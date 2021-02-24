@@ -339,7 +339,10 @@ func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) Executor {
 func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLookUpReader,
 	e *IndexLookUpExecutor) {
 	is := p.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	fullColLen := len(is.Index.Columns) + len(p.CommonHandleCols)
+	fullColLen := len(is.Index.Columns)
+	if p.ExtraHandleCol != nil && !p.ExtraHandleCol.IsInt() {
+		fullColLen += p.ExtraHandleCol.NumCols()
+	}
 	if !e.isCommonHandle() {
 		fullColLen += 1
 	}
@@ -2900,8 +2903,8 @@ func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []planner
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	var handleLen int
-	if len(v.CommonHandleCols) != 0 {
-		handleLen = len(v.CommonHandleCols)
+	if v.ExtraHandleCol != nil {
+		handleLen = v.ExtraHandleCol.NumCols()
 	} else {
 		handleLen = 1
 	}
@@ -2959,14 +2962,15 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	}
 	e.dagPB.CollectRangeCounts = &collectIndex
 	if v.ExtraHandleCol != nil {
-		e.handleIdx = append(e.handleIdx, v.ExtraHandleCol.Index)
-		e.handleCols = []*expression.Column{v.ExtraHandleCol}
-	} else {
-		for _, handleCol := range v.CommonHandleCols {
-			e.handleIdx = append(e.handleIdx, handleCol.Index)
+		e.handleCols = make([]*expression.Column, v.ExtraHandleCol.NumCols())
+		for i := 0; i < v.ExtraHandleCol.NumCols(); i++ {
+			col := v.ExtraHandleCol.GetCol(i)
+			e.handleIdx = append(e.handleIdx, col.Index)
+			e.handleCols[i] = col
 		}
-		e.handleCols = v.CommonHandleCols
-		e.primaryKeyIndex = tables.FindPrimaryIndex(tbl.Meta())
+		if !v.ExtraHandleCol.IsInt() {
+			e.primaryKeyIndex = tables.FindPrimaryIndex(tbl.Meta())
+		}
 	}
 	return e, nil
 }

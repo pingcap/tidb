@@ -253,11 +253,9 @@ type PhysicalIndexLookUpReader struct {
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
 
-	ExtraHandleCol *expression.Column
+	ExtraHandleCol HandleCols
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
 	PushedLimit *PushedDownLimit
-
-	CommonHandleCols []*expression.Column
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
@@ -284,7 +282,7 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	if p.ExtraHandleCol != nil {
-		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
+		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone()
 	}
 	if p.PushedLimit != nil {
 		cloned.PushedLimit = p.PushedLimit.Clone()

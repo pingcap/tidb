@@ -300,18 +300,11 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 		return err
 	}
 	if p.ExtraHandleCol != nil {
-		newCol, err := p.ExtraHandleCol.ResolveIndices(p.tablePlan.Schema())
+		newHandle, err := p.ExtraHandleCol.ResolveIndices(p.tablePlan.Schema())
 		if err != nil {
 			return err
 		}
-		p.ExtraHandleCol = newCol.(*expression.Column)
-	}
-	for i, commonHandleCol := range p.CommonHandleCols {
-		newCol, err := commonHandleCol.ResolveIndices(p.TablePlans[0].Schema())
-		if err != nil {
-			return err
-		}
-		p.CommonHandleCols[i] = newCol.(*expression.Column)
+		p.ExtraHandleCol = newHandle
 	}
 	return
 }

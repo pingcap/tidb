@@ -1028,9 +1028,6 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}
 		cop.tablePlan = ts
 	}
-	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
-		cop.commonHandleCols = ds.commonHandleCols
-	}
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
 	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 	if maxOneRow {

@@ -49,6 +49,8 @@ type HandleCols interface {
 	Compare(a, b []types.Datum) (int, error)
 	// GetFieldTypes return field types of columns
 	GetFieldsTypes() []*types.FieldType
+	// Clone return a cloned HandleCols
+	Clone() HandleCols
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
@@ -111,6 +113,19 @@ func (cb *CommonHandleCols) ResolveIndices(schema *expression.Schema) (HandleCol
 		ncb.columns[i] = newCol.(*expression.Column)
 	}
 	return ncb, nil
+}
+
+func (cb *CommonHandleCols) Clone() HandleCols {
+	ncb := &CommonHandleCols{
+		tblInfo: cb.tblInfo,
+		idxInfo: cb.idxInfo,
+		sc:      cb.sc,
+		columns: make([]*expression.Column, len(cb.columns)),
+	}
+	for i, col := range cb.columns {
+		ncb.columns[i] = col.Clone().(*expression.Column)
+	}
+	return ncb
 }
 
 // IsInt implements the kv.HandleCols interface.
@@ -232,6 +247,13 @@ func (ib *IntHandleCols) GetCol(idx int) *expression.Column {
 // NumCols implements the kv.HandleCols interface.
 func (ib *IntHandleCols) NumCols() int {
 	return 1
+}
+
+// Clone implements the kv.HandleCols interface.
+func (ib *IntHandleCols) Clone() HandleCols {
+	return &IntHandleCols{
+		col: ib.col.Clone().(*expression.Column),
+	}
 }
 
 // Compare implements the kv.HandleCols interface.

@@ -1358,8 +1358,16 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		indexPlan:        is,
 		tablePlan:        ts,
 		tblColHists:      is.stats.HistColl,
-		extraHandleCol:   extraCol,
-		commonHandleCols: commonCols,
+	}
+	if hasExtraCol {
+		cop.extraHandleCol = &IntHandleCols{extraCol}
+	} else if hasCommonCols {
+		cop.extraHandleCol = &CommonHandleCols{
+			tblInfo: tblInfo,
+			idxInfo: tables.FindPrimaryIndex(tblInfo),
+			columns: commonCols,
+			sc:      b.ctx.GetSessionVars().StmtCtx,
+		}
 	}
 	rootT := cop.convertToRootTask(b.ctx)
 	if err := rootT.p.ResolveIndices(); err != nil {

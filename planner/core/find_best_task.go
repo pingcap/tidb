@@ -907,9 +907,10 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	if ts.HandleCols == nil {
 		handleCol := ds.getPKIsHandleCol()
 		if handleCol == nil {
-			handleCol, _ = ts.appendExtraHandleCol(ds)
+			ts.HandleCols, _ = ts.appendExtraHandleCol(ds)
+		} else {
+			ts.HandleCols = NewIntHandleCols(handleCol)
 		}
-		ts.HandleCols = NewIntHandleCols(handleCol)
 	}
 	var err error
 	ts.HandleCols, err = ts.HandleCols.ResolveIndices(ts.schema)
@@ -978,15 +979,31 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 }
 
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
-func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.Column, bool) {
+func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (HandleCols, bool) {
 	handleCols := ds.handleCols
-	if handleCols != nil {
-		return handleCols.GetCol(0), false
+	if handleCols == nil {
+		handleCols = &IntHandleCols{ds.newExtraHandleSchemaCol()}
 	}
-	handleCol := ds.newExtraHandleSchemaCol()
-	ts.schema.Append(handleCol)
-	ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
-	return handleCol, true
+	hasNeedCol := false
+	for i := 0; i < handleCols.NumCols(); i++ {
+		col := handleCols.GetCol(i)
+		if !ts.schema.Contains(col) {
+			hasNeedCol = true
+			ts.schema.Append(col)
+			findColInfo := false
+			for _, colInfo := range ts.Table.Cols() {
+				if colInfo.ID == col.ID {
+					ts.Columns = append(ts.Columns, colInfo)
+					findColInfo = true
+					break
+				}
+			}
+			if !findColInfo {
+				ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+			}
+		}
+	}
+	return handleCols, hasNeedCol
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
@@ -1030,11 +1047,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	}
 	cop.cst = cost
 	task = cop
-	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
-		cop.commonHandleCols = ds.commonHandleCols
-	}
 	if candidate.isMatchProp {
-		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
+		if cop.tablePlan != nil {
 			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
 			cop.extraHandleCol = col
 			cop.doubleReadNeedProj = isNew
