@@ -106,6 +106,8 @@ const (
 	// inSequenceFunction is set when visiting a sequence function.
 	// This flag indicates the tableName in these function should be checked as sequence object.
 	inSequenceFunction
+	// disallowSelectIntoOption is set when the select statement is not allow to have "INTO OUTFILE" clause.
+	disallowSelectIntoOption
 )
 
 // preprocessor is an ast.Visitor that preprocess
@@ -128,18 +130,22 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeDelete
 	case *ast.SelectStmt:
 		p.stmtTp = TypeSelect
+		p.checkIntoOutfileOptionForSelect(node)
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
+		p.flag |= disallowSelectIntoOption
 	case *ast.CreateTableStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
+		p.flag |= disallowSelectIntoOption
 		p.resolveCreateTableStmt(node)
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
+		p.flag |= disallowSelectIntoOption
 		p.checkCreateViewGrammar(node)
 		p.checkCreateViewWithSelectGrammar(node)
 	case *ast.DropTableStmt:
@@ -219,6 +225,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.flag |= inCreateOrDropTable
 		}
 	case *ast.TableSource:
+		p.flag |= disallowSelectIntoOption
 		isModeOracle := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
 		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
 			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
@@ -232,6 +239,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
+	case *ast.SubqueryExpr:
+		p.flag |= disallowSelectIntoOption
+	case *ast.SetOprStmt:
+		p.checkIntoOutfileOptionForSetOpr(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -326,10 +337,14 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag &= ^inCreateOrDropTable
+		p.flag &= ^disallowSelectIntoOption
 		p.checkAutoIncrement(x)
 		p.checkContainDotColumn(x)
 	case *ast.CreateViewStmt:
 		p.flag &= ^inCreateOrDropTable
+		p.flag &= ^disallowSelectIntoOption
+	case *ast.InsertStmt:
+		p.flag &= ^disallowSelectIntoOption
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
@@ -396,6 +411,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if x.Kind == ast.BRIEKindRestore {
 			p.flag &= ^inCreateOrDropTable
 		}
+	case *ast.TableSource, *ast.SubqueryExpr:
+		p.flag &= ^disallowSelectIntoOption
 	}
 
 	return in, p.err == nil
@@ -535,6 +552,44 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 			p.checkSetOprSelectList(s)
 		}
 	}
+}
+
+func (p *preprocessor) checkIntoOutfileOptionForSelect(n *ast.SelectStmt) {
+	disallowIntoOpt := p.flag&disallowSelectIntoOption != 0
+	if disallowIntoOpt && n.SelectIntoOpt != nil {
+		p.err = ErrMisplacedIntoOutfile
+	}
+}
+
+func (p *preprocessor) checkIntoOutfileOptionForSetOpr(n *ast.SetOprStmt) {
+	disallowIntoOpt := p.flag&disallowSelectIntoOption != 0
+	hasIntoOpt, err := checkSetOprStmtIntoOption(n.SelectList)
+	if err != nil {
+		p.err = err
+		return
+	}
+	if hasIntoOpt && disallowIntoOpt {
+		p.err = ErrMisplacedIntoOutfile
+	}
+}
+
+func checkSetOprStmtIntoOption(n ast.Node) (hasIntoOpt bool, err error) {
+	switch v := n.(type) {
+	case *ast.SetOprSelectList:
+		for i, s := range v.Selects {
+			isLastOne := i+1 == len(v.Selects)
+			hasIntoOpt, err = checkSetOprStmtIntoOption(s)
+			if err != nil {
+				return true, err
+			}
+			if hasIntoOpt && !isLastOne {
+				return true, ErrMisplacedIntoOutfile
+			}
+		}
+	case *ast.SelectStmt:
+		return v.SelectIntoOpt != nil, nil
+	}
+	return false, nil
 }
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {

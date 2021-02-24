@@ -896,6 +896,7 @@ const (
 	ErrJSONValueOutOfRangeForFuncIndex                              = 3904
 	ErrFunctionalIndexDataIsTooLong                                 = 3907
 	ErrFunctionalIndexNotApplicable                                 = 3909
+	ErrMisplacedIntoOutfile                                         = 3954
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
