@@ -404,7 +404,7 @@ func (txn *TikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			keys = append(keys, key)
 		} else if txn.IsPessimistic() {
 			if checkKeyExists && valueExist {
-				return &ErrKeyExist{key}
+				return NewErrKeyExist(key)
 			}
 		}
 		if lockCtx.ReturnValues && locked {

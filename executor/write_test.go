@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"go.uber.org/zap"
 )
 
 type testBypassSuite struct{}
@@ -854,6 +856,7 @@ func (s *testSuite4) TestInsertOnDupUpdateDefault(c *C) {
 	tk.MustExec("insert into t values (22, 'gold witch'), (24, 'gray singer'), (21, 'silver sight');")
 	tk.MustExec("begin;")
 	err := tk.ExecToErr("insert into t values (21,'black warlock'), (22, 'dark sloth'), (21,  'cyan song') on duplicate key update c_int = c_int + 1, c_string = concat(c_int, ':', c_string);")
+	log.Error("[xxxx] err", zap.Any("err", err))
 	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
 	tk.MustExec("commit;")
 	tk.MustQuery("select * from t order by c_int;").Check(testutil.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))

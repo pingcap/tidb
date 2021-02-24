@@ -248,8 +248,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		for _, keyErr := range keyErrs {
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
-				key := alreadyExist.GetKey()
-				return &ErrKeyExist{key}
+				return &ErrKeyExist{AlreadyExist: alreadyExist}
 			}
 
 			// Extract lock from key error

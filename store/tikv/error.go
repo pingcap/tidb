@@ -70,15 +70,16 @@ func (d *ErrDeadlock) Error() string {
 }
 
 type ErrKeyExist struct {
-	key []byte
+	*kvrpcpb.AlreadyExist
+}
+
+func NewErrKeyExist(key []byte) error {
+	err := kvrpcpb.AlreadyExist{Key: key}
+	return &ErrKeyExist{&err}
 }
 
 func (k *ErrKeyExist) Error() string {
-	return "key exist"
-}
-
-func (k *ErrKeyExist) Key() []byte {
-	return k.key
+	return k.AlreadyExist.String()
 }
 
 // PDError wraps *pdpb.Error to implement the error interface.

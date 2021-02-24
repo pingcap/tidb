@@ -126,16 +126,17 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	err := txn.TikvTxn.LockKeys(ctx, lockCtx, keysInput...)
-	if e, ok := err.(*tikv.ErrKeyExist); ok {
-		return txn.extractKeyExistsErr(e.Key())
-	}
-	return errors.Trace(err)
+	return txn.extractKeyErr(err)
 }
 
 func (txn tikvTxn) Commit(ctx context.Context) error {
 	err := txn.TikvTxn.Commit(ctx)
-	if e, ok := err.(*tikv.ErrKeyExist); ok {
-		return txn.extractKeyExistsErr(e.Key())
+	return txn.extractKeyErr(err)
+}
+
+func (txn *tikvTxn) extractKeyErr(err error) error {
+	if e, ok := errors.Cause(err).(*tikv.ErrKeyExist); ok {
+		return txn.extractKeyExistsErr(e.GetKey())
 	}
 	return errors.Trace(err)
 }

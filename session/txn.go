@@ -56,11 +56,18 @@ type TxnState struct {
 }
 
 func (txn *TxnState) GetTableInfo(id int64) *model.TableInfo {
+	if t, ok := txn.Transaction.(kv.TableInfoCacher); ok {
+		return t.GetTableInfo(id)
+	}
 	return txn.idxNameCache[id]
 }
 
 func (txn *TxnState) CacheTableInfo(id int64, info *model.TableInfo) {
-	txn.idxNameCache[id] = info
+	if t, ok := txn.Transaction.(kv.TableInfoCacher); ok {
+		t.CacheTableInfo(id, info)
+	} else {
+		txn.idxNameCache[id] = info
+	}
 }
 
 func (st *TxnState) init() {

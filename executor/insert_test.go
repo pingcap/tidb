@@ -22,11 +22,13 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -214,7 +216,14 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
 	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
 }
-
+func getErrorExist() error {
+	return tikv.NewErrKeyExist([]byte("foo"))
+}
+func (s *testSuite8) TestErrorExist(c *C) {
+	err := getErrorExist()
+	_, ok := err.(*tikv.ErrKeyExist)
+	c.Assert(ok, IsTrue)
+}
 func (s *testSuite8) TestClusterIndexInsertOnDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists cluster_index_duplicate_entry_error;")
@@ -224,6 +233,7 @@ func (s *testSuite8) TestClusterIndexInsertOnDuplicateKey(c *C) {
 
 	tk.MustExec("create table t(a char(20), b int, primary key(a));")
 	tk.MustExec("insert into t values('aa', 1), ('bb', 1);")
+	log.Error("[xxxx]insert test begin")
 	_, err := tk.Exec("insert into t values('aa', 2);")
 	c.Assert(err, ErrorMatches, ".*Duplicate entry 'aa' for.*")
 
