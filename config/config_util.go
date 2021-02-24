@@ -159,12 +159,11 @@ const (
 	globalTxnScope = "global"
 )
 
-
 // GetTxnScopeFromConfig extract txn_scope value from config
-func GetTxnScopeFromConfig() string {
+func GetTxnScopeFromConfig() (bool, string) {
 	v, ok := GetGlobalConfig().Labels["zone"]
 	if ok && len(v) > 0 {
-		return v
+		return false, v
 	}
-	return globalTxnScope
+	return true, globalTxnScope
 }

@@ -8507,10 +8507,13 @@ func (s *testIntegrationSuite) TestIssue12209(c *C) {
 		testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestCrossDCQuery(c *C) {
+func (s *testIntegrationSerialSuite) TestCrossDCQuery(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),

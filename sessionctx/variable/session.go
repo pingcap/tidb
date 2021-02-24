@@ -819,8 +819,8 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
 		return oracle.GlobalTxnScope
 	}
-	if s.TxnScope.GetTxnScope() == oracle.LocalTxnScope {
-		return s.TxnScope.GetLocation()
+	if s.TxnScope.GetVarValue() == oracle.LocalTxnScope {
+		return s.TxnScope.GetTxnScope()
 	}
 	return oracle.GlobalTxnScope
 }
@@ -966,7 +966,7 @@ func NewSessionVars() *SessionVars {
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    oracle.NewGlobalTxnScope(),
+		TxnScope:                    oracle.GetTxnScope(),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 		Enable1PC:                   DefTiDBEnable1PC,
@@ -1687,13 +1687,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		case oracle.GlobalTxnScope:
 			s.TxnScope = oracle.NewGlobalTxnScope()
 		case oracle.LocalTxnScope:
-			if v := config.GetTxnScopeFromConfig(); len(v) > 0 {
-				s.TxnScope = oracle.NewLocalTxnScope(v)
-			} else {
-				s.TxnScope = oracle.NewGlobalTxnScope()
-			}
+			s.TxnScope = oracle.GetTxnScope()
+		default:
+			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
 		}
-		return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
 	case TiDBMemoryUsageAlarmRatio:
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
 	case TiDBEnableRateLimitAction:

@@ -303,10 +303,10 @@ func setSSLVariable(ca, key, cert string) {
 
 func setTxnScope() {
 	variable.SetSysVar("txn_scope", func() string {
-		if v := config.GetTxnScopeFromConfig(); len(v) > 0 {
-			return oracle.LocalTxnScope
+		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
+			return oracle.GlobalTxnScope
 		}
-		return oracle.GlobalTxnScope
+		return oracle.LocalTxnScope
 	}())
 }
 

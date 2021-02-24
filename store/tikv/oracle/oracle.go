@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
@@ -46,40 +47,47 @@ type Future interface {
 
 // TxnScope indicates the used txnScope for oracle
 type TxnScope struct {
-	// txnScope indicates the value of @@txn_scope, which only can be `global` or `local`
-	txnScope TxnScopeEnum
-	// location indicates the value which the tidb-server holds to request tso from pd
-	location string
+	// varValue indicates the value of @@txn_scope, which only can be `global` or `local`
+	varValue string
+	// txnScope indicates the value which the tidb-server holds to request tso from pd
+	txnScope string
 }
 
-func newTxnScope(txnScope TxnScopeEnum, location string) TxnScope {
-	return TxnScope{
-		txnScope: txnScope,
-		location: location,
+// GetTxnScope ...
+func GetTxnScope() TxnScope {
+	isGlobal, location := config.GetTxnScopeFromConfig()
+	if isGlobal {
+		return NewGlobalTxnScope()
 	}
+	return NewLocalTxnScope(location)
 }
 
-// NewGlobalTxnScope...
+// NewGlobalTxnScope ...
 func NewGlobalTxnScope() TxnScope {
 	return newTxnScope(GlobalTxnScope, GlobalTxnScope)
 }
 
-// NewLocalTxnScope...
-func NewLocalTxnScope(location string) TxnScope {
-	return newTxnScope(LocalTxnScope, location)
+// NewLocalTxnScope ...
+func NewLocalTxnScope(txnScope string) TxnScope {
+	return newTxnScope(LocalTxnScope, txnScope)
 }
 
-// GetTxnScope...
-func (t TxnScope) GetTxnScope() TxnScopeEnum {
+// GetVarValue  ...
+func (t TxnScope) GetVarValue() string {
+	return t.varValue
+}
+
+// GetTxnScope ...
+func (t TxnScope) GetTxnScope() string {
 	return t.txnScope
 }
 
-// GetLocation...
-func (t TxnScope) GetLocation() string {
-	return t.location
+func newTxnScope(varValue string, txnScope string) TxnScope {
+	return TxnScope{
+		varValue: varValue,
+		txnScope: txnScope,
+	}
 }
-
-type TxnScopeEnum string
 
 const (
 	physicalShiftBits = 18

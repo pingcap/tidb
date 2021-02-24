@@ -567,10 +567,10 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: ErrorCount, Value: "0", ReadOnly: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: BoolOn, Type: TypeBool, IsHintUpdatable: true},
 	{Scope: ScopeSession, Name: TiDBTxnScope, Value: func() string {
-		if v := config.GetTxnScopeFromConfig(); len(v) > 0 {
-			return oracle.LocalTxnScope
+		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
+			return oracle.GlobalTxnScope
 		}
-		return oracle.GlobalTxnScope
+		return oracle.LocalTxnScope
 	}()},
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution)},

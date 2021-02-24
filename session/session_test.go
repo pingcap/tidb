@@ -3248,31 +3248,44 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	c.Assert(taskID1 != taskID2, IsTrue)
 }
 
-func (s *testSessionSuite2) TestSetTxnScope(c *C) {
+func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
+	config.GetGlobalConfig().Labels["zone"] = ""
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
-
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
 	// assert set sys variable
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows("local"))
+	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
+
+	config.GetGlobalConfig().Labels["zone"] = "bj"
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	// assert default value
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(oracle.LocalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
+	// assert set sys variable
+	tk.MustExec("set @@session.txn_scope = 'global';")
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
 
 	// assert set invalid txn_scope
 	err := tk.ExecToErr("set @@txn_scope='foo'")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
-
-	// assert session scope
-	se, err := session.CreateSession4Test(s.store)
-	c.Check(err, IsNil)
-	tk.Se = se
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 }
 
-func (s *testSessionSuite2) TestGlobalAndLocalTxn(c *C) {
+func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
 	if *withTiKV {
