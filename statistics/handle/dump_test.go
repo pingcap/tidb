@@ -80,7 +80,7 @@ func (s *testStatsSuite) TestDumpGlobalStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static-only'")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t values (1), (2)")

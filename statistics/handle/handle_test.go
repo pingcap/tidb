@@ -681,7 +681,7 @@ func (s *testStatsSuite) TestShowGlobalStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static-only'")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t values (1), (2), (3), (4)")
 	tk.MustExec("analyze table t with 1 buckets")
@@ -694,7 +694,7 @@ func (s *testStatsSuite) TestShowGlobalStats(c *C) {
 	c.Assert(len(tk.MustQuery("show stats_healthy").Rows()), Equals, 2)
 	c.Assert(len(tk.MustQuery("show stats_healthy where partition_name='global'").Rows()), Equals, 0)
 
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only'")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t with 1 buckets")
 	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 3)
 	c.Assert(len(tk.MustQuery("show stats_meta where partition_name='global'").Rows()), Equals, 1)
@@ -733,7 +733,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	result = testKit.MustQuery("show stats_histograms where table_name = 't1';").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
 
-	// Test the 'dynamic-only' mode
+	// Test the 'dynamic' mode
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	testKit.MustExec("analyze table t, t1;")
 	result = testKit.MustQuery("show stats_meta where table_name = 't'").Sort()
