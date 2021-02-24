@@ -436,6 +436,9 @@ type SessionVars struct {
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
+	// Port is the port of the connected socket
+	Port string
+
 	// CurrentDB is the default database of this session.
 	CurrentDB string
 
@@ -1598,6 +1601,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if err != nil {
 			logutil.BgLogger().Warn(err.Error())
 			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
+			if err != nil {
+				return err
+			}
 		}
 		switch name {
 		case CollationConnection:
