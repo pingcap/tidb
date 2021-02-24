@@ -317,11 +317,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			url = fmt.Sprintf("%s://%s%s", util2.InternalHTTPSchema(), addr, route)
 		}
 
-		if ctx != nil {
-			req, err = http.NewRequestWithContext(ctx, method, url, body)
-		} else {
-			req, err = http.NewRequest(method, url, body)
-		}
+		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
 			return nil, err
 		}

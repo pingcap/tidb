@@ -924,7 +924,7 @@ func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
 				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
 			}
 		}
-		err := infosync.PutRuleBundles(nil, bundles)
+		err := infosync.PutRuleBundles(context.TODO(), bundles)
 		return err
 	}
 	return nil
@@ -1110,7 +1110,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 			}
 		}
 
-		err = infosync.PutRuleBundles(nil, bundles)
+		err = infosync.PutRuleBundles(context.TODO(), bundles)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -1319,7 +1319,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			bundles = append(bundles, placement.BuildPlacementDropBundle(nt.ID))
 			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
 		}
-		err = infosync.PutRuleBundles(nil, bundles)
+		err = infosync.PutRuleBundles(context.TODO(), bundles)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -1740,7 +1740,7 @@ func onAlterTableAlterPartition(t *meta.Meta, job *model.Job) (ver int64, err er
 		}
 		job.SchemaState = model.StateGlobalTxnOnly
 	case model.StateGlobalTxnOnly:
-		err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
+		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")

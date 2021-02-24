@@ -508,14 +508,13 @@ func (e *firstRow4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
-	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
+	if len(rowsInGroup) > 0 {
+		d, err := e.args[0].Eval(rowsInGroup[0])
 		if err != nil {
 			return memDelta, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlEnum().Copy()
 		memDelta += int64(len(p.val.Name))
-		break
 	}
 	return memDelta, nil
 }
@@ -556,14 +555,13 @@ func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
-	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
+	if len(rowsInGroup) > 0 {
+		d, err := e.args[0].Eval(rowsInGroup[0])
 		if err != nil {
 			return memDelta, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlSet().Copy()
 		memDelta += int64(len(p.val.Name))
-		break
 	}
 	return memDelta, nil
 }
