@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/gcworker"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -88,7 +87,7 @@ func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 }
 
 func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
-	gcWorker, err := gcworker.NewMockGCWorker(s.store.(tikv.Storage))
+	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	c.Assert(err, IsNil)
 	err = gcWorker.DeleteRanges(goctx.Background(), uint64(math.MaxInt32))
 	c.Assert(err, IsNil)
