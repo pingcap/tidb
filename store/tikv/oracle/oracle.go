@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
 
@@ -33,6 +33,7 @@ type Oracle interface {
 	GetTimestampAsync(ctx context.Context, opt *Option) Future
 	GetLowResolutionTimestamp(ctx context.Context, opt *Option) (uint64, error)
 	GetLowResolutionTimestampAsync(ctx context.Context, opt *Option) Future
+	GetStaleTimestamp(ctx context.Context, txnScope string, prevSecond uint64) (uint64, error)
 	IsExpired(lockTimestamp, TTL uint64, opt *Option) bool
 	UntilExpired(lockTimeStamp, TTL uint64, opt *Option) int64
 	Close()
@@ -86,4 +87,10 @@ func EncodeTSO(ts int64) uint64 {
 func GetTimeFromTS(ts uint64) time.Time {
 	ms := ExtractPhysical(ts)
 	return time.Unix(ms/1e3, (ms%1e3)*1e6)
+}
+
+// GoTimeToTS converts a Go time to uint64 timestamp.
+func GoTimeToTS(t time.Time) uint64 {
+	ts := (t.UnixNano() / int64(time.Millisecond)) << physicalShiftBits
+	return uint64(ts)
 }

@@ -149,12 +149,21 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
+func (s *mockStorage) BeginWithTxnScope(txnScope string) (Transaction, error) {
+	return newMockTxn(), nil
+}
+
 func (*mockTxn) IsPessimistic() bool {
 	return false
 }
 
-// BeginWithStartTS begins a transaction with startTS.
-func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
+// BeginWithStartTS begins transaction with given txnScope and startTS.
+func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
+	return s.Begin()
+}
+
+// BeginWithExactStaleness begins transaction with given exact staleness
+func (s *mockStorage) BeginWithExactStaleness(txnScope string, prevSec uint64) (Transaction, error) {
 	return s.Begin()
 }
 
@@ -173,7 +182,7 @@ func (s *mockStorage) UUID() string {
 }
 
 // CurrentVersion returns current max committed version.
-func (s *mockStorage) CurrentVersion() (Version, error) {
+func (s *mockStorage) CurrentVersion(txnScope string) (Version, error) {
 	return NewVersion(1), nil
 }
 

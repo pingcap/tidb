@@ -83,7 +83,7 @@ type logicalOptRule interface {
 func BuildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error) {
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
-	builder := NewPlanBuilder(sctx, is, &utilhint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder(sctx, is, &utilhint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, nil, err
@@ -111,7 +111,7 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	}
 	checker := lock.NewChecker(ctx, is)
 	for i := range vs {
-		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege)
+		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].alterWritable)
 		if err != nil {
 			return err
 		}

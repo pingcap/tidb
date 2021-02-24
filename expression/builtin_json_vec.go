@@ -448,9 +448,13 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 				pathExprs = append(pathExprs, pathExpr)
 			}
 		}
-		bj, _, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, pathExprs)
+		bj, isNull, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, pathExprs)
 		if err != nil {
 			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
 		}
 		result.AppendJSON(bj)
 	}
