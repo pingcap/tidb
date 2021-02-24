@@ -1227,7 +1227,7 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 		if con == 1 {
 			expected = reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
 		} else {
-			er := tk.MustQuery("explain " + sql).Rows()
+			er := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 			ok := false
 			for _, l := range er {
 				str := fmt.Sprintf("%v", l)
@@ -1273,7 +1273,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 			if con == 1 {
 				expected = tk.MustQuery(sql).Sort().Rows()
 			} else {
-				er := tk.MustQuery("explain " + sql).Rows()
+				er := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 				ok := false
 				for _, l := range er {
 					str := fmt.Sprintf("%v", l)
