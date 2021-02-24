@@ -119,7 +119,7 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].NullCount, Equals, int64(2))
-	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].NDV, Equals, int64(0))
+	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].Histogram.NDV, Equals, int64(0))
 
 	testKit.MustExec("alter table t add column c3 int NOT NULL")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())

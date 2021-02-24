@@ -1102,18 +1102,13 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	if d.infoHandle != nil && d.infoHandle.IsValid() {
 		bundles := make([]*placement.Bundle, 0, len(oldIDs))
 
-		yoldIDs := make([]int64, 0, len(oldIDs))
-		newIDs := make([]int64, 0, len(oldIDs))
 		for i, oldID := range oldIDs {
 			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldID))
 			if ok && !oldBundle.IsEmpty() {
-				yoldIDs = append(yoldIDs, oldID)
-				newIDs = append(newIDs, newPartitions[i].ID)
 				bundles = append(bundles, placement.BuildPlacementDropBundle(oldID))
 				bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newPartitions[i].ID))
 			}
 		}
-		job.CtxVars = []interface{}{yoldIDs, newIDs}
 
 		err = infosync.PutRuleBundles(nil, bundles)
 		if err != nil {
@@ -1122,6 +1117,11 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
+	newIDs := make([]int64, len(oldIDs))
+	for i := range oldIDs {
+		newIDs[i] = newPartitions[i].ID
+	}
+	job.CtxVars = []interface{}{oldIDs, newIDs}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
