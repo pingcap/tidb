@@ -1715,7 +1715,7 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 
 // TryGetHandleRestoredDataWrapper tries to get the restored data. The argument can be a slice or a map.
 func (t *TableCommon) TryGetHandleRestoredDataWrapper(row []types.Datum, rowMap map[int64]types.Datum) []types.Datum {
-	if !collate.NewCollationEnabled() || !t.Meta().IsCommonHandle {
+	if !collate.NewCollationEnabled() || !t.Meta().IsCommonHandle || t.meta.CommonHandleVersion == 0 {
 		return nil
 	}
 
@@ -1744,6 +1744,13 @@ func (t *TableCommon) TryGetHandleRestoredDataWrapper(row []types.Datum, rowMap 
 			} else {
 				rsData = append(rsData, row[col.Offset])
 			}
+		}
+	}
+
+	for _, idx := range t.meta.Indices {
+		if idx.Primary {
+			tablecodec.TruncateIndexValues(t.meta, idx, rsData)
+			break
 		}
 	}
 

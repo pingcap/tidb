@@ -1074,9 +1074,9 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 // GenIndexValuePortal is the portal for generating index value.
 func GenIndexValuePortal(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, restoredData []types.Datum) ([]byte, error) {
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
-		return GenIndexValueNewForClusteredIndexVersion1(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData)
+		return GenIndexValueForClusteredIndexVersion1(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData)
 	}
-	return genIndexValueNew(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID)
+	return genIndexValueVersion0(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID)
 }
 
 // TryGetCommonPkColumnRestoredIds get the IDs of primary key columns which need restored data if the table has common handle.
@@ -1101,8 +1101,8 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 	return pkColIds
 }
 
-// GenIndexValueNewForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
-func GenIndexValueNewForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
+// GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
+func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
 	idxVal := make([]byte, 1)
 	tailLen := 0
 	// Version info.
@@ -1158,8 +1158,8 @@ func GenIndexValueNewForClusteredIndexVersion1(sc *stmtctx.StatementContext, tbl
 	return idxVal, nil
 }
 
-// genIndexValueNew create index value for both local and global index.
-func genIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
+// genIndexValueVersion0 create index value for both local and global index.
+func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
 	idxVal := make([]byte, 1)
 	newEncode := false
 	tailLen := 0
