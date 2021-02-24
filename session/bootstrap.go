@@ -285,6 +285,15 @@ const (
 		INDEX tbl(table_id, is_index, hist_id)
 	);`
 
+	// CreateStatsFMSketchTable stores FMSketch data of a column histogram.
+	CreateStatsFMSketchTable = `CREATE TABLE IF NOT EXISTS mysql.stats_fm_sketch (
+		table_id 	BIGINT(64) NOT NULL,
+		is_index 	TINYINT(2) NOT NULL,
+		hist_id 	BIGINT(64) NOT NULL,
+		value 		LONGBLOB,
+		INDEX tbl(table_id, is_index, hist_id)
+	);`
+
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
 	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
 		name 		CHAR(100) NOT NULL,
@@ -463,9 +472,11 @@ const (
 	version63 = 63
 	// version64 is redone upgradeToVer58 after upgradeToVer63, this is to preserve the order of the columns in mysql.user
 	version64 = 64
+	// version65 add mysql.stats_fm_sketch table.
+	version65 = 65
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version64
+	currentBootstrapVersion = version65
 )
 
 var (
@@ -534,6 +545,7 @@ var (
 		upgradeToVer62,
 		upgradeToVer63,
 		upgradeToVer64,
+		upgradeToVer65,
 	}
 )
 
@@ -1429,6 +1441,13 @@ func upgradeToVer64(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
 }
 
+func upgradeToVer65(s Session, ver int64) {
+	if ver >= version65 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsFMSketchTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1503,6 +1522,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsExtended)
 	// Create schema_index_usage.
 	mustExecute(s, CreateSchemaIndexUsageTable)
+	// Create stats_fm_sketch table.
+	mustExecute(s, CreateStatsFMSketchTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

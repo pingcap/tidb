@@ -900,6 +900,7 @@ type Column struct {
 	Histogram
 	*CMSketch
 	*TopN
+	*FMSketch
 	PhysicalID int64
 	Count      int64
 	Info       *model.ColumnInfo
@@ -946,6 +947,9 @@ func (c *Column) MemoryUsage() (sum int64) {
 	if c.CMSketch != nil {
 		sum += c.CMSketch.MemoryUsage()
 	}
+	if c.FMSketch != nil {
+		sum += c.FMSketch.MemoryUsage()
+	}
 	return
 }
 
@@ -959,11 +963,11 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
-	if c.NDV > 0 && c.notNullCount() == 0 && sc != nil {
+	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sc != nil {
 		sc.SetHistogramsNotLoad()
 		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
 	}
-	return c.TotalRowCount() == 0 || (c.NDV > 0 && c.notNullCount() == 0)
+	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
@@ -975,8 +979,8 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		if c.Histogram.Bounds.NumRows() == 0 {
 			return 0.0, nil
 		}
-		if c.NDV > 0 && c.outOfRange(val) {
-			return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
+		if c.Histogram.NDV > 0 && c.outOfRange(val) {
+			return outOfRangeEQSelectivity(c.Histogram.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
 			count, err := queryValue(sc, c.CMSketch, c.TopN, val)
@@ -1019,7 +1023,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 	if c.TopN != nil {
 		topNLen = int64(len(c.TopN.TopN))
 	}
-	ndv := c.NDV - topNLen - int64(len(c.Histogram.Buckets))
+	ndv := c.Histogram.NDV - topNLen - int64(len(c.Histogram.Buckets))
 	if ndv <= 0 {
 		return 0, nil
 	}
@@ -1365,7 +1369,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			IsHandle:   oldCol.IsHandle,
 			CMSketch:   oldCol.CMSketch,
 		}
-		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
+		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.Histogram.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
 		var err error
 		splitRanges, ok := oldCol.Histogram.SplitRange(sc, node.Ranges, false)
 		if !ok {
@@ -1693,13 +1697,21 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	return &res, nil
 }
 
+func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
+	res := newBucket4Meging()
+	res.lower = d.Clone()
+	res.upper = d.Clone()
+	res.Count = int64(t.Count)
+	res.Repeat = int64(t.Count)
+	res.NDV = int64(1)
+	return res
+}
+
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-// Notice: If expBucketNumber == 0, we will let expBucketNumber = max(hists.Len())
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, expBucketNumber int64) (*Histogram, error) {
+func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64) (*Histogram, error) {
 	var totCount, totNull, bucketNumber, totColSize int64
-	needBucketNumber := false
 	if expBucketNumber == 0 {
-		needBucketNumber = true
+		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
 	// minValue is used to calc the bucket lower.
 	var minValue *types.Datum
@@ -1709,9 +1721,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		bucketNumber += int64(hist.Len())
 		if hist.Len() > 0 {
 			totCount += hist.Buckets[hist.Len()-1].Count
-			if needBucketNumber && int64(hist.Len()) > expBucketNumber {
-				expBucketNumber = int64(hist.Len())
-			}
 			if minValue == nil {
 				minValue = hist.GetLower(0).Clone()
 				continue
@@ -1725,6 +1734,8 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			}
 		}
 	}
+
+	bucketNumber += int64(len(popedTopN))
 	buckets := make([]*bucket4Merging, 0, bucketNumber)
 	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)
 
@@ -1732,6 +1743,27 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	for _, hist := range hists {
 		buckets = append(buckets, hist.buildBucket4Merging()...)
 	}
+
+	for _, meta := range popedTopN {
+		totCount += int64(meta.Count)
+		_, d, err := codec.DecodeOne(meta.Encoded)
+		if err != nil {
+			return nil, err
+		}
+		if minValue == nil {
+			minValue = d.Clone()
+			continue
+		}
+		res, err := d.CompareDatum(sc, minValue)
+		if err != nil {
+			return nil, err
+		}
+		if res < 0 {
+			minValue = d.Clone()
+		}
+		buckets = append(buckets, meta.buildBucket4Merging(&d))
+	}
+
 	var sortError error
 	sort.Slice(buckets, func(i, j int) bool {
 		res, err := buckets[i].upper.CompareDatum(sc, buckets[j].upper)
