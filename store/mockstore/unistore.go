@@ -45,6 +45,13 @@ type mockStorage struct {
 	*tikv.KVStore
 }
 
+// NewMockStorage wraps tikv.KVStore as kv.Storage.
+func NewMockStorage(tikvStore *tikv.KVStore) kv.Storage {
+	return &mockStorage{
+		KVStore: tikvStore,
+	}
+}
+
 func (s *mockStorage) EtcdAddrs() ([]string, error) {
 	return nil, nil
 }
@@ -55,4 +62,12 @@ func (s *mockStorage) TLSConfig() *tls.Config {
 
 func (s *mockStorage) StartGCWorker() error {
 	return nil
+}
+
+func (s *mockStorage) Name() string {
+	return "mock-storage"
+}
+
+func (s *mockStorage) Describe() string {
+	return ""
 }
