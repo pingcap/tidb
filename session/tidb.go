@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -275,7 +274,7 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 		// The last history could not be "commit"/"rollback" statement.
 		// It means it is impossible to start a new transaction at the end of the transaction.
 		// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
-		sessVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+		sessVars.SetInTxn(true)
 	}
 	return err
 }
