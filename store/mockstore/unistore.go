@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -37,18 +38,21 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &mockStorage{KVStore: kvstore}, nil
+	return NewMockStorage(kvstore), nil
 }
 
 // Wraps tikv.KVStore and make it compatible with kv.Storage.
 type mockStorage struct {
 	*tikv.KVStore
+	*copr.Store
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
 func NewMockStorage(tikvStore *tikv.KVStore) kv.Storage {
+	coprStore, _ := copr.NewStore(tikvStore, nil)
 	return &mockStorage{
 		KVStore: tikvStore,
+		Store:   coprStore,
 	}
 }
 
@@ -70,4 +74,8 @@ func (s *mockStorage) Name() string {
 
 func (s *mockStorage) Describe() string {
 	return ""
+}
+
+func (s *mockStorage) Close() error {
+	return nil
 }
