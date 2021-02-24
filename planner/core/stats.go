@@ -160,7 +160,7 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	hist, ok := ds.statisticTable.Columns[colID]
 	if ok && hist.Count > 0 {
 		factor := float64(ds.statisticTable.Count) / float64(hist.Count)
-		ndv = float64(hist.NDV) * factor
+		ndv = float64(hist.Histogram.NDV) * factor
 	} else {
 		ndv = float64(ds.statisticTable.Count) * distinctFactor
 	}
