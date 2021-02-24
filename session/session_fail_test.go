@@ -115,9 +115,7 @@ func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/getMinCommitTSFromTSO"), IsNil)
 	}()
 
-	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1")
 	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1"), IsNil)
-	tk.Se.GetSessionVars().SetSystemVar("tidb_guarantee_linearizability", "1")
 	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_guarantee_linearizability", "1"), IsNil)
 
 	// Auto-commit transactions don't need to get minCommitTS from TSO
