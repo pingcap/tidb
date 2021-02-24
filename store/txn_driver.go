@@ -56,10 +56,6 @@ func (txn tikvTxn) extractKeyErr(err error) error {
 }
 
 func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
-	if !txn.GetUnionStore().HasPresumeKeyNotExists(key) {
-		return errors.Errorf("session %d, existErr for key:%s should not be nil", txn.SessionID(), key)
-	}
-
 	tableID, indexID, isRecord, err := tablecodec.DecodeKeyHead(key)
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)

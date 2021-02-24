@@ -148,7 +148,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				// return c.extractKeyExistsErr(key)
-				return &ErrKeyExist{AlreadyExist: alreadyExist}
+				return c.extractKeyExistsErr(&ErrKeyExist{AlreadyExist: alreadyExist})
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
 				return &ErrDeadlock{Deadlock: deadlock}
@@ -227,6 +227,13 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (c *twoPhaseCommitter) extractKeyExistsErr(err *ErrKeyExist) error {
+	if !c.txn.us.HasPresumeKeyNotExists(err.AlreadyExist.GetKey()) {
+		return errors.Errorf("session %d, existErr for key:%s should not be nil", c.sessionID, err.AlreadyExist.GetKey())
+	}
+	return err
 }
 
 func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {

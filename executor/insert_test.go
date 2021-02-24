@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -216,14 +215,7 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
 	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
 }
-func getErrorExist() error {
-	return tikv.NewErrKeyExist([]byte("foo"))
-}
-func (s *testSuite8) TestErrorExist(c *C) {
-	err := getErrorExist()
-	_, ok := err.(*tikv.ErrKeyExist)
-	c.Assert(ok, IsTrue)
-}
+
 func (s *testSuite8) TestClusterIndexInsertOnDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists cluster_index_duplicate_entry_error;")

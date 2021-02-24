@@ -404,7 +404,8 @@ func (txn *TikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			keys = append(keys, key)
 		} else if txn.IsPessimistic() {
 			if checkKeyExists && valueExist {
-				return NewErrKeyExist(key)
+				err := NewErrKeyExist(key)
+				return txn.committer.extractKeyExistsErr(err.(*ErrKeyExist))
 			}
 		}
 		if lockCtx.ReturnValues && locked {
@@ -460,6 +461,7 @@ func (txn *TikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 		if err != nil {
 			for _, key := range keys {
+				// TODO let me think
 				if txn.us.HasPresumeKeyNotExists(key) {
 					txn.us.UnmarkPresumeKeyNotExists(key)
 				}
