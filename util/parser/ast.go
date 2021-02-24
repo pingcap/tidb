@@ -65,6 +65,8 @@ func findTablePos(s, t string) int {
 	return -1
 }
 
+// SimpleCases captures simple SQL statements and uses string replacement instead of `restore` to improve performance.
+// See https://github.com/pingcap/tidb/issues/22398.
 func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool) {
 	if len(origin) == 0 {
 		return "", false
