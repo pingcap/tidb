@@ -151,7 +151,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.Version2, 1)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, nil, statistics.Version2, 1)
 	c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
 
@@ -242,7 +242,7 @@ func (s *testStatsSuite) TestDumpVer2Stats(c *C) {
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
-	storageTbl, err := h.TableStatsFromStorage(tableInfo.Meta(), tableInfo.Meta().ID, false, nil)
+	storageTbl, err := h.TableStatsFromStorage(tableInfo.Meta(), tableInfo.Meta().ID, false, 0)
 	c.Assert(err, IsNil)
 
 	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)

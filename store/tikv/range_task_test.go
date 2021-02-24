@@ -21,8 +21,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 )
 
 type testRangeTaskSuite struct {
@@ -77,7 +77,7 @@ func (s *testRangeTaskSuite) SetUpTest(c *C) {
 	// 	}),
 	// )
 	// c.Assert(err, IsNil)
-	s.store = store.(*KVStore)
+	s.store = store
 
 	s.testRanges = []kv.KeyRange{
 		makeRange("", ""),

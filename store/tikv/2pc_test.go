@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
@@ -61,7 +61,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	spkv := NewMockSafePointKV()
-	store, err := NewKVStore("mocktikv-store", pdCli, spkv, client, false, nil)
+	store, err := NewKVStore("mocktikv-store", pdCli, spkv, client, nil)
 	store.EnableTxnLocalLatches(1024000)
 	c.Assert(err, IsNil)
 
