@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -3772,7 +3773,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 	enableOOM := func(tk *testkit.TestKit, name, sql string) {
 		c.Logf("enable OOM, testcase: %v", name)
 		// larger than 4 copResponse, smaller than 5 copResponse
-		quota := 5*tikv.MockResponseSizeForTest - 100
+		quota := 5*copr.MockResponseSizeForTest - 100
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
@@ -3787,7 +3788,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 
 	disableOOM := func(tk *testkit.TestKit, name, sql string) {
 		c.Logf("disable OOM, testcase: %v", name)
-		quota := 5*tikv.MockResponseSizeForTest - 100
+		quota := 5*copr.MockResponseSizeForTest - 100
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
