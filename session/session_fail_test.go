@@ -111,10 +111,12 @@ func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
 	tk.MustExec(`create table t1 (c int)`)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/getMinCommitTSFromTSO", `panic`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/getMinCommitTSFromTSO")
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/getMinCommitTSFromTSO"), IsNil)
+	}()
 
-	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1")
-	tk.Se.GetSessionVars().SetSystemVar("tidb_guarantee_linearizability", "1")
+	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1"), IsNil)
+	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_guarantee_linearizability", "1"), IsNil)
 	// Auto-commit transactions don't need to get minCommitTS from TSO
 	tk.MustExec("INSERT INTO t1 VALUES (1)")
 
@@ -141,7 +143,7 @@ func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
 
 	// Same for 1PC
 	tk.MustExec("set autocommit = 1")
-	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_1pc", "1")
+	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_enable_1pc", "1"), IsNil)
 	tk.MustExec("INSERT INTO t1 VALUES (4)")
 
 	tk.MustExec("BEGIN")

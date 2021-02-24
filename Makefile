@@ -57,7 +57,6 @@ check-static: tools/bin/golangci-lint
 	  --enable=gosimple \
 	  --enable=staticcheck \
 	  --enable=typecheck \
-	  --enable=unused \
 	  --enable=varcheck \
 	  --enable=structcheck \
 	  --new-from-rev=HEAD~50 \
