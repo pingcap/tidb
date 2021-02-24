@@ -274,7 +274,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 		indexPlan:      indexScan,
 		TablePlans:     []PhysicalPlan{tableReader},
 		tablePlan:      tableScan,
-		ExtraHandleCol: col,
+		ExtraHandleCol: &IntHandleCols{col},
 		PushedLimit:    &PushedDownLimit{1, 2},
 	}
 	indexLookup = indexLookup.Init(ctx, 0)
