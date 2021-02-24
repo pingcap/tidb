@@ -1355,9 +1355,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	}
 
 	cop := &copTask{
-		indexPlan:        is,
-		tablePlan:        ts,
-		tblColHists:      is.stats.HistColl,
+		indexPlan:   is,
+		tablePlan:   ts,
+		tblColHists: is.stats.HistColl,
 	}
 	if hasExtraCol {
 		cop.extraHandleCol = &IntHandleCols{extraCol}

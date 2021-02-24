@@ -669,9 +669,9 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	newTask := &rootTask{cst: t.cst}
 	sessVars := ctx.GetSessionVars()
 	p := PhysicalIndexLookUpReader{
-		tablePlan:        t.tablePlan,
-		indexPlan:        t.indexPlan,
-		ExtraHandleCol:   t.extraHandleCol,
+		tablePlan:      t.tablePlan,
+		indexPlan:      t.indexPlan,
+		ExtraHandleCol: t.extraHandleCol,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
 	p.PartitionInfo = t.partitionInfo
 	setTableScanToTableRowIDScan(p.tablePlan)
