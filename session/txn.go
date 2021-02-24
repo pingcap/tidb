@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/txnstateRecorder"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
@@ -180,6 +181,7 @@ func (txn *TxnState) changePendingToValid(ctx context.Context) error {
 		return err
 	}
 	txn.Transaction = t
+	txnstateRecorder.ReportTxnStart(txn.StartTS())
 	txn.initStmtBuf()
 	return nil
 }

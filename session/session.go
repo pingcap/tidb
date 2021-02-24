@@ -41,6 +41,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tipb/go-binlog"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -77,8 +80,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tipb/go-binlog"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/txnstateRecorder"
 )
 
 var (
@@ -502,7 +504,9 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.GuaranteeLinearizability,
 			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
-
+	if s.txn.Valid() {
+		txnstateRecorder.ReportCommitStarted(s.txn.StartTS())
+	}
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 }
 
@@ -584,6 +588,10 @@ func (s *session) CommitTxn(ctx context.Context) error {
 
 	var commitDetail *execdetails.CommitDetails
 	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	startTs := uint64(0)
+	if s.txn.Valid() {
+		startTs = s.txn.StartTS()
+	}
 	err := s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
@@ -595,6 +603,9 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		}
 	})
 	s.sessionVars.TxnCtx.Cleanup()
+	if startTs != 0 {
+		txnstateRecorder.ReportTxnEnd(startTs)
+	}
 	return err
 }
 
@@ -604,7 +615,10 @@ func (s *session) RollbackTxn(ctx context.Context) {
 		defer span1.Finish()
 	}
 
+	startTs := uint64(0)
 	if s.txn.Valid() {
+		startTs = s.txn.StartTS()
+		txnstateRecorder.ReportRollbackStarted(startTs)
 		terror.Log(s.txn.Rollback())
 	}
 	if ctx.Value(inCloseSession{}) == nil {
@@ -613,6 +627,9 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetInTxn(false)
+	if startTs != 0 {
+		txnstateRecorder.ReportTxnEnd(startTs)
+	}
 }
 
 func (s *session) GetClient() kv.Client {
@@ -811,6 +828,27 @@ type sessionPool interface {
 
 func (s *session) sysSessionPool() sessionPool {
 	return domain.GetDomain(s).SysSessionPool()
+}
+
+func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Row, []*ast.ResultField, error) {
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	startTime := time.Now()
+	rs, err := se.ExecuteInternal(ctx, sql)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
+	if err != nil || rs == nil {
+		return nil, nil, err
+	}
+
+	// Execute all recordset, take out the first one as result.
+	rows, err := drainRecordSet(ctx, se, rs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+	return rows, rs.Fields(), err
 }
 
 func createSessionFunc(store kv.Storage) pools.Factory {
@@ -1376,6 +1414,11 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	if s.txn.Valid() {
+		_, digest := parser.NormalizeDigest(stmtNode.Text())
+		txnstateRecorder.ReportStatementStartExecute(s.txn.StartTS(), digest)
+	}
+
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ExecuteStmt", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()

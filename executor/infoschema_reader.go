@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/txnstateRecorder"
 	"go.etcd.io/etcd/clientv3"
 )
 
@@ -148,6 +149,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
+		case infoschema.TableTiDBTrx,
+			infoschema.ClusterTableTiDBTrx:
+			err = e.setDataForTiDBTrx(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1974,6 +1978,11 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 		}
 	}
 	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) error {
+	e.rows = txnstateRecorder.Datums()
 	return nil
 }
 

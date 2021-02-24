@@ -55,6 +55,8 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/txnstateRecorder"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -377,6 +379,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	if txn.Valid() {
 		txnStartTS = txn.StartTS()
 	}
+
 	return &recordSet{
 		executor:   e,
 		stmt:       a,
@@ -581,7 +584,9 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		var lockKeyStats *execdetails.LockKeysDetails
 		ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
+		txnstateRecorder.ReportBlocked(txn.StartTS())
 		err = txn.LockKeys(ctx, lockCtx, keys...)
+		txnstateRecorder.ReportUnblocked(txn.StartTS())
 		if lockKeyStats != nil {
 			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
 		}
@@ -590,6 +595,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
+			// todo: Report deadlock
 			if ErrDeadlock.Equal(err) {
 				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
 			}
@@ -839,7 +845,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 		}
 		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
 	}
-	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
+	// `LogSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	prevStmt := a.GetTextToLog()

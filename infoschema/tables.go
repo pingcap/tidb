@@ -161,6 +161,8 @@ const (
 	TableClientErrorsSummaryByUser = "CLIENT_ERRORS_SUMMARY_BY_USER"
 	// TableClientErrorsSummaryByHost is the string constant of client errors table.
 	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
+	// TableTiDBTrx is current running transaction status table.
+	TableTiDBTrx = "TIDB_TRX"
 )
 
 var tableIDMap = map[string]int64{
@@ -229,10 +231,12 @@ var tableIDMap = map[string]int64{
 	TableStorageStats:                       autoid.InformationSchemaDBID + 63,
 	TableTiFlashTables:                      autoid.InformationSchemaDBID + 64,
 	TableTiFlashSegments:                    autoid.InformationSchemaDBID + 65,
-	TablePlacementPolicy:                    autoid.InformationSchemaDBID + 66,
+	TablePlacementPolicy:                autoid.InformationSchemaDBID + 68,
 	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
 	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
-	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
+	TableClientErrorsSummaryByHost:                  autoid.InformationSchemaDBID + 66,
+	TableTiDBTrx:                            autoid.InformationSchemaDBID + 67,
+	ClusterTableTiDBTrx:                 autoid.InformationSchemaDBID + 69,
 }
 
 type columnInfo struct {
@@ -1331,6 +1335,16 @@ var tableClientErrorsSummaryByHostCols = []columnInfo{
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
 }
 
+var tableTiDBTrxCols = []columnInfo{
+	{name: "ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag},
+	{name: "START_TIME", tp: mysql.TypeTimestamp, size: 26, comment: "Start time of the transaction"},
+	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of the sql the transaction are currently running"},
+	{name: "STATE", tp: mysql.TypeLonglong, size: 64, comment: "Current running state of the transaction"},
+	{name: "COMMIT_TRY_COUNT", tp: mysql.TypeLonglong, size: 64, comment: "Current transactions commit retry count"},
+	{name: "COMMITSTART_TIME", tp: mysql.TypeTimestamp, size: 26, comment: "Current commit's start time"},
+	{name: "WAITING_START_TIME", tp: mysql.TypeTimestamp, size: 26, comment: "Current lock waiting's start time"},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1700,6 +1714,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
+	TableTiDBTrx:                            tableTiDBTrxCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
