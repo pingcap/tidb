@@ -72,7 +72,7 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 // mppResponse wraps mpp data packet.
 type mppResponse struct {
 	pbResp   *mpp.MPPDataPacket
-	detail   *tikv.CopRuntimeStats
+	detail   *CopRuntimeStats
 	respTime time.Duration
 	respSize int64
 
@@ -90,7 +90,7 @@ func (m *mppResponse) GetStartKey() kv.Key {
 }
 
 // GetExecDetails is unavailable currently.
-func (m *mppResponse) GetCopRuntimeStats() *tikv.CopRuntimeStats {
+func (m *mppResponse) GetCopRuntimeStats() *CopRuntimeStats {
 	return m.detail
 }
 
@@ -306,7 +306,7 @@ func (m *mppIterator) handleMPPStreamResponse(bo *tikv.Backoffer, response *mpp.
 
 	resp := &mppResponse{
 		pbResp: response,
-		detail: new(tikv.CopRuntimeStats),
+		detail: new(CopRuntimeStats),
 	}
 
 	backoffTimes := bo.GetBackoffTimes()

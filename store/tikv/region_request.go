@@ -694,11 +694,3 @@ func IsolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 		return kvrpcpb.IsolationLevel_SI
 	}
 }
-
-// CopRuntimeStats contains execution detail information.
-type CopRuntimeStats struct {
-	execdetails.ExecDetails
-	RegionRequestRuntimeStats
-
-	CoprCacheHit bool
-}

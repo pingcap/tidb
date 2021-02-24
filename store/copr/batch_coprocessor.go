@@ -45,7 +45,7 @@ type batchCopTask struct {
 
 type batchCopResponse struct {
 	pbResp *coprocessor.BatchResponse
-	detail *tikv.CopRuntimeStats
+	detail *CopRuntimeStats
 
 	// batch Cop Response is yet to return startKey. So batchCop cannot retry partially.
 	startKey kv.Key
@@ -66,7 +66,7 @@ func (rs *batchCopResponse) GetStartKey() kv.Key {
 
 // GetExecDetails is unavailable currently, because TiFlash has not collected exec details for batch cop.
 // TODO: Will fix in near future.
-func (rs *batchCopResponse) GetCopRuntimeStats() *tikv.CopRuntimeStats {
+func (rs *batchCopResponse) GetCopRuntimeStats() *CopRuntimeStats {
 	return rs.detail
 }
 
@@ -308,7 +308,7 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *tikv.Backoffer, t
 	for idx := 0; idx < len(tasks); idx++ {
 		ret, err := b.handleTaskOnce(ctx, bo, tasks[idx])
 		if err != nil {
-			resp := &batchCopResponse{err: errors.Trace(err), detail: new(tikv.CopRuntimeStats)}
+			resp := &batchCopResponse{err: errors.Trace(err), detail: new(CopRuntimeStats)}
 			b.sendToRespCh(resp)
 			break
 		}
@@ -418,7 +418,7 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *tikv.Backoffer, response *
 
 	resp := batchCopResponse{
 		pbResp: response,
-		detail: new(tikv.CopRuntimeStats),
+		detail: new(CopRuntimeStats),
 	}
 
 	backoffTimes := bo.GetBackoffTimes()

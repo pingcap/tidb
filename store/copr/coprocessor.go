@@ -288,7 +288,7 @@ type copIteratorTaskSender struct {
 
 type copResponse struct {
 	pbResp   *coprocessor.Response
-	detail   *tikv.CopRuntimeStats
+	detail   *CopRuntimeStats
 	startKey kv.Key
 	err      error
 	respSize int64
@@ -307,7 +307,7 @@ func (rs *copResponse) GetStartKey() kv.Key {
 	return rs.startKey
 }
 
-func (rs *copResponse) GetCopRuntimeStats() *tikv.CopRuntimeStats {
+func (rs *copResponse) GetCopRuntimeStats() *CopRuntimeStats {
 	return rs.detail
 }
 
@@ -886,7 +886,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *tikv.Backoffer, rpcCtx *t
 		resp.startKey = task.ranges.At(0).StartKey
 	}
 	if resp.detail == nil {
-		resp.detail = new(tikv.CopRuntimeStats)
+		resp.detail = new(CopRuntimeStats)
 	}
 	resp.detail.Stats = worker.Stats
 	worker.Stats = nil
@@ -956,6 +956,14 @@ func (worker *copIteratorWorker) handleCopResponse(bo *tikv.Backoffer, rpcCtx *t
 	return nil, nil
 }
 
+// CopRuntimeStats contains execution detail information.
+type CopRuntimeStats struct {
+	execdetails.ExecDetails
+	tikv.RegionRequestRuntimeStats
+
+	CoprCacheHit bool
+}
+
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
 	errCode := errno.ErrUnknown
 	errMsg := err.Error()
@@ -983,7 +991,7 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 		pbResp: &coprocessor.Response{
 			Data: data,
 		},
-		detail: &tikv.CopRuntimeStats{},
+		detail: &CopRuntimeStats{},
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil
