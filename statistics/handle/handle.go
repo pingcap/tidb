@@ -118,6 +118,14 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
 		stmt, err := exec.ParseWithParams(ctx, sql, params...)
+		// TODO: An ugly way to set @@tidb_partition_prune_mode. Need to be improved.
+		if _, ok := stmt.(*ast.AnalyzeTableStmt); ok {
+			// TODO: do we need a lock?
+			pruneMode := h.mu.ctx.GetSessionVars().PartitionPruneMode.Load()
+			if session, ok := exec.(sessionctx.Context); ok {
+				session.GetSessionVars().PartitionPruneMode.Store(pruneMode)
+			}
+		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
