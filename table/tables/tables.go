@@ -683,6 +683,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
+		// In column type change, since we have set the origin default value for changing col, but
+		// for the new insert statement, we should use the casted value of relative column to insert.
 		if col.ChangeStateInfo != nil && col.State != model.StatePublic {
 			// TODO: Check overflow or ignoreTruncate.
 			value, err = table.CastValue(sctx, r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
@@ -1092,7 +1094,7 @@ func writeSequenceUpdateValueBinlog(ctx sessionctx.Context, db, sequence string,
 	sequenceFullName := stringutil.Escape(db, sqlMode) + "." + stringutil.Escape(sequence, sqlMode)
 	sql := "select setval(" + sequenceFullName + ", " + strconv.FormatInt(end, 10) + ")"
 
-	err := kv.RunInNewTxn(ctx.GetStore(), true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		mockJobID, err := m.GenGlobalID()
 		if err != nil {
