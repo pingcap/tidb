@@ -734,6 +734,8 @@ type mockStore struct {
 func (s *mockStore) EtcdAddrs() ([]string, error) { return []string{s.host}, nil }
 func (s *mockStore) TLSConfig() *tls.Config       { panic("not implemented") }
 func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
+func (s *mockStore) Name() string                 { return "mockStore" }
+func (s *mockStore) Describe() string             { return "" }
 
 func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	mockAddr := s.mockAddr
