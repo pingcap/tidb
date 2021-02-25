@@ -358,14 +358,17 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 			err = errors.Errorf("[stats] error occurred when read partition-level stats of the table with tableID %d and partitionID %d", physicalID, partitionID)
 			return
 		}
-		globalStats.Count += partitionStats.Count
 		for i := 0; i < globalStats.Num; i++ {
 			ID := tableInfo.Columns[i].ID
 			if isIndex != 0 {
 				// If the statistics is the index stats, we should use the index ID to replace the column ID.
 				ID = idxID
 			}
-			hg, cms, topN, fms := partitionStats.GetStatsInfo(ID, isIndex == 1)
+			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(ID, isIndex == 1)
+			if i == 0 {
+				// In a partition, we will only update globalStats.Count once
+				globalStats.Count += count
+			}
 			allHg[i] = append(allHg[i], hg)
 			allCms[i] = append(allCms[i], cms)
 			allTopN[i] = append(allTopN[i], topN)
