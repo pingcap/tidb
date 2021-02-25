@@ -1638,7 +1638,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
 		defer func() {
 			sessVars.LastQueryInfo = variable.QueryInfo{
-				TxnScope:    sessVars.TxnScope,
+				TxnScope:    sessVars.CheckAndGetTxnScope(),
 				StartTS:     sessVars.TxnCtx.StartTS,
 				ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
 			}
@@ -2790,7 +2790,7 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	}
 	var txn kv.Transaction
 	var err error
-	txnScope := s.GetSessionVars().TxnScope
+	txnScope := s.GetSessionVars().CheckAndGetTxnScope()
 	switch option.Mode {
 	case ast.TimestampBoundReadTimestamp:
 		txn, err = s.store.BeginWithStartTS(txnScope, option.StartTS)
