@@ -480,10 +480,10 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.DynamicOnly) + `'`)
 	// Because the statistics of partition p1 are missing, the construction of global-level stats will fail.
-	tk.MustExec("analyze table t4 partition p0;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 [stats] build global-level stats failed due to missing partition-level stats.(tableID: 63, partitionID: 64)"))
 	tk.MustExec("analyze table t4 partition p1;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 [stats] build global-level stats failed due to missing partition-level stats.(tableID: 63, partitionID: 65)"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 [stats] build global-level stats failed due to missing partition-level stats"))
+	tk.MustExec("analyze table t4 partition p0;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(""))
 	//tk.MustQuery(`explain format = 'brief' select * from t4 where a = 3`).Check(testkit.Rows(
 	//	"IndexReader 2.00 root  index:IndexRangeScan",
 	//	"└─IndexRangeScan 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",

@@ -18,7 +18,6 @@ import (
 	"context"
 	"math"
 	"math/rand"
-	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -173,11 +172,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(sc, infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
 			if err != nil {
 				errMessage := err.Error()
-				match, err1 := regexp.MatchString("^\\[stats\\] build global-level stats failed due to missing partition-level stats.", errMessage)
-				if err1 != nil {
-					return err1
-				}
-				if match {
+				if errMessage == "[stats] build global-level stats failed due to missing partition-level stats" {
+					// When we find some partition-level stats are missing, we need to report warning.
 					sc.AppendWarning(err)
 					continue
 				}
