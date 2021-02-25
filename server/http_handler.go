@@ -195,7 +195,7 @@ func (t *tikvHandlerTool) getMvccByHandle(tb table.PhysicalTable, params map[str
 			return nil, errors.Trace(err)
 		}
 	}
-	encodedKey := tb.RecordKey(handle)
+	encodedKey := tablecodec.EncodeRecordKey(tb.RecordPrefix(), handle)
 	data, err := t.GetMvccByEncodedKey(encodedKey)
 	if err != nil {
 		return nil, err
