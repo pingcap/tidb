@@ -43,13 +43,13 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
@@ -145,8 +145,8 @@ type TransactionContext struct {
 	shardRand    *rand.Rand
 
 	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
-	// It's also used in the statistias updating.
-	// Note: for the partitionted table, it stores all the partition IDs.
+	// It's also used in the statistics updating.
+	// Note: for the partitioned table, it stores all the partition IDs.
 	TableDeltaMap map[int64]TableDelta
 
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
@@ -162,9 +162,16 @@ type TransactionContext struct {
 	StatementCount int
 	CouldRetry     bool
 	IsPessimistic  bool
-	Isolation      string
-	LockExpire     uint32
-	ForUpdate      uint32
+	// IsStaleness indicates whether the txn is read only staleness txn.
+	IsStaleness bool
+	// IsExplicit indicates whether the txn is an interactive txn, which is typically started with a BEGIN
+	// or START TRANSACTION statement, or by setting autocommit to 0.
+	IsExplicit bool
+	Isolation  string
+	LockExpire uint32
+	ForUpdate  uint32
+	// TxnScope indicates the value of txn_scope
+	TxnScope string
 
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
@@ -266,6 +273,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.TableDeltaMap = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
+	tc.IsStaleness = false
 }
 
 // ClearDelta clears the delta map.
@@ -428,6 +436,9 @@ type SessionVars struct {
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
+	// Port is the port of the connected socket
+	Port string
+
 	// CurrentDB is the default database of this session.
 	CurrentDB string
 
@@ -471,8 +482,10 @@ type SessionVars struct {
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
-	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
-	// This variable is currently not recommended to be turned on.
+	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
+	MultiStatementMode int
+
+	// AllowWriteRowID variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
 
 	// AllowBatchCop means if we should send batch coprocessor to TiFlash. Default value is 1, means to use batch cop in case of aggregation and join.
@@ -485,6 +498,15 @@ type SessionVars struct {
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
+	// BroadcastJoinThresholdSize is used to limit the size of smaller table.
+	// It's unit is bytes, if the size of small table is larger than it, we will not use bcj.
+	BroadcastJoinThresholdSize int64
+
+	// BroadcastJoinThresholdCount is used to limit the total count of smaller table.
+	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
+	BroadcastJoinThresholdCount int64
+
+	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -515,6 +537,10 @@ type SessionVars struct {
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues chunk.Row
+
+	// In https://github.com/pingcap/tidb/issues/14164, we can see that MySQL can enter the column that is not in the insert's SELECT's output.
+	// We store the extra columns in this variable.
+	CurrInsertBatchExtraCols [][]types.Datum
 
 	// Per-connection time zones. Each client that connects has its own time zone setting, given by the session time_zone variable.
 	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
@@ -764,7 +790,7 @@ type SessionVars struct {
 	PartitionPruneMode atomic2.String
 
 	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
-	TxnScope string
+	TxnScope oracle.TxnScope
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
@@ -775,7 +801,8 @@ type SessionVars struct {
 	// Enable1PC indicates whether to enable the one-phase commit feature.
 	Enable1PC bool
 
-	GuaranteeExternalConsistency bool
+	// GuaranteeLinearizability indicates whether to guarantee linearizability
+	GuaranteeLinearizability bool
 
 	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
 	AnalyzeVersion int
@@ -785,6 +812,12 @@ type SessionVars struct {
 
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
+
+	// TiDBEnableExchangePartition indicates whether to enable exchange partition
+	TiDBEnableExchangePartition bool
+
+	// EnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
+	EnableTiFlashFallbackTiKV bool
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -792,7 +825,10 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
 		return oracle.GlobalTxnScope
 	}
-	return s.TxnScope
+	if s.TxnScope.GetVarValue() == oracle.LocalTxnScope {
+		return s.TxnScope.GetTxnScope()
+	}
+	return oracle.GlobalTxnScope
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -863,84 +899,87 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                        make(map[string]types.Datum),
-		UserVarTypes:                 make(map[string]*types.FieldType),
-		systems:                      make(map[string]string),
-		stmtVars:                     make(map[string]string),
-		PreparedStmts:                make(map[uint32]interface{}),
-		PreparedStmtNameToID:         make(map[string]uint32),
-		PreparedParams:               make([]types.Datum, 0, 10),
-		TxnCtx:                       &TransactionContext{},
-		RetryInfo:                    &RetryInfo{},
-		ActiveRoles:                  make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:                true,
-		AutoIncrementIncrement:       DefAutoIncrementIncrement,
-		AutoIncrementOffset:          DefAutoIncrementOffset,
-		Status:                       mysql.ServerStatusAutocommit,
-		StmtCtx:                      new(stmtctx.StatementContext),
-		AllowAggPushDown:             false,
-		AllowBCJ:                     false,
-		OptimizerSelectivityLevel:    DefTiDBOptimizerSelectivityLevel,
-		RetryLimit:                   DefTiDBRetryLimit,
-		DisableTxnAutoRetry:          DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:             kv.PriorityLow,
-		allowInSubqToJoinAndAgg:      DefOptInSubqToJoinAndAgg,
-		preferRangeScan:              DefOptPreferRangeScan,
-		CorrelationThreshold:         DefOptCorrelationThreshold,
-		CorrelationExpFactor:         DefOptCorrelationExpFactor,
-		CPUFactor:                    DefOptCPUFactor,
-		CopCPUFactor:                 DefOptCopCPUFactor,
-		CopTiFlashConcurrencyFactor:  DefOptTiFlashConcurrencyFactor,
-		NetworkFactor:                DefOptNetworkFactor,
-		ScanFactor:                   DefOptScanFactor,
-		DescScanFactor:               DefOptDescScanFactor,
-		SeekFactor:                   DefOptSeekFactor,
-		MemoryFactor:                 DefOptMemoryFactor,
-		DiskFactor:                   DefOptDiskFactor,
-		ConcurrencyFactor:            DefOptConcurrencyFactor,
-		EnableRadixJoin:              false,
-		EnableVectorizedExpression:   DefEnableVectorizedExpression,
-		L2CacheSize:                  cpuid.CPU.Cache.L2,
-		CommandValue:                 uint32(mysql.ComSleep),
-		TiDBOptJoinReorderThreshold:  DefTiDBOptJoinReorderThreshold,
-		SlowQueryFile:                config.GetGlobalConfig().Log.SlowQueryFile,
-		WaitSplitRegionFinish:        DefTiDBWaitSplitRegionFinish,
-		WaitSplitRegionTimeout:       DefWaitSplitRegionTimeout,
-		enableIndexMerge:             false,
-		EnableNoopFuncs:              DefTiDBEnableNoopFuncs,
-		replicaRead:                  kv.ReplicaReadLeader,
-		AllowRemoveAutoInc:           DefTiDBAllowRemoveAutoInc,
-		UsePlanBaselines:             DefTiDBUsePlanBaselines,
-		EvolvePlanBaselines:          DefTiDBEvolvePlanBaselines,
-		EnableExtendedStats:          false,
-		IsolationReadEngines:         make(map[kv.StoreType]struct{}),
-		LockWaitTimeout:              DefInnodbLockWaitTimeout * 1000,
-		MetricSchemaStep:             DefTiDBMetricSchemaStep,
-		MetricSchemaRangeDuration:    DefTiDBMetricSchemaRangeDuration,
-		SequenceState:                NewSequenceState(),
-		WindowingUseHighPrecision:    true,
-		PrevFoundInPlanCache:         DefTiDBFoundInPlanCache,
-		FoundInPlanCache:             DefTiDBFoundInPlanCache,
-		PrevFoundInBinding:           DefTiDBFoundInBinding,
-		FoundInBinding:               DefTiDBFoundInBinding,
-		SelectLimit:                  math.MaxUint64,
-		AllowAutoRandExplicitInsert:  DefTiDBAllowAutoRandExplicitInsert,
-		EnableClusteredIndex:         DefTiDBEnableClusteredIndex,
-		EnableParallelApply:          DefTiDBEnableParallelApply,
-		ShardAllocateStep:            DefTiDBShardAllocateStep,
-		EnableChangeColumnType:       DefTiDBChangeColumnType,
-		EnableChangeMultiSchema:      DefTiDBChangeMultiSchema,
-		EnablePointGetCache:          DefTiDBPointGetCache,
-		EnableAlterPlacement:         DefTiDBEnableAlterPlacement,
-		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
-		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                     config.GetGlobalConfig().TxnScope,
-		EnabledRateLimitAction:       DefTiDBEnableRateLimitAction,
-		EnableAsyncCommit:            DefTiDBEnableAsyncCommit,
-		Enable1PC:                    DefTiDBEnable1PC,
-		GuaranteeExternalConsistency: DefTiDBGuaranteeExternalConsistency,
-		AnalyzeVersion:               DefTiDBAnalyzeVersion,
-		EnableIndexMergeJoin:         DefTiDBEnableIndexMergeJoin,
+		Users:                       make(map[string]types.Datum),
+		UserVarTypes:                make(map[string]*types.FieldType),
+		systems:                     make(map[string]string),
+		stmtVars:                    make(map[string]string),
+		PreparedStmts:               make(map[uint32]interface{}),
+		PreparedStmtNameToID:        make(map[string]uint32),
+		PreparedParams:              make([]types.Datum, 0, 10),
+		TxnCtx:                      &TransactionContext{},
+		RetryInfo:                   &RetryInfo{},
+		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
+		StrictSQLMode:               true,
+		AutoIncrementIncrement:      DefAutoIncrementIncrement,
+		AutoIncrementOffset:         DefAutoIncrementOffset,
+		Status:                      mysql.ServerStatusAutocommit,
+		StmtCtx:                     new(stmtctx.StatementContext),
+		AllowAggPushDown:            false,
+		AllowBCJ:                    false,
+		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
+		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
+		RetryLimit:                  DefTiDBRetryLimit,
+		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:            kv.PriorityLow,
+		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
+		preferRangeScan:             DefOptPreferRangeScan,
+		CorrelationThreshold:        DefOptCorrelationThreshold,
+		CorrelationExpFactor:        DefOptCorrelationExpFactor,
+		CPUFactor:                   DefOptCPUFactor,
+		CopCPUFactor:                DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
+		NetworkFactor:               DefOptNetworkFactor,
+		ScanFactor:                  DefOptScanFactor,
+		DescScanFactor:              DefOptDescScanFactor,
+		SeekFactor:                  DefOptSeekFactor,
+		MemoryFactor:                DefOptMemoryFactor,
+		DiskFactor:                  DefOptDiskFactor,
+		ConcurrencyFactor:           DefOptConcurrencyFactor,
+		EnableRadixJoin:             false,
+		EnableVectorizedExpression:  DefEnableVectorizedExpression,
+		L2CacheSize:                 cpuid.CPU.Cache.L2,
+		CommandValue:                uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
+		enableIndexMerge:            false,
+		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
+		replicaRead:                 kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:            DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:         false,
+		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:            DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
+		SequenceState:               NewSequenceState(),
+		WindowingUseHighPrecision:   true,
+		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
+		FoundInPlanCache:            DefTiDBFoundInPlanCache,
+		PrevFoundInBinding:          DefTiDBFoundInBinding,
+		FoundInBinding:              DefTiDBFoundInBinding,
+		SelectLimit:                 math.MaxUint64,
+		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
+		EnableParallelApply:         DefTiDBEnableParallelApply,
+		ShardAllocateStep:           DefTiDBShardAllocateStep,
+		EnableChangeColumnType:      DefTiDBChangeColumnType,
+		EnableChangeMultiSchema:     DefTiDBChangeMultiSchema,
+		EnablePointGetCache:         DefTiDBPointGetCache,
+		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
+		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
+		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                    oracle.GetTxnScope(),
+		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
+		Enable1PC:                   DefTiDBEnable1PC,
+		GuaranteeLinearizability:    DefTiDBGuaranteeLinearizability,
+		AnalyzeVersion:              DefTiDBAnalyzeVersion,
+		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
+		EnableTiFlashFallbackTiKV:   DefTiDBEnableTiFlashFallbackTiKV,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1141,6 +1180,15 @@ func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 	return s.Status&flag > 0
 }
 
+// SetInTxn sets whether the session is in transaction.
+// It also updates the IsExplicit flag in TxnCtx if val is true.
+func (s *SessionVars) SetInTxn(val bool) {
+	s.SetStatusFlag(mysql.ServerStatusInTrans, val)
+	if val {
+		s.TxnCtx.IsExplicit = true
+	}
+}
+
 // InTxn returns if the session is in transaction.
 func (s *SessionVars) InTxn() bool {
 	return s.GetStatusFlag(mysql.ServerStatusInTrans)
@@ -1329,7 +1377,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		isAutocommit := TiDBOptOn(val)
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
-			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
+			s.SetInTxn(false)
 		}
 	case AutoIncrementIncrement:
 		// AutoIncrementIncrement is valid in [1, 65535].
@@ -1353,6 +1401,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 	case TiDBOptBCJ:
 		s.AllowBCJ = TiDBOptOn(val)
+	case TiDBBCJThresholdSize:
+		s.BroadcastJoinThresholdSize = tidbOptInt64(val, DefBroadcastJoinThresholdSize)
+	case TiDBBCJThresholdCount:
+		s.BroadcastJoinThresholdCount = tidbOptInt64(val, DefBroadcastJoinThresholdCount)
 	case TiDBOptDistinctAggPushDown:
 		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 	case TiDBOptWriteRowID:
@@ -1431,8 +1483,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BatchCommit = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
-	case TiDBCurrentTS, TiDBLastTxnInfo, TiDBConfig:
-		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
 	case TiDBInitChunkSize:
@@ -1554,6 +1604,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if err != nil {
 			logutil.BgLogger().Warn(err.Error())
 			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
+			if err != nil {
+				return err
+			}
 		}
 		switch name {
 		case CollationConnection:
@@ -1648,7 +1701,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:
-		s.TxnScope = val
+		switch val {
+		case oracle.GlobalTxnScope:
+			s.TxnScope = oracle.NewGlobalTxnScope()
+		case oracle.LocalTxnScope:
+			s.TxnScope = oracle.GetTxnScope()
+		default:
+			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
+		}
 	case TiDBMemoryUsageAlarmRatio:
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
 	case TiDBEnableRateLimitAction:
@@ -1657,14 +1717,20 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableAsyncCommit = TiDBOptOn(val)
 	case TiDBEnable1PC:
 		s.Enable1PC = TiDBOptOn(val)
-	case TiDBGuaranteeExternalConsistency:
-		s.GuaranteeExternalConsistency = TiDBOptOn(val)
+	case TiDBGuaranteeLinearizability:
+		s.GuaranteeLinearizability = TiDBOptOn(val)
 	case TiDBAnalyzeVersion:
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
 	case TiDBEnableIndexMergeJoin:
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 	case TiDBTrackAggregateMemoryUsage:
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
+	case TiDBMultiStatementMode:
+		s.MultiStatementMode = TiDBOptMultiStmt(val)
+	case TiDBEnableExchangePartition:
+		s.TiDBEnableExchangePartition = TiDBOptOn(val)
+	case TiDBEnableTiFlashFallbackTiKV:
+		s.EnableTiFlashFallbackTiKV = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
