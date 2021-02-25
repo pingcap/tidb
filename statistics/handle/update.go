@@ -905,7 +905,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			pi := tblInfo.GetPartitionInfo()
-			if pi == nil || pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+			if pi == nil || pruneMode == variable.DynamicOnly {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
@@ -914,7 +914,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 				}
 				continue
 			}
-			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+			if pruneMode == variable.StaticOnly {
 				for _, def := range pi.Definitions {
 					sql := "analyze table %n.%n partition %n"
 					statsTbl := h.GetPartitionStats(tblInfo, def.ID)
