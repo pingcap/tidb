@@ -1549,7 +1549,7 @@ func doDMLWorks(s Session) {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
 			if v.Name == variable.TiDBPartitionPruneMode {
-				vVal = string(variable.StaticOnly)
+				vVal = string(variable.Static)
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
 					// enable Dynamic Prune by default in test case.
 					vVal = string(variable.DynamicOnly)

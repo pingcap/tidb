@@ -45,7 +45,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		}
 	case model.ActionAddTablePartition, model.ActionTruncateTablePartition:
 		pruneMode := h.CurrentPruneMode()
-		if pruneMode == variable.StaticOnly {
+		if pruneMode == variable.Static {
 			for _, def := range t.PartInfo.Definitions {
 				if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
 					return err
@@ -71,7 +71,7 @@ func (h *Handle) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64) {
 	}
 	ids = make([]int64, 0, len(pi.Definitions)+1)
 	pruneMode := h.CurrentPruneMode()
-	if pruneMode == variable.StaticOnly {
+	if pruneMode == variable.Static {
 		for _, def := range pi.Definitions {
 			ids = append(ids, def.ID)
 		}

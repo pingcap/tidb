@@ -914,7 +914,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 				}
 				continue
 			}
-			if pruneMode == variable.StaticOnly {
+			if pruneMode == variable.Static {
 				for _, def := range pi.Definitions {
 					sql := "analyze table %n.%n partition %n"
 					statsTbl := h.GetPartitionStats(tblInfo, def.ID)

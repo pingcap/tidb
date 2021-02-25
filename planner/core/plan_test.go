@@ -528,7 +528,7 @@ func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
 

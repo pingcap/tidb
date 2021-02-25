@@ -845,8 +845,8 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 type PartitionPruneMode string
 
 const (
-	// StaticOnly indicates only prune at plan phase.
-	StaticOnly PartitionPruneMode = "static-only"
+	// Static indicates only prune at plan phase.
+	Static PartitionPruneMode = "static-only"
 	// DynamicOnly indicates only prune at execute phase.
 	DynamicOnly PartitionPruneMode = "dynamic-only"
 )
@@ -854,7 +854,7 @@ const (
 // Valid indicate PruneMode is validated.
 func (p PartitionPruneMode) Valid() bool {
 	switch p {
-	case StaticOnly, DynamicOnly:
+	case Static, DynamicOnly:
 		return true
 	default:
 		return false
