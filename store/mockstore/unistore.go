@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/util/execdetails"
 )
 
@@ -49,7 +50,8 @@ type mockStorage struct {
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
 func NewMockStorage(tikvStore *tikv.KVStore) kv.Storage {
-	coprStore, err := copr.NewStore(tikvStore, nil)
+	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
+	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
 	if err != nil {
 		panic(err)
 	}
