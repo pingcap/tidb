@@ -87,7 +87,7 @@ func (s *Float64SetWithMemoryUsage) Insert(val float64) (memDelta int64) {
 		memDelta = DefFloat64SetBucketMemoryUsage * (1 << s.bInMap)
 		s.bInMap++
 	}
-	return memDelta + 8
+	return memDelta + DefFloat64Size
 }
 
 // Int64SetWithMemoryUsage is a int set with memory usage.
@@ -117,5 +117,5 @@ func (s *Int64SetWithMemoryUsage) Insert(val int64) (memDelta int64) {
 		memDelta = DefInt64SetBucketMemoryUsage * (1 << s.bInMap)
 		s.bInMap++
 	}
-	return memDelta + 8
+	return memDelta + DefInt64Size
 }

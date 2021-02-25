@@ -88,8 +88,7 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 		if p.valSet.Exist(input) {
 			continue
 		}
-		p.valSet.Insert(input)
-		memDelta += DefInt64Size
+		memDelta += p.valSet.Insert(input)
 	}
 
 	return memDelta, nil
@@ -135,8 +134,7 @@ func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Con
 		if p.valSet.Exist(input) {
 			continue
 		}
-		p.valSet.Insert(input)
-		memDelta += DefFloat64Size
+		memDelta += p.valSet.Insert(input)
 	}
 
 	return memDelta, nil
@@ -187,8 +185,7 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 		if p.valSet.Exist(decStr) {
 			continue
 		}
-		p.valSet.Insert(decStr)
-		memDelta += int64(len(decStr))
+		memDelta += p.valSet.Insert(decStr)
 	}
 
 	return memDelta, nil
@@ -235,8 +232,7 @@ func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx
 		if p.valSet.Exist(int64(input.Duration)) {
 			continue
 		}
-		p.valSet.Insert(int64(input.Duration))
-		memDelta += DefInt64Size
+		memDelta += p.valSet.Insert(int64(input.Duration))
 	}
 
 	return memDelta, nil
@@ -286,8 +282,7 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 			continue
 		}
 		input = stringutil.Copy(input)
-		p.valSet.Insert(input)
-		memDelta += int64(len(input))
+		memDelta += p.valSet.Insert(input)
 	}
 
 	return memDelta, nil
@@ -345,8 +340,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 		if hasNull || p.valSet.Exist(encodedString) {
 			continue
 		}
-		p.valSet.Insert(encodedString)
-		memDelta += int64(len(encodedString))
+		memDelta += p.valSet.Insert(encodedString)
 	}
 
 	return memDelta, nil

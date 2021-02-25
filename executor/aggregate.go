@@ -828,7 +828,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			// For example:
 			// "select count(c) from t;" should return one row [0]
 			// "select count(c) from t group by c1;" should return empty result set.
-			e.groupSet.Insert("")
+			e.memTracker.Consume(e.groupSet.Insert(""))
 			e.groupKeys = append(e.groupKeys, "")
 		}
 		e.prepared = true

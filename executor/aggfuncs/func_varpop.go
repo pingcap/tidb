@@ -166,11 +166,10 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 		if isNull || p.valSet.Exist(input) {
 			continue
 		}
-		p.valSet.Insert(input)
+		memDelta += p.valSet.Insert(input)
 		p.count++
 		p.sum += input
 
-		memDelta += DefFloat64Size
 		if p.count > 1 {
 			p.variance = calculateIntermediate(p.count, p.sum, input, p.variance)
 		}
