@@ -935,7 +935,6 @@ type basePhysicalAgg struct {
 	AggFuncs         []*aggregation.AggFuncDesc
 	GroupByItems     []expression.Expression
 	MppRunMode       AggMppRunMode
-	MppPartitionCols []*expression.Column
 }
 
 func (p *basePhysicalAgg) isFinalAgg() bool {
