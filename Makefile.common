@@ -78,3 +78,5 @@ CHECK_FLAG =
 ifeq ("$(WITH_CHECK)", "1")
 	CHECK_FLAG = $(TEST_LDFLAGS)
 endif
+
+LINT_CHECK_COMMIT := $(shell ./tools/check/check-latest-ref.sh)
