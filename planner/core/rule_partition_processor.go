@@ -758,6 +758,9 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		fn = raw
 		args := fn.GetArgs()
 		if len(args) > 0 {
+			if expression.ExtractColumnSet(args).Len() > 1 {
+				return nil, nil, monotonous, err
+			}
 			arg0 := args[0]
 			if c, ok1 := arg0.(*expression.Column); ok1 {
 				col = c
@@ -977,6 +980,13 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	} else {
 		// If the partition expression is col, use constExpr.
 		constExpr = con
+	}
+	// If the partition expression is related with more than one columns such as 'a + b' or 'a * b' or something else,
+	// the constExpr may not a really constant when coming here.
+	// Suppose the partition expression is 'a + b' and we have a condition 'a = 2',
+	// the constExpr is '2 + b' after the replacement which we can't evaluate.
+	if !constExpr.ConstItem(sctx.GetSessionVars().StmtCtx) {
+		return ret, false
 	}
 	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
 	if err == nil && !isNull {
