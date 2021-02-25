@@ -389,6 +389,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 
 // FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) error {
+	// strErr is used to check str is bad number or not
 	var strErr error
 	for i := 0; i < len(str); i++ {
 		if !isSpace(str[i]) {
