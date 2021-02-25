@@ -16,6 +16,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -74,11 +76,12 @@ const (
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
 type worker struct {
-	id       int32
-	tp       workerType
-	ddlJobCh chan struct{}
-	ctx      context.Context
-	wg       sync.WaitGroup
+	id              int32
+	tp              workerType
+	addingDDLJobKey string
+	ddlJobCh        chan struct{}
+	ctx             context.Context
+	wg              sync.WaitGroup
 
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
 	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
@@ -97,6 +100,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		delRangeManager: delRangeMgr,
 	}
 
+	worker.addingDDLJobKey = addingDDLJobPrefix + worker.typeStr()
 	worker.logCtx = logutil.WithKeyValue(context.Background(), "worker", worker.String())
 	return worker
 }
@@ -142,21 +146,53 @@ func (w *worker) start(d *ddlCtx) {
 
 	ticker := time.NewTicker(checkTime)
 	defer ticker.Stop()
+	var notifyDDLJobByEtcdCh clientv3.WatchChan
+	if d.etcdCli != nil {
+		notifyDDLJobByEtcdCh = d.etcdCli.Watch(context.Background(), w.addingDDLJobKey)
+	}
 
+	rewatchCnt := 0
 	for {
+		ok := true
 		select {
 		case <-ticker.C:
 			logutil.Logger(w.logCtx).Debug("[ddl] wait to check DDL status again", zap.Duration("interval", checkTime))
 		case <-w.ddlJobCh:
+		case _, ok = <-notifyDDLJobByEtcdCh:
 		case <-w.ctx.Done():
 			return
 		}
 
+		if !ok {
+			logutil.Logger(w.logCtx).Warn("[ddl] start worker watch channel closed", zap.String("watch key", w.addingDDLJobKey))
+			notifyDDLJobByEtcdCh = d.etcdCli.Watch(context.Background(), w.addingDDLJobKey)
+			rewatchCnt++
+			if rewatchCnt > 10 {
+				time.Sleep(time.Duration(rewatchCnt) * time.Second)
+			}
+			continue
+		}
+
+		rewatchCnt = 0
 		err := w.handleDDLJobQueue(d)
 		if err != nil {
 			logutil.Logger(w.logCtx).Warn("[ddl] handle DDL job failed", zap.Error(err))
 		}
 	}
+}
+
+func (d *ddl) asyncNotifyByEtcd(addingDDLJobKey string, job *model.Job) {
+	if d.etcdCli == nil {
+		return
+	}
+
+	jobID := strconv.FormatInt(job.ID, 10)
+	timeStart := time.Now()
+	err := util.PutKVToEtcd(d.ctx, d.etcdCli, 1, addingDDLJobKey, jobID)
+	if err != nil {
+		logutil.BgLogger().Info("[ddl] notify handling DDL job failed", zap.String("jobID", jobID), zap.Error(err))
+	}
+	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerNotifyDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 }
 
 func asyncNotify(ch chan struct{}) {
