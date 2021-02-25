@@ -34,7 +34,7 @@ import (
 )
 
 type HelperTestSuite struct {
-	store tikv.Storage
+	store helper.Storage
 }
 
 var _ = Suite(new(HelperTestSuite))
@@ -59,6 +59,14 @@ func (s *mockStore) StartGCWorker() error {
 
 func (s *mockStore) TLSConfig() *tls.Config {
 	panic("not implemented")
+}
+
+func (s *mockStore) Name() string {
+	return "mock store"
+}
+
+func (s *mockStore) Describe() string {
+	return ""
 }
 
 func (s *HelperTestSuite) SetUpSuite(c *C) {
