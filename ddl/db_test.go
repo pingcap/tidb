@@ -6489,3 +6489,90 @@ func (s *testDBSuite4) TestUnsupportedAlterTableOption(c *C) {
 	tk.MustExec("create table t(a char(10) not null,b char(20)) shard_row_id_bits=6;")
 	tk.MustGetErrCode("alter table t pre_split_regions=6;", errno.ErrUnsupportedDDLOperation)
 }
+<<<<<<< HEAD
+=======
+
+func (s *testDBSuite4) TestCreateTableWithDecimalWithDoubleZero(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	checkType := func(db, table, field string) {
+		ctx := tk.Se.(sessionctx.Context)
+		is := domain.GetDomain(ctx).InfoSchema()
+		tableInfo, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
+		c.Assert(err, IsNil)
+		tblInfo := tableInfo.Meta()
+		for _, col := range tblInfo.Columns {
+			if col.Name.L == field {
+				c.Assert(col.Flen, Equals, 10)
+			}
+		}
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt(d decimal(0, 0))")
+	checkType("test", "tt", "d")
+
+	tk.MustExec("drop table tt")
+	tk.MustExec("create table tt(a int)")
+	tk.MustExec("alter table tt add column d decimal(0, 0)")
+	checkType("test", "tt", "d")
+
+	/*
+		Currently not support change column to decimal
+		tk.MustExec("drop table tt")
+		tk.MustExec("create table tt(d int)")
+		tk.MustExec("alter table tt change column d d decimal(0, 0)")
+		checkType("test", "tt", "d")
+	*/
+}
+
+func (s *testDBSuite4) TestIssue22207(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("set @@session.tidb_enable_exchange_partition = 1;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1(id char(10)) partition by list columns(id) (partition p0 values in ('a'), partition p1 values in ('b'));")
+	tk.MustExec("insert into t1 VALUES('a')")
+	tk.MustExec("create table t2(id char(10));")
+	tk.MustExec("ALTER TABLE t1 EXCHANGE PARTITION p0 WITH TABLE t2;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("a"))
+	c.Assert(len(tk.MustQuery("select * from t1").Rows()), Equals, 0)
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1 (id int) partition by list (id) (partition p0 values in (1,2,3), partition p1 values in (4,5,6));")
+	tk.MustExec("insert into t1 VALUES(1);")
+	tk.MustExec("insert into t1 VALUES(2);")
+	tk.MustExec("insert into t1 VALUES(3);")
+	tk.MustExec("create table t2(id int);")
+	tk.MustExec("ALTER TABLE t1 EXCHANGE PARTITION p0 WITH TABLE t2;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "2", "3"))
+	c.Assert(len(tk.MustQuery("select * from t1").Rows()), Equals, 0)
+	tk.MustExec("set @@session.tidb_enable_exchange_partition = 0;")
+}
+
+func (s *testSerialDBSuite) TestIssue22819(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test;")
+	tk1.MustExec("drop table if exists t1;")
+	defer func() {
+		tk1.MustExec("drop table if exists t1;")
+	}()
+
+	tk1.MustExec("create table t1 (v int) partition by hash (v) partitions 2")
+	tk1.MustExec("insert into t1 values (1)")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test;")
+	tk1.MustExec("begin")
+	tk1.MustExec("update t1 set v = 2 where v = 1")
+
+	tk2.MustExec("alter table t1 truncate partition p0")
+
+	_, err := tk1.Exec("commit")
+	c.Assert(err, ErrorMatches, ".*8028.*Information schema is changed during the execution of the statement.*")
+}
+>>>>>>> 7151b4f3b... config: use tidb_enable_list_partition to enable list table partition feature (#22864)
