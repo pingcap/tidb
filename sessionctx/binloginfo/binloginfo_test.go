@@ -271,7 +271,6 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.Se.GetSessionVars().BinlogClient = s.client
 	// This statement should not write binlog.
 	tk.MustExec(`insert into local_clustered_index values ("aaaaaa")`)
-	c.Assert(err, IsNil)
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	c.Assert(len(prewriteVal.Mutations), Equals, 0)
 
