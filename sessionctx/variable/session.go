@@ -851,6 +851,7 @@ const (
 	DynamicOnly PartitionPruneMode = "dynamic-only"
 	// StaticButPrepareDynamic indicates prune at plan phase but collect stats need for dynamic prune.
 	StaticButPrepareDynamic PartitionPruneMode = "static-collect-dynamic"
+	// Add a Comment.
 )
 
 // Valid indicate PruneMode is validated.
