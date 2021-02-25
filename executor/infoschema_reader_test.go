@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -727,7 +726,7 @@ func (sm *mockSessionManager) SetServerID(serverID uint64) {
 }
 
 type mockStore struct {
-	tikv.Storage
+	helper.Storage
 	host string
 }
 
@@ -740,7 +739,7 @@ func (s *mockStore) Describe() string             { return "" }
 func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	mockAddr := s.mockAddr
 	store := &mockStore{
-		s.store.(tikv.Storage),
+		s.store.(helper.Storage),
 		mockAddr,
 	}
 
@@ -813,7 +812,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	c.Assert(err.Error(), Equals, "pd unavailable")
 	mockAddr := s.mockAddr
 	store := &mockStore{
-		s.store.(tikv.Storage),
+		s.store.(helper.Storage),
 		mockAddr,
 	}
 
