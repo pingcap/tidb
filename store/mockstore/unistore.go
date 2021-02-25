@@ -82,5 +82,6 @@ func (s *mockStorage) Describe() string {
 }
 
 func (s *mockStorage) Close() error {
-	return nil
+	s.Store.Close()
+	return s.KVStore.Close()
 }
