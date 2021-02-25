@@ -47,13 +47,13 @@ type Future interface {
 
 // TxnScope indicates the used txnScope for oracle
 type TxnScope struct {
-	// varValue indicates the value of @@txn_scope, which only can be `global` or `local`
+	// varValue indicates the value of @@txn_scope, which can only be `global` or `local`
 	varValue string
-	// txnScope indicates the value which the tidb-server holds to request tso from pd
+	// txnScope indicates the value which the tidb-server holds to request tso to pd
 	txnScope string
 }
 
-// GetTxnScope ...
+// GetTxnScope get oracle.TxnScope from config
 func GetTxnScope() TxnScope {
 	isGlobal, location := config.GetTxnScopeFromConfig()
 	if isGlobal {
@@ -62,22 +62,22 @@ func GetTxnScope() TxnScope {
 	return NewLocalTxnScope(location)
 }
 
-// NewGlobalTxnScope ...
+// NewGlobalTxnScope create a Global TxnScope
 func NewGlobalTxnScope() TxnScope {
 	return newTxnScope(GlobalTxnScope, GlobalTxnScope)
 }
 
-// NewLocalTxnScope ...
+// NewLocalTxnScope create a Local TxnScope with given real txnScope value.
 func NewLocalTxnScope(txnScope string) TxnScope {
 	return newTxnScope(LocalTxnScope, txnScope)
 }
 
-// GetVarValue  ...
+// GetVarValue return the value of @@txn_scope which can only be `global` or `local`
 func (t TxnScope) GetVarValue() string {
 	return t.varValue
 }
 
-// GetTxnScope ...
+// GetTxnScope return the value of the tidb-server holds to request tso to pd.
 func (t TxnScope) GetTxnScope() string {
 	return t.txnScope
 }
