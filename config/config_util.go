@@ -155,11 +155,15 @@ func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) 
 	}
 }
 
-// GetTxnScopeFromConfig extract txn_scope default value from config
-func GetTxnScopeFromConfig() string {
+const (
+	globalTxnScope = "global"
+)
+
+// GetTxnScopeFromConfig extracts @@txn_scope value from config
+func GetTxnScopeFromConfig() (bool, string) {
 	v, ok := GetGlobalConfig().Labels["zone"]
-	if ok {
-		return v
+	if ok && len(v) > 0 {
+		return false, v
 	}
-	return DefTxnScope
+	return true, globalTxnScope
 }
