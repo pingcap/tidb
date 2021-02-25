@@ -7479,7 +7479,10 @@ func (s *testSuite) TestIssue15563(c *C) {
 	tk.MustQuery("select distinct 0.7544678906163867 /  0.68234634;").Check(testkit.Rows("1.10569639842486251190"))
 }
 
-func (s *testSuite) TestStalenessTransaction(c *C) {
+func (s *testSerialSuite) TestStalenessTransaction(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	testcases := []struct {
@@ -7490,6 +7493,7 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 		expectPhysicalTS int64
 		preSec           int64
 		txnScope         string
+		zone             string
 	}{
 		{
 			name:             "TimestampBoundExactStaleness",
@@ -7497,7 +7501,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1599321600000,
-			txnScope:         "sh",
+			txnScope:         "local",
+			zone:             "sh",
 		},
 		{
 			name:             "TimestampBoundReadTimestamp",
@@ -7505,7 +7510,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1599321600000,
-			txnScope:         "bj",
+			txnScope:         "local",
+			zone:             "bj",
 		},
 		{
 			name:        "TimestampBoundExactStaleness",
@@ -7513,7 +7519,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
 			IsStaleness: true,
 			preSec:      20,
-			txnScope:    "sh",
+			txnScope:    "local",
+			zone:        "sh",
 		},
 		{
 			name:        "TimestampBoundExactStaleness",
@@ -7521,7 +7528,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
 			IsStaleness: true,
 			preSec:      20,
-			txnScope:    "sz",
+			txnScope:    "local",
+			zone:        "sz",
 		},
 		{
 			name:        "begin",
@@ -7529,12 +7537,16 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:         "begin",
 			IsStaleness: false,
 			txnScope:    oracle.GlobalTxnScope,
+			zone:        "",
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		config.GetGlobalConfig().Labels = map[string]string{
+			"zone": testcase.zone,
+		}
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)
