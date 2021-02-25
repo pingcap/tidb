@@ -2,6 +2,9 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -13,12 +16,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/rowcodec"
-
 	"go.uber.org/zap"
-
-	"fmt"
-	"strings"
-	"time"
 )
 
 type tikvTxn struct {
