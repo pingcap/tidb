@@ -49,6 +49,7 @@ gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
 check-static: tools/bin/golangci-lint
+	@git for-each-ref --merged=HEAD --no-contains=HEAD --sort=-committerdate
 	tools/bin/golangci-lint run -v --disable-all --deadline=5m \
 	  --enable=misspell \
 	  --enable=ineffassign \
