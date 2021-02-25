@@ -3255,26 +3255,44 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	c.Assert(taskID1 != taskID2, IsTrue)
 }
 
-func (s *testSessionSuite2) TestSetTxnScope(c *C) {
+func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
+	config.GetGlobalConfig().Labels["zone"] = ""
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
-
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
 	// assert set sys variable
-	tk.MustExec("set @@session.txn_scope = 'dc-1';")
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows("dc-1"))
-
-	// assert session scope
-	se, err := session.CreateSession4Test(s.store)
-	c.Check(err, IsNil)
-	tk.Se = se
+	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
+
+	config.GetGlobalConfig().Labels["zone"] = "bj"
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	// assert default value
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(oracle.LocalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
+	// assert set sys variable
+	tk.MustExec("set @@session.txn_scope = 'global';")
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
+
+	// assert set invalid txn_scope
+	err := tk.ExecToErr("set @@txn_scope='foo'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
 }
 
-func (s *testSessionSuite2) TestGlobalAndLocalTxn(c *C) {
+func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
 	if *withTiKV {
@@ -3364,10 +3382,13 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
+	config.GetGlobalConfig().Labels = map[string]string{
+		"zone": "dc-1",
+	}
 	// set txn_scope to local
-	tk.MustExec("set @@session.txn_scope = 'dc-1';")
+	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows("dc-1"))
+	result.Check(testkit.Rows("local"))
 
 	// test local txn auto commit
 	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
@@ -3378,7 +3399,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
@@ -3392,7 +3413,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
@@ -3412,7 +3433,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (101)")       // write dc-2 with dc-1 scope
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope

@@ -76,8 +76,7 @@ type KVStore struct {
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
 	closed    chan struct{} // this is used to nofity when the store is closed
 
-	replicaReadSeed uint32        // this is used to load balance followers / learners when replica read is enabled
-	memCache        kv.MemManager // this is used to query from memory
+	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
 }
 
 // UpdateSPCache updates cached safepoint.
@@ -128,7 +127,6 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		spTime:          time.Now(),
 		closed:          make(chan struct{}),
 		replicaReadSeed: rand.Uint32(),
-		memCache:        kv.NewCacheDB(),
 	}
 	store.lockResolver = newLockResolver(store)
 
@@ -374,9 +372,4 @@ func (s *KVStore) SetTiKVClient(client Client) {
 // GetTiKVClient gets the client instance.
 func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
-}
-
-// GetMemCache return memory mamager of the storage
-func (s *KVStore) GetMemCache() kv.MemManager {
-	return s.memCache
 }
