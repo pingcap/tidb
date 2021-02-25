@@ -27,14 +27,14 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/pdapi"
 	"go.uber.org/zap"
 )
 
 type HelperTestSuite struct {
-	store tikv.Storage
+	store helper.Storage
 }
 
 var _ = Suite(new(HelperTestSuite))
@@ -59,6 +59,14 @@ func (s *mockStore) StartGCWorker() error {
 
 func (s *mockStore) TLSConfig() *tls.Config {
 	panic("not implemented")
+}
+
+func (s *mockStore) Name() string {
+	return "mock store"
+}
+
+func (s *mockStore) Describe() string {
+	return ""
 }
 
 func (s *HelperTestSuite) SetUpSuite(c *C) {
