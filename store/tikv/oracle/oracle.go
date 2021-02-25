@@ -53,7 +53,7 @@ type TxnScope struct {
 	txnScope string
 }
 
-// GetTxnScope get oracle.TxnScope from config
+// GetTxnScope gets oracle.TxnScope from config
 func GetTxnScope() TxnScope {
 	isGlobal, location := config.GetTxnScopeFromConfig()
 	if isGlobal {
@@ -62,22 +62,22 @@ func GetTxnScope() TxnScope {
 	return NewLocalTxnScope(location)
 }
 
-// NewGlobalTxnScope create a Global TxnScope
+// NewGlobalTxnScope creates a Global TxnScope
 func NewGlobalTxnScope() TxnScope {
 	return newTxnScope(GlobalTxnScope, GlobalTxnScope)
 }
 
-// NewLocalTxnScope create a Local TxnScope with given real txnScope value.
+// NewLocalTxnScope creates a Local TxnScope with given real txnScope value.
 func NewLocalTxnScope(txnScope string) TxnScope {
 	return newTxnScope(LocalTxnScope, txnScope)
 }
 
-// GetVarValue return the value of @@txn_scope which can only be `global` or `local`
+// GetVarValue returns the value of @@txn_scope which can only be `global` or `local`
 func (t TxnScope) GetVarValue() string {
 	return t.varValue
 }
 
-// GetTxnScope return the value of the tidb-server holds to request tso to pd.
+// GetTxnScope returns the value of the tidb-server holds to request tso to pd.
 func (t TxnScope) GetTxnScope() string {
 	return t.txnScope
 }
