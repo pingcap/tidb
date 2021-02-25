@@ -268,7 +268,7 @@ func (s *tikvStore) Close() error {
 	return s.KVStore.Close()
 }
 
-// GetMemCache return memory mamager of the storage
+// GetMemCache return memory manager of the storage
 func (s *tikvStore) GetMemCache() kv.MemManager {
 	return s.memCache
 }
