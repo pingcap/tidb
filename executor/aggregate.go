@@ -881,10 +881,11 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			return err
 		}
 
+		allMemDelta := int64(0)
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
-				e.groupSet.Insert(groupKey)
+				allMemDelta += e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
 			}
 			partialResults := e.getPartialResults(groupKey)
@@ -893,9 +894,10 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 				if err != nil {
 					return err
 				}
-				e.memTracker.Consume(memDelta)
+				allMemDelta += memDelta
 			}
 		}
+		e.memTracker.Consume(allMemDelta)
 	}
 }
 
