@@ -4336,9 +4336,9 @@ func (s *testSuiteP1) TestSelectPartition(c *C) {
 								partition p1 values less than (10),
 								partition p2 values less than (20),
 								partition pm values less than (maxvalue));`)
-	tk.MustExec("insert into tscalar values(0), (10), (40), (50), (55)");
+	tk.MustExec("insert into tscalar values(0), (10), (40), (50), (55)")
 	// test IN expression
-	tk.MustExec("insert into tscalar values(-0), (-10), (-40), (-50), (-55)");
+	tk.MustExec("insert into tscalar values(-0), (-10), (-40), (-50), (-55)")
 	tk.MustQuery("select * from tscalar where c1 in (55, 55)").Check(testkit.Rows("55"))
 	tk.MustQuery("select * from tscalar where c1 in (40, 40)").Check(testkit.Rows("40"))
 	tk.MustQuery("select * from tscalar where c1 in (40)").Check(testkit.Rows("40"))
