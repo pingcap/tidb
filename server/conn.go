@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
@@ -715,7 +716,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	_, err = cc.ctx.Execute(ctx, "use `"+db+"`")
+	sql, err := sqlexec.EscapeSQL("use %n", db)
+	if err != nil {
+		return err
+	}
+	_, err = cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}

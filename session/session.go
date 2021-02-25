@@ -742,8 +742,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	if s.Value(sessionctx.Initing) != nil {
 		return nil, nil
 	}
-	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
-	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
+	sql := sqlexec.MustEscapeSQL("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %n.%n", mysql.SystemDB, mysql.GlobalVariablesTable)
 	rows, _, err := s.ExecRestrictedSQL(s, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -762,8 +761,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name)
+	sql := sqlexec.MustEscapeSQL(`SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if executor.ErrResultIsEmpty.Equal(err) {
@@ -792,8 +790,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return errors.Trace(err)
 	}
 	name = strings.ToLower(name)
-	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+	sql := sqlexec.MustEscapeSQL(`REPLACE %n.%n VALUES (%?, %?);`, mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	_, _, err = s.ExecRestrictedSQL(s, sql)
 	return errors.Trace(err)
 }
