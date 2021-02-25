@@ -155,69 +155,83 @@ func (s *testMySQLConstSuite) TestPipesAsConcatMode(c *C) {
 
 func (s *testMySQLConstSuite) TestIssue22387(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	ctx := context.Background()
 	tk.MustExec("set sql_mode=''")
-	rs, _ := tk.Exec("select 12 - cast(15 as unsigned);")
-	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err := tk.QueryToErr("select 12 - cast(15 as unsigned);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(12 - 15)'")
-	c.Assert(rs.Close(), IsNil)
+
+	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION';")
+	tk.MustQuery("select 12 - cast(15 as unsigned);").Check(testkit.Rows("-3"))
 }
 
 func (s *testMySQLConstSuite) TestIssue22389(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	ctx := context.Background()
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION';")
 	tk.MustExec("DROP TABLE IF EXISTS tb5")
 	tk.MustExec("create table tb5(a bigint, b bigint);")
 	tk.MustExec("insert into tb5 values (10, -9223372036854775808);")
-	rs, _ := tk.Exec("select a - b from tb5;")
-	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err := tk.QueryToErr("select a - b from tb5;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
-	c.Assert(rs.Close(), IsNil)
+	tk.MustExec("set sql_mode=''")
+	err = tk.QueryToErr("select a - b from tb5;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
 }
 
 func (s *testMySQLConstSuite) TestIssue22390(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	ctx := context.Background()
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode='';")
 	tk.MustExec("DROP TABLE IF EXISTS tb5")
 	tk.MustExec("create table tb5(a bigint, b bigint);")
 	tk.MustExec("insert into tb5 values (10, -9223372036854775808);")
-	rs, _ := tk.Exec("select a - b from tb5;")
-	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
+	err := tk.QueryToErr("select a - b from tb5;")
 	c.Assert(err, NotNil)
-	c.Assert(rows, IsNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
-	c.Assert(rs.Close(), IsNil)
+
+	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION';")
+	err = tk.QueryToErr("select a - b from tb5;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
 }
 
 func (s *testMySQLConstSuite) TestIssue22442(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set sql_mode='';")
-	tk.MustQuery("select cast(-1 as unsigned) - cast(-1 as unsigned);  ").Check(testkit.Rows("0"))
+	tk.MustQuery("select cast(-1 as unsigned) - cast(-1 as unsigned);").Check(testkit.Rows("0"))
+
+	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION';")
+	tk.MustQuery("select cast(-1 as unsigned) - cast(-1 as unsigned);").Check(testkit.Rows("0"))
 }
 
 func (s *testMySQLConstSuite) TestIssue22444(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
 	tk.MustQuery("select cast(-1 as unsigned) - cast(-10000 as unsigned); ").Check(testkit.Rows("9999"))
+
+	tk.MustExec("set sql_mode='';")
+	tk.MustQuery("select cast(-1 as unsigned) - cast(-10000 as unsigned); ").Check(testkit.Rows("9999"))
 }
 
 func (s *testMySQLConstSuite) TestIssue22445(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
-	tk.MustQuery("select cast(-12 as unsigned) - cast(-1 as unsigned); ").Check(testkit.Rows("-11"))
+	tk.MustQuery("select cast(-12 as unsigned) - cast(-1 as unsigned);").Check(testkit.Rows("-11"))
+
+	tk.MustExec("set sql_mode='';")
+	err := tk.QueryToErr("select cast(-12 as unsigned) - cast(-1 as unsigned);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(18446744073709551604 - 18446744073709551615)'")
 }
 
 func (s *testMySQLConstSuite) TestIssue22446(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
+	tk.MustQuery("select cast(-1 as unsigned) - 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
+
+	tk.MustExec("set sql_mode=''; ")
 	tk.MustQuery("select cast(-1 as unsigned) - 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
 }
 
@@ -225,6 +239,11 @@ func (s *testMySQLConstSuite) TestIssue22447(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
 	tk.MustQuery("select 9223372036854775808 - cast(-1 as unsigned)").Check(testkit.Rows("-9223372036854775807"))
+
+	tk.MustExec("set sql_mode='';")
+	err := tk.QueryToErr("select 9223372036854775808 - cast(-1 as unsigned)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(9223372036854775808 - 18446744073709551615)'")
 }
 
 func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
@@ -234,146 +253,84 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
 	r.Check(testkit.Rows("-1"))
 
-	// 1.1 minusFUU, uint64(a) >= uint64(b)
-	rs, err := tk.Exec("SELECT CAST(-1 as UNSIGNED) - cast(9223372036854775807 as unsigned);")
-	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	// 1. minusFUU
+	err := tk.QueryToErr("SELECT CAST(-1 as UNSIGNED) - cast(9223372036854775807 as unsigned);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(18446744073709551615 - 9223372036854775807)'")
-	c.Assert(rs.Close(), IsNil)
 
-	// normal case: cast(-1 as UNSIGNED) - cast(-9223372036854775808 as unsigned) = 18446744073709551615 - 9223372036854775807
-	tk.MustQuery("SELECT CAST(-1 as UNSIGNED) - cast(-9223372036854775808 as unsigned);").Check(testkit.Rows("9223372036854775807"))
-
-	// normal case: cast(0 as unsigned) - cast(9223372036854775808 as unsigned) = 0 - 9223372036854775808
-	tk.MustQuery("SELECT cast(0 as unsigned) - cast(9223372036854775808 as unsigned);").Check(testkit.Rows("-9223372036854775808"))
-
-	// 1.2 minusFUU, uint64(a) < uint64(b)
-	rs, err = tk.Exec("SELECT CAST(0 as UNSIGNED) - cast(9223372036854775809 as unsigned);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT CAST(0 as UNSIGNED) - cast(9223372036854775809 as unsigned);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(0 - 9223372036854775809)'")
-	c.Assert(rs.Close(), IsNil)
 
-	// 1.3 minusFUU, normal case
 	tk.MustQuery("SELECT CAST(0 as UNSIGNED) - cast(9223372036854775808 as unsigned);").Check(testkit.Rows("-9223372036854775808"))
+	tk.MustQuery("SELECT CAST(-1 as UNSIGNED) - cast(-9223372036854775808 as unsigned);").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("SELECT cast(0 as unsigned) - cast(9223372036854775808 as unsigned);").Check(testkit.Rows("-9223372036854775808"))
 
-	// 2.1 minusSS, a < 0 && -b > math.MinInt64 - a
-	rs, err = tk.Exec("SELECT -9223372036854775808 - (1);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	// 2. minusSS
+	err = tk.QueryToErr("SELECT -9223372036854775808 - (1);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-9223372036854775808 - 1)'")
-	c.Assert(rs.Close(), IsNil)
 
-	// 2.2 minusSS, a >= 0 && rh == math.MinInt64
-	rs, err = tk.Exec("SELECT 1 - (-9223372036854775808);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT 1 - (-9223372036854775808);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775808)'")
-	c.Assert(rs.Close(), IsNil)
 
-	// 2.3 minusSS, a > 0 && -b > math.MaxInt64 - a
-	rs, err = tk.Exec("SELECT 1 - (-9223372036854775807);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT 1 - (-9223372036854775807);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775807)'")
-	c.Assert(rs.Close(), IsNil)
 
-	// 3.1 minusFUS, a < 0 && b <= 0
-	rs, err = tk.Exec("SELECT CAST(-12 as UNSIGNED) - (-1);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	// 3. minusFUS
+	err = tk.QueryToErr("SELECT CAST(-12 as UNSIGNED) - (-1);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(18446744073709551604 - -1)'")
-	c.Assert(rs.Close(), IsNil)
 
-	rs, err = tk.Exec("SELECT CAST(9223372036854775808 as UNSIGNED) - (0);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT CAST(9223372036854775808 as UNSIGNED) - (0);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(9223372036854775808 - 0)'")
-	c.Assert(rs.Close(), IsNil)
 
-	// 3.2 minusFUS, a < 0 && b > 0 && uint64(a) > uint64(math.MaxInt64+b)
-	rs, err = tk.Exec("SELECT CAST(-1 as UNSIGNED) - (9223372036854775807);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT CAST(-1 as UNSIGNED) - (9223372036854775807);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(18446744073709551615 - 9223372036854775807)'")
-	c.Assert(rs.Close(), IsNil)
 
-	rs, err = tk.Exec("SELECT CAST(9223372036854775808 as UNSIGNED) - 0;")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT CAST(9223372036854775808 as UNSIGNED) - 0;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(9223372036854775808 - 0)'")
-	c.Assert(rs.Close(), IsNil)
 
 	tk.MustQuery("SELECT CAST(-1 as UNSIGNED) - (9223372036854775808);").Check(testkit.Rows("9223372036854775807"))
 
-	// 3.3 minusFUS, a >= 0 && b < 0 && (b == math.MinInt64 || -b > math.MaxInt64-a)
-	rs, err = tk.Exec("SELECT CAST(1 as UNSIGNED) - (-9223372036854775808);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT CAST(1 as UNSIGNED) - (-9223372036854775808);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775808)'")
-	c.Assert(rs.Close(), IsNil)
 
-	rs, err = tk.Exec("SELECT CAST(1 as UNSIGNED) - (-9223372036854775807);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT CAST(1 as UNSIGNED) - (-9223372036854775807);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775807)'")
-	c.Assert(rs.Close(), IsNil)
 
 	tk.MustQuery("SELECT CAST(1 as UNSIGNED) - (-9223372036854775806)").Check(testkit.Rows("9223372036854775807"))
-
-	// 3.4 minusFUS: a >= 0 && b >= 0, never overflow
 	tk.MustQuery("select cast(0 as unsigned) - 9223372036854775807").Check(testkit.Rows("-9223372036854775807"))
 
-	// 4.1 minusFSU, a >= 0 && b >= 0, never overflow
-	tk.MustQuery("select 0 - cast(9223372036854775807 as unsigned)").Check(testkit.Rows("-9223372036854775807"))
-
-	// 4.2 minusFSU, a >= 0 && b < 0 && uint64(b) - uint64(a) > maxint64 + 1
-	rs, err = tk.Exec("SELECT CAST(1 as SIGNED) - cast(9223372036854775810 as unsigned);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	// 4. minusFSU
+	err = tk.QueryToErr("SELECT CAST(1 as SIGNED) - cast(9223372036854775810 as unsigned);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - 9223372036854775810)'")
-	c.Assert(rs.Close(), IsNil)
 
-	tk.MustQuery("SELECT CAST(1 as SIGNED) - cast(9223372036854775809 as unsigned)").Check(testkit.Rows("-9223372036854775808"))
-
-	// 4.3 minusFSU, a < 0 && b >= 0 : a -b < minint64
-	rs, err = tk.Exec("SELECT CAST(-1 as SIGNED) - cast(9223372036854775808 as unsigned);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT CAST(-1 as SIGNED) - cast(9223372036854775808 as unsigned);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-1 - 9223372036854775808)'")
-	c.Assert(rs.Close(), IsNil)
 
-	tk.MustQuery("SELECT CAST(-1 as SIGNED) - cast(9223372036854775807 as unsigned)").Check(testkit.Rows("-9223372036854775808"))
-
-	// 4.4 minusFSU, a < 0 && b < 0, definitely overflow
-	rs, err = tk.Exec("SELECT CAST(-9223372036854775807 as SIGNED) - cast(-1 as unsigned);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT CAST(-9223372036854775807 as SIGNED) - cast(-1 as unsigned);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-9223372036854775807 - 18446744073709551615)'")
-	c.Assert(rs.Close(), IsNil)
 
-	rs, err = tk.Exec("SELECT CAST(-1 as SIGNED) - cast(9223372036854775808 as unsigned);")
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT CAST(-1 as SIGNED) - cast(9223372036854775808 as unsigned);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-1 - 9223372036854775808)'")
-	c.Assert(rs.Close(), IsNil)
 
-	rs, _ = tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
+	tk.MustQuery("select 0 - cast(9223372036854775807 as unsigned)").Check(testkit.Rows("-9223372036854775807"))
+	tk.MustQuery("SELECT CAST(1 as SIGNED) - cast(9223372036854775809 as unsigned)").Check(testkit.Rows("-9223372036854775808"))
+	tk.MustQuery("SELECT CAST(-1 as SIGNED) - cast(9223372036854775807 as unsigned)").Check(testkit.Rows("-9223372036854775808"))
+
+	rs, _ := tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
