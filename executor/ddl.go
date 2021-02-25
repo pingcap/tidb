@@ -273,7 +273,7 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),
 			)
-			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
+			sql := sqlexec.MustEscapeSQL("admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
 			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 			if err != nil {
 				return err
