@@ -1,4 +1,4 @@
-package store
+package driver
 
 import (
 	. "github.com/pingcap/check"
