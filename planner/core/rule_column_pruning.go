@@ -318,7 +318,7 @@ func (p *LogicalJoin) mergeSchema() {
 	} else {
 		p.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
 		switch p.JoinType {
-		case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		case LeftOuterJoin:
 			resetNotNullFlag(p.schema, p.children[1].Schema().Len(), p.schema.Len())
 		case RightOuterJoin:
 			resetNotNullFlag(p.schema, 0, p.children[0].Schema().Len())
