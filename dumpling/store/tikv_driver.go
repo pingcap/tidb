@@ -161,6 +161,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...DriverOption) (kv.St
 		KVStore:   s,
 		etcdAddrs: etcdAddrs,
 		tlsConfig: tlsConfig,
+		memCache:  kv.NewCacheDB(),
 		pdClient:  &pdClient,
 		enableGC:  !disableGC,
 	}
@@ -173,6 +174,7 @@ type tikvStore struct {
 	*tikv.KVStore
 	etcdAddrs []string
 	tlsConfig *tls.Config
+	memCache  kv.MemManager // this is used to query from memory
 	pdClient  pd.Client
 	enableGC  bool
 	gcWorker  *gcworker.GCWorker
@@ -264,4 +266,9 @@ func (s *tikvStore) Close() error {
 		s.gcWorker.Close()
 	}
 	return s.KVStore.Close()
+}
+
+// GetMemCache return memory manager of the storage
+func (s *tikvStore) GetMemCache() kv.MemManager {
+	return s.memCache
 }
