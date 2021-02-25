@@ -1048,10 +1048,10 @@
       {
         "SQL": "select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2",
         "Plan": [
-          "Projection_30 1.00 root  Column#3, test.t1.a, test.t1.b",
+          "Projection_30 1.00 root  Column#7, test.t1.a, test.t1.b",
           "└─Apply_32 1.00 root  CARTESIAN left outer join",
           "  ├─Apply_34(Build) 1.00 root  CARTESIAN left outer join",
-          "  │ ├─HashAgg_39(Build) 1.00 root  funcs:sum(Column#8)->Column#3, funcs:firstrow(Column#9)->test.t2.a, funcs:firstrow(Column#10)->test.t2.b",
+          "  │ ├─HashAgg_39(Build) 1.00 root  funcs:sum(Column#8)->Column#7, funcs:firstrow(Column#9)->test.t2.a, funcs:firstrow(Column#10)->test.t2.b",
           "  │ │ └─TableReader_40 1.00 root  data:HashAgg_41",
           "  │ │   └─HashAgg_41 1.00 cop[tikv]  funcs:sum(test.t2.a)->Column#8, funcs:firstrow(test.t2.a)->Column#9, funcs:firstrow(test.t2.b)->Column#10",
           "  │ │     └─TableFullScan_38 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",

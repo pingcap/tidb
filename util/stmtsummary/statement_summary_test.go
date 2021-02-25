@@ -38,8 +38,8 @@ type testStmtSummarySuite struct {
 	ssMap *stmtSummaryByDigestMap
 }
 
-func emptyPlanGenerator() string {
-	return ""
+func emptyPlanGenerator() (string, string) {
+	return "", ""
 }
 
 func fakePlanDigestGenerator() string {
@@ -75,11 +75,12 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		digest:     stmtExecInfo1.Digest,
 		planDigest: stmtExecInfo1.PlanDigest,
 	}
+	samplePlan, _ := stmtExecInfo1.PlanGenerator()
 	expectedSummaryElement := stmtSummaryByDigestElement{
 		beginTime:            now + 60,
 		endTime:              now + 1860,
 		sampleSQL:            stmtExecInfo1.OriginalSQL,
-		samplePlan:           stmtExecInfo1.PlanGenerator(),
+		samplePlan:           samplePlan,
 		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 		execCount:            1,
 		sumLatency:           stmtExecInfo1.TotalLatency,
@@ -94,16 +95,16 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		maxCopProcessAddress: stmtExecInfo1.CopTasks.MaxProcessAddress,
 		maxCopWaitTime:       stmtExecInfo1.CopTasks.MaxWaitTime,
 		maxCopWaitAddress:    stmtExecInfo1.CopTasks.MaxWaitAddress,
-		sumProcessTime:       stmtExecInfo1.ExecDetail.ProcessTime,
-		maxProcessTime:       stmtExecInfo1.ExecDetail.ProcessTime,
-		sumWaitTime:          stmtExecInfo1.ExecDetail.WaitTime,
-		maxWaitTime:          stmtExecInfo1.ExecDetail.WaitTime,
+		sumProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
+		maxProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
+		sumWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
+		maxWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
 		sumBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
 		maxBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
-		sumTotalKeys:         stmtExecInfo1.ExecDetail.CopDetail.TotalKeys,
-		maxTotalKeys:         stmtExecInfo1.ExecDetail.CopDetail.TotalKeys,
-		sumProcessedKeys:     stmtExecInfo1.ExecDetail.CopDetail.ProcessedKeys,
-		maxProcessedKeys:     stmtExecInfo1.ExecDetail.CopDetail.ProcessedKeys,
+		sumTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
+		maxTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
+		sumProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
+		maxProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
 		sumGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
 		maxGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
 		sumPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
@@ -175,8 +176,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			CalleeAddress: "202",
-			ProcessTime:   1500,
-			WaitTime:      150,
 			BackoffTime:   180,
 			RequestCount:  20,
 			CommitDetail: &execdetails.CommitDetails{
@@ -197,7 +196,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				PrewriteRegionNum: 100,
 				TxnRetry:          10,
 			},
-			CopDetail: &execdetails.CopDetails{
+			ScanDetail: &execdetails.ScanDetail{
 				TotalKeys:                 6000,
 				ProcessedKeys:             1500,
 				RocksdbDeleteSkippedCount: 100,
@@ -205,6 +204,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				RocksdbBlockCacheHitCount: 10,
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
+			},
+			TimeDetail: execdetails.TimeDetail{
+				ProcessTime: 1500,
+				WaitTime:    150,
 			},
 		},
 		StmtCtx: &stmtctx.StatementContext{
@@ -230,16 +233,16 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.maxCopProcessAddress = stmtExecInfo2.CopTasks.MaxProcessAddress
 	expectedSummaryElement.maxCopWaitTime = stmtExecInfo2.CopTasks.MaxWaitTime
 	expectedSummaryElement.maxCopWaitAddress = stmtExecInfo2.CopTasks.MaxWaitAddress
-	expectedSummaryElement.sumProcessTime += stmtExecInfo2.ExecDetail.ProcessTime
-	expectedSummaryElement.maxProcessTime = stmtExecInfo2.ExecDetail.ProcessTime
-	expectedSummaryElement.sumWaitTime += stmtExecInfo2.ExecDetail.WaitTime
-	expectedSummaryElement.maxWaitTime = stmtExecInfo2.ExecDetail.WaitTime
+	expectedSummaryElement.sumProcessTime += stmtExecInfo2.ExecDetail.TimeDetail.ProcessTime
+	expectedSummaryElement.maxProcessTime = stmtExecInfo2.ExecDetail.TimeDetail.ProcessTime
+	expectedSummaryElement.sumWaitTime += stmtExecInfo2.ExecDetail.TimeDetail.WaitTime
+	expectedSummaryElement.maxWaitTime = stmtExecInfo2.ExecDetail.TimeDetail.WaitTime
 	expectedSummaryElement.sumBackoffTime += stmtExecInfo2.ExecDetail.BackoffTime
 	expectedSummaryElement.maxBackoffTime = stmtExecInfo2.ExecDetail.BackoffTime
-	expectedSummaryElement.sumTotalKeys += stmtExecInfo2.ExecDetail.CopDetail.TotalKeys
-	expectedSummaryElement.maxTotalKeys = stmtExecInfo2.ExecDetail.CopDetail.TotalKeys
-	expectedSummaryElement.sumProcessedKeys += stmtExecInfo2.ExecDetail.CopDetail.ProcessedKeys
-	expectedSummaryElement.maxProcessedKeys = stmtExecInfo2.ExecDetail.CopDetail.ProcessedKeys
+	expectedSummaryElement.sumTotalKeys += stmtExecInfo2.ExecDetail.ScanDetail.TotalKeys
+	expectedSummaryElement.maxTotalKeys = stmtExecInfo2.ExecDetail.ScanDetail.TotalKeys
+	expectedSummaryElement.sumProcessedKeys += stmtExecInfo2.ExecDetail.ScanDetail.ProcessedKeys
+	expectedSummaryElement.maxProcessedKeys = stmtExecInfo2.ExecDetail.ScanDetail.ProcessedKeys
 	expectedSummaryElement.sumGetCommitTsTime += stmtExecInfo2.ExecDetail.CommitDetail.GetCommitTsTime
 	expectedSummaryElement.maxGetCommitTsTime = stmtExecInfo2.ExecDetail.CommitDetail.GetCommitTsTime
 	expectedSummaryElement.sumPrewriteTime += stmtExecInfo2.ExecDetail.CommitDetail.PrewriteTime
@@ -300,8 +303,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			CalleeAddress: "302",
-			ProcessTime:   150,
-			WaitTime:      15,
 			BackoffTime:   18,
 			RequestCount:  2,
 			CommitDetail: &execdetails.CommitDetails{
@@ -322,7 +323,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				PrewriteRegionNum: 10,
 				TxnRetry:          1,
 			},
-			CopDetail: &execdetails.CopDetails{
+			ScanDetail: &execdetails.ScanDetail{
 				TotalKeys:                 600,
 				ProcessedKeys:             150,
 				RocksdbDeleteSkippedCount: 100,
@@ -330,6 +331,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				RocksdbBlockCacheHitCount: 10,
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
+			},
+			TimeDetail: execdetails.TimeDetail{
+				ProcessTime: 150,
+				WaitTime:    15,
 			},
 		},
 		StmtCtx: &stmtctx.StatementContext{
@@ -349,11 +354,11 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.sumParseLatency += stmtExecInfo3.ParseLatency
 	expectedSummaryElement.sumCompileLatency += stmtExecInfo3.CompileLatency
 	expectedSummaryElement.sumNumCopTasks += int64(stmtExecInfo3.CopTasks.NumCopTasks)
-	expectedSummaryElement.sumProcessTime += stmtExecInfo3.ExecDetail.ProcessTime
-	expectedSummaryElement.sumWaitTime += stmtExecInfo3.ExecDetail.WaitTime
+	expectedSummaryElement.sumProcessTime += stmtExecInfo3.ExecDetail.TimeDetail.ProcessTime
+	expectedSummaryElement.sumWaitTime += stmtExecInfo3.ExecDetail.TimeDetail.WaitTime
 	expectedSummaryElement.sumBackoffTime += stmtExecInfo3.ExecDetail.BackoffTime
-	expectedSummaryElement.sumTotalKeys += stmtExecInfo3.ExecDetail.CopDetail.TotalKeys
-	expectedSummaryElement.sumProcessedKeys += stmtExecInfo3.ExecDetail.CopDetail.ProcessedKeys
+	expectedSummaryElement.sumTotalKeys += stmtExecInfo3.ExecDetail.ScanDetail.TotalKeys
+	expectedSummaryElement.sumProcessedKeys += stmtExecInfo3.ExecDetail.ScanDetail.ProcessedKeys
 	expectedSummaryElement.sumGetCommitTsTime += stmtExecInfo3.ExecDetail.CommitDetail.GetCommitTsTime
 	expectedSummaryElement.sumPrewriteTime += stmtExecInfo3.ExecDetail.CommitDetail.PrewriteTime
 	expectedSummaryElement.sumCommitTime += stmtExecInfo3.ExecDetail.CommitDetail.CommitTime
@@ -554,8 +559,6 @@ func generateAnyExecInfo() *StmtExecInfo {
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			CalleeAddress: "129",
-			ProcessTime:   500,
-			WaitTime:      50,
 			BackoffTime:   80,
 			RequestCount:  10,
 			CommitDetail: &execdetails.CommitDetails{
@@ -576,7 +579,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 				PrewriteRegionNum: 20,
 				TxnRetry:          2,
 			},
-			CopDetail: &execdetails.CopDetails{
+			ScanDetail: &execdetails.ScanDetail{
 				TotalKeys:                 1000,
 				ProcessedKeys:             500,
 				RocksdbDeleteSkippedCount: 100,
@@ -584,6 +587,10 @@ func generateAnyExecInfo() *StmtExecInfo {
 				RocksdbBlockCacheHitCount: 10,
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
+			},
+			TimeDetail: execdetails.TimeDetail{
+				ProcessTime: 500,
+				WaitTime:    50,
 			},
 		},
 		StmtCtx: &stmtctx.StatementContext{
@@ -620,15 +627,15 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
 		int64(stmtExecInfo1.CompileLatency), stmtExecInfo1.CopTasks.NumCopTasks, int64(stmtExecInfo1.CopTasks.MaxProcessTime),
 		stmtExecInfo1.CopTasks.MaxProcessAddress, int64(stmtExecInfo1.CopTasks.MaxWaitTime),
-		stmtExecInfo1.CopTasks.MaxWaitAddress, int64(stmtExecInfo1.ExecDetail.ProcessTime), int64(stmtExecInfo1.ExecDetail.ProcessTime),
-		int64(stmtExecInfo1.ExecDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.BackoffTime),
-		int64(stmtExecInfo1.ExecDetail.BackoffTime), stmtExecInfo1.ExecDetail.CopDetail.TotalKeys, stmtExecInfo1.ExecDetail.CopDetail.TotalKeys,
-		stmtExecInfo1.ExecDetail.CopDetail.ProcessedKeys, stmtExecInfo1.ExecDetail.CopDetail.ProcessedKeys,
-		int64(stmtExecInfo1.ExecDetail.CopDetail.RocksdbDeleteSkippedCount), int64(stmtExecInfo1.ExecDetail.CopDetail.RocksdbDeleteSkippedCount),
-		int64(stmtExecInfo1.ExecDetail.CopDetail.RocksdbKeySkippedCount), int64(stmtExecInfo1.ExecDetail.CopDetail.RocksdbKeySkippedCount),
-		int64(stmtExecInfo1.ExecDetail.CopDetail.RocksdbBlockCacheHitCount), int64(stmtExecInfo1.ExecDetail.CopDetail.RocksdbBlockCacheHitCount),
-		int64(stmtExecInfo1.ExecDetail.CopDetail.RocksdbBlockReadCount), int64(stmtExecInfo1.ExecDetail.CopDetail.RocksdbBlockReadCount),
-		int64(stmtExecInfo1.ExecDetail.CopDetail.RocksdbBlockReadByte), int64(stmtExecInfo1.ExecDetail.CopDetail.RocksdbBlockReadByte),
+		stmtExecInfo1.CopTasks.MaxWaitAddress, int64(stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime), int64(stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime),
+		int64(stmtExecInfo1.ExecDetail.TimeDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.TimeDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.BackoffTime),
+		int64(stmtExecInfo1.ExecDetail.BackoffTime), stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys, stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
+		stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys, stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
+		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount),
+		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbKeySkippedCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbKeySkippedCount),
+		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount),
+		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadCount),
+		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadByte), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadByte),
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime),
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.CommitTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.CommitTime),
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime),
@@ -921,22 +928,19 @@ func (s *testStmtSummarySuite) TestGetMoreThanOnceBindableStmt(c *C) {
 	stmtExecInfo1.NormalizedSQL = "insert ?"
 	stmtExecInfo1.StmtCtx.StmtType = "Insert"
 	s.ssMap.AddStatement(stmtExecInfo1)
-	schemas, sqls := s.ssMap.GetMoreThanOnceBindableStmt()
-	c.Assert(len(schemas), Equals, 0)
-	c.Assert(len(sqls), Equals, 0)
+	stmts := s.ssMap.GetMoreThanOnceBindableStmt()
+	c.Assert(len(stmts), Equals, 0)
 
 	stmtExecInfo1.NormalizedSQL = "select ?"
 	stmtExecInfo1.Digest = "digest1"
 	stmtExecInfo1.StmtCtx.StmtType = "Select"
 	s.ssMap.AddStatement(stmtExecInfo1)
-	schemas, sqls = s.ssMap.GetMoreThanOnceBindableStmt()
-	c.Assert(len(schemas), Equals, 0)
-	c.Assert(len(sqls), Equals, 0)
+	stmts = s.ssMap.GetMoreThanOnceBindableStmt()
+	c.Assert(len(stmts), Equals, 0)
 
 	s.ssMap.AddStatement(stmtExecInfo1)
-	schemas, sqls = s.ssMap.GetMoreThanOnceBindableStmt()
-	c.Assert(len(schemas), Equals, 1)
-	c.Assert(len(sqls), Equals, 1)
+	stmts = s.ssMap.GetMoreThanOnceBindableStmt()
+	c.Assert(len(stmts), Equals, 1)
 }
 
 // Test `formatBackoffTypes`.

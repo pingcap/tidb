@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -48,6 +49,16 @@ func (s *testSuite1) TestPreparedDDL(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("prepare stmt from 'create table t (id int, KEY id (id))'")
+}
+
+// TestUnsupportedStmtForPrepare is related to https://github.com/pingcap/tidb/issues/17412
+func (s *testSuite1) TestUnsupportedStmtForPrepare(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`prepare stmt0 from "create table t0(a int primary key)"`)
+	tk.MustGetErrCode(`prepare stmt1 from "execute stmt0"`, mysql.ErrUnsupportedPs)
+	tk.MustGetErrCode(`prepare stmt2 from "deallocate prepare stmt0"`, mysql.ErrUnsupportedPs)
+	tk.MustGetErrCode(`prepare stmt4 from "prepare stmt3 from 'create table t1(a int, b int)'"`, mysql.ErrUnsupportedPs)
 }
 
 func (s *testSuite1) TestIgnorePlanCache(c *C) {
@@ -189,7 +200,7 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	plannercore.SetPreparedPlanCache(true)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
 	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
@@ -278,7 +289,7 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustQuery(`execute stmt2 using @v2, @v2, @v3, @v3`).Check(testkit.Rows("b b 2 2 2", "c c 3 3 3"))
 
 	// For issue 19002
-	tk.MustExec(`set @@tidb_enable_clustered_index = 1`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(a int, b int, c int, primary key(a, b))`)
 	tk.MustExec(`insert into t1 values(1,1,111),(2,2,222),(3,3,333)`)
