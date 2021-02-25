@@ -1179,7 +1179,7 @@ func (s *testTableSuite) TestIssue18845(c *C) {
 }
 
 // Test statements_summary_history.
-func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
+func (s *testClusterTableSuite) TestStmtSummaryHistoryTable(c *C) {
 	tk := s.newTestKitWithRoot(c)
 	tk.MustExec("drop table if exists test_summary")
 	tk.MustExec("create table test_summary(a int, b varchar(10), key k(a))")
@@ -1209,22 +1209,26 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 		"where digest_text like 'insert into `test_summary`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into test_summary values(1, 'a')"))
 
-	tk.MustExec("drop table if exists `table`")
-	tk.MustExec("create table `table`(`insert` int)")
-
-	sql = "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys," +
-		"max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions," +
-		"max_prewrite_regions, avg_affected_rows, query_sample_text " +
-		"from information_schema.statements_summary_history " +
-		"where digest_text like 'create table `table`%'"
-	tk.MustQuery(sql).Check(testkit.Rows("CreateTable test test.table <nil> 1 0 0 0 0 0 0 0 0 0 0 create table `table`(`insert` int)"))
-
 	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary_history`,
 	).Check(testkit.Rows())
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("drop table if exists `table`")
+	tk.MustExec("set global tidb_stmt_summary_history_size = 1")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustExec("create table `table`(`insert` int)")
+	tk.MustExec("select `insert` from `table`")
+
+	sql = "select digest_text from information_schema.statements_summary_history;"
+	tk.MustQuery(sql).Check(testkit.Rows(
+		"select `insert` from `table`",
+		"create table `table` ( `insert` int )",
+		"set global `tidb_enable_stmt_summary` = ?",
+	))
 }
 
 // Test statements_summary_history.
