@@ -354,6 +354,10 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		if err != nil {
 			return
 		}
+		if partitionStats == nil {
+			err = errors.Errorf("[stats] build global-level stats failed due to missing partition-level stats")
+			return
+		}
 		for i := 0; i < globalStats.Num; i++ {
 			ID := tableInfo.Columns[i].ID
 			if isIndex != 0 {
@@ -364,10 +368,6 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
 				globalStats.Count += count
-			}
-			if cms == nil && topN == nil && fms == nil {
-				err = errors.Errorf("[stats] build global-level stats failed due to missing partition-level stats")
-				return
 			}
 			allHg[i] = append(allHg[i], hg)
 			allCms[i] = append(allCms[i], cms)
