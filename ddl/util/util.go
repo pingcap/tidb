@@ -16,11 +16,7 @@ package util
 import (
 	"context"
 	"encoding/hex"
-<<<<<<< HEAD
-	"fmt"
-=======
 	"strings"
->>>>>>> 75f748568... ddl: migrate part of ddl package code from Execute/ExecRestricted to safe API (1) (#22670)
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -32,25 +28,14 @@ import (
 )
 
 const (
-<<<<<<< HEAD
 	deleteRangesTable         = `gc_delete_range`
 	doneDeleteRangesTable     = `gc_delete_range_done`
-	loadDeleteRangeSQL        = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%s WHERE ts < %v`
-	recordDoneDeletedRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
-	completeDeleteRangeSQL    = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
-	updateDeleteRangeSQL      = `UPDATE mysql.gc_delete_range SET start_key = "%s" WHERE job_id = %d AND element_id = %d AND start_key = "%s"`
-	deleteDoneRecordSQL       = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %d AND element_id = %d`
-=======
-	deleteRangesTable            = `gc_delete_range`
-	doneDeleteRangesTable        = `gc_delete_range_done`
-	loadDeleteRangeSQL           = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?`
-	recordDoneDeletedRangeSQL    = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
-	completeDeleteRangeSQL       = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
-	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id in (` // + idList + ")"
-	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
-	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
-	loadGlobalVars               = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
->>>>>>> 75f748568... ddl: migrate part of ddl package code from Execute/ExecRestricted to safe API (1) (#22670)
+	loadDeleteRangeSQL        = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?`
+	recordDoneDeletedRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
+	completeDeleteRangeSQL    = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
+	updateDeleteRangeSQL      = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
+	deleteDoneRecordSQL       = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
+	loadGlobalVars            = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -75,14 +60,17 @@ func LoadDoneDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []De
 }
 
 func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	rs, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), loadDeleteRangeSQL, table, safePoint)
-	if rs != nil {
-		defer terror.Call(rs.Close)
+	var buf strings.Builder
+	sqlexec.MustFormatSQL(&buf, loadDeleteRangeSQL, table, safePoint)
+	rss, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), buf.String())
+	if len(rss) > 0 {
+		defer terror.Call(rss[0].Close)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	rs := rss[0]
 	req := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
 	for {
@@ -117,7 +105,9 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 // CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
 // NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+	var buf strings.Builder
+	sqlexec.MustFormatSQL(&buf, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), buf.String())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -127,34 +117,17 @@ func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 
 // RemoveFromGCDeleteRange is exported for ddl pkg to use.
 func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) error {
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), completeDeleteRangeSQL, jobID, elementID)
-	return errors.Trace(err)
-}
-
-<<<<<<< HEAD
-=======
-// RemoveMultiFromGCDeleteRange is exported for ddl pkg to use.
-func RemoveMultiFromGCDeleteRange(ctx sessionctx.Context, jobID int64, elementIDs []int64) error {
 	var buf strings.Builder
-	buf.WriteString(completeDeleteMultiRangesSQL)
-	paramIDs := make([]interface{}, 0, 1+len(elementIDs))
-	paramIDs = append(paramIDs, jobID)
-	for i, elementID := range elementIDs {
-		if i > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString("%?")
-		paramIDs = append(paramIDs, elementID)
-	}
-	buf.WriteString(")")
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), buf.String(), paramIDs...)
+	sqlexec.MustFormatSQL(&buf, completeDeleteRangeSQL, jobID, elementID)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), buf.String())
 	return errors.Trace(err)
 }
 
->>>>>>> 75f748568... ddl: migrate part of ddl package code from Execute/ExecRestricted to safe API (1) (#22670)
 // DeleteDoneRecord removes a record from gc_delete_range_done table.
 func DeleteDoneRecord(ctx sessionctx.Context, dr DelRangeTask) error {
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), deleteDoneRecordSQL, dr.JobID, dr.ElementID)
+	var buf strings.Builder
+	sqlexec.MustFormatSQL(&buf, deleteDoneRecordSQL, dr.JobID, dr.ElementID)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), buf.String())
 	return errors.Trace(err)
 }
 
@@ -162,7 +135,9 @@ func DeleteDoneRecord(ctx sessionctx.Context, dr DelRangeTask) error {
 func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
+	var buf strings.Builder
+	sqlexec.MustFormatSQL(&buf, updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), buf.String())
 	return errors.Trace(err)
 }
 
@@ -180,26 +155,15 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 	if sctx, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		var buf strings.Builder
-		buf.WriteString(loadGlobalVars)
-		paramNames := make([]interface{}, 0, len(varNames))
+		sqlexec.MustFormatSQL(&buf, loadGlobalVars)
 		for i, name := range varNames {
 			if i > 0 {
-				buf.WriteString(", ")
+				sqlexec.MustFormatSQL(&buf, ", ")
 			}
-			buf.WriteString("%?")
-			paramNames = append(paramNames, name)
+			sqlexec.MustFormatSQL(&buf, "%?", name)
 		}
-		buf.WriteString(")")
-		stmt, err := sctx.ParseWithParams(context.Background(), buf.String(), paramNames...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-<<<<<<< HEAD
-		sql := fmt.Sprintf(loadGlobalVarsSQL, nameList)
-		rows, _, err := sctx.ExecRestrictedSQL(ctx, sql)
-=======
-		rows, _, err := sctx.ExecRestrictedStmt(context.Background(), stmt)
->>>>>>> 75f748568... ddl: migrate part of ddl package code from Execute/ExecRestricted to safe API (1) (#22670)
+		sqlexec.MustFormatSQL(&buf, ")")
+		rows, _, err := sctx.ExecRestrictedSQL(ctx, buf.String())
 		if err != nil {
 			return errors.Trace(err)
 		}
