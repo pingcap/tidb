@@ -6647,3 +6647,77 @@ func (s *testSuite) TestIssue22201(c *C) {
 	tk.MustQuery("SELECT HEX(WEIGHT_STRING('ab' AS char(1000000000000000000)));").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1301 Result of weight_string() was larger than max_allowed_packet (67108864) - truncated"))
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
+	testcases := []struct {
+		name      string
+		sql       string
+		expectErr error
+	}{
+		{
+			name:      "ddl change before stale txn",
+			sql:       `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:03'`,
+			expectErr: errors.New("schema version changed after the staleness startTS"),
+		},
+		{
+			name: "ddl change before stale txn",
+			sql: fmt.Sprintf("START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '%v'",
+				time.Now().Truncate(3*time.Second).Format("2006-01-02 15:04:05")),
+			expectErr: errors.New(".*schema version changed after the staleness startTS.*"),
+		},
+		{
+			name:      "ddl change before stale txn",
+			sql:       `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:03'`,
+			expectErr: nil,
+		},
+	}
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	for _, testcase := range testcases {
+		check := func() {
+			if testcase.expectErr != nil {
+				c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(true)"), IsNil)
+				defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+			} else {
+				c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
+				defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+			}
+			_, err := tk.Exec(testcase.sql)
+			if testcase.expectErr != nil {
+				c.Assert(err, NotNil)
+				c.Assert(err.Error(), Matches, testcase.expectErr.Error())
+			} else {
+				c.Assert(err, IsNil)
+			}
+		}
+		check()
+	}
+}
+
+func (s *testSuiteP1) TestIssue22941(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists m, mp")
+	tk.MustExec(`CREATE TABLE m (
+		mid varchar(50) NOT NULL,
+		ParentId varchar(50) DEFAULT NULL,
+		PRIMARY KEY (mid),
+		KEY ind_bm_parent (ParentId,mid)
+	)`)
+
+	tk.MustExec(`CREATE TABLE mp (
+		mpid bigint(20) unsigned NOT NULL DEFAULT '0',
+		mid varchar(50) DEFAULT NULL COMMENT '模块主键',
+	PRIMARY KEY (mpid)
+	);`)
+
+	tk.MustExec(`insert into mp values("1","1");`)
+	tk.MustExec(`insert into m values("0", "0");`)
+	rs := tk.MustQuery(`SELECT ( SELECT COUNT(1) FROM m WHERE ParentId = c.mid ) expand,  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
+	rs.Check(testkit.Rows("1 <nil> 1 0"))
+
+	rs = tk.MustQuery(`SELECT  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
+	rs.Check(testkit.Rows("<nil> 1 0"))
+}
+>>>>>>> df01fcc1f... planner, executor: reset NotNullFlag when merge schema for join (#22955)
