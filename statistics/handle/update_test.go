@@ -2050,7 +2050,7 @@ func (s *testStatsSuite) TestFeedbackCounter(c *C) {
 	c.Assert(subtraction(newNum, oldNum), Equals, 20)
 }
 
-func (s *testStatsSuite2) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
+func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testkit.WithPruneMode(testKit, variable.DynamicOnly, func() {
