@@ -48,9 +48,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -122,13 +122,13 @@ type tikvHandlerTool struct {
 // newTikvHandlerTool checks and prepares for tikv handler.
 // It would panic when any error happens.
 func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
-	var tikvStore tikv.Storage
+	var tikvStore helper.Storage
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
 		panic("Invalid KvStore with illegal driver")
 	}
 
-	if tikvStore, ok = store.store.(tikv.Storage); !ok {
+	if tikvStore, ok = store.store.(helper.Storage); !ok {
 		panic("Invalid KvStore with illegal store")
 	}
 
@@ -1110,7 +1110,7 @@ func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 }
 
 func (h tableHandler) getPDAddr() ([]string, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}

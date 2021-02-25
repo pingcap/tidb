@@ -66,7 +66,6 @@ type pstmtPlanCacheKey struct {
 	database             string
 	connID               uint64
 	pstmtID              uint32
-	snapshot             uint64
 	schemaVersion        int64
 	sqlMode              mysql.SQLMode
 	timezoneOffset       int
@@ -89,7 +88,6 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
-		key.hash = codec.EncodeInt(key.hash, int64(key.snapshot))
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
@@ -133,7 +131,6 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 		database:             sessionVars.CurrentDB,
 		connID:               sessionVars.ConnectionID,
 		pstmtID:              pstmtID,
-		snapshot:             sessionVars.SnapshotTS,
 		schemaVersion:        schemaVersion,
 		sqlMode:              sessionVars.SQLMode,
 		timezoneOffset:       timezoneOffset,

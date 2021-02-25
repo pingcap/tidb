@@ -14,6 +14,8 @@
 package mockstore
 
 import (
+	"crypto/tls"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
@@ -31,5 +33,41 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		Client: pdClient,
 	}
 
-	return tikv.NewTestTiKVStore(client, pdClient, opts.clientHijacker, opts.pdClientHijacker, opts.txnLocalLatches)
+	kvstore, err := tikv.NewTestTiKVStore(client, pdClient, opts.clientHijacker, opts.pdClientHijacker, opts.txnLocalLatches)
+	if err != nil {
+		return nil, err
+	}
+	return &mockStorage{KVStore: kvstore}, nil
+}
+
+// Wraps tikv.KVStore and make it compatible with kv.Storage.
+type mockStorage struct {
+	*tikv.KVStore
+}
+
+// NewMockStorage wraps tikv.KVStore as kv.Storage.
+func NewMockStorage(tikvStore *tikv.KVStore) kv.Storage {
+	return &mockStorage{
+		KVStore: tikvStore,
+	}
+}
+
+func (s *mockStorage) EtcdAddrs() ([]string, error) {
+	return nil, nil
+}
+
+func (s *mockStorage) TLSConfig() *tls.Config {
+	return nil
+}
+
+func (s *mockStorage) StartGCWorker() error {
+	return nil
+}
+
+func (s *mockStorage) Name() string {
+	return "mock-storage"
+}
+
+func (s *mockStorage) Describe() string {
+	return ""
 }
