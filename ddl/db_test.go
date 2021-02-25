@@ -4274,12 +4274,12 @@ func (s *testDBSuite3) TestIssue22307(c *C) {
 	s.mustExec(tk, c, "create table t (a int, b int)")
 	s.mustExec(tk, c, "insert into t values(1, 1);")
 
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var checkErr1, checkErr2 error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		switch job.SchemaState {
-		case model.StateWriteOnly:
-		default:
+		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
 		_, checkErr1 = tk.Exec("update t set a = 3 where b = 1;")
