@@ -494,11 +494,6 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
-}
-
-// StorageEx extended the interface Storage.
-type StorageEx interface {
-	Storage
 	// GetMemCache return memory mamager of the storage.
 	GetMemCache() MemManager
 }
