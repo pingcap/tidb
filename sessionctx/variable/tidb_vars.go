@@ -703,6 +703,7 @@ var FeatureSwitchVariables = []string{
 	TiDBEnableAsyncCommit,
 	TiDBEnable1PC,
 	TiDBGuaranteeLinearizability,
+	TiDBEnableClusteredIndex,
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
