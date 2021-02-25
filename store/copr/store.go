@@ -45,7 +45,9 @@ func NewStore(kvStore *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (
 
 // Close releases resources allocated for coprocessor.
 func (s *Store) Close() {
-	s.coprCache.cache.Close()
+	if s.coprCache != nil {
+		s.coprCache.cache.Close()
+	}
 }
 
 func (s *Store) nextReplicaReadSeed() uint32 {
