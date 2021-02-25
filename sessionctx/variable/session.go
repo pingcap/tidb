@@ -854,6 +854,7 @@ const (
 	Dynamic PartitionPruneMode = "dynamic"
 
 	// Don't use out-of-date mode.
+
 	// StaticOnly is out-of-date.
 	StaticOnly PartitionPruneMode = "static-only"
 	// DynamicOnly is out-of-date.
@@ -872,6 +873,7 @@ func (p PartitionPruneMode) Valid() bool {
 	}
 }
 
+// Update updates out-of-date PruneMode.
 func (p PartitionPruneMode) Update() PartitionPruneMode {
 	switch p {
 	case StaticOnly, StaticButPrepareDynamic:
