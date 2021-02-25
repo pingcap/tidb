@@ -324,7 +324,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		// try to get the task with an enforced sort.
 		newProp.SortItems = []property.SortItem{}
 		newProp.ExpectedCnt = math.MaxFloat64
-		newProp.PartitionCols = nil
+		newProp.PartitionExprs = nil
 		newProp.PartitionTp = property.AnyType
 		var hintCanWork bool
 		plansNeedEnforce, hintCanWork = p.self.exhaustPhysicalPlans(newProp)

@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -69,8 +70,8 @@ type PhysicalProperty struct {
 	// indicates that whether we are allowed to add an enforcer.
 	CanAddEnforcer bool
 
-	// If the partition type is hash, the data should be reshuffled by partition cols.
-	PartitionCols []*expression.Column
+	// If the partition type is hash, the data should be reshuffled by partition expressions.
+	PartitionExprs []expression.Expression
 
 	// which types the exchange sender belongs to, only take effects when it's a mpp task.
 	PartitionTp PartitionType
@@ -96,15 +97,15 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 }
 
 // IsSubsetOf check if the keys can match the needs of partition.
-func (p *PhysicalProperty) IsSubsetOf(keys []*expression.Column) []int {
-	if len(p.PartitionCols) > len(keys) {
+func (p *PhysicalProperty) IsSubsetOf(ctx sessionctx.Context, keys []expression.Expression) []int {
+	if len(p.PartitionExprs) > len(keys) {
 		return nil
 	}
 	matches := make([]int, 0, len(keys))
-	for _, partCol := range p.PartitionCols {
+	for _, partExpr := range p.PartitionExprs {
 		found := false
 		for i, key := range keys {
-			if partCol.Equal(nil, key) {
+			if partExpr.Equal(nil, key) {
 				found = true
 				matches = append(matches, i)
 				break
@@ -184,7 +185,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 	}
 	if p.TaskTp == MppTaskType {
 		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.PartitionTp))
-		for _, col := range p.PartitionCols {
+		for _, col := range p.PartitionExprs {
 			p.hashcode = append(p.hashcode, col.HashCode(nil)...)
 		}
 	}
@@ -200,11 +201,11 @@ func (p *PhysicalProperty) String() string {
 // property, specifically, `CanAddEnforcer` should not be included.
 func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 	prop := &PhysicalProperty{
-		SortItems:     p.SortItems,
-		TaskTp:        p.TaskTp,
-		ExpectedCnt:   p.ExpectedCnt,
-		PartitionTp:   p.PartitionTp,
-		PartitionCols: p.PartitionCols,
+		SortItems:      p.SortItems,
+		TaskTp:         p.TaskTp,
+		ExpectedCnt:    p.ExpectedCnt,
+		PartitionTp:    p.PartitionTp,
+		PartitionExprs: p.PartitionExprs,
 	}
 	return prop
 }

@@ -858,7 +858,7 @@ type PhysicalExchangeSender struct {
 
 	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
-	HashCols     []*expression.Column
+	HashExprs    []expression.Expression
 	// Tasks is the mpp task for current PhysicalExchangeSender
 	Tasks []*kv.MPPTask
 

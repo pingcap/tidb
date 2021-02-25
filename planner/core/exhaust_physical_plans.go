@@ -1698,6 +1698,39 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	return joins, true
 }
 
+func (p *LogicalJoin) tryGetDecimalCastExpr(col *expression.Column, scale, prec int) expression.Expression {
+	if col.GetType().Decimal != scale || col.GetType().Flen != prec {
+		newTp := types.NewFieldType(mysql.TypeNewDecimal)
+		newTp.Decimal = scale
+		newTp.Flen = prec
+		return expression.BuildCastFunction(p.ctx, col, newTp)
+	}
+	return col
+}
+
+func (p *LogicalJoin) getTiFlashPartitionKeyForShuffledHashJoin(lKeys []*expression.Column, rKeys []*expression.Column) (lExprs []expression.Expression, rExprs []expression.Expression) {
+	for i := 0; i < len(lKeys); i++ {
+		lTp := lKeys[i].GetType()
+		rTp := rKeys[i].GetType()
+		if lTp.Tp == types.KindMysqlDecimal && rTp.Tp == types.KindMysqlDecimal {
+			maxPrec := int(math.Max(float64(lTp.Flen), float64(rTp.Flen)))
+			maxScale := int(math.Max(float64(lTp.Decimal), float64(rTp.Decimal)))
+			if lTp.Flen+maxScale-lTp.Decimal > maxPrec {
+				maxPrec = lTp.Flen + maxScale - lTp.Decimal
+			}
+			if rTp.Flen+maxScale-rTp.Decimal > maxPrec {
+				maxPrec = lTp.Flen + maxScale - rTp.Decimal
+			}
+			lExprs = append(lExprs, p.tryGetDecimalCastExpr(lKeys[i], maxScale, maxPrec))
+			rExprs = append(rExprs, p.tryGetDecimalCastExpr(rKeys[i], maxScale, maxPrec))
+		} else {
+			lExprs = append(lExprs, lKeys[i])
+			rExprs = append(rExprs, rKeys[i])
+		}
+	}
+	return lExprs, rExprs
+}
+
 func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBCJ bool) []PhysicalPlan {
 	if !prop.IsEmpty() {
 		return nil
@@ -1749,8 +1782,12 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			if preferredBuildIndex == 1 {
 				hashKeys = lkeys
 			}
-			if matches := prop.IsSubsetOf(hashKeys); len(matches) != 0 {
-				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.HashType, PartitionCols: prop.PartitionCols}
+			hashExprs := make([]expression.Expression, 0, len(hashKeys))
+			for _, key := range hashKeys {
+				hashExprs = append(hashExprs, key)
+			}
+			if matches := prop.IsSubsetOf(p.ctx, hashExprs); len(matches) != 0 {
+				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.HashType, PartitionExprs: prop.PartitionExprs}
 			} else {
 				return nil
 			}
@@ -1758,19 +1795,20 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.AnyType}
 		}
 	} else {
+		lExprs, rExprs := p.getTiFlashPartitionKeyForShuffledHashJoin(lkeys, rkeys)
 		if prop.PartitionTp == property.HashType {
 			var matches []int
-			if matches = prop.IsSubsetOf(lkeys); len(matches) == 0 {
-				matches = prop.IsSubsetOf(rkeys)
+			if matches = prop.IsSubsetOf(p.ctx, lExprs); len(matches) == 0 {
+				matches = prop.IsSubsetOf(p.ctx, rExprs)
 			}
 			if len(matches) == 0 {
 				return nil
 			}
-			lkeys = chooseSubsetOfJoinKeys(lkeys, matches)
-			rkeys = chooseSubsetOfJoinKeys(rkeys, matches)
+			lExprs = chooseSubsetOfExprs(lExprs, matches)
+			rExprs = chooseSubsetOfExprs(rExprs, matches)
 		}
-		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: lkeys, CanAddEnforcer: true}
-		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: rkeys, CanAddEnforcer: true}
+		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionExprs: lExprs, CanAddEnforcer: true}
+		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionExprs: rExprs, CanAddEnforcer: true}
 	}
 	join := PhysicalHashJoin{
 		basePhysicalJoin: baseJoin,
@@ -1781,8 +1819,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	return []PhysicalPlan{join}
 }
 
-func chooseSubsetOfJoinKeys(keys []*expression.Column, matches []int) []*expression.Column {
-	newKeys := make([]*expression.Column, 0, len(matches))
+func chooseSubsetOfExprs(keys []expression.Expression, matches []int) []expression.Expression {
+	newKeys := make([]expression.Expression, 0, len(matches))
 	for _, id := range matches {
 		newKeys = append(newKeys, keys[id])
 	}
@@ -2254,19 +2292,19 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	if prop.PartitionTp == property.BroadcastType {
 		return nil
 	}
-	partitionCols := la.GetGroupByCols()
-	if len(partitionCols) != 0 {
+	if len(la.GroupByItems) > 0 {
+		// Check if a subset of group by columns can suffice.
+		partitionExprs := make([]expression.Expression, 0, len(la.GroupByItems))
+		copy(partitionExprs, la.GroupByItems)
 		if prop.PartitionTp == property.HashType {
-			if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
-				partitionCols = chooseSubsetOfJoinKeys(partitionCols, matches)
-			} else {
+			if matches := prop.IsSubsetOf(la.ctx, partitionExprs); len(matches) != len(partitionExprs) {
 				// do not satisfy the property of its parent, so return empty
 				return nil
 			}
 		}
 		// TODO: permute various partition columns from group-by columns
 		// 1-phase agg
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionExprs: partitionExprs, CanAddEnforcer: true}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp1Phase
@@ -2276,7 +2314,6 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		agg = NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
-		agg.MppPartitionCols = partitionCols
 		hashAggs = append(hashAggs, agg)
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {

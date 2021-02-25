@@ -868,7 +868,7 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "Broadcast")
 	case tipb.ExchangeType_Hash:
 		fmt.Fprintf(buffer, "HashPartition")
-		fmt.Fprintf(buffer, ", Hash Cols: %s", expression.ExplainColumnList(p.HashCols))
+		fmt.Fprintf(buffer, ", Hash Exprs: %s", expression.ExplainExpressionList(p.HashExprs, p.Schema()))
 	}
 	if len(p.Tasks) > 0 {
 		fmt.Fprintf(buffer, ", tasks: [")

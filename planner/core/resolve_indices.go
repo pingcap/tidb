@@ -358,12 +358,11 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	for i, col := range p.HashCols {
-		colExpr, err1 := col.ResolveIndices(p.children[0].Schema())
-		if err1 != nil {
-			return err1
+	for i, expr := range p.HashExprs {
+		p.HashExprs[i], err = expr.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
 		}
-		p.HashCols[i], _ = colExpr.(*expression.Column)
 	}
 	return err
 }

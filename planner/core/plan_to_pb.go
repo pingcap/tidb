@@ -241,18 +241,14 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		encodedTask = append(encodedTask, encodedStr)
 	}
 
-	hashCols := make([]expression.Expression, 0, len(e.HashCols))
-	for _, col := range e.HashCols {
-		hashCols = append(hashCols, col)
-	}
-	hashColPb, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, hashCols, ctx.GetClient())
+	hashExprsPb, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, e.HashExprs, ctx.GetClient())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	ecExec := &tipb.ExchangeSender{
 		Tp:              e.ExchangeType,
 		EncodedTaskMeta: encodedTask,
-		PartitionKeys:   hashColPb,
+		PartitionKeys:   hashExprsPb,
 		Child:           child,
 	}
 	executorID := e.ExplainID().String()
