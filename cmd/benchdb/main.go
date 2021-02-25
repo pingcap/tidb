@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store"
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -55,7 +56,7 @@ func main() {
 	flag.PrintDefaults()
 	err := logutil.InitZapLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
-	err = store.Register("tikv", store.TiKVDriver{})
+	err = store.Register("tikv", driver.TiKVDriver{})
 	terror.MustNil(err)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
