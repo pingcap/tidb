@@ -64,7 +64,6 @@ type tikvSnapshot struct {
 	isStaleness     bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	matchStoreLabels []*metapb.StoreLabel
-	minCommitTSPushed
 	resolvedLocks   *util.TSSet
 
 	// Cache the result of BatchGet.
