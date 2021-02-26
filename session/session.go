@@ -107,16 +107,6 @@ type Session interface {
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
-	// ParseWithParams is the parameterized version of Parse: it will try to prevent injection under utf8mb4.
-	// It works like printf() in c, there are following format specifiers:
-	// 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
-	// 2. %%: output %
-	// 3. %n: for identifiers, for example ("use %n", db)
-	//
-	// Attention: it does not prevent you from doing parse("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
-	// One argument should be a standalone entity. It should not "concat" with other placeholders and characters.
-	// This function only saves you from processing potentially unsafe parameters.
-	ParseWithParams(ctx context.Context, sql string, args ...interface{}) ([]ast.StmtNode, error)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
@@ -962,15 +952,17 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]c
 	}
 }
 
-// getExecRet executes restricted sql and the result is one column.
-// It returns a string value.
-func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error) {
-	rows, fields, err := s.ExecRestrictedSQL(sql)
+func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
+	stmt, err := s.ParseWithParams(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
+	if err != nil {
+		return "", err
+	}
+	rows, fields, err := s.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return "", err
 	}
 	if len(rows) == 0 {
-		return "", executor.ErrResultIsEmpty
+		return "", errResultIsEmpty
 	}
 	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
 	value, err := d.ToString()
@@ -985,9 +977,11 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	if s.Value(sessionctx.Initing) != nil {
 		return nil, nil
 	}
-	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
-	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
-	rows, _, err := s.ExecRestrictedSQL(sql)
+	stmt, err := s.ParseWithParams(context.TODO(), `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %n.%n`, mysql.SystemDB, mysql.GlobalVariablesTable)
+	if err != nil {
+		return nil, err
+	}
+	rows, _, err := s.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -1008,11 +1002,9 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name)
-	sysVar, err := s.getExecRet(s, sql)
+	sysVar, err := s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
 	if err != nil {
-		if executor.ErrResultIsEmpty.Equal(err) {
+		if errResultIsEmpty.Equal(err) {
 			sv := variable.GetSysVar(name)
 			if sv != nil {
 				return sv.Value, nil
@@ -1049,15 +1041,21 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	}
 	name = strings.ToLower(name)
 	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
-	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
-	_, _, err = s.ExecRestrictedSQL(sql)
+	stmt, err := s.ParseWithParams(context.TODO(), "REPLACE %n.%n VALUES (%?, %?)", mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+	if err != nil {
+		return err
+	}
+	_, _, err = s.ExecRestrictedStmt(context.TODO(), stmt)
 	return err
 }
 
 func (s *session) ensureFullGlobalStats() error {
-	rows, _, err := s.ExecRestrictedSQL(`select count(1) from information_schema.tables t where t.create_options = 'partitioned'
-		and not exists (select 1 from mysql.stats_meta m where m.table_id = t.tidb_table_id)`)
+	stmt, err := s.ParseWithParams(context.TODO(), `select count(1) from information_schema.tables t where t.create_options = 'partitioned'
+	and not exists (select 1 from mysql.stats_meta m where m.table_id = t.tidb_table_id)`)
+	if err != nil {
+		return err
+	}
+	rows, _, err := s.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return err
 	}
@@ -1148,15 +1146,12 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 
-	stmtNodes, err := s.ParseWithParams(ctx, sql, args...)
+	stmtNode, err := s.ParseWithParams(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
-	if len(stmtNodes) != 1 {
-		return nil, errors.New("Executing multiple statements internally is not supported")
-	}
 
-	rs, err = s.ExecuteStmt(ctx, stmtNodes[0])
+	rs, err = s.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
@@ -1228,8 +1223,10 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 }
 
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
-func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) ([]ast.StmtNode, error) {
-	sql, err := EscapeSQL(sql, args...)
+// Note that it will not do escaping if no variable arguments are passed.
+func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+	var err error
+	sql, err = sqlexec.EscapeSQL(sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1249,6 +1246,9 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 		parseStartTime = time.Now()
 		stmts, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+	}
+	if len(stmts) != 1 {
+		err = errors.New("run multiple statements internally is not supported")
 	}
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1272,7 +1272,86 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
-	return stmts, nil
+	return stmts[0], nil
+}
+
+// ExecRestrictedStmt implements RestrictedSQLExecutor interface.
+func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
+	[]chunk.Row, []*ast.ResultField, error) {
+	var execOption sqlexec.ExecOption
+	for _, opt := range opts {
+		opt(&execOption)
+	}
+	// Use special session to execute the sql.
+	tmp, err := s.sysSessionPool().Get()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer s.sysSessionPool().Put(tmp)
+	se := tmp.(*session)
+
+	startTime := time.Now()
+	// The special session will share the `InspectionTableCache` with current session
+	// if the current session in inspection mode.
+	if cache := s.sessionVars.InspectionTableCache; cache != nil {
+		se.sessionVars.InspectionTableCache = cache
+		defer func() { se.sessionVars.InspectionTableCache = nil }()
+	}
+	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
+		se.sessionVars.OptimizerUseInvisibleIndexes = true
+		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
+	}
+	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
+	defer func() {
+		if !execOption.IgnoreWarning {
+			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
+				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+				s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
+			}
+		}
+		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
+	}()
+
+	if execOption.SnapshotTS != 0 {
+		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(execOption.SnapshotTS)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+			return nil, nil, err
+		}
+		defer func() {
+			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
+			}
+			se.sessionVars.SnapshotInfoschema = nil
+		}()
+	}
+
+	// for analyze stmt we need let worker session follow user session that executing stmt.
+	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
+	metrics.SessionRestrictedSQLCounter.Inc()
+
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	rs, err := se.ExecuteStmt(ctx, stmtNode)
+	if err != nil {
+		se.sessionVars.StmtCtx.AppendError(err)
+	}
+	if rs == nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if closeErr := rs.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+	var rows []chunk.Row
+	rows, err = drainRecordSet(ctx, se, rs)
+	if err != nil {
+		return nil, nil, err
+	}
+	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+	return rows, rs.Fields(), err
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
@@ -1922,11 +2001,6 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	return s, nil
 }
 
-// loadSystemTZ loads systemTZ from mysql.tidb
-func loadSystemTZ(se *session) (string, error) {
-	return loadParameter(se, "system_tz")
-}
-
 // loadCollationParameter loads collation parameter from mysql.tidb
 func loadCollationParameter(se *session) (bool, error) {
 	para, err := loadParameter(se, tidbNewCollationEnabled)
@@ -1982,25 +2056,7 @@ var (
 
 // loadParameter loads read-only parameter from mysql.tidb
 func loadParameter(se *session, name string) (string, error) {
-	sql := "select variable_value from mysql.tidb where variable_name = '" + name + "'"
-	rs, errLoad := se.ExecuteInternal(context.Background(), sql)
-	if errLoad != nil {
-		return "", errLoad
-	}
-	// the record of mysql.tidb under where condition: variable_name = $name should shall only be one.
-	defer func() {
-		if err := rs.Close(); err != nil {
-			logutil.BgLogger().Error("close result set error", zap.Error(err))
-		}
-	}()
-	req := rs.NewChunk()
-	if err := rs.Next(context.Background(), req); err != nil {
-		return "", err
-	}
-	if req.NumRows() == 0 {
-		return "", errResultIsEmpty
-	}
-	return req.GetRow(0).GetString(0), nil
+	return se.getTableValue(context.TODO(), mysql.TiDBTable, name)
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
@@ -2031,7 +2087,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 	// get system tz from mysql.tidb
-	tz, err := loadSystemTZ(se)
+	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
 	if err != nil {
 		return nil, err
 	}
