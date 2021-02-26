@@ -789,6 +789,15 @@ partition by range (a) (
 		testkit.Rows("4 1 4 0", "2 1 2 1", "2 0 2 1"))
 	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
 		testkit.Rows("4 1 0 0", "2 1 0 0", "2 0 0 0"))
+
+	tk.MustQuery("show stats_buckets where is_index=0").Check(
+		testkit.Rows("test t global a 0 0 2 1 1 5 0", "test t global a 0 1 4 1 5 15 0",
+			"test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 5 5 0",
+			"test t p1 a 0 0 1 1 11 11 0", "test t p1 a 0 1 2 1 15 15 0"))
+	tk.MustQuery("show stats_buckets where is_index=1").Check(
+		testkit.Rows("test t global a 1 0 2 1 1 5 0", "test t global a 1 1 4 1 5 15 0",
+			"test t p0 a 1 0 1 1 1 1 0", "test t p0 a 1 1 2 1 5 5 0",
+			"test t p1 a 1 0 1 1 11 11 0", "test t p1 a 1 1 2 1 15 15 0"))
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
