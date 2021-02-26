@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -6412,6 +6413,13 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustExec("insert into t1 values ('ß', 's');")
 	tk.MustExec("insert into t2 values ('s', 's')")
 	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_unicode_ci where t1.a = 's';").Check(testkit.Rows("ß s <nil> <nil>"))
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a char(10) collate utf8mb4_general_ci, index (a));")
+	tk.MustExec("create table t2(a char(10) collate utf8_bin, index (a));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("insert into t2 values ('A');")
+	tk.MustExec("set names utf8 collate utf8_general_ci;")
+	tk.MustQuery("select * from t1, t2 where t1.a=t2.a and t1.a= 'a';").Check(testkit.Rows("a A"))
 }
 
 func (s *testIntegrationSuite2) TestIssue17791(c *C) {
@@ -8508,10 +8516,13 @@ func (s *testIntegrationSuite) TestIssue12209(c *C) {
 		testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestCrossDCQuery(c *C) {
+func (s *testIntegrationSerialSuite) TestCrossDCQuery(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
@@ -8554,6 +8565,7 @@ PARTITION BY RANGE (c) (
 	testcases := []struct {
 		name      string
 		txnScope  string
+		zone      string
 		sql       string
 		expectErr error
 	}{
@@ -8573,49 +8585,59 @@ PARTITION BY RANGE (c) (
 		//},
 		{
 			name:      "cross dc read to sh by holding bj, PointGet",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1 where c = 1",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to sh by holding bj, IndexLookUp",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1 use index (idx_d) where c < 5 and d < 5;",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to sh by holding bj, IndexMerge",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 where c <5 and (d =5 or e=5);",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to sh by holding bj, TableReader",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1 where c < 6",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to global by holding bj",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "read sh dc by holding sh",
-			txnScope:  "sh",
+			txnScope:  "local",
+			zone:      "sh",
 			sql:       "select * from t1 where c < 6",
 			expectErr: nil,
 		},
 		{
 			name:      "read sh dc by holding global",
 			txnScope:  "global",
+			zone:      "",
 			sql:       "select * from t1 where c < 6",
 			expectErr: nil,
 		},
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		config.GetGlobalConfig().Labels = map[string]string{
+			"zone": testcase.zone,
+		}
 		_, err = tk.Exec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		c.Assert(err, IsNil)
 		res, err := tk.Exec(testcase.sql)
