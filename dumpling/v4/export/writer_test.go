@@ -9,6 +9,8 @@ import (
 	"os"
 	"path"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
@@ -27,7 +29,7 @@ func (s *testWriterSuite) newWriter(conf *Config, c *C) *Writer {
 	c.Assert(err, IsNil)
 	conn, err := db.Conn(context.Background())
 	c.Assert(err, IsNil)
-	return NewWriter(context.Background(), 0, conf, conn, extStore)
+	return NewWriter(tcontext.Background(), 0, conf, conn, extStore)
 }
 
 func (s *testWriterSuite) TestWriteDatabaseMeta(c *C) {

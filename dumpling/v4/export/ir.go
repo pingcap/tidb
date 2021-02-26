@@ -82,14 +82,6 @@ type MetaIR interface {
 	MetaSQL() string
 }
 
-// Logger used for logging when export.
-type Logger interface {
-	Debug(format string, args ...interface{})
-	Info(format string, args ...interface{})
-	Warn(format string, args ...interface{})
-	Error(format string, args ...interface{})
-}
-
 func setTableMetaFromRows(rows *sql.Rows) (TableMeta, error) {
 	tps, err := rows.ColumnTypes()
 	if err != nil {

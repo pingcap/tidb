@@ -637,6 +637,7 @@ github.com/pingcap/check v0.0.0-20191107115940-caf2b9e6ccf4/go.mod h1:PYMCGwN0JH
 github.com/pingcap/check v0.0.0-20191216031241-8a5a85928f12/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
 github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712 h1:R8gStypOBmpnHEx1qi//SaqxJVI4inOqljg/Aj5/390=
 github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
+github.com/pingcap/dm v1.1.0-alpha.0.20200521025928-83063141c5fd h1:j1xRUlwfdEgmTwBDGw7DB3wyE+9nQj99BtrQfhz+97M=
 github.com/pingcap/dm v1.1.0-alpha.0.20200521025928-83063141c5fd/go.mod h1:I5AAhwb0JPfLZINukML5VU9rB6mCcVA/Jq5OFFtMuEk=
 github.com/pingcap/dumpling v0.0.0-20200423082233-887d037b5b5c/go.mod h1:VJTcnA0MLL9tzDceTDoRh3k5UnOq9Hk6wh/ATo+B8I8=
 github.com/pingcap/errcode v0.0.0-20180921232412-a1a7271709d9/go.mod h1:4b2X8xSqxIroj/IZ9MX/VGZhAwc11wB9wRIzHvz6SeM=

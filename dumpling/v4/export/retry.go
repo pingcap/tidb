@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
+
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-tools/pkg/dbutil"
 	"go.uber.org/zap"
-
-	"github.com/pingcap/dumpling/v4/log"
 )
 
 const (
@@ -64,14 +64,16 @@ func (b *dumpChunkBackoffer) Attempt() int {
 	return b.attempt
 }
 
-func newLockTablesBackoffer(blockList map[string]map[string]interface{}) *lockTablesBackoffer {
+func newLockTablesBackoffer(tctx *tcontext.Context, blockList map[string]map[string]interface{}) *lockTablesBackoffer {
 	return &lockTablesBackoffer{
+		tctx:      tctx,
 		attempt:   lockTablesRetryTime,
 		blockList: blockList,
 	}
 }
 
 type lockTablesBackoffer struct {
+	tctx      *tcontext.Context
 	attempt   int
 	blockList map[string]map[string]interface{}
 }
@@ -82,7 +84,7 @@ func (b *lockTablesBackoffer) NextBackoff(err error) time.Duration {
 		b.attempt--
 		db, table, err := getTableFromMySQLError(mysqlErr.Message)
 		if err != nil {
-			log.Error("retry lock tables meet error", zap.Error(err))
+			b.tctx.L().Error("retry lock tables meet error", zap.Error(err))
 			b.attempt = 0
 			return 0
 		}
