@@ -3589,11 +3589,10 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(stmts, HasLen, 1)
 
 	var sb strings.Builder
-	ctx := format.NewRestoreCtx(0, &sb)
+	ctx := format.NewRestoreCtx(format.RestoreStringDoubleQuotes, &sb)
 	err = stmts[0].Restore(ctx)
 	c.Assert(err, IsNil)
-	// FIXME: well... so the restore function is vulnerable...
-	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\xbf' OR 1=1 /* LIMIT 1")
+	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
 
 	// test invalid sql
 	_, err = se.ParseWithParams(context.Background(), "SELECT")
