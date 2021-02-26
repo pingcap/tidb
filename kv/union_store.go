@@ -15,8 +15,6 @@ package kv
 
 import (
 	"context"
-
-	"github.com/pingcap/parser/model"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a MemBuffer for buffered write.
@@ -62,19 +60,17 @@ type Options interface {
 // unionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
-	memBuffer    *memdb
-	snapshot     Snapshot
-	idxNameCache map[int64]*model.TableInfo
-	opts         options
+	memBuffer *memdb
+	snapshot  Snapshot
+	opts      options
 }
 
 // NewUnionStore builds a new unionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
-		snapshot:     snapshot,
-		memBuffer:    newMemDB(),
-		idxNameCache: make(map[int64]*model.TableInfo),
-		opts:         make(map[Option]interface{}),
+		snapshot:  snapshot,
+		memBuffer: newMemDB(),
+		opts:      make(map[Option]interface{}),
 	}
 }
 
@@ -136,14 +132,6 @@ func (us *unionStore) HasPresumeKeyNotExists(k Key) bool {
 // DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
 func (us *unionStore) UnmarkPresumeKeyNotExists(k Key) {
 	us.memBuffer.UpdateFlags(k, DelPresumeKeyNotExists)
-}
-
-func (us *unionStore) GetTableInfo(id int64) *model.TableInfo {
-	return us.idxNameCache[id]
-}
-
-func (us *unionStore) CacheTableInfo(id int64, info *model.TableInfo) {
-	us.idxNameCache[id] = info
 }
 
 // SetOption implements the unionStore SetOption interface.
