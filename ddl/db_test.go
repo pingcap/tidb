@@ -6540,7 +6540,7 @@ func (s *testDBSuite4) TestCreateTableWithDecimalWithDoubleZero(c *C) {
 func (s *testDBSuite4) TestIssue22207(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly;")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("set @@session.tidb_enable_exchange_partition = 1;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("drop table if exists t2;")
