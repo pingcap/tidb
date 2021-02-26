@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -309,8 +308,8 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			enable = true
 		}
 	case model.PartitionTypeList:
-		// Partition by list is enabled only when tidb_enable_table_partition is 'nightly'.
-		enable = strings.EqualFold(ctx.GetSessionVars().EnableTablePartition, variable.Nightly)
+		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
+		enable = ctx.GetSessionVars().EnableListTablePartition
 	}
 
 	if !enable {
