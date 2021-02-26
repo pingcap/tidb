@@ -576,24 +576,6 @@ type mockReader struct {
 	currentIndex int
 }
 
-func (e *closureExecutor) scanFromMockReader(startKey, endKey []byte, limit int, startTS uint64, proc dbreader.ScanProcessor) error {
-	var cnt int
-	for e.mockReader.currentIndex < e.mockReader.chk.NumRows() {
-		err := proc.Process(nil, nil)
-		if err != nil {
-			if err == dbreader.ScanBreak {
-				break
-			}
-			return errors.Trace(err)
-		}
-		cnt++
-		if cnt >= limit {
-			break
-		}
-	}
-	return nil
-}
-
 func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	err := e.checkRangeLock()
 	if err != nil {
