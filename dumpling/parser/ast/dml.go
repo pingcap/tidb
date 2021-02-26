@@ -145,15 +145,27 @@ func NewCrossJoin(left, right ResultSetNode) (n *Join) {
 
 // Restore implements Node interface.
 func (n *Join) Restore(ctx *format.RestoreCtx) error {
-	if ctx.JoinLevel != 0 {
-		ctx.WritePlain("(")
-		defer ctx.WritePlain(")")
+	useCommaJoin := false
+	_, leftIsJoin := n.Left.(*Join)
+
+	if leftIsJoin && n.Left.(*Join).Right == nil {
+		if ts, ok := n.Left.(*Join).Left.(*TableSource); ok {
+			switch ts.Source.(type) {
+			case *SelectStmt, *SetOprStmt:
+				useCommaJoin = true
+			}
+		}
 	}
-	ctx.JoinLevel++
+
+	if leftIsJoin && !useCommaJoin {
+		ctx.WritePlain("(")
+	}
 	if err := n.Left.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore Join.Left")
 	}
-	ctx.JoinLevel--
+	if leftIsJoin && !useCommaJoin {
+		ctx.WritePlain(")")
+	}
 	if n.Right == nil {
 		return nil
 	}
@@ -169,13 +181,22 @@ func (n *Join) Restore(ctx *format.RestoreCtx) error {
 	if n.StraightJoin {
 		ctx.WriteKeyWord(" STRAIGHT_JOIN ")
 	} else {
-		ctx.WriteKeyWord(" JOIN ")
+		if useCommaJoin {
+			ctx.WritePlain(", ")
+		} else {
+			ctx.WriteKeyWord(" JOIN ")
+		}
 	}
-	ctx.JoinLevel++
+	_, rightIsJoin := n.Right.(*Join)
+	if rightIsJoin {
+		ctx.WritePlain("(")
+	}
 	if err := n.Right.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore Join.Right")
 	}
-	ctx.JoinLevel--
+	if rightIsJoin {
+		ctx.WritePlain(")")
+	}
 
 	if n.On != nil {
 		ctx.WritePlain(" ")
