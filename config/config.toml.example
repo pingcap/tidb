@@ -417,14 +417,6 @@ store-liveness-timeout = "5s"
 # If the size(in byte) of a transaction is large than `ttl-refreshed-txn-size`, it update the lock TTL during the 2PC.
 ttl-refreshed-txn-size = 33554432
 
-[tikv-client.async-commit]
-# The maximum allowed keys in an async commit transaction. Transactions with more keys than the limit
-# will be committed with normal 2PC way.
-keys-limit = 256
-# The maximum length total of keys in bytes. Transactions will be committed with the normal 2PC way
-# if the limit is exceeded.
-total-key-size-limit = 4096
-
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
 # reuses the result when corresponding data in TiKV is unchanged, on a region basis.
