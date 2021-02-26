@@ -421,7 +421,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 			endIdx++
 		}
 		digitsFrac = endIdx - strIdx - 1
-	} else if strIdx < len(str) && (str[strIdx] != 'e' && str[strIdx] != 'E') {
+	} else if strIdx < len(str) && (str[strIdx] != 'e' && str[strIdx] != 'E' && str[strIdx] != ' ') {
 		strErr = ErrBadNumber
 	} else {
 		digitsFrac = 0
