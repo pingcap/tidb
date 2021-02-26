@@ -1,0 +1,2 @@
+Running in native mode.
+ok  	github.com/pingcap/tidb/executor	144.923s	coverage: 78.5% of statements
