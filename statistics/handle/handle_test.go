@@ -787,8 +787,6 @@ partition by range (a) (
 	// distinct, null_count, tot_col_size should be the sum of their values in partition-stats, and correlation should be 0
 	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("4 1 4 0", "2 1 2 1", "2 0 2 1"))
-	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
-		testkit.Rows("4 1 0 0", "2 1 0 0", "2 0 0 0"))
 
 	tk.MustQuery("show stats_buckets where is_index=0").Check(
 		testkit.Rows("test t global a 0 0 2 1 1 5 0", "test t global a 0 1 4 1 5 15 0",

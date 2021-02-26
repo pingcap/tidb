@@ -426,10 +426,10 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		} else {
-			// For the index stats, we get the final NDV by accumulating the NDV of each partition histogram.
+			// For the index stats, we get the final NDV by accumulating the NDV of each bucket in the index histogram.
 			globalStatsNDV := int64(0)
-			for _, ph := range allHg[i] {
-				globalStatsNDV += ph.NDV
+			for _, bucket := range globalStats.Hg[i].Buckets {
+				globalStatsNDV += bucket.NDV
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
