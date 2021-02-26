@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package driver
 
 import (
 	"context"
@@ -48,32 +48,32 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-// DriverOption is a function that changes some config of Driver
-type DriverOption func(*TiKVDriver)
+// Option is a function that changes some config of Driver
+type Option func(*TiKVDriver)
 
 // WithSecurity changes the config.Security used by tikv driver.
-func WithSecurity(s config.Security) DriverOption {
+func WithSecurity(s config.Security) Option {
 	return func(c *TiKVDriver) {
 		c.security = s
 	}
 }
 
 // WithTiKVClientConfig changes the config.TiKVClient used by tikv driver.
-func WithTiKVClientConfig(client config.TiKVClient) DriverOption {
+func WithTiKVClientConfig(client config.TiKVClient) Option {
 	return func(c *TiKVDriver) {
 		c.tikvConfig = client
 	}
 }
 
 // WithTxnLocalLatches changes the config.TxnLocalLatches used by tikv driver.
-func WithTxnLocalLatches(t config.TxnLocalLatches) DriverOption {
+func WithTxnLocalLatches(t config.TxnLocalLatches) Option {
 	return func(c *TiKVDriver) {
 		c.txnLocalLatches = t
 	}
 }
 
 // WithPDClientConfig changes the config.PDClient used by tikv driver.
-func WithPDClientConfig(client config.PDClient) DriverOption {
+func WithPDClientConfig(client config.PDClient) Option {
 	return func(c *TiKVDriver) {
 		c.pdConfig = client
 	}
@@ -93,7 +93,7 @@ func (d TiKVDriver) Open(path string) (kv.Storage, error) {
 	return d.OpenWithOptions(path)
 }
 
-func (d *TiKVDriver) setDefaultAndOptions(options ...DriverOption) {
+func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 	tidbCfg := config.GetGlobalConfig()
 	d.pdConfig = tidbCfg.PDClient
 	d.security = tidbCfg.Security
@@ -106,7 +106,7 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...DriverOption) {
 
 // OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
 // unspecified options will be set to global config
-func (d TiKVDriver) OpenWithOptions(path string, options ...DriverOption) (kv.Storage, error) {
+func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
 	d.setDefaultAndOptions(options...)
@@ -161,6 +161,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...DriverOption) (kv.St
 		KVStore:   s,
 		etcdAddrs: etcdAddrs,
 		tlsConfig: tlsConfig,
+		memCache:  kv.NewCacheDB(),
 		pdClient:  &pdClient,
 		enableGC:  !disableGC,
 	}
@@ -173,6 +174,7 @@ type tikvStore struct {
 	*tikv.KVStore
 	etcdAddrs []string
 	tlsConfig *tls.Config
+	memCache  kv.MemManager // this is used to query from memory
 	pdClient  pd.Client
 	enableGC  bool
 	gcWorker  *gcworker.GCWorker
@@ -264,4 +266,9 @@ func (s *tikvStore) Close() error {
 		s.gcWorker.Close()
 	}
 	return s.KVStore.Close()
+}
+
+// GetMemCache return memory manager of the storage
+func (s *tikvStore) GetMemCache() kv.MemManager {
+	return s.memCache
 }
