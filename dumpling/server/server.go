@@ -69,7 +69,6 @@ import (
 )
 
 var (
-	baseConnID  uint32
 	serverPID   int
 	osUser      string
 	osVersion   string
