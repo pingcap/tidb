@@ -1868,6 +1868,11 @@ func (it *infoschemaTable) Type() table.Type {
 	return it.tp
 }
 
+// TryGetHandleRestoredDataWrapper implements table.Table Type interface.
+func (it *infoschemaTable) TryGetHandleRestoredDataWrapper(row []types.Datum, rowMap map[int64]types.Datum) []types.Datum {
+	return nil
+}
+
 // VirtualTable is a dummy table.Table implementation.
 type VirtualTable struct{}
 
@@ -1993,4 +1998,9 @@ func (vt *VirtualTable) Seek(ctx sessionctx.Context, h kv.Handle) (kv.Handle, bo
 // Type implements table.Table Type interface.
 func (vt *VirtualTable) Type() table.Type {
 	return table.VirtualTable
+}
+
+// TryGetHandleRestoredDataWrapper implements table.Table Type interface.
+func (vt *VirtualTable) TryGetHandleRestoredDataWrapper(row []types.Datum, rowMap map[int64]types.Datum) []types.Datum {
+	return nil
 }

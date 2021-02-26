@@ -898,7 +898,6 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 		}
 	})
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
-	rsData := make([]types.Datum, len(idxInfo.Columns))
 	var err error
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]
@@ -924,9 +923,8 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 		}
 		idxVal[j] = idxColumnVal
 	}
-	if t, ok := w.table.(*tables.TableCommon); ok {
-		rsData = t.TryGetHandleRestoredDataWrapper(nil, w.rowMap)
-	}
+
+	rsData := w.table.TryGetHandleRestoredDataWrapper(nil, w.rowMap)
 	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal, rsData: rsData}
 	return idxRecord, nil
 }
@@ -1132,10 +1130,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 		} else if w.distinctCheckFlags[i] {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
-			var rsData []types.Datum
-			if t, ok := w.table.(*tables.TableCommon); ok {
-				rsData = t.TryGetHandleRestoredDataWrapper(idxRecords[i].vals, nil)
-			}
+			rsData := w.table.TryGetHandleRestoredDataWrapper(idxRecords[i].vals, nil)
 			needRsData := tables.NeedRestoredData(w.index.Meta().Columns, w.table.Meta().Columns)
 			val, err := tablecodec.GenIndexValuePortal(stmtCtx, w.table.Meta(), w.index.Meta(), needRsData, w.distinctCheckFlags[i], false, idxRecords[i].vals, idxRecords[i].handle, 0, rsData)
 			if err != nil {

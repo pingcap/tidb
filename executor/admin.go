@@ -378,10 +378,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			}
 			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
 			e.idxValsBufs[result.scanRowCount] = idxVals
-			var rsData []types.Datum
-			if t, ok := e.table.(*tables.TableCommon); ok {
-				rsData = t.TryGetHandleRestoredDataWrapper(idxVals, nil)
-			}
+			rsData := e.table.TryGetHandleRestoredDataWrapper(idxVals, nil)
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: false})
 			result.scanRowCount++
 			result.currentHandle = handle

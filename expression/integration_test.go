@@ -7862,6 +7862,7 @@ func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollationIndexEncod
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
 	tk.MustExec("create table t(a int, b char(10) collate utf8mb4_bin, c char(10) collate utf8mb4_general_ci," +
 		"d varchar(10) collate utf8mb4_bin, e varchar(10) collate utf8mb4_general_ci, f char(10) collate utf8mb4_unicode_ci, g varchar(10) collate utf8mb4_unicode_ci, " +
 		"primary key(a, b, c, d, e, f, g), key a(a), unique key ua(a), key b(b), unique key ub(b), key c(c), unique key uc(c)," +
@@ -7905,6 +7906,16 @@ func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollationIndexEncod
 	tk.MustQuery("select * from t use index(ud)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
 	tk.MustQuery("select * from t use index(e)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
 	tk.MustQuery("select * from t use index(ue)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255) COLLATE utf8_general_ci primary key clustered, b int) partition by range columns(a) " +
+		"(partition p0 values less than ('0'), partition p1 values less than MAXVALUE);")
+	tk.MustExec("alter table t add index b(b);")
+	tk.MustExec("insert into t values ('0', 1);")
+	tk.MustQuery("select * from t use index(b);").Check(testkit.Rows("0 1"))
+	tk.MustQuery("select * from t use index();").Check(testkit.Rows("0 1"))
+	tk.MustExec("admin check table t")
 }
 
 func (s *testIntegrationSuite) TestIssue11645(c *C) {

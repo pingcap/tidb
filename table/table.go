@@ -210,6 +210,8 @@ type Table interface {
 
 	// Type returns the type of table
 	Type() Type
+
+	TryGetHandleRestoredDataWrapper(row []types.Datum, rowMap map[int64]types.Datum) []types.Datum
 }
 
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
