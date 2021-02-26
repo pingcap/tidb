@@ -1850,20 +1850,19 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 		}
 		// Currently, only partitions have placement rules.
 		var tbName, dbName, ptName string
-		skip := false
+		skip := true
 		tb, db, part := is.FindTableByPartitionID(id)
 		if tb != nil {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
-				skip = true
-			} else {
+			if checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
 				dbName = db.Name.L
 				tbName = tb.Meta().Name.L
 				ptName = part.Name.L
+				skip = false
 			}
 		}
 		failpoint.Inject("outputInvalidPlacementRules", func(val failpoint.Value) {
 			if val.(bool) {
-				skip = true
+				skip = false
 			}
 		})
 		if skip {
