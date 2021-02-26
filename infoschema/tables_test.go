@@ -463,6 +463,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		ID:      1,
 		User:    "user-1",
 		Host:    "localhost",
+		Port:    "",
 		DB:      "information_schema",
 		Command: byte(1),
 		Digest:  "abc1",
@@ -474,6 +475,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		ID:      2,
 		User:    "user-2",
 		Host:    "localhost",
+		Port:    "",
 		DB:      "test",
 		Command: byte(2),
 		Digest:  "abc2",
@@ -481,21 +483,36 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Info:    strings.Repeat("x", 101),
 		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
+	sm.processInfoMap[3] = &util.ProcessInfo{
+		ID:      3,
+		User:    "user-3",
+		Host:    "127.0.0.1",
+		Port:    "12345",
+		DB:      "test",
+		Command: byte(2),
+		Digest:  "abc3",
+		State:   1,
+		Info:    "check port",
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
 			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "do something"),
 			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0 ", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0 ", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
 			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "do something"),
 			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 100)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
 		testkit.Rows(
 			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "do something"),
 			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 
 	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
