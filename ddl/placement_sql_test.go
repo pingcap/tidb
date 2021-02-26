@@ -440,9 +440,7 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 }
 
 func (s *testSerialDBSuite) TestTxnScopeConstraint(c *C) {
-	defer func() {
-		config.RestoreFunc()
-	}()
+	defer config.RestoreFunc()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -661,9 +659,7 @@ add placement policy
 }
 
 func (s *testSerialSuite) TestGlobalTxnState(c *C) {
-	defer func() {
-		config.RestoreFunc()
-	}()
+	defer config.RestoreFunc()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
