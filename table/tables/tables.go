@@ -583,7 +583,7 @@ func PrimaryPrefixColumnIDs(tbl *model.TableInfo) (prefixCols []int64) {
 			continue
 		}
 		for _, col := range idx.Columns {
-			if tbl.Columns[col.Offset].Flen > col.Length {
+			if col.Length > 0 && tbl.Columns[col.Offset].Flen > col.Length {
 				prefixCols = append(prefixCols, tbl.Columns[col.Offset].ID)
 			}
 		}
