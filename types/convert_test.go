@@ -251,7 +251,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v.(*MyDecimal).String(), Equals, "1.0000")
 	v, err = Convert("199.00 ", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v.(*MyDecimal).String(), Equals, "199.00")
+	c.Assert(v.(*MyDecimal).String(), Equals, "199.0000")
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
