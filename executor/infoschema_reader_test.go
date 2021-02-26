@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -463,7 +462,7 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions1';").Check(testkit.Rows("p0 RANGE COLUMNS id", "p1 RANGE COLUMNS id", "p2 RANGE COLUMNS id"))
 	tk.MustExec("DROP TABLE test_partitions1")
 
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table test_partitions (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (2));")
 	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions';").Check(testkit.Rows("p0 LIST `a`", "p1 LIST `a`"))
 	tk.MustExec("drop table test_partitions")
@@ -727,18 +726,20 @@ func (sm *mockSessionManager) SetServerID(serverID uint64) {
 }
 
 type mockStore struct {
-	tikv.Storage
+	helper.Storage
 	host string
 }
 
 func (s *mockStore) EtcdAddrs() ([]string, error) { return []string{s.host}, nil }
 func (s *mockStore) TLSConfig() *tls.Config       { panic("not implemented") }
 func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
+func (s *mockStore) Name() string                 { return "mockStore" }
+func (s *mockStore) Describe() string             { return "" }
 
 func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	mockAddr := s.mockAddr
 	store := &mockStore{
-		s.store.(tikv.Storage),
+		s.store.(helper.Storage),
 		mockAddr,
 	}
 
@@ -811,7 +812,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	c.Assert(err.Error(), Equals, "pd unavailable")
 	mockAddr := s.mockAddr
 	store := &mockStore{
-		s.store.(tikv.Storage),
+		s.store.(helper.Storage),
 		mockAddr,
 	}
 

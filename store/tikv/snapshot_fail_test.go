@@ -43,11 +43,27 @@ func (s *testSnapshotFailSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
+func (s *testSnapshotFailSuite) cleanup(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	iter, err := txn.Iter(kv.Key(""), kv.Key(""))
+	c.Assert(err, IsNil)
+	for iter.Valid() {
+		err = txn.Delete(iter.Key())
+		c.Assert(err, IsNil)
+		err = iter.Next()
+		c.Assert(err, IsNil)
+	}
+	c.Assert(txn.Commit(context.TODO()), IsNil)
+}
+
 func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 	// Meaningless to test with tikv because it has a mock key error
 	if *WithTiKV {
 		return
 	}
+	defer s.cleanup(c)
+
 	// Put two KV pairs
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -75,6 +91,8 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	if *WithTiKV {
 		return
 	}
+	defer s.cleanup(c)
+
 	// Put two KV pairs
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -120,6 +138,8 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 }
 
 func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
+	defer s.cleanup(c)
+
 	snapshot := s.store.GetSnapshot(kv.MaxVersion)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshotGetTSAsync", `pause`), IsNil)
 	ch := make(chan error)
@@ -138,13 +158,14 @@ func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", `return`), IsNil)
 	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 1)
 	c.Assert(err, IsNil)
-	// Sets its minCommitTS to a large value, so the lock can be actually ignored.
-	committer.minCommitTS = committer.startTS + (1 << 28)
+	// Sets its minCommitTS to one second later, so the lock will be ignored by point get.
+	committer.minCommitTS = committer.startTS + (1000 << 18)
 	err = committer.execute(context.Background())
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshotGetTSAsync"), IsNil)
 
 	err = <-ch
 	c.Assert(err, ErrorMatches, ".*key not exist")
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
 }
