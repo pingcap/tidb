@@ -28,6 +28,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -1849,14 +1850,24 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 		}
 		// Currently, only partitions have placement rules.
 		var tbName, dbName, ptName string
+		skip := false
 		tb, db, part := is.FindTableByPartitionID(id)
 		if tb != nil {
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
-				continue
+				skip = true
+			} else {
+				dbName = db.Name.L
+				tbName = tb.Meta().Name.L
+				ptName = part.Name.L
 			}
-			dbName = db.Name.L
-			tbName = tb.Meta().Name.L
-			ptName = part.Name.L
+		}
+		failpoint.Inject("outputInvalidPlacementRules", func(val failpoint.Value) {
+			if val.(bool) {
+				skip = true
+			}
+		})
+		if skip {
+			continue
 		}
 		for _, rule := range bundle.Rules {
 			constraint, err := placement.RestoreLabelConstraintList(rule.LabelConstraints)
