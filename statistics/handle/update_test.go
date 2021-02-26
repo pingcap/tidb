@@ -44,7 +44,6 @@ import (
 )
 
 var _ = Suite(&testStatsSuite{})
-var _ = Suite(&testStatsSuite2{})
 var _ = SerialSuites(&testSerialStatsSuite{})
 
 type testSerialStatsSuite struct {
@@ -73,10 +72,6 @@ type testSuiteBase struct {
 }
 
 type testStatsSuite struct {
-	testSuiteBase
-}
-
-type testStatsSuite2 struct {
 	testSuiteBase
 }
 
