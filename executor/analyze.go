@@ -171,7 +171,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			sc := e.ctx.GetSessionVars().StmtCtx
 			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(sc, infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
 			if err != nil {
-				if ErrBuildGlobalLevelStatsFailed.Equal(err) {
+				if types.ErrBuildGlobalLevelStatsFailed.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
 					sc.AppendWarning(err)
 					continue
