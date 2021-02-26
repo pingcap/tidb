@@ -841,7 +841,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 	return nil, nil
 }
 
-// RowWithCols implements table.Table RowWithCols interface.
+// RowWithCols is used to get the corresponding column datum values with the given handle.
 func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
 	// Get raw row data from kv.
 	key := tablecodec.EncodeRecordKey(t.RecordPrefix(), h)
