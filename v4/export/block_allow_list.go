@@ -5,11 +5,11 @@ package export
 import (
 	"go.uber.org/zap"
 
-	"github.com/pingcap/dumpling/v4/log"
+	tcontext "github.com/pingcap/dumpling/v4/context"
 )
 
-func filterTables(conf *Config) {
-	log.Debug("filter tables")
+func filterTables(tctx *tcontext.Context, conf *Config) {
+	tctx.L().Debug("start to filter tables")
 	dbTables := DatabaseTables{}
 	ignoredDBTable := DatabaseTables{}
 
@@ -31,7 +31,7 @@ func filterTables(conf *Config) {
 	}
 
 	if len(ignoredDBTable) > 0 {
-		log.Debug("ignore table", zap.String("tables", ignoredDBTable.Literal()))
+		tctx.L().Debug("ignore table", zap.String("tables", ignoredDBTable.Literal()))
 	}
 
 	conf.Tables = dbTables

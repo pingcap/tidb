@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
 	. "github.com/pingcap/check"
@@ -42,7 +44,7 @@ func (s *testSQLSuite) TestDetectServerInfo(c *C) {
 
 		verStr, err := SelectVersion(db)
 		c.Assert(err, IsNil, cmt)
-		info := ParseServerInfo(verStr)
+		info := ParseServerInfo(tcontext.Background(), verStr)
 		c.Assert(info.ServerType, Equals, serverTp, cmt)
 		c.Assert(info.ServerVersion == nil, Equals, expectVer == nil, cmt)
 		if info.ServerVersion == nil {

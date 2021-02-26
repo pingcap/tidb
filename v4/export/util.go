@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
+
 	"github.com/pingcap/errors"
 	"go.etcd.io/etcd/clientv3"
 )
@@ -31,7 +33,7 @@ func getPdDDLIDs(pCtx context.Context, cli *clientv3.Client) ([]string, error) {
 	return pdDDLIds, nil
 }
 
-func checkSameCluster(ctx context.Context, db *sql.DB, pdAddrs []string) (bool, error) {
+func checkSameCluster(tctx *tcontext.Context, db *sql.DB, pdAddrs []string) (bool, error) {
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:   pdAddrs,
 		DialTimeout: defaultEtcdDialTimeOut,
@@ -39,11 +41,11 @@ func checkSameCluster(ctx context.Context, db *sql.DB, pdAddrs []string) (bool, 
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	tidbDDLIDs, err := GetTiDBDDLIDs(db)
+	tidbDDLIDs, err := GetTiDBDDLIDs(tctx, db)
 	if err != nil {
 		return false, err
 	}
-	pdDDLIDs, err := getPdDDLIDs(ctx, cli)
+	pdDDLIDs, err := getPdDDLIDs(tctx, cli)
 	if err != nil {
 		return false, err
 	}

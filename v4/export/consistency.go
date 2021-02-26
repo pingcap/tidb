@@ -6,6 +6,8 @@ import (
 	"context"
 	"database/sql"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
+
 	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 )
@@ -49,7 +51,7 @@ func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB
 
 // ConsistencyController is the interface that controls the consistency of exporting progress
 type ConsistencyController interface {
-	Setup(context.Context) error
+	Setup(*tcontext.Context) error
 	TearDown(context.Context) error
 	PingContext(context.Context) error
 }
@@ -58,7 +60,7 @@ type ConsistencyController interface {
 type ConsistencyNone struct{}
 
 // Setup implements ConsistencyController.Setup
-func (c *ConsistencyNone) Setup(_ context.Context) error {
+func (c *ConsistencyNone) Setup(_ *tcontext.Context) error {
 	return nil
 }
 
@@ -79,11 +81,11 @@ type ConsistencyFlushTableWithReadLock struct {
 }
 
 // Setup implements ConsistencyController.Setup
-func (c *ConsistencyFlushTableWithReadLock) Setup(ctx context.Context) error {
+func (c *ConsistencyFlushTableWithReadLock) Setup(tctx *tcontext.Context) error {
 	if c.serverType == ServerTypeTiDB {
 		return errors.New("'flush table with read lock' cannot be used to ensure the consistency in TiDB")
 	}
-	return FlushTableWithReadLock(ctx, c.conn)
+	return FlushTableWithReadLock(tctx, c.conn)
 }
 
 // TearDown implements ConsistencyController.TearDown
@@ -113,13 +115,13 @@ type ConsistencyLockDumpingTables struct {
 }
 
 // Setup implements ConsistencyController.Setup
-func (c *ConsistencyLockDumpingTables) Setup(ctx context.Context) error {
+func (c *ConsistencyLockDumpingTables) Setup(tctx *tcontext.Context) error {
 	blockList := make(map[string]map[string]interface{})
-	return utils.WithRetry(ctx, func() error {
+	return utils.WithRetry(tctx, func() error {
 		lockTablesSQL := buildLockTablesSQL(c.allTables, blockList)
-		_, err := c.conn.ExecContext(ctx, lockTablesSQL)
+		_, err := c.conn.ExecContext(tctx, lockTablesSQL)
 		return errors.Trace(err)
-	}, newLockTablesBackoffer(blockList))
+	}, newLockTablesBackoffer(tctx, blockList))
 }
 
 // TearDown implements ConsistencyController.TearDown
