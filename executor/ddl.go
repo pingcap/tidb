@@ -319,8 +319,12 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),
 			)
-			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
-			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+			exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+			stmt, err := exec.ParseWithParams(context.TODO(), "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+			if err != nil {
+				return err
+			}
+			_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
 			if err != nil {
 				return err
 			}

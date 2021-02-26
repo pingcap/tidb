@@ -16,12 +16,12 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"math/rand"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -715,9 +715,14 @@ type AnalyzeFastExec struct {
 }
 
 func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
-	sql := fmt.Sprintf("select flag from mysql.stats_histograms where table_id = %d;", e.tableID.PersistID)
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	var stmt ast.StmtNode
+	stmt, err = exec.ParseWithParams(context.TODO(), "select flag from mysql.stats_histograms where table_id = %?", e.tableID.PersistID)
+	if err != nil {
+		return
+	}
 	var rows []chunk.Row
-	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return
 	}
@@ -741,21 +746,19 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 				err = rollbackFn()
 			}
 		}()
-		var partition string
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "select count(*) from %n.%n", dbInfo.Name.L, e.tblInfo.Name.L)
+
 		if e.tableID.StoreAsCollectID() && e.tblInfo.ID != e.tableID.PersistID {
 			for _, definition := range e.tblInfo.Partition.Definitions {
 				if definition.ID == e.tableID.PersistID {
-					partition = fmt.Sprintf(" partition(%s)", definition.Name.L)
+					sqlexec.MustFormatSQL(sql, " partition(%n)", definition.Name.L)
 					break
 				}
 			}
 		}
-		sql := fmt.Sprintf("select count(*) from %s.%s", dbInfo.Name.L, e.tblInfo.Name.L)
-		if len(partition) > 0 {
-			sql += partition
-		}
 		var rs sqlexec.RecordSet
-		rs, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+		rs, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql.String())
 		if err != nil {
 			return
 		}
