@@ -190,7 +190,3 @@ func (s *testConfigSuite) TestTxnScopeValue(c *C) {
 	c.Assert(isGlobal, IsFalse)
 	c.Assert(v, Equals, "global")
 }
-
-func SetLabelConfig() {
-	GetGlobalConfig()
-}
