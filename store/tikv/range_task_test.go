@@ -21,14 +21,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 )
 
 type testRangeTaskSuite struct {
 	OneByOneSuite
 	cluster cluster.Cluster
-	store   *tikvStore
+	store   *KVStore
 
 	testRanges     []kv.KeyRange
 	expectedRanges [][]kv.KeyRange
@@ -77,7 +77,7 @@ func (s *testRangeTaskSuite) SetUpTest(c *C) {
 	// 	}),
 	// )
 	// c.Assert(err, IsNil)
-	s.store = store.(*tikvStore)
+	s.store = store
 
 	s.testRanges = []kv.KeyRange{
 		makeRange("", ""),

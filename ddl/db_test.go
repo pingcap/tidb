@@ -47,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -180,7 +180,7 @@ func (s *testSerialDBSuite) TestAddIndexWithPK(c *C) {
 	})
 
 	testAddIndexWithPK(tk, s, c)
-	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	testAddIndexWithPK(tk, s, c)
 }
 
@@ -1058,7 +1058,7 @@ func (s *testDBSuite6) TestAddMultiColumnsIndexClusterIndex(c *C) {
 	tk.MustExec("create database test_add_multi_col_index_clustered;")
 	tk.MustExec("use test_add_multi_col_index_clustered;")
 
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table t (a int, b varchar(10), c int, primary key (a, b));")
 	tk.MustExec("insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);")
 	tk.MustExec("create index idx on t (a, c);")
@@ -1158,7 +1158,7 @@ func testAddIndex(c *C, store kv.Storage, lease time.Duration, tp testAddIndexTy
 	case testPartition:
 		tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	case testClusteredIndex:
-		tk.MustExec("set @@tidb_enable_clustered_index = 1")
+		tk.Se.GetSessionVars().EnableClusteredIndex = true
 	}
 	tk.MustExec("drop table if exists test_add_index")
 	tk.MustExec(createTableSQL)
@@ -1794,7 +1794,7 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 		"  `a` int(11) NOT NULL,\n"+
 		"  `b` int(11) NOT NULL,\n"+
 		"  KEY `idx` (`a`),\n"+
-		"  PRIMARY KEY (`a`,`b`)\n"+
+		"  PRIMARY KEY (`a`,`b`) /*T![clustered_index] NONCLUSTERED */\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table test_add_pk2 drop primary key")
 	tk.MustQuery("desc test_add_pk2").Check(testutil.RowsWithSep(",", ""+
@@ -2794,7 +2794,7 @@ func (s *testSerialDBSuite) TestRepairTable(c *C) {
 
 	// Exec the show create table statement to make sure new tableInfo has been set.
 	result := tk.MustQuery("show create table origin")
-	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` int(11) NOT NULL AUTO_INCREMENT,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` int(11) NOT NULL AUTO_INCREMENT,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 }
 
@@ -4529,7 +4529,7 @@ func (s *testSerialDBSuite) TestAddIndexForGeneratedColumn(c *C) {
 	})
 
 	testAddIndexForGeneratedColumn(tk, s, c)
-	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	testAddIndexForGeneratedColumn(tk, s, c)
 }
 
@@ -6540,7 +6540,8 @@ func (s *testDBSuite4) TestCreateTableWithDecimalWithDoubleZero(c *C) {
 func (s *testDBSuite4) TestIssue22207(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly;")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("set @@session.tidb_enable_exchange_partition = 1;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t1(id char(10)) partition by list columns(id) (partition p0 values in ('a'), partition p1 values in ('b'));")
@@ -6560,4 +6561,27 @@ func (s *testDBSuite4) TestIssue22207(c *C) {
 	tk.MustExec("ALTER TABLE t1 EXCHANGE PARTITION p0 WITH TABLE t2;")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "2", "3"))
 	c.Assert(len(tk.MustQuery("select * from t1").Rows()), Equals, 0)
+	tk.MustExec("set @@session.tidb_enable_exchange_partition = 0;")
+}
+
+func (s *testSerialDBSuite) TestIssue22819(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test;")
+	tk1.MustExec("drop table if exists t1;")
+	defer func() {
+		tk1.MustExec("drop table if exists t1;")
+	}()
+
+	tk1.MustExec("create table t1 (v int) partition by hash (v) partitions 2")
+	tk1.MustExec("insert into t1 values (1)")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test;")
+	tk1.MustExec("begin")
+	tk1.MustExec("update t1 set v = 2 where v = 1")
+
+	tk2.MustExec("alter table t1 truncate partition p0")
+
+	_, err := tk1.Exec("commit")
+	c.Assert(err, ErrorMatches, ".*8028.*Information schema is changed during the execution of the statement.*")
 }
