@@ -309,17 +309,17 @@ type maxMin4IntSliding struct {
 	windowInfo
 }
 
+func (e *maxMin4IntSliding) ResetPartialResult(pr PartialResult) {
+	e.maxMin4Int.ResetPartialResult(pr)
+	(*partialResult4MaxMinInt)(pr).deque.Reset()
+}
+
 func (e *maxMin4IntSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Int.AllocPartialResult()
 	(*partialResult4MaxMinInt)(p).deque = newDeque(e.isMax, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
-}
-
-func (e *maxMin4IntSliding) ResetPartialResult(pr PartialResult) {
-	e.maxMin4Int.ResetPartialResult(pr)
-	(*partialResult4MaxMinInt)(pr).deque.Reset()
 }
 
 func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
