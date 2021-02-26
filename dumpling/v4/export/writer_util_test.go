@@ -3,11 +3,12 @@
 package export
 
 import (
-	"context"
 	"database/sql/driver"
 	"fmt"
 	"strings"
 	"testing"
+
+	tcontext "github.com/pingcap/dumpling/v4/context"
 
 	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
@@ -39,7 +40,7 @@ func (s *testUtilSuite) TestWriteMeta(c *C) {
 	meta := newMockMetaIR("t1", createTableStmt, specCmts)
 	writer := storage.NewBufferWriter()
 
-	err := WriteMeta(context.Background(), meta, writer)
+	err := WriteMeta(tcontext.Background(), meta, writer)
 	c.Assert(err, IsNil)
 	expected := "/*!40103 SET TIME_ZONE='+00:00' */;\n" +
 		"CREATE TABLE `t1` (\n" +
@@ -64,7 +65,7 @@ func (s *testUtilSuite) TestWriteInsert(c *C) {
 	bf := storage.NewBufferWriter()
 
 	conf := configForWriteSQL(UnspecifiedSize, UnspecifiedSize)
-	err := WriteInsert(context.Background(), conf, tableIR, tableIR, bf)
+	err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
@@ -95,7 +96,7 @@ func (s *testUtilSuite) TestWriteInsertReturnsError(c *C) {
 	bf := storage.NewBufferWriter()
 
 	conf := configForWriteSQL(UnspecifiedSize, UnspecifiedSize)
-	err := WriteInsert(context.Background(), conf, tableIR, tableIR, bf)
+	err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, Equals, rowErr)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
@@ -120,7 +121,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
 	conf := configForWriteCSV(true, opt)
-	err := WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
+	err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
 		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +
@@ -133,7 +134,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	opt.delimiter = quotationMark
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	conf = configForWriteCSV(true, opt)
-	err = WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
+	err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected = "1,'male','bob@mail.com','020-1234',\\N\n" +
 		"2,'female','sarah@mail.com','020-1253','healthy'\n" +
@@ -146,7 +147,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	opt.separator = []byte(";")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	conf = configForWriteCSV(true, opt)
-	err = WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
+	err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected = "1;'male';'bob@mail.com';'020-1234';\\N\n" +
 		"2;'female';'sarah@mail.com';'020-1253';'healthy'\n" +
@@ -161,7 +162,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.colNames = []string{"id", "gender", "email", "phone_number", "status"}
 	conf = configForWriteCSV(false, opt)
-	err = WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
+	err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected = "maidma&;,?magenderma&;,?maemamailma&;,?maphone_numberma&;,?mastatusma\n" +
 		"1&;,?mamamalema&;,?mabob@mamail.comma&;,?ma020-1234ma&;,?\\N\n" +
@@ -187,7 +188,7 @@ func (s *testUtilSuite) TestSQLDataTypes(c *C) {
 		bf := storage.NewBufferWriter()
 
 		conf := configForWriteSQL(UnspecifiedSize, UnspecifiedSize)
-		err := WriteInsert(context.Background(), conf, tableIR, tableIR, bf)
+		err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf)
 		c.Assert(err, IsNil)
 		lines := strings.Split(bf.String(), "\n")
 		c.Assert(len(lines), Equals, 3)
@@ -201,7 +202,7 @@ func (s *testUtilSuite) TestWrite(c *C) {
 	exp := []string{"test", "loooooooooooooooooooong", "poison_error"}
 
 	for i, s := range src {
-		err := write(context.Background(), mocksw, s)
+		err := write(tcontext.Background(), mocksw, s)
 		if err != nil {
 			c.Assert(err.Error(), Equals, exp[i])
 		} else {
@@ -209,7 +210,7 @@ func (s *testUtilSuite) TestWrite(c *C) {
 			c.Assert(mocksw.buf, Equals, exp[i])
 		}
 	}
-	err := write(context.Background(), mocksw, "test")
+	err := write(tcontext.Background(), mocksw, "test")
 	c.Assert(err, IsNil)
 }
 

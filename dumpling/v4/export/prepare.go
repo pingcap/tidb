@@ -10,8 +10,6 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
-
-	"github.com/pingcap/dumpling/v4/log"
 )
 
 const (
@@ -99,12 +97,10 @@ func prepareDumpingDatabases(conf *Config, db *sql.Conn) ([]string, error) {
 }
 
 func listAllTables(db *sql.Conn, databaseNames []string) (DatabaseTables, error) {
-	log.Debug("list all the tables")
 	return ListAllDatabasesTables(db, databaseNames, TableTypeBase)
 }
 
 func listAllViews(db *sql.Conn, databaseNames []string) (DatabaseTables, error) {
-	log.Debug("list all the views")
 	return ListAllDatabasesTables(db, databaseNames, TableTypeView)
 }
 

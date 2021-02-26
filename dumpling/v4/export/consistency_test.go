@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strings"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
@@ -22,9 +24,9 @@ func (s *testConsistencySuite) assertNil(err error, c *C) {
 	}
 }
 
-func (s *testConsistencySuite) assertLifetimeErrNil(ctx context.Context, ctrl ConsistencyController, c *C) {
-	s.assertNil(ctrl.Setup(ctx), c)
-	s.assertNil(ctrl.TearDown(ctx), c)
+func (s *testConsistencySuite) assertLifetimeErrNil(tctx *tcontext.Context, ctrl ConsistencyController, c *C) {
+	s.assertNil(ctrl.Setup(tctx), c)
+	s.assertNil(ctrl.TearDown(tctx), c)
 }
 
 func (s *testConsistencySuite) TestConsistencyController(c *C) {
@@ -33,6 +35,7 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 	defer db.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	tctx := tcontext.Background().WithContext(ctx)
 	conf := DefaultConfig()
 	resultOk := sqlmock.NewResult(0, 1)
 
@@ -40,7 +43,7 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 	ctrl, _ := NewConsistencyController(ctx, conf, db)
 	_, ok := ctrl.(*ConsistencyNone)
 	c.Assert(ok, IsTrue)
-	s.assertLifetimeErrNil(ctx, ctrl, c)
+	s.assertLifetimeErrNil(tctx, ctrl, c)
 
 	conf.Consistency = consistencyTypeFlush
 	mock.ExpectExec("FLUSH TABLES WITH READ LOCK").WillReturnResult(resultOk)
@@ -48,7 +51,7 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
 	_, ok = ctrl.(*ConsistencyFlushTableWithReadLock)
 	c.Assert(ok, IsTrue)
-	s.assertLifetimeErrNil(ctx, ctrl, c)
+	s.assertLifetimeErrNil(tctx, ctrl, c)
 	if err = mock.ExpectationsWereMet(); err != nil {
 		c.Fatal(err.Error())
 	}
@@ -58,7 +61,7 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
 	_, ok = ctrl.(*ConsistencyNone)
 	c.Assert(ok, IsTrue)
-	s.assertLifetimeErrNil(ctx, ctrl, c)
+	s.assertLifetimeErrNil(tctx, ctrl, c)
 
 	conf.Consistency = consistencyTypeLock
 	conf.Tables = NewDatabaseTables().
@@ -69,7 +72,7 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
 	_, ok = ctrl.(*ConsistencyLockDumpingTables)
 	c.Assert(ok, IsTrue)
-	s.assertLifetimeErrNil(ctx, ctrl, c)
+	s.assertLifetimeErrNil(tctx, ctrl, c)
 	if err = mock.ExpectationsWereMet(); err != nil {
 		c.Fatal(err.Error())
 	}
@@ -81,6 +84,7 @@ func (s *testConsistencySuite) TestConsistencyLockControllerRetry(c *C) {
 	defer db.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	tctx := tcontext.Background().WithContext(ctx)
 	conf := DefaultConfig()
 	resultOk := sqlmock.NewResult(0, 1)
 
@@ -95,7 +99,7 @@ func (s *testConsistencySuite) TestConsistencyLockControllerRetry(c *C) {
 	ctrl, _ := NewConsistencyController(ctx, conf, db)
 	_, ok := ctrl.(*ConsistencyLockDumpingTables)
 	c.Assert(ok, IsTrue)
-	s.assertLifetimeErrNil(ctx, ctrl, c)
+	s.assertLifetimeErrNil(tctx, ctrl, c)
 	if err = mock.ExpectationsWereMet(); err != nil {
 		c.Fatal(err.Error())
 	}
@@ -129,6 +133,7 @@ func (s *testConsistencySuite) TestConsistencyControllerError(c *C) {
 	defer db.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	tctx := tcontext.Background().WithContext(ctx)
 	conf := DefaultConfig()
 
 	conf.Consistency = "invalid_str"
@@ -146,7 +151,7 @@ func (s *testConsistencySuite) TestConsistencyControllerError(c *C) {
 	conf.Consistency = consistencyTypeFlush
 	conf.ServerInfo.ServerType = ServerTypeTiDB
 	ctrl, _ := NewConsistencyController(ctx, conf, db)
-	err = ctrl.Setup(ctx)
+	err = ctrl.Setup(tctx)
 	c.Assert(err, NotNil)
 
 	// lock table fail
@@ -154,6 +159,6 @@ func (s *testConsistencySuite) TestConsistencyControllerError(c *C) {
 	conf.Tables = NewDatabaseTables().AppendTables("db", "t")
 	mock.ExpectExec("LOCK TABLE").WillReturnError(errors.New(""))
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
-	err = ctrl.Setup(ctx)
+	err = ctrl.Setup(tctx)
 	c.Assert(err, NotNil)
 }

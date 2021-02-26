@@ -5,6 +5,8 @@ package export
 import (
 	"strings"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-tools/pkg/filter"
 	tf "github.com/pingcap/tidb-tools/pkg/table-filter"
@@ -35,7 +37,7 @@ func (s *testBWListSuite) TestFilterTables(c *C) {
 	}
 
 	conf.TableFilter = tf.NewSchemasFilter("xxx")
-	filterTables(conf)
+	filterTables(tcontext.Background(), conf)
 	c.Assert(conf.Tables, HasLen, 1)
 	c.Assert(conf.Tables, DeepEquals, expectedDBTables)
 }
@@ -53,14 +55,14 @@ func (s *testBWListSuite) TestFilterDatabaseWithNoTable(c *C) {
 		TableFilter:       tf.NewSchemasFilter("yyy"),
 		DumpEmptyDatabase: true,
 	}
-	filterTables(conf)
+	filterTables(tcontext.Background(), conf)
 	c.Assert(conf.Tables, HasLen, 0)
 
 	dbTables["xxx"] = []*TableInfo{}
 	expectedDBTables["xxx"] = []*TableInfo{}
 	conf.Tables = dbTables
 	conf.TableFilter = tf.NewSchemasFilter("xxx")
-	filterTables(conf)
+	filterTables(tcontext.Background(), conf)
 	c.Assert(conf.Tables, HasLen, 1)
 	c.Assert(conf.Tables, DeepEquals, expectedDBTables)
 
@@ -68,7 +70,7 @@ func (s *testBWListSuite) TestFilterDatabaseWithNoTable(c *C) {
 	expectedDBTables = DatabaseTables{}
 	conf.Tables = dbTables
 	conf.DumpEmptyDatabase = false
-	filterTables(conf)
+	filterTables(tcontext.Background(), conf)
 	c.Assert(conf.Tables, HasLen, 0)
 	c.Assert(conf.Tables, DeepEquals, expectedDBTables)
 }

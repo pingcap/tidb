@@ -6,13 +6,9 @@ import (
 	"github.com/pingcap/errors"
 	pclog "github.com/pingcap/log"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
-var (
-	appLogger = Logger{zap.NewNop()}
-	appLevel  = zap.NewAtomicLevel()
-)
+var appLogger = Logger{zap.NewNop()}
 
 // Logger wraps the zap logger.
 type Logger struct {
@@ -42,8 +38,8 @@ type Config struct {
 }
 
 // InitAppLogger inits the wrapped logger from config.
-func InitAppLogger(cfg *Config) error {
-	logger, props, err := pclog.InitLogger(&pclog.Config{
+func InitAppLogger(cfg *Config) (Logger, error) {
+	logger, _, err := pclog.InitLogger(&pclog.Config{
 		Level: cfg.Level,
 		File: pclog.FileLogConfig{
 			Filename:   cfg.File,
@@ -54,50 +50,12 @@ func InitAppLogger(cfg *Config) error {
 		Format: cfg.Format,
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return appLogger, errors.Trace(err)
 	}
-	logger = logger.WithOptions(zap.AddCallerSkip(1))
-	appLogger = Logger{logger}
-	appLevel = props.Level
-	return nil
+	return Logger{logger.WithOptions(zap.AddStacktrace(zap.DPanicLevel))}, nil
 }
 
-// SetAppLogger sets the wrapped logger from config.
-func SetAppLogger(logger *zap.Logger) {
-	appLogger = Logger{logger}
-}
-
-// ChangeAppLogLevel changes the wrapped logger's log level.
-func ChangeAppLogLevel(level zapcore.Level) {
-	appLevel.SetLevel(level)
-}
-
-// Info wraps *zap.Logger's Info function.
-func Info(msg string, fields ...zap.Field) {
-	appLogger.Info(msg, fields...)
-}
-
-// Warn wraps *zap.Logger's Warn function.
-func Warn(msg string, fields ...zap.Field) {
-	appLogger.Warn(msg, fields...)
-}
-
-// Error wraps *zap.Logger's Error function.
-func Error(msg string, fields ...zap.Field) {
-	appLogger.Error(msg, fields...)
-}
-
-// Debug wraps *zap.Logger's Debug function.
-func Debug(msg string, fields ...zap.Field) {
-	appLogger.Debug(msg, fields...)
-}
-
-// Fatal wraps *zap.Logger's Fatal function.
-func Fatal(msg string, fields ...zap.Field) {
-	appLogger.Fatal(msg, fields...)
-}
-
-// Panic wraps *zap.Logger's Panic function.
-func Panic(msg string, fields ...zap.Field) {
-	appLogger.Panic(msg, fields...)
+// NewAppLogger returns the wrapped logger from config.
+func NewAppLogger(logger *zap.Logger) Logger {
+	return Logger{logger}
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
 	"github.com/pingcap/dumpling/v4/log"
 
 	// import mysql driver
@@ -26,7 +27,7 @@ import (
 
 // Dumper is the dump progress structure
 type Dumper struct {
-	ctx       context.Context
+	tctx      *tcontext.Context
 	conf      *Config
 	cancelCtx context.CancelFunc
 
@@ -38,14 +39,13 @@ type Dumper struct {
 
 // NewDumper returns a new Dumper
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
-	ctx, cancelFn := context.WithCancel(ctx)
+	tctx, cancelFn := tcontext.Background().WithContext(ctx).WithCancel()
 	d := &Dumper{
-		ctx:       ctx,
+		tctx:      tctx,
 		conf:      conf,
 		cancelCtx: cancelFn,
 	}
 	err := adjustConfig(conf,
-		initLogger,
 		registerTLSConfig,
 		validateSpecifiedSQL,
 		validateFileFormat)
@@ -53,6 +53,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		return nil, err
 	}
 	err = runSteps(d,
+		initLogger,
 		createExternalStore,
 		startHTTPService,
 		openSQLDB,
@@ -76,43 +77,43 @@ func (d *Dumper) Dump() (dumpErr error) {
 		err     error
 		conCtrl ConsistencyController
 	)
-	ctx, conf, pool := d.ctx, d.conf, d.dbHandle
-	m := newGlobalMetadata(d.extStore, conf.Snapshot)
+	tctx, conf, pool := d.tctx, d.conf, d.dbHandle
+	m := newGlobalMetadata(tctx, d.extStore, conf.Snapshot)
 	defer func() {
 		if dumpErr == nil {
-			_ = m.writeGlobalMetaData(ctx)
+			_ = m.writeGlobalMetaData()
 		}
 	}()
 
 	// for consistency lock, we should get table list at first to generate the lock tables SQL
 	if conf.Consistency == consistencyTypeLock {
-		conn, err = createConnWithConsistency(ctx, pool)
+		conn, err = createConnWithConsistency(tctx, pool)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err = prepareTableListToDump(conf, conn); err != nil {
+		if err = prepareTableListToDump(tctx, conf, conn); err != nil {
 			conn.Close()
 			return err
 		}
 		conn.Close()
 	}
 
-	conCtrl, err = NewConsistencyController(ctx, conf, pool)
+	conCtrl, err = NewConsistencyController(tctx, conf, pool)
 	if err != nil {
 		return err
 	}
-	if err = conCtrl.Setup(ctx); err != nil {
+	if err = conCtrl.Setup(tctx); err != nil {
 		return errors.Trace(err)
 	}
 	// To avoid lock is not released
 	defer func() {
-		err = conCtrl.TearDown(ctx)
+		err = conCtrl.TearDown(tctx)
 		if err != nil {
-			log.Error("fail to tear down consistency controller", zap.Error(err))
+			tctx.L().Error("fail to tear down consistency controller", zap.Error(err))
 		}
 	}()
 
-	metaConn, err := createConnWithConsistency(ctx, pool)
+	metaConn, err := createConnWithConsistency(tctx, pool)
 	if err != nil {
 		return err
 	}
@@ -126,25 +127,25 @@ func (d *Dumper) Dump() (dumpErr error) {
 	// for consistency none, the binlog pos in metadata might be earlier than dumped data. We need to enable safe-mode to assure data safety.
 	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, false)
 	if err != nil {
-		log.Info("get global metadata failed", zap.Error(err))
+		tctx.L().Info("get global metadata failed", zap.Error(err))
 	}
 
 	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
 	if conf.Consistency != consistencyTypeLock {
-		if err = prepareTableListToDump(conf, metaConn); err != nil {
+		if err = prepareTableListToDump(tctx, conf, metaConn); err != nil {
 			return err
 		}
 	}
 
 	rebuildConn := func(conn *sql.Conn) (*sql.Conn, error) {
 		// make sure that the lock connection is still alive
-		err1 := conCtrl.PingContext(ctx)
+		err1 := conCtrl.PingContext(tctx)
 		if err1 != nil {
 			return conn, errors.Trace(err1)
 		}
 		// give up the last broken connection
 		conn.Close()
-		newConn, err1 := createConnWithConsistency(ctx, pool)
+		newConn, err1 := createConnWithConsistency(tctx, pool)
 		if err1 != nil {
 			return conn, errors.Trace(err1)
 		}
@@ -160,9 +161,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 
 	taskChan := make(chan Task, defaultDumpThreads)
-	taskChannelCapacity.With(conf.Labels).Add(defaultDumpThreads)
-	wg, writingCtx := errgroup.WithContext(ctx)
-	writers, tearDownWriters, err := d.startWriters(writingCtx, wg, taskChan, rebuildConn)
+	AddGauge(taskChannelCapacity, conf.Labels, defaultDumpThreads)
+	wg, writingCtx := errgroup.WithContext(tctx)
+	writers, tearDownWriters, err := d.startWriters(tctx.WithContext(writingCtx), wg, taskChan, rebuildConn)
 	if err != nil {
 		return err
 	}
@@ -170,9 +171,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	if conf.TransactionalConsistency {
 		if conf.Consistency == consistencyTypeFlush || conf.Consistency == consistencyTypeLock {
-			log.Info("All the dumping transactions have started. Start to unlock tables")
+			tctx.L().Info("All the dumping transactions have started. Start to unlock tables")
 		}
-		if err = conCtrl.TearDown(ctx); err != nil {
+		if err = conCtrl.TearDown(tctx); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -183,22 +184,22 @@ func (d *Dumper) Dump() (dumpErr error) {
 		// record again, to provide a location to exit safe mode for DM
 		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, true)
 		if err != nil {
-			log.Info("get global metadata (after connection pool established) failed", zap.Error(err))
+			tctx.L().Info("get global metadata (after connection pool established) failed", zap.Error(err))
 		}
 	}
 
-	summary.SetLogCollector(summary.NewLogCollector(log.Info))
+	summary.SetLogCollector(summary.NewLogCollector(tctx.L().Info))
 	summary.SetUnit(summary.BackupUnit)
 	defer summary.Summary(summary.BackupUnit)
 
-	logProgressCtx, logProgressCancel := context.WithCancel(ctx)
+	logProgressCtx, logProgressCancel := tctx.WithCancel()
 	go d.runLogProgress(logProgressCtx)
 	defer logProgressCancel()
 
 	tableDataStartTime := time.Now()
 
 	failpoint.Inject("PrintTiDBMemQuotaQuery", func(_ failpoint.Value) {
-		row := d.dbHandle.QueryRowContext(ctx, "select @@tidb_mem_quota_query;")
+		row := d.dbHandle.QueryRowContext(tctx, "select @@tidb_mem_quota_query;")
 		var s string
 		err = row.Scan(&s)
 		if err != nil {
@@ -227,27 +228,27 @@ func (d *Dumper) Dump() (dumpErr error) {
 	return nil
 }
 
-func (d *Dumper) startWriters(ctx context.Context, wg *errgroup.Group, taskChan <-chan Task,
+func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskChan <-chan Task,
 	rebuildConnFn func(*sql.Conn) (*sql.Conn, error)) ([]*Writer, func(), error) {
 	conf, pool := d.conf, d.dbHandle
 	writers := make([]*Writer, conf.Threads)
 	for i := 0; i < conf.Threads; i++ {
-		conn, err := createConnWithConsistency(ctx, pool)
+		conn, err := createConnWithConsistency(tctx, pool)
 		if err != nil {
 			return nil, func() {}, err
 		}
-		writer := NewWriter(ctx, int64(i), conf, conn, d.extStore)
+		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore)
 		writer.rebuildConnFn = rebuildConnFn
 		writer.setFinishTableCallBack(func(task Task) {
 			if td, ok := task.(*TaskTableData); ok {
-				finishedTablesCounter.With(conf.Labels).Inc()
-				log.Debug("finished dumping table data",
+				IncCounter(finishedTablesCounter, conf.Labels)
+				tctx.L().Debug("finished dumping table data",
 					zap.String("database", td.Meta.DatabaseName()),
 					zap.String("table", td.Meta.TableName()))
 			}
 		})
 		writer.setFinishTaskCallBack(func(task Task) {
-			taskChannelCapacity.With(conf.Labels).Inc()
+			IncGauge(taskChannelCapacity, conf.Labels)
 		})
 		wg.Go(func() error {
 			return writer.run(taskChan)
@@ -274,7 +275,7 @@ func (d *Dumper) dumpDatabases(metaConn *sql.Conn, taskChan chan<- Task) error {
 		d.sendTaskToChan(task, taskChan)
 
 		for _, table := range tables {
-			log.Debug("start dumping table...", zap.String("database", dbName),
+			d.L().Debug("start dumping table...", zap.String("database", dbName),
 				zap.String("table", table.Name))
 			meta, err := dumpTableMeta(conf, metaConn, dbName, table)
 			if err != nil {
@@ -328,7 +329,7 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 	if conf.ServerInfo.ServerType == ServerTypeTiDB &&
 		conf.ServerInfo.ServerVersion != nil &&
 		conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 {
-		log.Debug("dumping TiDB tables with TABLESAMPLE",
+		d.L().Debug("dumping TiDB tables with TABLESAMPLE",
 			zap.String("database", db), zap.String("table", tbl))
 		return d.concurrentDumpTiDBTables(conn, meta, taskChan)
 	}
@@ -338,7 +339,7 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 	}
 	if field == "" {
 		// skip split chunk logic if not found proper field
-		log.Warn("fallback to sequential dump due to no proper field",
+		d.L().Warn("fallback to sequential dump due to no proper field",
 			zap.String("database", db), zap.String("table", tbl))
 		return d.sequentialDumpTable(conn, meta, taskChan)
 	}
@@ -347,18 +348,18 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 	if err != nil {
 		return err
 	}
-	log.Debug("get int bounding values",
+	d.L().Debug("get int bounding values",
 		zap.String("lower", min.String()),
 		zap.String("upper", max.String()))
 
-	count := estimateCount(db, tbl, conn, field, conf)
-	log.Info("get estimated rows count",
+	count := estimateCount(d.tctx, db, tbl, conn, field, conf)
+	d.L().Info("get estimated rows count",
 		zap.String("database", db),
 		zap.String("table", tbl),
 		zap.Uint64("estimateCount", count))
 	if count < conf.Rows {
 		// skip chunk logic if estimates are low
-		log.Warn("skip concurrent dump due to estimate count < rows",
+		d.L().Warn("skip concurrent dump due to estimate count < rows",
 			zap.Uint64("estimate count", count),
 			zap.Uint64("conf.rows", conf.Rows),
 			zap.String("database", db),
@@ -407,38 +408,38 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 }
 
 func (d *Dumper) sendTaskToChan(task Task, taskChan chan<- Task) (ctxDone bool) {
-	ctx, conf := d.ctx, d.conf
+	tctx, conf := d.tctx, d.conf
 	select {
-	case <-ctx.Done():
+	case <-tctx.Done():
 		return true
 	case taskChan <- task:
-		log.Debug("send task to writer",
+		tctx.L().Debug("send task to writer",
 			zap.String("task", task.Brief()))
-		taskChannelCapacity.With(conf.Labels).Desc()
+		DecGauge(taskChannelCapacity, conf.Labels)
 		return false
 	}
 }
 
 func (d *Dumper) selectMinAndMaxIntValue(conn *sql.Conn, db, tbl, field string) (*big.Int, *big.Int, error) {
-	ctx, conf, zero := d.ctx, d.conf, &big.Int{}
+	tctx, conf, zero := d.tctx, d.conf, &big.Int{}
 	query := fmt.Sprintf("SELECT MIN(`%s`),MAX(`%s`) FROM `%s`.`%s`",
 		escapeString(field), escapeString(field), escapeString(db), escapeString(tbl))
 	if conf.Where != "" {
 		query = fmt.Sprintf("%s WHERE %s", query, conf.Where)
 	}
-	log.Debug("split chunks", zap.String("query", query))
+	tctx.L().Debug("split chunks", zap.String("query", query))
 
 	var smin sql.NullString
 	var smax sql.NullString
-	row := conn.QueryRowContext(ctx, query)
+	row := conn.QueryRowContext(tctx, query)
 	err := row.Scan(&smin, &smax)
 	if err != nil {
-		log.Error("split chunks - get max min failed", zap.String("query", query), zap.Error(err))
+		tctx.L().Error("split chunks - get max min failed", zap.String("query", query), zap.Error(err))
 		return zero, zero, errors.Trace(err)
 	}
 	if !smax.Valid || !smin.Valid {
 		// found no data
-		log.Warn("no data to dump", zap.String("database", db), zap.String("table", tbl))
+		tctx.L().Warn("no data to dump", zap.String("database", db), zap.String("table", tbl))
 		return zero, zero, nil
 	}
 
@@ -481,6 +482,11 @@ func (d *Dumper) concurrentDumpTiDBTables(conn *sql.Conn, meta TableMeta, taskCh
 		}
 	}
 	return nil
+}
+
+// L returns real logger
+func (d *Dumper) L() log.Logger {
+	return d.tctx.L()
 }
 
 func selectTiDBTableSample(conn *sql.Conn, dbName, tableName string) (pkFields []string, pkVals []string, err error) {
@@ -527,7 +533,7 @@ func buildTiDBTableSampleQuery(pkFields []string, dbName, tblName string) string
 	return fmt.Sprintf(template, pks, escapeString(dbName), escapeString(tblName), pks)
 }
 
-func prepareTableListToDump(conf *Config, db *sql.Conn) error {
+func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) error {
 	databases, err := prepareDumpingDatabases(conf, db)
 	if err != nil {
 		return err
@@ -546,7 +552,7 @@ func prepareTableListToDump(conf *Config, db *sql.Conn) error {
 		conf.Tables.Merge(views)
 	}
 
-	filterTables(conf)
+	filterTables(tctx, conf)
 	return nil
 }
 
@@ -634,14 +640,34 @@ func runSteps(d *Dumper, steps ...func(*Dumper) error) error {
 	return nil
 }
 
+func initLogger(d *Dumper) error {
+	conf := d.conf
+	var logger log.Logger
+	if conf.Logger != nil {
+		logger = log.NewAppLogger(conf.Logger)
+	} else {
+		var err error
+		logger, err = log.InitAppLogger(&log.Config{
+			Level:  conf.LogLevel,
+			File:   conf.LogFile,
+			Format: conf.LogFormat,
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	d.tctx = d.tctx.WithLogger(logger)
+	return nil
+}
+
 // createExternalStore is an initialization step of Dumper.
 func createExternalStore(d *Dumper) error {
-	ctx, conf := d.ctx, d.conf
+	tctx, conf := d.tctx, d.conf
 	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	extStore, err := storage.Create(ctx, b, false)
+	extStore, err := storage.Create(tctx, b, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -654,9 +680,9 @@ func startHTTPService(d *Dumper) error {
 	conf := d.conf
 	if conf.StatusAddr != "" {
 		go func() {
-			err := startDumplingService(conf.StatusAddr)
+			err := startDumplingService(d.tctx, conf.StatusAddr)
 			if err != nil {
-				log.Warn("meet error when stopping dumpling http service", zap.Error(err))
+				d.L().Warn("meet error when stopping dumpling http service", zap.Error(err))
 			}
 		}()
 	}
@@ -682,7 +708,7 @@ func detectServerInfo(d *Dumper) error {
 		conf.ServerInfo = ServerInfoUnknown
 		return err
 	}
-	conf.ServerInfo = ParseServerInfo(versionStr)
+	conf.ServerInfo = ParseServerInfo(d.tctx, versionStr)
 	return nil
 }
 
@@ -705,24 +731,24 @@ func resolveAutoConsistency(d *Dumper) error {
 
 // tidbSetPDClientForGC is an initialization step of Dumper.
 func tidbSetPDClientForGC(d *Dumper) error {
-	ctx, si, pool := d.ctx, d.conf.ServerInfo, d.dbHandle
+	tctx, si, pool := d.tctx, d.conf.ServerInfo, d.dbHandle
 	if si.ServerType != ServerTypeTiDB ||
 		si.ServerVersion == nil ||
 		si.ServerVersion.Compare(*gcSafePointVersion) < 0 {
 		return nil
 	}
-	pdAddrs, err := GetPdAddrs(pool)
+	pdAddrs, err := GetPdAddrs(tctx, pool)
 	if err != nil {
 		return err
 	}
 	if len(pdAddrs) > 0 {
-		doPdGC, err := checkSameCluster(ctx, pool, pdAddrs)
+		doPdGC, err := checkSameCluster(tctx, pool, pdAddrs)
 		if err != nil {
-			log.Warn("meet error while check whether fetched pd addr and TiDB belong to one cluster", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
+			tctx.L().Warn("meet error while check whether fetched pd addr and TiDB belong to one cluster", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
 		} else if doPdGC {
-			pdClient, err := pd.NewClientWithContext(ctx, pdAddrs, pd.SecurityOption{})
+			pdClient, err := pd.NewClientWithContext(tctx, pdAddrs, pd.SecurityOption{})
 			if err != nil {
-				log.Warn("create pd client to control GC failed", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
+				tctx.L().Warn("create pd client to control GC failed", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
 			}
 			d.tidbPDClientForGC = pdClient
 		}
@@ -734,17 +760,17 @@ func tidbSetPDClientForGC(d *Dumper) error {
 func tidbGetSnapshot(d *Dumper) error {
 	conf, doPdGC := d.conf, d.tidbPDClientForGC != nil
 	consistency := conf.Consistency
-	pool, ctx := d.dbHandle, d.ctx
+	pool, tctx := d.dbHandle, d.tctx
 	if conf.Snapshot == "" && (doPdGC || consistency == "snapshot") {
-		conn, err := pool.Conn(ctx)
+		conn, err := pool.Conn(tctx)
 		if err != nil {
-			log.Warn("cannot get snapshot from TiDB", zap.Error(err))
+			tctx.L().Warn("cannot get snapshot from TiDB", zap.Error(err))
 			return nil
 		}
 		snapshot, err := getSnapshot(conn)
 		_ = conn.Close()
 		if err != nil {
-			log.Warn("cannot get snapshot from TiDB", zap.Error(err))
+			tctx.L().Warn("cannot get snapshot from TiDB", zap.Error(err))
 			return nil
 		}
 		conf.Snapshot = snapshot
@@ -755,16 +781,16 @@ func tidbGetSnapshot(d *Dumper) error {
 
 // tidbStartGCSavepointUpdateService is an initialization step of Dumper.
 func tidbStartGCSavepointUpdateService(d *Dumper) error {
-	ctx, pool, conf := d.ctx, d.dbHandle, d.conf
+	tctx, pool, conf := d.tctx, d.dbHandle, d.conf
 	snapshot, si := conf.Snapshot, conf.ServerInfo
 	if d.tidbPDClientForGC != nil {
 		snapshotTS, err := parseSnapshotToTSO(pool, snapshot)
 		if err != nil {
 			return err
 		}
-		go updateServiceSafePoint(ctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
+		go updateServiceSafePoint(tctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
 	} else if si.ServerType == ServerTypeTiDB {
-		log.Warn("If the amount of data to dump is large, criteria: (data more than 60GB or dumped time more than 10 minutes)\n" +
+		tctx.L().Warn("If the amount of data to dump is large, criteria: (data more than 60GB or dumped time more than 10 minutes)\n" +
 			"you'd better adjust the tikv_gc_life_time to avoid export failure due to TiDB GC during the dump process.\n" +
 			"Before dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '720h' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n" +
 			"After dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '10m' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n")
@@ -772,30 +798,30 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 	return nil
 }
 
-func updateServiceSafePoint(ctx context.Context, pdClient pd.Client, ttl int64, snapshotTS uint64) {
+func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int64, snapshotTS uint64) {
 	updateInterval := time.Duration(ttl/2) * time.Second
 	tick := time.NewTicker(updateInterval)
 	dumplingServiceSafePointID := fmt.Sprintf("%s_%d", dumplingServiceSafePointPrefix, time.Now().UnixNano())
-	log.Info("generate dumpling gc safePoint id", zap.String("id", dumplingServiceSafePointID))
+	tctx.L().Info("generate dumpling gc safePoint id", zap.String("id", dumplingServiceSafePointID))
 
 	for {
-		log.Debug("update PD safePoint limit with ttl",
+		tctx.L().Debug("update PD safePoint limit with ttl",
 			zap.Uint64("safePoint", snapshotTS),
 			zap.Int64("ttl", ttl))
 		for retryCnt := 0; retryCnt <= 10; retryCnt++ {
-			_, err := pdClient.UpdateServiceGCSafePoint(ctx, dumplingServiceSafePointID, ttl, snapshotTS)
+			_, err := pdClient.UpdateServiceGCSafePoint(tctx, dumplingServiceSafePointID, ttl, snapshotTS)
 			if err == nil {
 				break
 			}
-			log.Debug("update PD safePoint failed", zap.Error(err), zap.Int("retryTime", retryCnt))
+			tctx.L().Debug("update PD safePoint failed", zap.Error(err), zap.Int("retryTime", retryCnt))
 			select {
-			case <-ctx.Done():
+			case <-tctx.Done():
 				return
 			case <-time.After(time.Second):
 			}
 		}
 		select {
-		case <-ctx.Done():
+		case <-tctx.Done():
 			return
 		case <-tick.C:
 		}
@@ -826,7 +852,7 @@ func setSessionParam(d *Dumper) error {
 		}
 	}
 	var err error
-	if d.dbHandle, err = resetDBWithSessionParams(pool, conf.GetDSN(""), conf.SessionParams); err != nil {
+	if d.dbHandle, err = resetDBWithSessionParams(d.tctx, pool, conf.GetDSN(""), conf.SessionParams); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

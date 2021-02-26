@@ -4,25 +4,24 @@ package export
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"fmt"
 	"strings"
 	"text/template"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
+
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	"go.uber.org/zap"
-
-	"github.com/pingcap/dumpling/v4/log"
 )
 
 // Writer is the abstraction that keep pulling data from database and write to files.
 // Every writer owns a snapshot connection, and will try to get a task from task stream chan and work on it.
 type Writer struct {
 	id         int64
-	ctx        context.Context
+	tctx       *tcontext.Context
 	conf       *Config
 	conn       *sql.Conn
 	extStorage storage.ExternalStorage
@@ -36,10 +35,10 @@ type Writer struct {
 }
 
 // NewWriter returns a new Writer with given configurations
-func NewWriter(ctx context.Context, id int64, config *Config, conn *sql.Conn, externalStore storage.ExternalStorage) *Writer {
+func NewWriter(tctx *tcontext.Context, id int64, config *Config, conn *sql.Conn, externalStore storage.ExternalStorage) *Writer {
 	sw := &Writer{
 		id:                  id,
-		ctx:                 ctx,
+		tctx:                tctx,
 		conf:                config,
 		conn:                conn,
 		extStorage:          externalStore,
@@ -74,8 +73,8 @@ func countTotalTask(writers []*Writer) int {
 func (w *Writer) run(taskStream <-chan Task) error {
 	for {
 		select {
-		case <-w.ctx.Done():
-			log.Warn("context has been done, the writer will exit",
+		case <-w.tctx.Done():
+			w.tctx.L().Warn("context has been done, the writer will exit",
 				zap.Int64("writer ID", w.id))
 			return nil
 		case task, ok := <-taskStream:
@@ -110,34 +109,34 @@ func (w *Writer) handleTask(task Task) error {
 		}
 		return nil
 	default:
-		log.Warn("unsupported writer task type", zap.String("type", fmt.Sprintf("%T", t)))
+		w.tctx.L().Warn("unsupported writer task type", zap.String("type", fmt.Sprintf("%T", t)))
 		return nil
 	}
 }
 
 // WriteDatabaseMeta writes database meta to a file
 func (w *Writer) WriteDatabaseMeta(db, createSQL string) error {
-	ctx, conf := w.ctx, w.conf
+	tctx, conf := w.tctx, w.conf
 	fileName, err := (&outputFileNamer{DB: db}).render(conf.OutputFileTemplate, outputFileTemplateSchema)
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(ctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
+	return writeMetaToFile(tctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
 }
 
 // WriteTableMeta writes table meta to a file
 func (w *Writer) WriteTableMeta(db, table, createSQL string) error {
-	ctx, conf := w.ctx, w.conf
+	tctx, conf := w.tctx, w.conf
 	fileName, err := (&outputFileNamer{DB: db, Table: table}).render(conf.OutputFileTemplate, outputFileTemplateTable)
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(ctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
+	return writeMetaToFile(tctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
 }
 
 // WriteViewMeta writes view meta to a file
 func (w *Writer) WriteViewMeta(db, view, createTableSQL, createViewSQL string) error {
-	ctx, conf := w.ctx, w.conf
+	tctx, conf := w.tctx, w.conf
 	fileNameTable, err := (&outputFileNamer{DB: db, Table: view}).render(conf.OutputFileTemplate, outputFileTemplateTable)
 	if err != nil {
 		return err
@@ -146,27 +145,27 @@ func (w *Writer) WriteViewMeta(db, view, createTableSQL, createViewSQL string) e
 	if err != nil {
 		return err
 	}
-	err = writeMetaToFile(ctx, db, createTableSQL, w.extStorage, fileNameTable+".sql", conf.CompressType)
+	err = writeMetaToFile(tctx, db, createTableSQL, w.extStorage, fileNameTable+".sql", conf.CompressType)
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(ctx, db, createViewSQL, w.extStorage, fileNameView+".sql", conf.CompressType)
+	return writeMetaToFile(tctx, db, createViewSQL, w.extStorage, fileNameView+".sql", conf.CompressType)
 }
 
 // WriteTableData writes table data to a file with retry
 func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int) error {
-	ctx, conf, conn := w.ctx, w.conf, w.conn
+	tctx, conf, conn := w.tctx, w.conf, w.conn
 	retryTime := 0
 	var lastErr error
-	return utils.WithRetry(ctx, func() (err error) {
+	return utils.WithRetry(tctx, func() (err error) {
 		defer func() {
 			lastErr = err
 			if err != nil {
-				errorCount.With(conf.Labels).Inc()
+				IncCounter(errorCount, conf.Labels)
 			}
 		}()
 		retryTime++
-		log.Debug("trying to dump table chunk", zap.Int("retryTime", retryTime), zap.String("db", meta.DatabaseName()),
+		tctx.L().Debug("trying to dump table chunk", zap.Int("retryTime", retryTime), zap.String("db", meta.DatabaseName()),
 			zap.String("table", meta.TableName()), zap.Int("chunkIndex", currentChunk), zap.NamedError("lastError", lastErr))
 		// don't rebuild connection when dump for the first time
 		if retryTime > 1 {
@@ -176,7 +175,7 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 				return
 			}
 		}
-		err = ir.Start(ctx, conn)
+		err = ir.Start(tctx, conn)
 		if err != nil {
 			return
 		}
@@ -187,11 +186,11 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 			}
 		}
 		defer ir.Close()
-		return w.tryToWriteTableData(ctx, meta, ir, currentChunk)
+		return w.tryToWriteTableData(tctx, meta, ir, currentChunk)
 	}, newDumpChunkBackoffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
 
-func (w *Writer) tryToWriteTableData(ctx context.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
+func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
 	conf, format := w.conf, w.fileFmt
 	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
 	fileName, err := namer.NextName(conf.OutputFileTemplate, w.fileFmt.Extension())
@@ -200,9 +199,9 @@ func (w *Writer) tryToWriteTableData(ctx context.Context, meta TableMeta, ir Tab
 	}
 
 	for {
-		fileWriter, tearDown := buildInterceptFileWriter(ctx, w.extStorage, fileName, conf.CompressType)
-		err = format.WriteInsert(ctx, conf, meta, ir, fileWriter)
-		tearDown(ctx)
+		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType)
+		err = format.WriteInsert(tctx, conf, meta, ir, fileWriter)
+		tearDown(tctx)
 		if err != nil {
 			return err
 		}
@@ -222,14 +221,14 @@ func (w *Writer) tryToWriteTableData(ctx context.Context, meta TableMeta, ir Tab
 	return nil
 }
 
-func writeMetaToFile(ctx context.Context, target, metaSQL string, s storage.ExternalStorage, path string, compressType storage.CompressType) error {
-	fileWriter, tearDown, err := buildFileWriter(ctx, s, path, compressType)
+func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.ExternalStorage, path string, compressType storage.CompressType) error {
+	fileWriter, tearDown, err := buildFileWriter(tctx, s, path, compressType)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer tearDown(ctx)
+	defer tearDown(tctx)
 
-	return WriteMeta(ctx, &metaData{
+	return WriteMeta(tctx, &metaData{
 		target:  target,
 		metaSQL: metaSQL,
 		specCmts: []string{

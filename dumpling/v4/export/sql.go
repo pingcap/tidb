@@ -12,10 +12,10 @@ import (
 	"strconv"
 	"strings"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
+
 	"github.com/pingcap/errors"
 	"go.uber.org/zap"
-
-	"github.com/pingcap/dumpling/v4/log"
 )
 
 // ShowDatabases shows the databases of a database server.
@@ -202,41 +202,6 @@ func SelectAllFromTable(conf *Config, db *sql.Conn, database, table string) (Tab
 		query:  query,
 		colLen: selectLen,
 	}, nil
-}
-
-// SelectFromSQL dumps data serialized from a specified SQL
-func SelectFromSQL(conf *Config, conn *sql.Conn) (TableMeta, TableDataIR, error) {
-	log.Info("dump data from sql", zap.String("sql", conf.SQL))
-	rows, err := conn.QueryContext(context.Background(), conf.SQL)
-	if err != nil {
-		return nil, nil, errors.Annotatef(err, "sql: %s", conf.SQL)
-	}
-	defer rows.Close()
-	colTypes, err := rows.ColumnTypes()
-	if err != nil {
-		return nil, nil, errors.Annotatef(err, "sql: %s", conf.SQL)
-	}
-	cols, err := rows.Columns()
-	if err != nil {
-		return nil, nil, errors.Annotatef(err, "sql: %s", conf.SQL)
-	}
-	for i := range cols {
-		cols[i] = wrapBackTicks(cols[i])
-	}
-	meta := &tableMeta{
-		colTypes:      colTypes,
-		selectedField: strings.Join(cols, ","),
-		specCmts: []string{
-			"/*!40101 SET NAMES binary*/;",
-		},
-	}
-	data := &tableData{
-		query:  conf.SQL,
-		colLen: len(cols),
-	}
-	rows.Close()
-
-	return meta, data, rows.Err()
 }
 
 func buildSelectQuery(database, table string, fields string, where string, orderByClause string) string {
@@ -465,11 +430,11 @@ func GetSpecifiedColumnValue(rows *sql.Rows, columnName string) ([]string, error
 }
 
 // GetPdAddrs gets PD address from TiDB
-func GetPdAddrs(db *sql.DB) ([]string, error) {
+func GetPdAddrs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 	query := "SELECT * FROM information_schema.cluster_info where type = 'pd';"
-	rows, err := db.Query(query)
+	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
-		log.Warn("can't execute query from db",
+		tctx.L().Warn("can't execute query from db",
 			zap.String("query", query), zap.Error(err))
 		return []string{}, errors.Annotatef(err, "sql: %s", query)
 	}
@@ -478,11 +443,11 @@ func GetPdAddrs(db *sql.DB) ([]string, error) {
 }
 
 // GetTiDBDDLIDs gets DDL IDs from TiDB
-func GetTiDBDDLIDs(db *sql.DB) ([]string, error) {
+func GetTiDBDDLIDs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 	query := "SELECT * FROM information_schema.tidb_servers_info;"
-	rows, err := db.Query(query)
+	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
-		log.Warn("can't execute query from db",
+		tctx.L().Warn("can't execute query from db",
 			zap.String("query", query), zap.Error(err))
 		return []string{}, errors.Annotatef(err, "sql: %s", query)
 	}
@@ -514,14 +479,14 @@ func isUnknownSystemVariableErr(err error) bool {
 	return strings.Contains(err.Error(), "Unknown system variable")
 }
 
-func resetDBWithSessionParams(db *sql.DB, dsn string, params map[string]interface{}) (*sql.DB, error) {
+func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, params map[string]interface{}) (*sql.DB, error) {
 	support := make(map[string]interface{})
 	for k, v := range params {
 		s := fmt.Sprintf("SET SESSION %s = ?", k)
-		_, err := db.Exec(s, v)
+		_, err := db.ExecContext(tctx, s, v)
 		if err != nil {
 			if isUnknownSystemVariableErr(err) {
-				log.Info("session variable is not supported by db", zap.String("variable", k), zap.Reflect("value", v))
+				tctx.L().Info("session variable is not supported by db", zap.String("variable", k), zap.Reflect("value", v))
 				continue
 			}
 			return nil, errors.Trace(err)
@@ -727,7 +692,7 @@ func pickupPossibleField(dbName, tableName string, db *sql.Conn, conf *Config) (
 	return fieldName, nil
 }
 
-func estimateCount(dbName, tableName string, db *sql.Conn, field string, conf *Config) uint64 {
+func estimateCount(tctx *tcontext.Context, dbName, tableName string, db *sql.Conn, field string, conf *Config) uint64 {
 	query := fmt.Sprintf("EXPLAIN SELECT `%s` FROM `%s`.`%s`", escapeString(field), escapeString(dbName), escapeString(tableName))
 
 	if conf.Where != "" {
@@ -735,7 +700,7 @@ func estimateCount(dbName, tableName string, db *sql.Conn, field string, conf *C
 		query += conf.Where
 	}
 
-	estRows := detectEstimateRows(db, query, []string{"rows", "estRows", "count"})
+	estRows := detectEstimateRows(tctx, db, query, []string{"rows", "estRows", "count"})
 	/* tidb results field name is estRows (before 4.0.0-beta.2: count)
 		+-----------------------+----------+-----------+---------------------------------------------------------+
 		| id                    | estRows  | task      | access object | operator info                           |
@@ -764,10 +729,10 @@ func estimateCount(dbName, tableName string, db *sql.Conn, field string, conf *C
 	return 0
 }
 
-func detectEstimateRows(db *sql.Conn, query string, fieldNames []string) uint64 {
-	rows, err := db.QueryContext(context.Background(), query)
+func detectEstimateRows(tctx *tcontext.Context, db *sql.Conn, query string, fieldNames []string) uint64 {
+	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
-		log.Warn("can't execute query from db",
+		tctx.L().Warn("can't execute query from db",
 			zap.String("query", query), zap.Error(err))
 		return 0
 	}
@@ -775,13 +740,13 @@ func detectEstimateRows(db *sql.Conn, query string, fieldNames []string) uint64 
 	rows.Next()
 	columns, err := rows.Columns()
 	if err != nil {
-		log.Warn("can't get columns from db",
+		tctx.L().Warn("can't get columns from db",
 			zap.String("query", query), zap.Error(err))
 		return 0
 	}
 	err = rows.Err()
 	if err != nil {
-		log.Warn("rows meet some error during the query",
+		tctx.L().Warn("rows meet some error during the query",
 			zap.String("query", query), zap.Error(err))
 		return 0
 	}
@@ -802,14 +767,14 @@ found:
 	}
 	err = rows.Scan(addr...)
 	if err != nil || fieldIndex < 0 {
-		log.Warn("can't get estimate count from db",
+		tctx.L().Warn("can't get estimate count from db",
 			zap.String("query", query), zap.Error(err))
 		return 0
 	}
 
 	estRows, err := strconv.ParseFloat(oneRow[fieldIndex].String, 64)
 	if err != nil {
-		log.Warn("can't get parse rows from db",
+		tctx.L().Warn("can't get parse rows from db",
 			zap.String("query", query), zap.Error(err))
 		return 0
 	}

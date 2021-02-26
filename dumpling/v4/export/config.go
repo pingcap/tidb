@@ -13,6 +13,8 @@ import (
 	"text/template"
 	"time"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
+
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
@@ -23,8 +25,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
-
-	"github.com/pingcap/dumpling/v4/log"
 )
 
 const (
@@ -172,8 +172,8 @@ func DefaultConfig() *Config {
 // String returns dumpling's config in json format
 func (conf *Config) String() string {
 	cfg, err := json.Marshal(conf)
-	if err != nil {
-		log.Error("fail to marshal config to json", zap.Error(err))
+	if err != nil && conf.Logger != nil {
+		conf.Logger.Error("fail to marshal config to json", zap.Error(err))
 	}
 	return string(cfg)
 }
@@ -579,8 +579,8 @@ var (
 )
 
 // ParseServerInfo parses exported server type and version info from version string
-func ParseServerInfo(src string) ServerInfo {
-	log.Debug("parse server info", zap.String("server info string", src))
+func ParseServerInfo(tctx *tcontext.Context, src string) ServerInfo {
+	tctx.L().Debug("parse server info", zap.String("server info string", src))
 	lowerCase := strings.ToLower(src)
 	serverInfo := ServerInfo{}
 	switch {
@@ -594,7 +594,7 @@ func ParseServerInfo(src string) ServerInfo {
 		serverInfo.ServerType = ServerTypeUnknown
 	}
 
-	log.Info("detect server type",
+	tctx.L().Info("detect server type",
 		zap.String("type", serverInfo.ServerType.String()))
 
 	var versionStr string
@@ -608,12 +608,12 @@ func ParseServerInfo(src string) ServerInfo {
 	var err error
 	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
 	if err != nil {
-		log.Warn("fail to parse version",
+		tctx.L().Warn("fail to parse version",
 			zap.String("version", versionStr))
 		return serverInfo
 	}
 
-	log.Info("detect server version",
+	tctx.L().Info("detect server version",
 		zap.String("version", serverInfo.ServerVersion.String()))
 	return serverInfo
 }
@@ -655,22 +655,6 @@ func adjustConfig(conf *Config, fns ...func(*Config) error) error {
 		err := f(conf)
 		if err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-func initLogger(conf *Config) error {
-	if conf.Logger != nil {
-		log.SetAppLogger(conf.Logger)
-	} else {
-		err := log.InitAppLogger(&log.Config{
-			Level:  conf.LogLevel,
-			File:   conf.LogFile,
-			Format: conf.LogFormat,
-		})
-		if err != nil {
-			return errors.Trace(err)
 		}
 	}
 	return nil
