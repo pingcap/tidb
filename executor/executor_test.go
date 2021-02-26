@@ -4285,7 +4285,7 @@ func (s *testSuiteP1) TestSelectPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists th, tr, tl`)
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly;")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
 	tk.MustExec(`create table th (a int, b int) partition by hash(a) partitions 3;`)
 	tk.MustExec(`create table tr (a int, b int)
 							partition by range (a) (
@@ -7478,7 +7478,10 @@ func (s *testSuite) TestIssue15563(c *C) {
 	tk.MustQuery("select distinct 0.7544678906163867 /  0.68234634;").Check(testkit.Rows("1.10569639842486251190"))
 }
 
-func (s *testSuite) TestStalenessTransaction(c *C) {
+func (s *testSerialSuite) TestStalenessTransaction(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	testcases := []struct {
@@ -7489,6 +7492,7 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 		expectPhysicalTS int64
 		preSec           int64
 		txnScope         string
+		zone             string
 	}{
 		{
 			name:             "TimestampBoundExactStaleness",
@@ -7496,7 +7500,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1599321600000,
-			txnScope:         "sh",
+			txnScope:         "local",
+			zone:             "sh",
 		},
 		{
 			name:             "TimestampBoundReadTimestamp",
@@ -7504,7 +7509,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1599321600000,
-			txnScope:         "bj",
+			txnScope:         "local",
+			zone:             "bj",
 		},
 		{
 			name:        "TimestampBoundExactStaleness",
@@ -7512,7 +7518,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
 			IsStaleness: true,
 			preSec:      20,
-			txnScope:    "sh",
+			txnScope:    "local",
+			zone:        "sh",
 		},
 		{
 			name:        "TimestampBoundExactStaleness",
@@ -7520,7 +7527,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
 			IsStaleness: true,
 			preSec:      20,
-			txnScope:    "sz",
+			txnScope:    "local",
+			zone:        "sz",
 		},
 		{
 			name:        "begin",
@@ -7528,12 +7536,16 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:         "begin",
 			IsStaleness: false,
 			txnScope:    oracle.GlobalTxnScope,
+			zone:        "",
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		config.GetGlobalConfig().Labels = map[string]string{
+			"zone": testcase.zone,
+		}
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)
@@ -7647,4 +7659,30 @@ func (s *testSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 		}
 		check()
 	}
+}
+
+func (s *testSuiteP1) TestIssue22941(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists m, mp")
+	tk.MustExec(`CREATE TABLE m (
+		mid varchar(50) NOT NULL,
+		ParentId varchar(50) DEFAULT NULL,
+		PRIMARY KEY (mid),
+		KEY ind_bm_parent (ParentId,mid)
+	)`)
+
+	tk.MustExec(`CREATE TABLE mp (
+		mpid bigint(20) unsigned NOT NULL DEFAULT '0',
+		mid varchar(50) DEFAULT NULL COMMENT '模块主键',
+	PRIMARY KEY (mpid)
+	);`)
+
+	tk.MustExec(`insert into mp values("1","1");`)
+	tk.MustExec(`insert into m values("0", "0");`)
+	rs := tk.MustQuery(`SELECT ( SELECT COUNT(1) FROM m WHERE ParentId = c.mid ) expand,  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
+	rs.Check(testkit.Rows("1 <nil> 1 0"))
+
+	rs = tk.MustQuery(`SELECT  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
+	rs.Check(testkit.Rows("<nil> 1 0"))
 }
