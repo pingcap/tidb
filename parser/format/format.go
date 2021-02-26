@@ -288,13 +288,12 @@ func (rf RestoreFlags) HasStringWithoutDefaultCharset() bool {
 type RestoreCtx struct {
 	Flags     RestoreFlags
 	In        io.Writer
-	JoinLevel int
 	DefaultDB string
 }
 
 // NewRestoreCtx returns a new `RestoreCtx`.
 func NewRestoreCtx(flags RestoreFlags, in io.Writer) *RestoreCtx {
-	return &RestoreCtx{flags, in, 0, ""}
+	return &RestoreCtx{flags, in, ""}
 }
 
 // WriteKeyWord writes the `keyWord` into writer.
