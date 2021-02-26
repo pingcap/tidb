@@ -851,15 +851,15 @@ func (s *testPlanSerialSuite) TestIssue18066(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("prepare stmt from 'select * from t'")
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
-	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
 		testkit.Rows("1 0 0"))
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
-	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
 		testkit.Rows("2 1 1"))
 	tk.MustExec("prepare stmt from 'select * from t'")
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
 		testkit.Rows("3 1 0"))
 }
 
