@@ -1432,22 +1432,6 @@ func (s *testSuite8) TestUpdate(c *C) {
 	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'I_uniq'"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 
-<<<<<<< HEAD
-=======
-	// test issue21965
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-	tk.MustExec("create table t (a int) partition by list (a) (partition p0 values in (0,1));")
-	tk.MustExec("insert ignore into t values (1);")
-	tk.MustExec("update ignore t set a=2 where a=1;")
-	tk.CheckLastMessage("Rows matched: 1  Changed: 0  Warnings: 0")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int key) partition by list (a) (partition p0 values in (0,1));")
-	tk.MustExec("insert ignore into t values (1);")
-	tk.MustExec("update ignore t set a=2 where a=1;")
-	tk.CheckLastMessage("Rows matched: 1  Changed: 0  Warnings: 0")
-
->>>>>>> 7151b4f3b... config: use tidb_enable_list_partition to enable list table partition feature (#22864)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id integer auto_increment, t1 datetime, t2 datetime, primary key (id))")
 	tk.MustExec("insert into t(t1, t2) values('2000-10-01 01:01:01', '2017-01-01 10:10:10')")

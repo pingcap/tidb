@@ -97,13 +97,8 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
-<<<<<<< HEAD
 	tk.MustExec("set @@tidb_enable_clustered_index=0;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
-=======
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
->>>>>>> 7151b4f3b... config: use tidb_enable_list_partition to enable list table partition feature (#22864)
 	tk.MustExec("create table t1 (id int, a int, b int                 ) partition by list (    a    ) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t2 (a int, id int, b int) partition by list (a*3 + b - 2*a - b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t3 (b int, id int, a int) partition by list columns (a) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")

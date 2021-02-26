@@ -67,19 +67,6 @@ const (
 	BoolOff = "OFF"
 	// BoolOn is the canonical string representation of a boolean true.
 	BoolOn = "ON"
-<<<<<<< HEAD
-	// Nightly indicate the nightly version.
-	Nightly = "NIGHTLY"
-=======
-	// On is the canonical string for ON
-	On = "ON"
-
-	// Off is the canonical string for OFF
-	Off = "OFF"
-
-	// Warn means return warnings
-	Warn = "WARN"
->>>>>>> 7151b4f3b... config: use tidb_enable_list_partition to enable list table partition feature (#22864)
 )
 
 // SysVar is for system variable.
