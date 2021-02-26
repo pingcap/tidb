@@ -3257,9 +3257,11 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	defer func() {
-		config.GetGlobalConfig().Labels["zone"] = ""
+		config.RestoreFunc()
 	}()
-	config.GetGlobalConfig().Labels["zone"] = ""
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels["zone"] = ""
+	})
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
@@ -3270,8 +3272,9 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
-
-	config.GetGlobalConfig().Labels["zone"] = "bj"
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels["zone"] = "bj"
+	})
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
@@ -3291,7 +3294,7 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 	defer func() {
-		config.GetGlobalConfig().Labels["zone"] = ""
+		config.RestoreFunc()
 	}()
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
@@ -3382,9 +3385,9 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
-	config.GetGlobalConfig().Labels = map[string]string{
-		"zone": "dc-1",
-	}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels["zone"] = "dc-1"
+	})
 	// set txn_scope to local
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")

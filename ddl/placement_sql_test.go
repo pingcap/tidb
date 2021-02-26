@@ -441,7 +441,7 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 
 func (s *testSerialDBSuite) TestTxnScopeConstraint(c *C) {
 	defer func() {
-		config.GetGlobalConfig().Labels["zone"] = ""
+		config.RestoreFunc()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -569,9 +569,9 @@ PARTITION BY RANGE (c) (
 
 	for _, testcase := range testCases {
 		c.Log(testcase.name)
-		config.GetGlobalConfig().Labels = map[string]string{
-			"zone": testcase.zone,
-		}
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Labels["zone"] = testcase.zone
+		})
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
@@ -662,7 +662,7 @@ add placement policy
 
 func (s *testSerialSuite) TestGlobalTxnState(c *C) {
 	defer func() {
-		config.GetGlobalConfig().Labels["zone"] = ""
+		config.RestoreFunc()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -704,9 +704,9 @@ PARTITION BY RANGE (c) (
 			},
 		},
 	}
-	config.GetGlobalConfig().Labels = map[string]string{
-		"zone": "bj",
-	}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels["zone"] = "bj"
+	})
 	dbInfo := testGetSchemaByName(c, tk.Se, "test")
 	tk2 := testkit.NewTestKit(c, s.store)
 	var chkErr error

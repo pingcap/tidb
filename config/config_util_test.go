@@ -170,16 +170,27 @@ engines = ["tikv", "tiflash", "tidb"]
 }
 
 func (s *testConfigSuite) TestTxnScopeValue(c *C) {
-	GetGlobalConfig().Labels["zone"] = "bj"
+	defer RestoreFunc()
+	UpdateGlobal(func(conf *Config) {
+		conf.Labels["zone"] = "bj"
+	})
 	isGlobal, v := GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsFalse)
 	c.Assert(v, Equals, "bj")
-	GetGlobalConfig().Labels["zone"] = ""
+	UpdateGlobal(func(conf *Config) {
+		conf.Labels["zone"] = ""
+	})
 	isGlobal, v = GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsTrue)
 	c.Assert(v, Equals, "global")
-	GetGlobalConfig().Labels["zone"] = "global"
+	UpdateGlobal(func(conf *Config) {
+		conf.Labels["zone"] = "global"
+	})
 	isGlobal, v = GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsFalse)
 	c.Assert(v, Equals, "global")
+}
+
+func SetLabelConfig() {
+	GetGlobalConfig()
 }

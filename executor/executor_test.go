@@ -7480,7 +7480,7 @@ func (s *testSuite) TestIssue15563(c *C) {
 
 func (s *testSerialSuite) TestStalenessTransaction(c *C) {
 	defer func() {
-		config.GetGlobalConfig().Labels["zone"] = ""
+		config.RestoreFunc()
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
@@ -7543,9 +7543,9 @@ func (s *testSerialSuite) TestStalenessTransaction(c *C) {
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		config.GetGlobalConfig().Labels = map[string]string{
-			"zone": testcase.zone,
-		}
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Labels["zone"] = testcase.zone
+		})
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)

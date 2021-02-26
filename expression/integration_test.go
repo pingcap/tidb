@@ -8539,7 +8539,7 @@ func (s *testIntegrationSuite) TestIssue12209(c *C) {
 
 func (s *testIntegrationSerialSuite) TestCrossDCQuery(c *C) {
 	defer func() {
-		config.GetGlobalConfig().Labels["zone"] = ""
+		config.RestoreFunc()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -8656,9 +8656,9 @@ PARTITION BY RANGE (c) (
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		config.GetGlobalConfig().Labels = map[string]string{
-			"zone": testcase.zone,
-		}
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Labels["zone"] = testcase.zone
+		})
 		_, err = tk.Exec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		c.Assert(err, IsNil)
 		res, err := tk.Exec(testcase.sql)
