@@ -28,7 +28,10 @@ var _ = Suite(&testScanMockSuite{})
 
 func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	store := NewTestStore(c)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
@@ -61,7 +64,10 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 
 func (s *testScanMockSuite) TestReverseScan(c *C) {
 	store := NewTestStore(c)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)

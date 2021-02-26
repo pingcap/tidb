@@ -87,7 +87,8 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
@@ -96,7 +97,8 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	is = do.InfoSchema()
 
 	do.StatsHandle().Clear()
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 }
@@ -138,7 +140,8 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
@@ -149,7 +152,8 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	is = do.InfoSchema()
 
 	do.StatsHandle().Clear()
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 }
@@ -231,7 +235,8 @@ func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
 	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
 
 	do.StatsHandle().Clear()
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	c.Assert(statsTbl2.Count, Equals, int64(recordCount))
@@ -276,7 +281,8 @@ func (s *testStatsSuite) TestColumnIDs(c *C) {
 	testKit.MustExec("alter table t drop column c1")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
@@ -443,7 +449,8 @@ func (s *testStatsSuite) TestLoadHist(c *C) {
 		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	h.Update(do.InfoSchema())
+	err = h.Update(do.InfoSchema())
+	c.Assert(err, IsNil)
 	newStatsTbl := h.GetTableStats(tableInfo)
 	// The stats table is updated.
 	c.Assert(oldStatsTbl == newStatsTbl, IsFalse)
@@ -807,7 +814,8 @@ func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)
 	c.Assert(statsTbl.ExtendedStats, NotNil)
@@ -815,7 +823,8 @@ func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 
 	tk.MustExec("update mysql.stats_extended set status = 1 where name = 's1'")
 	do.StatsHandle().Clear()
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)
 	c.Assert(statsTbl.ExtendedStats, NotNil)
@@ -825,7 +834,8 @@ func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
 		"2 [2,3] <nil> 2",
 	))
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.ExtendedStats, NotNil)
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
@@ -848,7 +858,8 @@ func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)
 	c.Assert(statsTbl.ExtendedStats, NotNil)
@@ -856,14 +867,16 @@ func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 
 	tk.MustExec("update mysql.stats_extended set status = 1 where name = 's1'")
 	do.StatsHandle().Clear()
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)
 	c.Assert(statsTbl.ExtendedStats, NotNil)
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
 
 	tk.MustExec("delete from mysql.stats_extended where name = 's1'")
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.ExtendedStats, NotNil)
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
@@ -894,7 +907,8 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)
 	c.Assert(statsTbl.ExtendedStats, NotNil)
@@ -905,7 +919,8 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 		"2 [1,2] 1.000000 1",
 		"2 [1,3] -1.000000 1",
 	))
-	do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(is)
+	c.Assert(err, IsNil)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)
 	c.Assert(statsTbl.ExtendedStats, NotNil)

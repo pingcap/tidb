@@ -1,0 +1,2 @@
+db_change_test: appendEnum, :521 N
+db_change_test.go:1127: testStateChangeSuite.TestParallelAddPrimaryKey, need to drop first

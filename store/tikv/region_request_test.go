@@ -503,7 +503,8 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCa
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		server.Serve(lis)
+		err := server.Serve(lis)
+		c.Assert(err, IsNil)
 		wg.Done()
 	}()
 
@@ -528,7 +529,9 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCa
 		redirectAddr: addr,
 	}
 	sender = NewRegionRequestSender(s.cache, client1)
-	sender.SendReq(s.bo, req, region.Region, 3*time.Second)
+	_, err = sender.SendReq(s.bo, req, region.Region, 3*time.Second)
+	// error: context cancelled
+	c.Assert(err, NotNil)
 
 	// cleanup
 	server.Stop()

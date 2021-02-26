@@ -50,8 +50,11 @@ gosec:tools/bin/gosec
 
 check-static: tools/bin/golangci-lint
 	tools/bin/golangci-lint run -v --disable-all --deadline=3m \
-	  --enable=misspell \
-	  --enable=ineffassign \
+	  --enable=errcheck \
+	   --max-issues-per-linter=0 \
+	   --max-same-issues=0 \
+	   --enable=misspell \
+       --enable=ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec

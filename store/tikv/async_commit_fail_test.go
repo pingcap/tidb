@@ -108,15 +108,17 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 	s.putAlphabets(c, true)
 
 	txn := s.beginAsyncCommit(c)
-	txn.Set([]byte("a"), []byte("v1"))
-	txn.Set([]byte("b"), []byte("v2"))
+	err := txn.Set([]byte("a"), []byte("v1"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("b"), []byte("v2"))
+	c.Assert(err, IsNil)
 	s.mustPointGet(c, []byte("a"), []byte("a"))
 	s.mustPointGet(c, []byte("b"), []byte("b"))
 
 	// PointGet cannot ignore async commit transactions' locks.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
-	err := txn.Commit(ctx)
+	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(txn.committer.isAsyncCommit(), IsTrue)
 	s.mustPointGet(c, []byte("a"), []byte("v1"))
@@ -169,7 +171,8 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 
 		txn := s.beginAsyncCommit(c)
 		for i := range keys {
-			txn.Set([]byte(keys[i]), []byte(values[i]))
+			err := txn.Set([]byte(keys[i]), []byte(values[i]))
+			c.Assert(err, IsNil)
 		}
 
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)

@@ -55,7 +55,8 @@ func (s *testScanSuite) TearDownSuite(c *C) {
 		k := scanner.Key()
 		err = txn.Delete(k)
 		c.Assert(err, IsNil)
-		scanner.Next()
+		err := scanner.Next()
+		c.Assert(err, IsNil)
 	}
 	err = txn.Commit(s.ctx)
 	c.Assert(err, IsNil)
@@ -92,10 +93,12 @@ func (s *testScanSuite) TestScan(c *C) {
 			// Because newScan return first item without calling scan.Next() just like go-hbase,
 			// for-loop count will decrease 1.
 			if i < rowNum-1 {
-				scan.Next()
+				err := scan.Next()
+				c.Assert(err, IsNil)
 			}
 		}
-		scan.Next()
+		err := scan.Next()
+		c.Assert(err, IsNil)
 		c.Assert(scan.Valid(), IsFalse)
 	}
 

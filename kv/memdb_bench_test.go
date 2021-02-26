@@ -42,7 +42,10 @@ func BenchmarkLargeIndex(b *testing.B) {
 	b.ResetTimer()
 
 	for i := range buf {
-		db.Set(buf[i][:keySize], buf[i][:])
+		err := db.Set(buf[i][:keySize], buf[i][:])
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -56,7 +59,10 @@ func BenchmarkPut(b *testing.B) {
 	b.ResetTimer()
 
 	for i := range buf {
-		p.Set(buf[i][:keySize], buf[i][:])
+		err := p.Set(buf[i][:keySize], buf[i][:])
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -70,7 +76,10 @@ func BenchmarkPutRandom(b *testing.B) {
 	b.ResetTimer()
 
 	for i := range buf {
-		p.Set(buf[i][:keySize], buf[i][:])
+		err := p.Set(buf[i][:keySize], buf[i][:])
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -82,12 +91,18 @@ func BenchmarkGet(b *testing.B) {
 
 	p := newMemDBForBench()
 	for i := range buf {
-		p.Set(buf[i][:keySize], buf[i][:])
+		err := p.Set(buf[i][:keySize], buf[i][:])
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 
 	b.ResetTimer()
 	for i := range buf {
-		p.Get(context.TODO(), buf[i][:keySize])
+		_, err := p.Get(context.TODO(), buf[i][:keySize])
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -99,12 +114,18 @@ func BenchmarkGetRandom(b *testing.B) {
 
 	p := newMemDBForBench()
 	for i := range buf {
-		p.Set(buf[i][:keySize], buf[i][:])
+		err := p.Set(buf[i][:keySize], buf[i][:])
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		p.Get(context.TODO(), buf[i][:keySize])
+		_, err := p.Get(context.TODO(), buf[i][:keySize])
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -156,17 +177,26 @@ func benchmarkSetGet(b *testing.B, buffer MemBuffer, data [][]byte) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, k := range data {
-			buffer.Set(k, k)
+			err := buffer.Set(k, k)
+			if err != nil {
+				b.Fatal(err)
+			}
 		}
 		for _, k := range data {
-			buffer.Get(context.TODO(), k)
+			_, err := buffer.Get(context.TODO(), k)
+			if err != nil {
+				b.Fatal(err)
+			}
 		}
 	}
 }
 
 func benchIterator(b *testing.B, buffer MemBuffer) {
 	for k := 0; k < opCnt; k++ {
-		buffer.Set(encodeInt(k), encodeInt(k))
+		err := buffer.Set(encodeInt(k), encodeInt(k))
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -175,7 +205,10 @@ func benchIterator(b *testing.B, buffer MemBuffer) {
 			b.Error(err)
 		}
 		for iter.Valid() {
-			iter.Next()
+			err := iter.Next()
+			if err != nil {
+				b.Fatal(err)
+			}
 		}
 		iter.Close()
 	}

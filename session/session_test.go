@@ -115,7 +115,10 @@ func clearStorage(store kv.Storage) error {
 		return errors.Trace(err)
 	}
 	for iter.Valid() {
-		txn.Delete(iter.Key())
+		err := txn.Delete(iter.Key())
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if err := iter.Next(); err != nil {
 			return errors.Trace(err)
 		}
@@ -302,7 +305,8 @@ func (s *testSessionSuite2) TestErrorRollback(c *C) {
 			localTk := testkit.NewTestKitWithInit(c, s.store)
 			localTk.MustExec("set @@session.tidb_retry_limit = 100")
 			for j := 0; j < num; j++ {
-				localTk.Exec("insert into t_rollback values (1, 1)")
+				// cannot detect error, on purpose error
+				_, _ = localTk.Exec("insert into t_rollback values (1, 1)")
 				localTk.MustExec("update t_rollback set c2 = c2 + 1 where c1 = 0")
 			}
 		}()
@@ -730,7 +734,8 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	c.Assert(err, IsNil)
 	compiler := executor.Compiler{Ctx: tk.Se}
 	stmt, _ := compiler.Compile(context.TODO(), stmtNode)
-	executor.ResetContextOfStmt(tk.Se, stmtNode)
+	err = executor.ResetContextOfStmt(tk.Se, stmtNode)
+	c.Assert(err, IsNil)
 	history.Add(stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
@@ -1818,7 +1823,8 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 	tk.MustExec("begin;")
 	tk.MustExec("insert into test(id, val) values(20, 6);")
 	tk.MustExec("commit;")
-	tk1.Exec("commit")
+	// cannot check error, err not nil
+	_, _ = tk1.Exec("commit")
 	tk1.MustExec("insert into test(id, val) values(5, 5);")
 
 	tk.MustExec("drop table test;")
@@ -1830,7 +1836,8 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 		);`)
 	tk.MustExec("insert into test(id, val1, val2) values(1, 1, 1);")
 	tk.MustExec("insert into test(id, val1, val2) values(2, 2, 2);")
-	tk.Exec("update test set val1 = 3, val2 = 2 where id = 1;")
+	_, err = tk.Exec("update test set val1 = 3, val2 = 2 where id = 1;")
+	c.Assert(err, IsNil)
 	tk.MustExec("insert into test(id, val1, val2) values(3, 3, 3);")
 }
 
@@ -2038,7 +2045,8 @@ func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 
-	failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed")
+	err = failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed")
+	c.Assert(err, IsNil)
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")
@@ -2625,17 +2633,19 @@ func (s *testSessionSuite3) TestSetTransactionIsolationOneShot(c *C) {
 	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		c.Assert(req.IsolationLevel, Equals, kv.SI)
 	})
-	tk.Se.Execute(ctx, "select * from t where k = 1")
+	_, err := tk.Se.Execute(ctx, "select * from t where k = 1")
+	c.Assert(err, IsNil)
 
 	// Check it just take effect for one time.
 	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		c.Assert(req.IsolationLevel, Equals, kv.SI)
 	})
-	tk.Se.Execute(ctx, "select * from t where k = 1")
+	_, err = tk.Se.Execute(ctx, "select * from t where k = 1")
+	c.Assert(err, IsNil)
 
 	// Can't change isolation level when it's inside a transaction.
 	tk.MustExec("begin")
-	_, err := tk.Se.Execute(ctx, "set transaction isolation level read committed")
+	_, err = tk.Se.Execute(ctx, "set transaction isolation level read committed")
 	c.Assert(err, NotNil)
 }
 
@@ -2732,7 +2742,8 @@ func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	tk1.MustExec("update no_retry set id = id + 1")
 	c.Assert(tikv.MockRetryableErrorResp.Enable(`return(true)`), IsNil)
 	_, err := tk1.Se.Execute(context.Background(), "commit")
-	tikv.MockRetryableErrorResp.Disable()
+	err = tikv.MockRetryableErrorResp.Disable()
+	c.Assert(err, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))
@@ -3469,157 +3480,188 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	tk.Se.GetSessionVars().SetSystemVar("sql_mode", mysql.DefaultSQLMode)
+	err := tk.Se.GetSessionVars().SetSystemVar("sql_mode", mysql.DefaultSQLMode)
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_mode=ALLOW_INVALID_DATES) */ @@sql_mode;").Check(testkit.Rows("ALLOW_INVALID_DATES"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@sql_mode;").Check(testkit.Rows(mysql.DefaultSQLMode))
 
-	tk.Se.GetSessionVars().SetSystemVar("tmp_table_size", "16777216")
+	err = tk.Se.GetSessionVars().SetSystemVar("tmp_table_size", "16777216")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(tmp_table_size=1024) */ @@tmp_table_size;").Check(testkit.Rows("1024"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@tmp_table_size;").Check(testkit.Rows("16777216"))
 
-	tk.Se.GetSessionVars().SetSystemVar("range_alloc_block_size", "4096")
+	err = tk.Se.GetSessionVars().SetSystemVar("range_alloc_block_size", "4096")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(range_alloc_block_size=4294967295) */ @@range_alloc_block_size;").Check(testkit.Rows("4294967295"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@range_alloc_block_size;").Check(testkit.Rows("4096"))
 
-	tk.Se.GetSessionVars().SetSystemVar("max_execution_time", "0")
+	err = tk.Se.GetSessionVars().SetSystemVar("max_execution_time", "0")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(max_execution_time=1) */ @@max_execution_time;").Check(testkit.Rows("1"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@max_execution_time;").Check(testkit.Rows("0"))
 
-	tk.Se.GetSessionVars().SetSystemVar("time_zone", "SYSTEM")
+	err = tk.Se.GetSessionVars().SetSystemVar("time_zone", "SYSTEM")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(time_zone='+12:00') */ @@time_zone;").Check(testkit.Rows("+12:00"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@time_zone;").Check(testkit.Rows("SYSTEM"))
 
-	tk.Se.GetSessionVars().SetSystemVar("join_buffer_size", "262144")
+	err = tk.Se.GetSessionVars().SetSystemVar("join_buffer_size", "262144")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(join_buffer_size=128) */ @@join_buffer_size;").Check(testkit.Rows("128"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@join_buffer_size;").Check(testkit.Rows("262144"))
 
-	tk.Se.GetSessionVars().SetSystemVar("max_length_for_sort_data", "1024")
+	err = tk.Se.GetSessionVars().SetSystemVar("max_length_for_sort_data", "1024")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(max_length_for_sort_data=4) */ @@max_length_for_sort_data;").Check(testkit.Rows("4"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@max_length_for_sort_data;").Check(testkit.Rows("1024"))
 
-	tk.Se.GetSessionVars().SetSystemVar("max_error_count", "64")
+	err = tk.Se.GetSessionVars().SetSystemVar("max_error_count", "64")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(max_error_count=0) */ @@max_error_count;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@max_error_count;").Check(testkit.Rows("64"))
 
-	tk.Se.GetSessionVars().SetSystemVar("sql_buffer_result", "OFF")
+	err = tk.Se.GetSessionVars().SetSystemVar("sql_buffer_result", "OFF")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_buffer_result=ON) */ @@sql_buffer_result;").Check(testkit.Rows("ON"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@sql_buffer_result;").Check(testkit.Rows("OFF"))
 
-	tk.Se.GetSessionVars().SetSystemVar("max_heap_table_size", "16777216")
+	err = tk.Se.GetSessionVars().SetSystemVar("max_heap_table_size", "16777216")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(max_heap_table_size=16384) */ @@max_heap_table_size;").Check(testkit.Rows("16384"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@max_heap_table_size;").Check(testkit.Rows("16777216"))
 
-	tk.Se.GetSessionVars().SetSystemVar("div_precision_increment", "4")
+	err = tk.Se.GetSessionVars().SetSystemVar("div_precision_increment", "4")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(div_precision_increment=0) */ @@div_precision_increment;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@div_precision_increment;").Check(testkit.Rows("4"))
 
-	tk.Se.GetSessionVars().SetSystemVar("sql_auto_is_null", "0")
+	err = tk.Se.GetSessionVars().SetSystemVar("sql_auto_is_null", "0")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_auto_is_null=1) */ @@sql_auto_is_null;").Check(testkit.Rows("1"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@sql_auto_is_null;").Check(testkit.Rows("0"))
 
-	tk.Se.GetSessionVars().SetSystemVar("sort_buffer_size", "262144")
+	err = tk.Se.GetSessionVars().SetSystemVar("sort_buffer_size", "262144")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(sort_buffer_size=32768) */ @@sort_buffer_size;").Check(testkit.Rows("32768"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@sort_buffer_size;").Check(testkit.Rows("262144"))
 
-	tk.Se.GetSessionVars().SetSystemVar("max_join_size", "18446744073709551615")
+	err = tk.Se.GetSessionVars().SetSystemVar("max_join_size", "18446744073709551615")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(max_join_size=1) */ @@max_join_size;").Check(testkit.Rows("1"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@max_join_size;").Check(testkit.Rows("18446744073709551615"))
 
-	tk.Se.GetSessionVars().SetSystemVar("max_seeks_for_key", "18446744073709551615")
+	err = tk.Se.GetSessionVars().SetSystemVar("max_seeks_for_key", "18446744073709551615")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(max_seeks_for_key=1) */ @@max_seeks_for_key;").Check(testkit.Rows("1"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@max_seeks_for_key;").Check(testkit.Rows("18446744073709551615"))
 
-	tk.Se.GetSessionVars().SetSystemVar("max_sort_length", "1024")
+	err = tk.Se.GetSessionVars().SetSystemVar("max_sort_length", "1024")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(max_sort_length=4) */ @@max_sort_length;").Check(testkit.Rows("4"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@max_sort_length;").Check(testkit.Rows("1024"))
 
-	tk.Se.GetSessionVars().SetSystemVar("bulk_insert_buffer_size", "8388608")
+	err = tk.Se.GetSessionVars().SetSystemVar("bulk_insert_buffer_size", "8388608")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(bulk_insert_buffer_size=0) */ @@bulk_insert_buffer_size;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@bulk_insert_buffer_size;").Check(testkit.Rows("8388608"))
 
-	tk.Se.GetSessionVars().SetSystemVar("sql_big_selects", "1")
+	err = tk.Se.GetSessionVars().SetSystemVar("sql_big_selects", "1")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_big_selects=0) */ @@sql_big_selects;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@sql_big_selects;").Check(testkit.Rows("1"))
 
-	tk.Se.GetSessionVars().SetSystemVar("read_rnd_buffer_size", "262144")
+	err = tk.Se.GetSessionVars().SetSystemVar("read_rnd_buffer_size", "262144")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(read_rnd_buffer_size=1) */ @@read_rnd_buffer_size;").Check(testkit.Rows("1"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@read_rnd_buffer_size;").Check(testkit.Rows("262144"))
 
-	tk.Se.GetSessionVars().SetSystemVar("unique_checks", "1")
+	err = tk.Se.GetSessionVars().SetSystemVar("unique_checks", "1")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(unique_checks=0) */ @@unique_checks;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@unique_checks;").Check(testkit.Rows("1"))
 
-	tk.Se.GetSessionVars().SetSystemVar("read_buffer_size", "131072")
+	err = tk.Se.GetSessionVars().SetSystemVar("read_buffer_size", "131072")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(read_buffer_size=8192) */ @@read_buffer_size;").Check(testkit.Rows("8192"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@read_buffer_size;").Check(testkit.Rows("131072"))
 
-	tk.Se.GetSessionVars().SetSystemVar("default_tmp_storage_engine", "InnoDB")
+	err = tk.Se.GetSessionVars().SetSystemVar("default_tmp_storage_engine", "InnoDB")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(default_tmp_storage_engine='CSV') */ @@default_tmp_storage_engine;").Check(testkit.Rows("CSV"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@default_tmp_storage_engine;").Check(testkit.Rows("InnoDB"))
 
-	tk.Se.GetSessionVars().SetSystemVar("optimizer_search_depth", "62")
+	err = tk.Se.GetSessionVars().SetSystemVar("optimizer_search_depth", "62")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(optimizer_search_depth=1) */ @@optimizer_search_depth;").Check(testkit.Rows("1"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@optimizer_search_depth;").Check(testkit.Rows("62"))
 
-	tk.Se.GetSessionVars().SetSystemVar("max_points_in_geometry", "65536")
+	err = tk.Se.GetSessionVars().SetSystemVar("max_points_in_geometry", "65536")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(max_points_in_geometry=3) */ @@max_points_in_geometry;").Check(testkit.Rows("3"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@max_points_in_geometry;").Check(testkit.Rows("65536"))
 
-	tk.Se.GetSessionVars().SetSystemVar("updatable_views_with_limit", "YES")
+	err = tk.Se.GetSessionVars().SetSystemVar("updatable_views_with_limit", "YES")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(updatable_views_with_limit=0) */ @@updatable_views_with_limit;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@updatable_views_with_limit;").Check(testkit.Rows("YES"))
 
-	tk.Se.GetSessionVars().SetSystemVar("optimizer_prune_level", "1")
+	err = tk.Se.GetSessionVars().SetSystemVar("optimizer_prune_level", "1")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(optimizer_prune_level=0) */ @@optimizer_prune_level;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@optimizer_prune_level;").Check(testkit.Rows("1"))
 
-	tk.Se.GetSessionVars().SetSystemVar("group_concat_max_len", "1024")
+	err = tk.Se.GetSessionVars().SetSystemVar("group_concat_max_len", "1024")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(group_concat_max_len=4) */ @@group_concat_max_len;").Check(testkit.Rows("4"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@group_concat_max_len;").Check(testkit.Rows("1024"))
 
-	tk.Se.GetSessionVars().SetSystemVar("eq_range_index_dive_limit", "200")
+	err = tk.Se.GetSessionVars().SetSystemVar("eq_range_index_dive_limit", "200")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(eq_range_index_dive_limit=0) */ @@eq_range_index_dive_limit;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@eq_range_index_dive_limit;").Check(testkit.Rows("200"))
 
-	tk.Se.GetSessionVars().SetSystemVar("sql_safe_updates", "0")
+	err = tk.Se.GetSessionVars().SetSystemVar("sql_safe_updates", "0")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_safe_updates=1) */ @@sql_safe_updates;").Check(testkit.Rows("1"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@sql_safe_updates;").Check(testkit.Rows("0"))
 
-	tk.Se.GetSessionVars().SetSystemVar("end_markers_in_json", "0")
+	err = tk.Se.GetSessionVars().SetSystemVar("end_markers_in_json", "0")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(end_markers_in_json=1) */ @@end_markers_in_json;").Check(testkit.Rows("1"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@end_markers_in_json;").Check(testkit.Rows("0"))
 
-	tk.Se.GetSessionVars().SetSystemVar("windowing_use_high_precision", "ON")
+	err = tk.Se.GetSessionVars().SetSystemVar("windowing_use_high_precision", "ON")
+	c.Assert(err, IsNil)
 	tk.MustQuery("SELECT /*+ SET_VAR(windowing_use_high_precision=OFF) */ @@windowing_use_high_precision;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@windowing_use_high_precision;").Check(testkit.Rows("1"))
@@ -3674,7 +3716,10 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	// use isolated store, because in below failpoint we will cancel its context
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer dom.Close()
@@ -3683,7 +3728,10 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	defer se.Close()
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/storeCloseInLoop", `return`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
+		c.Assert(err, IsNil)
+	}()
 
 	// this DDL call will enter deadloop before this fix
 	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
@@ -3794,8 +3842,12 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
+	err := failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
+		c.Assert(err, IsNil)
+	}()
 
 	enableOOM := func(tk *testkit.TestKit, name, sql string) {
 		c.Logf("enable OOM, testcase: %v", name)
@@ -3824,7 +3876,8 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
 	}
 
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
+	err = failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
+	c.Assert(err, IsNil)
 	// assert oom action and switch
 	for _, testcase := range testcases {
 		se, err := session.CreateSession4Test(s.store)
@@ -3855,7 +3908,8 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		enableOOM(tk, testcase.name, testcase.sql)
 		se.Close()
 	}
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax")
+	err = failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax")
+	c.Assert(err, IsNil)
 
 	// assert oom fallback
 	for _, testcase := range testcases {
@@ -3900,7 +3954,11 @@ func (s *testSessionSerialSuite) TestIssue21943(c *C) {
 
 func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+		c.Assert(err, IsNil)
+	}()
+
 	testcases := []struct {
 		name       string
 		sql        string
@@ -4046,7 +4104,11 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 
 func (s *testSessionSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+		c.Assert(err, IsNil)
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testcases := []struct {

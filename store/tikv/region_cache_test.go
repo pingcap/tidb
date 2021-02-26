@@ -827,7 +827,8 @@ func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
 	r := ctxTiFlash.Meta
 	reqSend := NewRegionRequestSender(s.cache, nil)
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{CurrentRegions: []*metapb.Region{r}}}
-	reqSend.onRegionError(s.bo, ctxTiFlash, nil, regionErr)
+	_, err = reqSend.onRegionError(s.bo, ctxTiFlash, nil, regionErr)
+	c.Assert(err, IsNil)
 
 	// check leader read should not go to tiflash
 	lctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
@@ -856,7 +857,10 @@ func createClusterWithStoresAndRegions(regionCnt, storeCount int) *mocktikv.Clus
 func loadRegionsToCache(cache *RegionCache, regionCnt int) {
 	for i := 0; i < regionCnt; i++ {
 		rawKey := []byte(fmt.Sprintf(regionSplitKeyFormat, i))
-		cache.LocateKey(NewBackofferWithVars(context.Background(), 1, nil), rawKey)
+		_, err := cache.LocateKey(NewBackofferWithVars(context.Background(), 1, nil), rawKey)
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -1163,11 +1167,13 @@ func (s *testRegionCacheSuite) TestFollowerMeetEpochNotMatch(c *C) {
 	c.Assert(ctxFollower1.Store.storeID, Equals, s.store2)
 
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}
-	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	_, err = reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	c.Assert(err, IsNil)
 	c.Assert(followReqSeed, Equals, uint32(1))
 
 	regionErr = &errorpb.Error{RegionNotFound: &errorpb.RegionNotFound{}}
-	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	_, err = reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	c.Assert(err, IsNil)
 	c.Assert(followReqSeed, Equals, uint32(2))
 }
 
@@ -1194,7 +1200,8 @@ func (s *testRegionCacheSuite) TestMixedMeetEpochNotMatch(c *C) {
 	c.Assert(ctxFollower1.Store.storeID, Equals, s.store1)
 
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}
-	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	_, err = reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	c.Assert(err, IsNil)
 	c.Assert(followReqSeed, Equals, uint32(1))
 }
 
@@ -1240,7 +1247,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestGetRegionByIDFromCache(c *C) {
 	c.Assert(region, NotNil)
 
 	// test kv epochNotMatch return empty regions
-	s.cache.OnRegionEpochNotMatch(s.bo, &RPCContext{Region: region.Region, Store: &Store{storeID: s.store}}, []*metapb.Region{})
+	err = s.cache.OnRegionEpochNotMatch(s.bo, &RPCContext{Region: region.Region, Store: &Store{storeID: s.store}}, []*metapb.Region{})
 	c.Assert(err, IsNil)
 	r := s.cache.getRegionByIDFromCache(s.region)
 	c.Assert(r, IsNil)

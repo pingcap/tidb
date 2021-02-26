@@ -884,7 +884,8 @@ func (s *testPessimisticSuite) TestPessimisticSerializable(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		tk1.ExecToErr("delete from test where value = 20;")
+		err := tk1.ExecToErr("delete from test where value = 20;")
+		c.Assert(err, IsNil)
 		wg.Done()
 	}()
 	tk.MustExec("commit;")
@@ -904,7 +905,8 @@ func (s *testPessimisticSuite) TestPessimisticSerializable(c *C) {
 
 	wg.Add(1)
 	go func() {
-		tk1.ExecToErr("update test set value = 11 where id = 1;")
+		err := tk1.ExecToErr("update test set value = 11 where id = 1;")
+		c.Assert(err, IsNil)
 		wg.Done()
 	}()
 	tk.MustExec("commit;")
@@ -950,7 +952,8 @@ func (s *testPessimisticSuite) TestPessimisticSerializable(c *C) {
 	tk1.MustExec("update test set value = 12 where id = 1;")
 	tk1.MustExec("update test set value = 18 where id = 1;")
 	tk1.MustExec("commit;")
-	tk.ExecToErr("delete from test where value = 20;")
+	err := tk.ExecToErr("delete from test where value = 20;")
+	c.Assert(err, IsNil)
 	tk.MustExec("rollback;")
 
 	// Write Skew (G2-item)
@@ -1494,7 +1497,9 @@ func (s *testPessimisticSuite) TestKillWaitLockTxn(c *C) {
 	c.Assert(succ, IsTrue)
 	err := <-errCh
 	c.Assert(err, IsNil)
-	tk.Exec("rollback")
+	_, err = tk.Exec("rollback")
+	// Query execution was interrupted
+	c.Assert(err, NotNil)
 	// reset kill
 	atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0)
 	tk.MustExec("rollback")

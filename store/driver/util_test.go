@@ -64,7 +64,10 @@ func clearStorage(store kv.Storage) error {
 		return errors.Trace(err)
 	}
 	for iter.Valid() {
-		txn.Delete(iter.Key())
+		err = txn.Delete(iter.Key())
+		if err != nil {
+			panic(err)
+		}
 		if err := iter.Next(); err != nil {
 			return errors.Trace(err)
 		}

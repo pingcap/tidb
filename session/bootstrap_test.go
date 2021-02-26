@@ -43,7 +43,10 @@ func (s *testBootstrapSuite) SetUpSuite(c *C) {
 func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	defer dom.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
@@ -140,7 +143,10 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbNameBootstrap)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	s.bootstrapWithOnlyDDLWork(store, c)
 	dom, err := domap.Get(store)
 	c.Assert(err, IsNil)
@@ -197,7 +203,10 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 
@@ -282,7 +291,10 @@ func (s *testBootstrapSuite) TestIssue17979_1(c *C) {
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	// test issue 20900, upgrade from v3.0 to v4.0.11+
 	seV3 := newSession(c, store, s.dbName)
@@ -310,7 +322,8 @@ func (s *testBootstrapSuite) TestIssue17979_1(c *C) {
 	c.Assert(ver, Equals, int64(currentBootstrapVersion))
 	r := mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk()
-	r.Next(ctx, req)
+	err = r.Next(ctx, req)
+	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetString(0), Equals, "log")
 	c.Assert(config.GetGlobalConfig().OOMAction, Equals, config.OOMActionLog)
 }
@@ -325,7 +338,10 @@ func (s *testBootstrapSuite) TestIssue17979_2(c *C) {
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	// test issue 20900, upgrade from v4.0.11 to v4.0.11
 	seV3 := newSession(c, store, s.dbName)
@@ -353,7 +369,8 @@ func (s *testBootstrapSuite) TestIssue17979_2(c *C) {
 	c.Assert(ver, Equals, int64(currentBootstrapVersion))
 	r := mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk()
-	r.Next(ctx, req)
+	err = r.Next(ctx, req)
+	c.Assert(err, IsNil)
 	c.Assert(req.NumRows(), Equals, 0)
 	c.Assert(config.GetGlobalConfig().OOMAction, Equals, config.OOMActionCancel)
 }
@@ -362,7 +379,10 @@ func (s *testBootstrapSuite) TestIssue20900_1(c *C) {
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	// test issue 20900, upgrade from v3.0 to v4.0.9+
 	seV3 := newSession(c, store, s.dbName)
@@ -390,11 +410,13 @@ func (s *testBootstrapSuite) TestIssue20900_1(c *C) {
 	c.Assert(ver, Equals, int64(currentBootstrapVersion))
 	r := mustExecSQL(c, seV4, "select @@tidb_mem_quota_query")
 	req := r.NewChunk()
-	r.Next(ctx, req)
+	err = r.Next(ctx, req)
+	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetString(0), Equals, "34359738368")
 	r = mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
 	req = r.NewChunk()
-	r.Next(ctx, req)
+	err = r.Next(ctx, req)
+	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetString(0), Equals, "34359738368")
 	c.Assert(seV4.GetSessionVars().MemQuotaQuery, Equals, int64(34359738368))
 }
@@ -403,7 +425,10 @@ func (s *testBootstrapSuite) TestIssue20900_2(c *C) {
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	// test issue 20900, upgrade from v4.0.8 to v4.0.9+
 	seV3 := newSession(c, store, s.dbName)
@@ -431,19 +456,24 @@ func (s *testBootstrapSuite) TestIssue20900_2(c *C) {
 	c.Assert(ver, Equals, int64(currentBootstrapVersion))
 	r := mustExecSQL(c, seV4, "select @@tidb_mem_quota_query")
 	req := r.NewChunk()
-	r.Next(ctx, req)
+	err = r.Next(ctx, req)
+	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetString(0), Equals, "1073741824")
 	c.Assert(seV4.GetSessionVars().MemQuotaQuery, Equals, int64(1073741824))
 	r = mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
 	req = r.NewChunk()
-	r.Next(ctx, req)
+	err = r.Next(ctx, req)
+	c.Assert(err, IsNil)
 	c.Assert(req.NumRows(), Equals, 0)
 }
 
 func (s *testBootstrapSuite) TestANSISQLMode(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 	mustExecSQL(c, se, `set @@global.sql_mode="NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,ANSI"`)
@@ -478,7 +508,10 @@ func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
 func (s *testBootstrapSuite) TestBootstrapInitExpensiveQueryHandle(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	se, err := createSession(store)
 	c.Assert(err, IsNil)
 	dom := domain.GetDomain(se)
@@ -492,7 +525,10 @@ func (s *testBootstrapSuite) TestStmtSummary(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := context.Background()
 	store, dom := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	defer dom.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, `update mysql.global_variables set variable_value='' where variable_name='tidb_enable_stmt_summary'`)
@@ -537,7 +573,10 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := context.Background()
 	store, dom := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	defer dom.Close()
 	se := newSession(c, store, s.dbName)
 	for _, bindCase := range bindCases {
@@ -576,7 +615,10 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := context.Background()
 	store, dom := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	defer dom.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)

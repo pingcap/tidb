@@ -147,13 +147,15 @@ func (s *testOnePCSuite) Test1PCIsolation(c *C) {
 	v1 := []byte("v1")
 
 	txn := s.begin1PC(c)
-	txn.Set(k, v1)
-	err := txn.Commit(ctx)
+	err := txn.Set(k, v1)
+	c.Assert(err, IsNil)
+	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
 
 	v2 := []byte("v2")
 	txn = s.begin1PC(c)
-	txn.Set(k, v2)
+	err = txn.Set(k, v2)
+	c.Assert(err, IsNil)
 
 	// Make `txn`'s commitTs more likely to be less than `txn2`'s startTs if there's bug in commitTs
 	// calculation.

@@ -338,7 +338,8 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 		txn1 := s.beginAsyncCommit(c)
 		txn1.SetOption(kv.Pessimistic, isPessimistic)
 		s.mustGetFromTxn(c, txn1, []byte("k1"), []byte("v1"))
-		txn1.Set([]byte("k1"), []byte("v2"))
+		err := txn1.Set([]byte("k1"), []byte("v2"))
+		c.Assert(err, IsNil)
 
 		for i := 0; i < 20; i++ {
 			_, err := s.store.GetOracle().GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
@@ -348,7 +349,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 		txn2 := s.beginAsyncCommit(c)
 		s.mustGetFromTxn(c, txn2, []byte("k1"), []byte("v1"))
 
-		err := txn1.Commit(ctx)
+		err = txn1.Commit(ctx)
 		c.Assert(err, IsNil)
 		// Check txn1 is committed in async commit.
 		c.Assert(txn1.committer.isAsyncCommit(), IsTrue)

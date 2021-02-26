@@ -108,21 +108,25 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk.MustExec(`prepare stmt2 from "select * from t where b = ? and c = ?"`)
 	tk.MustExec("set @param=1")
 	tk.MustQuery("execute stmt1 using @param").Check(testkit.Rows("1 1 1"))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	hit = pb.GetCounter().GetValue()
 	c.Check(hit, Equals, float64(0))
 	tk.MustExec("set @param=2")
 	tk.MustQuery("execute stmt1 using @param").Check(testkit.Rows("2 2 2"))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	hit = pb.GetCounter().GetValue()
 	c.Check(hit, Equals, float64(1))
 	tk.MustQuery("execute stmt2 using @param, @param").Check(testkit.Rows("2 2 2"))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	hit = pb.GetCounter().GetValue()
 	c.Check(hit, Equals, float64(1))
 	tk.MustExec("set @param=1")
 	tk.MustQuery("execute stmt2 using @param, @param").Check(testkit.Rows("1 1 1"))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	hit = pb.GetCounter().GetValue()
 	c.Check(hit, Equals, float64(2))
 	// PointGetPlan for Update.
@@ -135,7 +139,8 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 		"2 2 2",
 		"3 4 4",
 	))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	hit = pb.GetCounter().GetValue()
 	c.Check(hit, Equals, float64(2))
 	tk.MustExec("set @param=4")
@@ -145,7 +150,8 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 		"2 2 2",
 		"4 4 4",
 	))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	hit = pb.GetCounter().GetValue()
 	c.Check(hit, Equals, float64(2))
 	// PointGetPlan for Delete.
@@ -156,7 +162,8 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 		"1 1 1",
 		"2 2 2",
 	))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	hit = pb.GetCounter().GetValue()
 	c.Check(hit, Equals, float64(2))
 	tk.MustExec("set @param=2")
@@ -164,7 +171,8 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows(
 		"1 1 1",
 	))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	hit = pb.GetCounter().GetValue()
 	c.Check(hit, Equals, float64(2))
 	tk.MustExec("insert into t (a, b, c) values (18446744073709551615, 4, 4)")
@@ -173,7 +181,8 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk.MustExec(`prepare stmt7 from "select a from t where a = ?"`)
 	tk.MustQuery("execute stmt7 using @p1").Check(testkit.Rows())
 	tk.MustQuery("execute stmt7 using @p2").Check(testkit.Rows("1"))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	hit = pb.GetCounter().GetValue()
 	c.Check(hit, Equals, float64(2))
 }
