@@ -795,7 +795,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			return nil, err
 		}
 	}
-	sc.AddAffectedRows(1)
 	if sessVars.TxnCtx == nil {
 		return recordID, nil
 	}
