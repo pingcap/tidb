@@ -63,8 +63,8 @@ const (
 	EnableAsyncCommit
 	// Enable1PC indicates whether one-phase commit is enabled
 	Enable1PC
-	// GuaranteeExternalConsistency indicates whether to guarantee external consistency at the cost of an extra tso request before prewrite
-	GuaranteeExternalConsistency
+	// GuaranteeLinearizability indicates whether to guarantee linearizability at the cost of an extra tso request before prewrite
+	GuaranteeLinearizability
 	// TxnScope indicates which @@txn_scope this transaction will work with.
 	TxnScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
@@ -266,6 +266,8 @@ type Transaction interface {
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
+	// GetOption returns the option
+	GetOption(opt Option) interface{}
 	// DelOption deletes an option.
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
@@ -492,7 +494,7 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
-	// GetMemCache return memory mamager of the storage
+	// GetMemCache return memory manager of the storage.
 	GetMemCache() MemManager
 }
 

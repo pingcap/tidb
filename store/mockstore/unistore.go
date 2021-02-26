@@ -37,12 +37,20 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &mockStorage{KVStore: kvstore}, nil
+	return &mockStorage{KVStore: kvstore, memCache: kv.NewCacheDB()}, nil
 }
 
 // Wraps tikv.KVStore and make it compatible with kv.Storage.
 type mockStorage struct {
 	*tikv.KVStore
+	memCache kv.MemManager
+}
+
+// NewMockStorage wraps tikv.KVStore as kv.Storage.
+func NewMockStorage(tikvStore *tikv.KVStore) kv.Storage {
+	return &mockStorage{
+		KVStore: tikvStore,
+	}
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {
@@ -51,4 +59,21 @@ func (s *mockStorage) EtcdAddrs() ([]string, error) {
 
 func (s *mockStorage) TLSConfig() *tls.Config {
 	return nil
+}
+
+// GetMemCache return memory mamager of the storage
+func (s *mockStorage) GetMemCache() kv.MemManager {
+	return s.memCache
+}
+
+func (s *mockStorage) StartGCWorker() error {
+	return nil
+}
+
+func (s *mockStorage) Name() string {
+	return "mock-storage"
+}
+
+func (s *mockStorage) Describe() string {
+	return ""
 }

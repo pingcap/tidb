@@ -67,10 +67,8 @@ type KVStore struct {
 	coprCache    *coprCache
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
-	gcWorker     GCHandler
 
-	mock     bool
-	enableGC bool
+	mock bool
 
 	kv        SafePointKV
 	safePoint uint64
@@ -78,8 +76,7 @@ type KVStore struct {
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
 	closed    chan struct{} // this is used to nofity when the store is closed
 
-	replicaReadSeed uint32        // this is used to load balance followers / learners when replica read is enabled
-	memCache        kv.MemManager // this is used to query from memory
+	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
 }
 
 // UpdateSPCache updates cached safepoint.
@@ -112,7 +109,7 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 }
 
 // NewKVStore creates a new TiKV store instance.
-func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, coprCacheConfig *config.CoprocessorCache) (*KVStore, error) {
+func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, coprCacheConfig *config.CoprocessorCache) (*KVStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -130,10 +127,8 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		spTime:          time.Now(),
 		closed:          make(chan struct{}),
 		replicaReadSeed: rand.Uint32(),
-		memCache:        kv.NewCacheDB(),
 	}
 	store.lockResolver = newLockResolver(store)
-	store.enableGC = enableGC
 
 	coprCache, err := newCoprCache(coprCacheConfig)
 	if err != nil {
@@ -155,21 +150,6 @@ func (s *KVStore) EnableTxnLocalLatches(size uint) {
 // IsLatchEnabled is used by mockstore.TestConfig.
 func (s *KVStore) IsLatchEnabled() bool {
 	return s.txnLatches != nil
-}
-
-// StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
-func (s *KVStore) StartGCWorker() error {
-	if !s.enableGC || NewGCHandlerFunc == nil {
-		return nil
-	}
-
-	gcWorker, err := NewGCHandlerFunc(s, s.pdClient)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	gcWorker.Start()
-	s.gcWorker = gcWorker
-	return nil
 }
 
 func (s *KVStore) runSafePointChecker() {
@@ -237,9 +217,6 @@ func (s *KVStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 func (s *KVStore) Close() error {
 	s.oracle.Close()
 	s.pdClient.Close()
-	if s.gcWorker != nil {
-		s.gcWorker.Close()
-	}
 
 	close(s.closed)
 	if err := s.client.Close(); err != nil {
@@ -346,16 +323,6 @@ func (s *KVStore) GetPDClient() pd.Client {
 	return s.pdClient
 }
 
-// Name gets the name of the storage engine
-func (s *KVStore) Name() string {
-	return "TiKV"
-}
-
-// Describe returns of brief introduction of the storage
-func (s *KVStore) Describe() string {
-	return "TiKV is a distributed transactional key-value database"
-}
-
 // ShowStatus returns the specified status of the storage
 func (s *KVStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
 	return nil, kv.ErrNotImplemented
@@ -382,11 +349,6 @@ func (s *KVStore) GetLockResolver() *LockResolver {
 	return s.lockResolver
 }
 
-// GetGCHandler returns the GC worker instance.
-func (s *KVStore) GetGCHandler() GCHandler {
-	return s.gcWorker
-}
-
 // Closed returns a channel that indicates if the store is closed.
 func (s *KVStore) Closed() <-chan struct{} {
 	return s.closed
@@ -410,9 +372,4 @@ func (s *KVStore) SetTiKVClient(client Client) {
 // GetTiKVClient gets the client instance.
 func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
-}
-
-// GetMemCache return memory mamager of the storage
-func (s *KVStore) GetMemCache() kv.MemManager {
-	return s.memCache
 }
