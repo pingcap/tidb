@@ -52,7 +52,8 @@ func TestT(t *testing.T) {
 }
 
 type testGCWorkerSuite struct {
-	store      tikv.Storage
+	store      kv.Storage
+	tikvStore  tikv.Storage
 	cluster    cluster.Cluster
 	oracle     *oracles.MockOracle
 	gcWorker   *GCWorker
@@ -91,10 +92,10 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	)
 	c.Assert(err, IsNil)
 
-	s.store = store.(tikv.Storage)
-	c.Assert(err, IsNil)
+	s.store = store
+	s.tikvStore = store.(tikv.Storage)
 	s.oracle = &oracles.MockOracle{}
-	s.store.SetOracle(s.oracle)
+	s.tikvStore.SetOracle(s.oracle)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
@@ -235,7 +236,7 @@ func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 
 func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 	ctx := context.Background()
-	spkv := s.store.GetSafePointKV()
+	spkv := s.tikvStore.GetSafePointKV()
 	err := spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
 	c.Assert(err, IsNil)
 	now := oracle.GoTimeToTS(time.Now())
@@ -379,7 +380,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	safePointTime, err := s.gcWorker.loadTime(gcSafePointKey)
 	minStartTS := oracle.GoTimeToTS(*safePointTime) + 1
 	c.Assert(err, IsNil)
-	spkv := s.store.GetSafePointKV()
+	spkv := s.tikvStore.GetSafePointKV()
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(minStartTS, 10))
 	c.Assert(err, IsNil)
 	s.oracle.AddOffset(time.Minute * 40)
@@ -392,7 +393,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	ctx := context.Background()
 	bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
-	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
+	loc, err := s.tikvStore.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
 
@@ -881,7 +882,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
 	s.gcWorker.testingKnobs.resolveLocks = func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
 		*resolveCntRef++
 		if *resolveCntRef == 1 {
-			s.gcWorker.store.GetRegionCache().InvalidateCachedRegion(regionID)
+			s.gcWorker.tikvStore.GetRegionCache().InvalidateCachedRegion(regionID)
 			// mock the region cache miss error
 			return false, nil
 		}
@@ -923,10 +924,11 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 			mCluster := s.cluster.(*mocktikv.Cluster)
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
-			s.store.GetRegionCache().OnRegionEpochNotMatch(
+			err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
 				tikv.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
+			c.Assert(err, IsNil)
 			// also let region1 contains all 4 locks
 			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
 				if regionID == s.initRegion.regionID {
@@ -1042,7 +1044,7 @@ func (s *testGCWorkerSuite) TestRunGCJobAPI(c *C) {
 
 	p := s.createGCProbe(c, "k1")
 	safePoint := s.mustAllocTs(c)
-	err := RunGCJob(context.Background(), s.store, s.pdClient, safePoint, "mock", 1)
+	err := RunGCJob(context.Background(), s.tikvStore, s.pdClient, safePoint, "mock", 1)
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
 	etcdSafePoint := s.loadEtcdSafePoint(c)
@@ -1054,7 +1056,7 @@ func (s *testGCWorkerSuite) TestRunDistGCJobAPI(c *C) {
 	gcSafePointCacheInterval = 0
 
 	safePoint := s.mustAllocTs(c)
-	err := RunDistributedGCJob(context.Background(), s.store, s.pdClient, safePoint, "mock", 1)
+	err := RunDistributedGCJob(context.Background(), s.tikvStore, s.pdClient, safePoint, "mock", 1)
 	c.Assert(err, IsNil)
 	pdSafePoint := s.mustGetSafePointFromPd(c)
 	c.Assert(pdSafePoint, Equals, safePoint)
@@ -1077,7 +1079,7 @@ func (s *testGCWorkerSuite) TestStartWithRunGCJobFailures(c *C) {
 }
 
 func (s *testGCWorkerSuite) loadEtcdSafePoint(c *C) uint64 {
-	val, err := s.gcWorker.store.GetSafePointKV().Get(tikv.GcSavedSafePoint)
+	val, err := s.gcWorker.tikvStore.GetSafePointKV().Get(tikv.GcSavedSafePoint)
 	c.Assert(err, IsNil)
 	res, err := strconv.ParseUint(val, 10, 64)
 	c.Assert(err, IsNil)
