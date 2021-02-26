@@ -428,7 +428,7 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 		idxVals = append(idxVals, chk.GetRow(0).GetDatum(oldCol.Offset, &oldCol.FieldType))
 	}
 
-	rsData := a.tblInfoAtCommit.TryGetHandleRestoredDataWrapper(idxVals, nil)
+	rsData := tables.TryGetHandleRestoredDataWrapper(a.tblInfoAtCommit, idxVals, nil)
 
 	// Generate index key buf.
 	newIdxKey, distinct, err := tablecodec.GenIndexKey(sctx.GetSessionVars().StmtCtx,

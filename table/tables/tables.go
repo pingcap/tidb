@@ -852,7 +852,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 			idxMeta := v.Meta()
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
 		}
-		rsData := t.TryGetHandleRestoredDataWrapper(r, nil)
+		rsData := TryGetHandleRestoredDataWrapper(t, r, nil)
 		if dupHandle, err := v.Create(sctx, txn.GetUnionStore(), indexVals, recordID, rsData, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
@@ -1156,7 +1156,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
-	rsData := t.TryGetHandleRestoredDataWrapper(vals, nil)
+	rsData := TryGetHandleRestoredDataWrapper(t, vals, nil)
 	if _, err := idx.Create(ctx, txn.GetUnionStore(), vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
@@ -1714,8 +1714,8 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 }
 
 // TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.
-func (t *TableCommon) TryGetHandleRestoredDataWrapper(row []types.Datum, rowMap map[int64]types.Datum) []types.Datum {
-	if !collate.NewCollationEnabled() || !t.Meta().IsCommonHandle || t.meta.CommonHandleVersion == 0 {
+func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap map[int64]types.Datum) []types.Datum {
+	if !collate.NewCollationEnabled() || !t.Meta().IsCommonHandle || t.Meta().CommonHandleVersion == 0 {
 		return nil
 	}
 
@@ -1747,9 +1747,9 @@ func (t *TableCommon) TryGetHandleRestoredDataWrapper(row []types.Datum, rowMap 
 		}
 	}
 
-	for _, idx := range t.meta.Indices {
+	for _, idx := range t.Meta().Indices {
 		if idx.Primary {
-			tablecodec.TruncateIndexValues(t.meta, idx, rsData)
+			tablecodec.TruncateIndexValues(t.Meta(), idx, rsData)
 			break
 		}
 	}
