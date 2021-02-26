@@ -2061,7 +2061,7 @@ func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
 		is := do.InfoSchema()
 		h := do.StatsHandle()
 		c.Assert(h.RefreshVars(), IsNil)
-		h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 
 		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")
 		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
