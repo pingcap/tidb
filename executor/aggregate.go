@@ -912,7 +912,8 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 			allMemDelta += memDelta
 		}
 		e.partialResultMap[groupKey] = partialResults
-		allMemDelta += int(len(groupKey))
+		allMemDelta += int64(len(groupKey))
+		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
 		if len(e.partialResultMap) > (1<<e.bInMap)*loadFactorNum/loadFactorDen {
 			e.memTracker.Consume(defBucketMemoryUsage * (1 << e.bInMap))
 			e.bInMap++
