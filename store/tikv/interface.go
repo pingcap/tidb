@@ -51,14 +51,14 @@ type Storage interface {
 	// Closed returns the closed channel.
 	Closed() <-chan struct{}
 
-	// Begin a global transaction
-	Begin() (kv.Transaction, error)
-	// Begin a transaction with the given txnScope (local or global)
-	BeginWithTxnScope(txnScope string) (kv.Transaction, error)
-	// BeginWithStartTS begins transaction with given txnScope and startTS.
-	BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error)
-	// BeginWithStalenessTS begins transaction with given staleness
-	BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error)
+	// // Begin a global transaction
+	// Begin() (kv.Transaction, error)
+	// // Begin a transaction with the given txnScope (local or global)
+	// BeginWithTxnScope(txnScope string) (kv.Transaction, error)
+	// // BeginWithStartTS begins transaction with given txnScope and startTS.
+	// BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error)
+	// // BeginWithStalenessTS begins transaction with given staleness
+	// BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver kv.Version) kv.Snapshot
@@ -78,6 +78,4 @@ type Storage interface {
 	SupportDeleteRange() (supported bool)
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
-	// GetMemCache return memory manager of the storage
-	GetMemCache() kv.MemManager
 }

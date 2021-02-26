@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -37,12 +38,13 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &mockStorage{KVStore: kvstore}, nil
+	return &mockStorage{KVStore: kvstore, memCache: kv.NewCacheDB()}, nil
 }
 
 // Wraps tikv.KVStore and make it compatible with kv.Storage.
 type mockStorage struct {
 	*tikv.KVStore
+	memCache kv.MemManager
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
@@ -60,6 +62,11 @@ func (s *mockStorage) TLSConfig() *tls.Config {
 	return nil
 }
 
+// GetMemCache return memory mamager of the storage
+func (s *mockStorage) GetMemCache() kv.MemManager {
+	return s.memCache
+}
+
 func (s *mockStorage) StartGCWorker() error {
 	return nil
 }
@@ -70,4 +77,34 @@ func (s *mockStorage) Name() string {
 
 func (s *mockStorage) Describe() string {
 	return ""
+}
+
+// Begin a global transaction.
+func (s *mockStorage) Begin() (kv.Transaction, error) {
+	txn, err := s.KVStore.Begin()
+	return NewTiKVTxn(txn, err)
+}
+
+func (s *mockStorage) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithTxnScope(txnScope)
+	return NewTiKVTxn(txn, err)
+}
+
+// BeginWithStartTS begins a transaction with startTS.
+func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithStartTS(txnScope, startTS)
+	return NewTiKVTxn(txn, err)
+}
+
+// BeginWithExactStaleness begins transaction with given staleness
+func (s *mockStorage) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithExactStaleness(txnScope, prevSec)
+	return NewTiKVTxn(txn, err)
+}
+
+func NewTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
+	if err != nil {
+		return nil, err
+	}
+	return driver.NewTiKVTxn(txn), nil
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -51,10 +52,29 @@ type TxnState struct {
 	initCnt       int
 	stagingHandle kv.StagingHandle
 	mutations     map[int64]*binlog.TableMutation
+	idxNameCache  map[int64]*model.TableInfo
+}
+
+// GetTableInfo returns the cached index name.
+func (txn *TxnState) GetTableInfo(id int64) *model.TableInfo {
+	if t, ok := txn.Transaction.(kv.TransactionEx); ok {
+		return t.GetTableInfo(id)
+	}
+	return txn.idxNameCache[id]
+}
+
+// CacheTableInfo caches the index name.
+func (txn *TxnState) CacheTableInfo(id int64, info *model.TableInfo) {
+	if t, ok := txn.Transaction.(kv.TransactionEx); ok {
+		t.CacheTableInfo(id, info)
+	} else {
+		txn.idxNameCache[id] = info
+	}
 }
 
 func (st *TxnState) init() {
 	st.mutations = make(map[int64]*binlog.TableMutation)
+	st.idxNameCache = make(map[int64]*model.TableInfo)
 }
 
 func (st *TxnState) initStmtBuf() {

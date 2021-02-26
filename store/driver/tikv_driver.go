@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package driver
 
 import (
 	"context"
@@ -25,9 +25,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -48,32 +50,32 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-// DriverOption is a function that changes some config of Driver
-type DriverOption func(*TiKVDriver)
+// Option is a function that changes some config of Driver
+type Option func(*TiKVDriver)
 
 // WithSecurity changes the config.Security used by tikv driver.
-func WithSecurity(s config.Security) DriverOption {
+func WithSecurity(s config.Security) Option {
 	return func(c *TiKVDriver) {
 		c.security = s
 	}
 }
 
 // WithTiKVClientConfig changes the config.TiKVClient used by tikv driver.
-func WithTiKVClientConfig(client config.TiKVClient) DriverOption {
+func WithTiKVClientConfig(client config.TiKVClient) Option {
 	return func(c *TiKVDriver) {
 		c.tikvConfig = client
 	}
 }
 
 // WithTxnLocalLatches changes the config.TxnLocalLatches used by tikv driver.
-func WithTxnLocalLatches(t config.TxnLocalLatches) DriverOption {
+func WithTxnLocalLatches(t config.TxnLocalLatches) Option {
 	return func(c *TiKVDriver) {
 		c.txnLocalLatches = t
 	}
 }
 
 // WithPDClientConfig changes the config.PDClient used by tikv driver.
-func WithPDClientConfig(client config.PDClient) DriverOption {
+func WithPDClientConfig(client config.PDClient) Option {
 	return func(c *TiKVDriver) {
 		c.pdConfig = client
 	}
@@ -93,7 +95,7 @@ func (d TiKVDriver) Open(path string) (kv.Storage, error) {
 	return d.OpenWithOptions(path)
 }
 
-func (d *TiKVDriver) setDefaultAndOptions(options ...DriverOption) {
+func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 	tidbCfg := config.GetGlobalConfig()
 	d.pdConfig = tidbCfg.PDClient
 	d.security = tidbCfg.Security
@@ -106,7 +108,7 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...DriverOption) {
 
 // OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
 // unspecified options will be set to global config
-func (d TiKVDriver) OpenWithOptions(path string, options ...DriverOption) (kv.Storage, error) {
+func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
 	d.setDefaultAndOptions(options...)
@@ -161,6 +163,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...DriverOption) (kv.St
 		KVStore:   s,
 		etcdAddrs: etcdAddrs,
 		tlsConfig: tlsConfig,
+		memCache:  kv.NewCacheDB(),
 		pdClient:  &pdClient,
 		enableGC:  !disableGC,
 	}
@@ -173,6 +176,7 @@ type tikvStore struct {
 	*tikv.KVStore
 	etcdAddrs []string
 	tlsConfig *tls.Config
+	memCache  kv.MemManager // this is used to query from memory
 	pdClient  pd.Client
 	enableGC  bool
 	gcWorker  *gcworker.GCWorker
@@ -264,4 +268,40 @@ func (s *tikvStore) Close() error {
 		s.gcWorker.Close()
 	}
 	return s.KVStore.Close()
+}
+
+// Begin a global transaction.
+func (s *tikvStore) Begin() (kv.Transaction, error) {
+	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
+}
+
+func (s *tikvStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithTxnScope(txnScope)
+	if err != nil {
+		return txn, errors.Trace(err)
+	}
+	return txn_driver.NewTiKVTxn(txn), err
+}
+
+// BeginWithStartTS begins a transaction with startTS.
+func (s *tikvStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithStartTS(txnScope, startTS)
+	if err != nil {
+		return txn, errors.Trace(err)
+	}
+	return txn_driver.NewTiKVTxn(txn), err
+}
+
+// BeginWithExactStaleness begins transaction with given staleness
+func (s *tikvStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithExactStaleness(txnScope, prevSec)
+	if err != nil {
+		return txn, errors.Trace(err)
+	}
+	return txn_driver.NewTiKVTxn(txn), err
+}
+
+// GetMemCache return memory manager of the storage
+func (s *tikvStore) GetMemCache() kv.MemManager {
+	return s.memCache
 }

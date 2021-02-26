@@ -592,10 +592,12 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	txn, err := sctx.Txn(true)
+	kvTxn, err := sctx.Txn(true)
 	if err != nil {
 		return nil, err
 	}
+	// TODO:fix it once br is ready
+	txn := kvTxn.(kv.TransactionEx)
 
 	var opt table.AddRecordOpt
 	for _, fn := range opts {
@@ -624,7 +626,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		hasRecordID = true
 	} else {
 		tblInfo := t.Meta()
-		txn.GetUnionStore().CacheTableInfo(t.physicalTableID, tblInfo)
+		txn.CacheTableInfo(t.physicalTableID, tblInfo)
 		if tblInfo.PKIsHandle {
 			recordID = kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64())
 			hasRecordID = true
@@ -851,7 +853,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 			idxMeta := v.Meta()
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
 		}
-		if dupHandle, err := v.Create(sctx, txn.GetUnionStore(), indexVals, recordID, opts...); err != nil {
+		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
 			}
@@ -1154,7 +1156,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
-	if _, err := idx.Create(ctx, txn.GetUnionStore(), vals, h, opts...); err != nil {
+	if _, err := idx.Create(ctx, txn, vals, h, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)
