@@ -416,45 +416,71 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 		return 0, isNull, err
 	}
 	forceToSigned := s.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
-	isLHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
-	isRHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
+	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 
-	if forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag) {
-		if a < 0 {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
+	errType := "BIGINT UNSIGNED"
+	signed := forceToSigned || (!isLHSUnsigned && !isRHSUnsigned)
+	if signed {
+		errType = "BIGINT"
 	}
-	if forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag) {
-		if b < 0 {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
+	overflow := s.overflowCheck(isLHSUnsigned, isRHSUnsigned, signed, a, b)
+	if overflow {
+		return 0, true, types.ErrOverflow.GenWithStackByArgs(errType, fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
-	switch {
-	case isLHSUnsigned && isRHSUnsigned:
-		if uint64(a) < uint64(b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	case isLHSUnsigned && !isRHSUnsigned:
-		if b >= 0 && uint64(a) < uint64(b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-		if b < 0 && uint64(a) > math.MaxUint64-uint64(-b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	case !isLHSUnsigned && isRHSUnsigned:
-		if a < 0 || uint64(a) < uint64(b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	case !isLHSUnsigned && !isRHSUnsigned:
-		// We need `(a >= 0 && b == math.MinInt64)` due to `-(math.MinInt64) == math.MinInt64`.
-		// If `a<0 && b<=0`: `a-b` will not overflow even though b==math.MinInt64.
-		// If `a<0 && b>0`: `a-b` will not overflow only if `math.MinInt64<=a-b` satisfied
-		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	}
 	return a - b, false, nil
+}
+
+// returns true when overflowed
+func (s *builtinArithmeticMinusIntSig) overflowCheck(isLHSUnsigned, isRHSUnsigned, signed bool, a, b int64) bool {
+	res := a - b
+	ua, ub := uint64(a), uint64(b)
+	resUnsigned := false
+	if isLHSUnsigned {
+		if isRHSUnsigned {
+			if ua < ub {
+				if res >= 0 {
+					return true
+				}
+			} else {
+				resUnsigned = true
+			}
+		} else {
+			if b >= 0 {
+				if ua > ub {
+					resUnsigned = true
+				}
+			} else {
+				if testIfSumOverflowsUll(ua, uint64(-b)) {
+					return true
+				}
+				resUnsigned = true
+			}
+		}
+	} else {
+		if isRHSUnsigned {
+			if uint64(a-math.MinInt64) < ub {
+				return true
+			}
+		} else {
+			if a > 0 && b < 0 {
+				resUnsigned = true
+			} else if a < 0 && b > 0 && res >= 0 {
+				return true
+			}
+		}
+	}
+
+	if (!signed && !resUnsigned && res < 0) || (signed && resUnsigned && uint64(res) > uint64(math.MaxInt64)) {
+		return true
+	}
+
+	return false
+}
+
+func testIfSumOverflowsUll(a, b uint64) bool {
+	return math.MaxUint64-a < b
 }
 
 type arithmeticMultiplyFunctionClass struct {
