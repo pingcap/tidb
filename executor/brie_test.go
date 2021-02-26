@@ -58,6 +58,12 @@ func brieTaskInfoToResult(info *brieTaskInfo) string {
 	return strings.Join(arr, ", ")
 }
 
+func fetchShowBRIEResult(c *C, e *ShowExec, brieColTypes []*types.FieldType) string {
+	e.result = newFirstChunk(e)
+	c.Assert(e.fetchShowBRIE(ast.BRIEKindBackup), IsNil)
+	return e.result.ToString(brieColTypes)
+}
+
 func (s *testBRIESuite) TestFetchShowBRIE(c *C) {
 	// Compose a mocked session manager.
 	ps := make([]*util.ProcessInfo, 0, 1)
@@ -94,7 +100,6 @@ func (s *testBRIESuite) TestFetchShowBRIE(c *C) {
 		baseExecutor: newBaseExecutor(sctx, schema, 0),
 		Tp:           ast.ShowBackups,
 	}
-	e.result = newFirstChunk(e)
 	c.Assert(e.Open(ctx), IsNil)
 
 	tp := mysql.TypeDatetime
@@ -117,28 +122,17 @@ func (s *testBRIESuite) TestFetchShowBRIE(c *C) {
 	info1Res := brieTaskInfoToResult(info1)
 
 	globalBRIEQueue.registerTask(ctx, info1)
-	c.Assert(e.fetchShowBRIE(ast.BRIEKindBackup), IsNil)
-	res := e.result.ToString(brieColTypes)
-	c.Assert(res, Equals, info1Res)
+	c.Assert(fetchShowBRIEResult(c, e, brieColTypes), Equals, info1Res)
 
 	// Query again, this info should already have been cleaned
-	e.result = newFirstChunk(e)
-	c.Assert(e.fetchShowBRIE(ast.BRIEKindBackup), IsNil)
-	res = e.result.ToString(brieColTypes)
-	c.Assert(res, HasLen, 0)
+	c.Assert(fetchShowBRIEResult(c, e, brieColTypes), HasLen, 0)
 
 	// Register this task again, we should be able to fetch this info
-	e.result = newFirstChunk(e)
 	globalBRIEQueue.registerTask(ctx, info1)
-	c.Assert(e.fetchShowBRIE(ast.BRIEKindBackup), IsNil)
-	res = e.result.ToString(brieColTypes)
-	c.Assert(res, Equals, info1Res)
+	c.Assert(fetchShowBRIEResult(c, e, brieColTypes), Equals, info1Res)
 
 	// Query again, we should be able to fetch this info again, because we have cleared in last clearInterval
-	e.result = newFirstChunk(e)
-	c.Assert(e.fetchShowBRIE(ast.BRIEKindBackup), IsNil)
-	res = e.result.ToString(brieColTypes)
-	c.Assert(res, Equals, info1Res)
+	c.Assert(fetchShowBRIEResult(c, e, brieColTypes), Equals, info1Res)
 
 	// Reset clear time, we should only fetch info2 this time.
 	globalBRIEQueue.lastClearTime = gotime.Now().Add(-clearInterval - gotime.Second)
@@ -150,13 +144,10 @@ func (s *testBRIESuite) TestFetchShowBRIE(c *C) {
 		execTime:   currTime,
 		finishTime: currTime,
 		storage:    "noop://test/backup2",
-		message:    "finished",
+		message:    "",
 	}
 	info2Res := brieTaskInfoToResult(info2)
 	globalBRIEQueue.registerTask(ctx, info2)
 	globalBRIEQueue.clearTask(e.ctx.GetSessionVars().StmtCtx)
-	e.result = newFirstChunk(e)
-	c.Assert(e.fetchShowBRIE(ast.BRIEKindBackup), IsNil)
-	res = e.result.ToString(brieColTypes)
-	c.Assert(res, Equals, info2Res)
+	c.Assert(fetchShowBRIEResult(c, e, brieColTypes), Equals, info2Res+"NULL")
 }
