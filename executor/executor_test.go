@@ -4286,7 +4286,7 @@ func (s *testSuiteP1) TestSelectPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists th, tr, tl`)
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly;")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
 	tk.MustExec(`create table th (a int, b int) partition by hash(a) partitions 3;`)
 	tk.MustExec(`create table tr (a int, b int)
 							partition by range (a) (
@@ -7660,4 +7660,30 @@ func (s *testSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 		}
 		check()
 	}
+}
+
+func (s *testSuiteP1) TestIssue22941(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists m, mp")
+	tk.MustExec(`CREATE TABLE m (
+		mid varchar(50) NOT NULL,
+		ParentId varchar(50) DEFAULT NULL,
+		PRIMARY KEY (mid),
+		KEY ind_bm_parent (ParentId,mid)
+	)`)
+
+	tk.MustExec(`CREATE TABLE mp (
+		mpid bigint(20) unsigned NOT NULL DEFAULT '0',
+		mid varchar(50) DEFAULT NULL COMMENT '模块主键',
+	PRIMARY KEY (mpid)
+	);`)
+
+	tk.MustExec(`insert into mp values("1","1");`)
+	tk.MustExec(`insert into m values("0", "0");`)
+	rs := tk.MustQuery(`SELECT ( SELECT COUNT(1) FROM m WHERE ParentId = c.mid ) expand,  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
+	rs.Check(testkit.Rows("1 <nil> 1 0"))
+
+	rs = tk.MustQuery(`SELECT  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
+	rs.Check(testkit.Rows("<nil> 1 0"))
 }
