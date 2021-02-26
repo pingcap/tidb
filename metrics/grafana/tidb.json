@@ -3591,19 +3591,19 @@
           },
           "type": "heatmap",
           "xAxis": {
-              "show": true
-            },
+            "show": true
+          },
           "xBucketNumber": null,
           "xBucketSize": null,
           "yAxis": {
             "decimals": 0,
-              "format": "short",
-              "logBase": 1,
-              "max": null,
-              "min": null,
+            "format": "short",
+            "logBase": 1,
+            "max": null,
+            "min": null,
             "show": true,
             "splitFactor": null
-        },
+          },
           "yBucketBound": "auto",
           "yBucketNumber": null,
           "yBucketSize": null
@@ -3658,19 +3658,19 @@
           },
           "type": "heatmap",
           "xAxis": {
-              "show": true
-            },
+            "show": true
+          },
           "xBucketNumber": null,
           "xBucketSize": null,
           "yAxis": {
             "decimals": 0,
-              "format": "short",
-              "logBase": 1,
-              "max": null,
-              "min": null,
+            "format": "short",
+            "logBase": 1,
+            "max": null,
+            "min": null,
             "show": true,
             "splitFactor": null
-        },
+          },
           "yBucketBound": "auto",
           "yBucketNumber": null,
           "yBucketSize": null
@@ -4129,19 +4129,19 @@
           },
           "type": "heatmap",
           "xAxis": {
-              "show": true
-            },
+            "show": true
+          },
           "xBucketNumber": null,
           "xBucketSize": null,
           "yAxis": {
             "decimals": 0,
-              "format": "short",
-              "logBase": 1,
-              "max": null,
-              "min": null,
+            "format": "short",
+            "logBase": 1,
+            "max": null,
+            "min": null,
             "show": true,
             "splitFactor": null
-        },
+          },
           "yBucketBound": "auto",
           "yBucketNumber": null,
           "yBucketSize": null
@@ -4306,16 +4306,16 @@
           },
           "type": "heatmap",
           "xAxis": {
-              "show": true
-            },
+            "show": true
+          },
           "xBucketNumber": null,
           "xBucketSize": null,
           "yAxis": {
             "decimals": 0,
             "format": "short",
-              "logBase": 1,
-              "max": null,
-              "min": null,
+            "logBase": 1,
+            "max": null,
+            "min": null,
             "show": true,
             "splitFactor": null
           },
@@ -4374,19 +4374,19 @@
           },
           "type": "heatmap",
           "xAxis": {
-              "show": true
-            },
+            "show": true
+          },
           "xBucketNumber": null,
           "xBucketSize": null,
           "yAxis": {
             "decimals": 0,
-              "format": "short",
-              "logBase": 1,
-              "max": null,
-              "min": null,
+            "format": "short",
+            "logBase": 1,
+            "max": null,
+            "min": null,
             "show": true,
             "splitFactor": null
-        },
+          },
           "yBucketBound": "auto",
           "yBucketNumber": null,
           "yBucketSize": null
@@ -5040,16 +5040,16 @@
           },
           "type": "heatmap",
           "xAxis": {
-              "show": true
-            },
+            "show": true
+          },
           "xBucketNumber": null,
           "xBucketSize": null,
           "yAxis": {
             "decimals": 0,
-              "format": "short",
-              "logBase": 1,
-              "max": null,
-              "min": null,
+            "format": "short",
+            "logBase": 1,
+            "max": null,
+            "min": null,
             "show": true,
             "splitFactor": null
           },
@@ -5107,8 +5107,15 @@
               "expr": "sum(rate(tidb_tikvclient_async_commit_txn_counter{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{type}}",
+              "legendFormat": "async commit-{{type}}",
               "refId": "A"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(tidb_tikvclient_one_pc_txn_counter{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+              "intervalFactor": 1,
+              "format": "time_series",
+              "legendFormat": "1PC-{{type}}"
             }
           ],
           "thresholds": [],
@@ -11937,25 +11944,20 @@
     "list": [
       {
         "allValue": null,
-        "current": {
-        },
+        "current": {},
         "datasource": "${DS_TEST-CLUSTER}",
         "hide": 2,
         "includeAll": false,
         "label": "tidb_cluster",
         "multi": false,
         "name": "tidb_cluster",
-        "options": [
-
-        ],
+        "options": [],
         "query": "label_values(pd_cluster_status, tidb_cluster)",
         "refresh": 2,
         "regex": "",
         "sort": 1,
         "tagValuesQuery": "",
-        "tags": [
-
-        ],
+        "tags": [],
         "tagsQuery": "",
         "type": "query",
         "useTags": false
