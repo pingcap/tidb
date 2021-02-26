@@ -1477,4 +1477,17 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 	is.SetBundle(bundle1)
 	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by partition_name, rule_id").Check(testkit.Rows(
 		"0 test test_placement p0", "1 test test_placement p0", "0 test test_placement p1", "1 test test_placement p1"))
+
+	// do not report error for invalid ObjectID
+	// check pingcap/tidb/issues/22950
+	bundle1.ID = placement.GroupID(1)
+	tk.MustQuery("select rule_id from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
+		"0", "1"))
+
+	// test the failpoint for testing
+	fpName := "github.com/pingcap/tidb/executor/outputInvalidPlacementRules"
+	c.Assert(failpoint.Enable(fpName, "return(true)"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+	tk.MustQuery("select rule_id from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
+		"0", "0", "1", "1"))
 }
