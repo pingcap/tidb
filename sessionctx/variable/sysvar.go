@@ -28,10 +28,12 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
+	atomic2 "go.uber.org/atomic"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -69,15 +71,12 @@ const (
 	BoolOff = "OFF"
 	// BoolOn is the canonical string representation of a boolean true.
 	BoolOn = "ON"
-
 	// On is the canonical string for ON
 	On = "ON"
 
 	// Off is the canonical string for OFF
 	Off = "OFF"
 
-	// Nightly indicate the nightly version.
-	Nightly = "NIGHTLY"
 	// Warn means return warnings
 	Warn = "WARN"
 )
@@ -346,16 +345,22 @@ func (sv *SysVar) ValidateFromHook(vars *SessionVars, normalizedValue string, or
 }
 
 // GetNativeValType attempts to convert the val to the approx MySQL non-string type
-func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte) {
+func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte, uint) {
 	switch sv.Type {
+	case TypeUnsigned:
+		u, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			u = 0
+		}
+		return types.NewUintDatum(u), mysql.TypeLonglong, mysql.UnsignedFlag
 	case TypeBool:
 		optVal := int64(0) // OFF
 		if TiDBOptOn(val) {
 			optVal = 1
 		}
-		return types.NewIntDatum(optVal), mysql.TypeLong
+		return types.NewIntDatum(optVal), mysql.TypeLong, 0
 	}
-	return types.NewStringDatum(val), mysql.TypeVarString
+	return types.NewStringDatum(val), mysql.TypeVarString, 0
 }
 
 var sysVars map[string]*SysVar
@@ -490,7 +495,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetClient, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterValid(normalizedValue, CharacterSetClient)
 	}},
-	{Scope: ScopeNone, Name: Port, Value: "4000"},
+	{Scope: ScopeNone, Name: Port, Value: "4000", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint16},
 	{Scope: ScopeNone, Name: LowerCaseTableNames, Value: "2"},
 	{Scope: ScopeNone, Name: LogBin, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -565,7 +570,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: WarningCount, Value: "0", ReadOnly: true},
 	{Scope: ScopeSession, Name: ErrorCount, Value: "0", ReadOnly: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: BoolOn, Type: TypeBool, IsHintUpdatable: true},
-	{Scope: ScopeSession, Name: TiDBTxnScope, Value: config.GetTxnScopeFromConfig()},
+	{Scope: ScopeSession, Name: TiDBTxnScope, Value: func() string {
+		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
+			return oracle.GlobalTxnScope
+		}
+		return oracle.LocalTxnScope
+	}()},
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJThresholdCount, Value: strconv.Itoa(DefBroadcastJoinThresholdCount), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
@@ -635,7 +645,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBEnableChunkRPC, Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeSession, Name: TxnIsolationOneShot, Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: BoolOn, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "AUTO", Nightly}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: BoolOn, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "AUTO"}},
+	{Scope: ScopeSession, Name: TiDBEnableListTablePartition, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashJoinConcurrency, Value: strconv.Itoa(DefTiDBHashJoinConcurrency), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt64, AllowAutoValue: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBProjectionConcurrency, Value: strconv.Itoa(DefTiDBProjectionConcurrency), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashAggPartialConcurrency, Value: strconv.Itoa(DefTiDBHashAggPartialConcurrency), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt64, AllowAutoValue: true},
@@ -748,7 +759,23 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAsyncCommit, Value: BoolToOnOff(DefTiDBEnableAsyncCommit), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnable1PC, Value: BoolToOnOff(DefTiDBEnable1PC), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBGuaranteeLinearizability, Value: BoolToOnOff(DefTiDBGuaranteeLinearizability), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if normalizedValue == "2" && FeedbackProbability.Load() > 0 {
+			var original string
+			var err error
+			if scope == ScopeGlobal {
+				original, err = vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBAnalyzeVersion)
+				if err != nil {
+					return normalizedValue, nil
+				}
+			} else {
+				original = strconv.Itoa(vars.AnalyzeVersion)
+			}
+			vars.StmtCtx.AppendError(errors.New("variable tidb_analyze_version not updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback"))
+			return original, nil
+		}
+		return normalizedValue, nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMergeJoin, Value: BoolToOnOff(DefTiDBEnableIndexMergeJoin), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTrackAggregateMemoryUsage, Value: BoolToOnOff(DefTiDBTrackAggregateMemoryUsage), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMultiStatementMode, Value: Off, Type: TypeEnum, PossibleValues: []string{Off, On, Warn}},
@@ -761,6 +788,10 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},
 	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
 }
+
+// FeedbackProbability points to the FeedbackProbability in statistics package.
+// It's initialized in init() in feedback.go to solve import cycle.
+var FeedbackProbability *atomic2.Float64
 
 // SynonymsSysVariables is synonyms of system variables.
 var SynonymsSysVariables = map[string][]string{}

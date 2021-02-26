@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/session"
@@ -439,6 +440,9 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 }
 
 func (s *testSerialDBSuite) TestTxnScopeConstraint(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -508,6 +512,7 @@ PARTITION BY RANGE (c) (
 		name              string
 		sql               string
 		txnScope          string
+		zone              string
 		disableAutoCommit bool
 		err               error
 	}{
@@ -515,18 +520,21 @@ PARTITION BY RANGE (c) (
 			name:     "Insert into PARTITION p0 with global txnScope",
 			sql:      "insert into t1 (c) values (1)",
 			txnScope: "global",
+			zone:     "",
 			err:      nil,
 		},
 		{
 			name:     "insert into PARTITION p0 with wrong txnScope",
 			sql:      "insert into t1 (c) values (1)",
-			txnScope: "bj",
+			txnScope: "local",
+			zone:     "bj",
 			err:      fmt.Errorf(".*out of txn_scope.*"),
 		},
 		{
 			name:     "insert into PARTITION p1 with local txnScope",
 			sql:      "insert into t1 (c) values (10)",
-			txnScope: "bj",
+			txnScope: "local",
+			zone:     "bj",
 			err:      fmt.Errorf(".*doesn't have placement policies with txn_scope.*"),
 		},
 		{
@@ -538,19 +546,22 @@ PARTITION BY RANGE (c) (
 		{
 			name:     "insert into PARTITION p2 with local txnScope",
 			sql:      "insert into t1 (c) values (15)",
-			txnScope: "bj",
+			txnScope: "local",
+			zone:     "bj",
 			err:      fmt.Errorf(".*leader placement policy is not defined.*"),
 		},
 		{
 			name:     "insert into PARTITION p2 with global txnScope",
 			sql:      "insert into t1 (c) values (15)",
 			txnScope: "global",
+			zone:     "",
 			err:      nil,
 		},
 		{
 			name:              "insert into PARTITION p0 with wrong txnScope and autocommit off",
 			sql:               "insert into t1 (c) values (1)",
-			txnScope:          "bj",
+			txnScope:          "local",
+			zone:              "bj",
 			disableAutoCommit: true,
 			err:               fmt.Errorf(".*out of txn_scope.*"),
 		},
@@ -558,6 +569,9 @@ PARTITION BY RANGE (c) (
 
 	for _, testcase := range testCases {
 		c.Log(testcase.name)
+		config.GetGlobalConfig().Labels = map[string]string{
+			"zone": testcase.zone,
+		}
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
@@ -630,6 +644,7 @@ add placement policy
 	constraints='["+   zone   =   sh  "]'
 	role=leader
 	replicas=1;`)
+	c.Assert(err, IsNil)
 	// modify p0 when alter p1 placement policy, the txn should be success.
 	_, err = tk.Exec("begin;")
 	c.Assert(err, IsNil)
@@ -638,13 +653,17 @@ add placement policy
 	constraints='["+   zone   =   sh  "]'
 	role=follower
 	replicas=3;`)
+	c.Assert(err, IsNil)
 	_, err = tk.Exec("insert into tp1 (c) values (1);")
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("commit")
 	c.Assert(err, IsNil)
 }
 
-func (s *testDBSuite1) TestGlobalTxnState(c *C) {
+func (s *testSerialSuite) TestGlobalTxnState(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -685,6 +704,9 @@ PARTITION BY RANGE (c) (
 			},
 		},
 	}
+	config.GetGlobalConfig().Labels = map[string]string{
+		"zone": "bj",
+	}
 	dbInfo := testGetSchemaByName(c, tk.Se, "test")
 	tk2 := testkit.NewTestKit(c, s.store)
 	var chkErr error
@@ -704,7 +726,7 @@ PARTITION BY RANGE (c) (
 						s.dom.InfoSchema().SetBundle(bundle)
 						done = true
 						tk2.MustExec("use test")
-						tk2.MustExec("set @@txn_scope=bj")
+						tk2.MustExec("set @@txn_scope=local")
 						_, chkErr = tk2.Exec("insert into t1 (c) values (1);")
 					}
 				}
