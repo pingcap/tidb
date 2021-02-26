@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -3414,41 +3415,62 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	result.Check(testkit.Rows("-10.001 1.989 1.99899 -10.00101", "-12.100 -0.110 -0.10001 -12.10001"))
 	result = tk.MustQuery("SELECT 1-12, 21-0.01, 89-\"11\", 12-\"a\", 12-NULL, NULL-1, NULL-NULL;")
 	result.Check(testkit.Rows("-11 20.99 78 12 <nil> <nil> <nil>"))
+
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);")
 	tk.MustExec("INSERT INTO t SELECT 1, 4;")
-	rs, err = tk.Exec("SELECT a-b FROM t;")
-	c.Assert(errors.ErrorStack(err), Equals, "")
-	c.Assert(rs, NotNil)
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+	err = tk.QueryToErr("SELECT a-b FROM t;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
-	c.Assert(rs.Close(), IsNil)
-	rs, err = tk.Exec("select cast(-1 as signed) - cast(-1 as unsigned);")
-	c.Assert(errors.ErrorStack(err), Equals, "")
-	c.Assert(rs, NotNil)
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+
+	err = tk.QueryToErr("select cast(1 as unsigned) - cast(4 as unsigned);")
+	c.Assert(err, NotNil)
+	// TODO: make error compatible with MySQL, should be BIGINT UNSIGNED value is out of range in '(cast(1 as unsigned) - cast(4 as unsigned))
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(1 - 4)'")
+
+	err = tk.QueryToErr("select cast(-1 as signed) - cast(-1 as unsigned);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-1 - 18446744073709551615)'")
-	c.Assert(rs.Close(), IsNil)
-	rs, err = tk.Exec("select cast(-1 as unsigned) - cast(-1 as signed);")
-	c.Assert(errors.ErrorStack(err), Equals, "")
-	c.Assert(rs, NotNil)
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
+
+	err = tk.QueryToErr("select cast(1 as signed) - cast(-1 as unsigned);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(1 - 18446744073709551615)'")
+
+	err = tk.QueryToErr("select cast(-1 as unsigned) - cast(-1 as signed);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(18446744073709551615 - -1)'")
-	c.Assert(rs.Close(), IsNil)
-	tk.MustQuery(`select cast(-3 as unsigned) - cast(-1 as signed);`).Check(testkit.Rows("18446744073709551614"))
-	tk.MustQuery("select 1.11 - 1.11;").Check(testkit.Rows("0.00"))
+
+	err = tk.QueryToErr("select cast(-9223372036854775808 as unsigned) - (-9223372036854775808);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(9223372036854775808 - -9223372036854775808)'")
+
+	err = tk.QueryToErr("select cast(12 as unsigned) - (14);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(12 - 14)'")
+
+	err = tk.QueryToErr("select cast(9223372036854775807 as signed) - cast(-1 as signed);")
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(9223372036854775807 - -1)'")
+
+	err = tk.QueryToErr("select cast(-9223372036854775808 as signed) - cast(1 as signed);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-9223372036854775808 - 1)'")
+
+	err = tk.QueryToErr("select cast(12 as signed) - cast(-9223372036854775808 as signed);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(12 - -9223372036854775808)'")
+
 	tk.MustExec(`create table tb5(a int(10));`)
 	tk.MustExec(`insert into tb5 (a) values (10);`)
 	e := tk.QueryToErr(`select * from tb5 where a - -9223372036854775808;`)
 	c.Assert(e, NotNil)
 	c.Assert(strings.HasSuffix(e.Error(), `BIGINT value is out of range in '(Column#0 - -9223372036854775808)'`), IsTrue, Commentf("err: %v", err))
+
 	tk.MustExec(`drop table tb5`)
+	tk.MustQuery("select cast(-9223372036854775808 as unsigned) - (-9223372036854775807);").Check(testkit.Rows("18446744073709551615"))
+	tk.MustQuery("select cast(-3 as unsigned) - cast(-1 as signed);").Check(testkit.Rows("18446744073709551614"))
+	tk.MustQuery("select 1.11 - 1.11;").Check(testkit.Rows("0.00"))
+	tk.MustQuery("select cast(-1 as unsigned) - cast(-12 as unsigned);").Check(testkit.Rows("11"))
+	tk.MustQuery("select cast(-1 as unsigned) - cast(0 as unsigned);").Check(testkit.Rows("18446744073709551615"))
 
 	// for multiply
 	tk.MustQuery("select 1234567890 * 1234567890").Check(testkit.Rows("1524157875019052100"))
@@ -6412,6 +6434,13 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustExec("insert into t1 values ('ß', 's');")
 	tk.MustExec("insert into t2 values ('s', 's')")
 	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_unicode_ci where t1.a = 's';").Check(testkit.Rows("ß s <nil> <nil>"))
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a char(10) collate utf8mb4_general_ci, index (a));")
+	tk.MustExec("create table t2(a char(10) collate utf8_bin, index (a));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("insert into t2 values ('A');")
+	tk.MustExec("set names utf8 collate utf8_general_ci;")
+	tk.MustQuery("select * from t1, t2 where t1.a=t2.a and t1.a= 'a';").Check(testkit.Rows("a A"))
 }
 
 func (s *testIntegrationSuite2) TestIssue17791(c *C) {
@@ -8508,10 +8537,13 @@ func (s *testIntegrationSuite) TestIssue12209(c *C) {
 		testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestCrossDCQuery(c *C) {
+func (s *testIntegrationSerialSuite) TestCrossDCQuery(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
@@ -8554,6 +8586,7 @@ PARTITION BY RANGE (c) (
 	testcases := []struct {
 		name      string
 		txnScope  string
+		zone      string
 		sql       string
 		expectErr error
 	}{
@@ -8573,49 +8606,59 @@ PARTITION BY RANGE (c) (
 		//},
 		{
 			name:      "cross dc read to sh by holding bj, PointGet",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1 where c = 1",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to sh by holding bj, IndexLookUp",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1 use index (idx_d) where c < 5 and d < 5;",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to sh by holding bj, IndexMerge",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 where c <5 and (d =5 or e=5);",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to sh by holding bj, TableReader",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1 where c < 6",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to global by holding bj",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "read sh dc by holding sh",
-			txnScope:  "sh",
+			txnScope:  "local",
+			zone:      "sh",
 			sql:       "select * from t1 where c < 6",
 			expectErr: nil,
 		},
 		{
 			name:      "read sh dc by holding global",
 			txnScope:  "global",
+			zone:      "",
 			sql:       "select * from t1 where c < 6",
 			expectErr: nil,
 		},
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		config.GetGlobalConfig().Labels = map[string]string{
+			"zone": testcase.zone,
+		}
 		_, err = tk.Exec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		c.Assert(err, IsNil)
 		res, err := tk.Exec(testcase.sql)
@@ -8712,4 +8755,30 @@ func (s *testIntegrationSuite) Test22717(c *C) {
 	tk.MustQuery("select b from t where b").Check(testkit.Rows("0", "1", "2"))
 	tk.MustQuery("select c from t where c").Check(testkit.Rows("a", "", "a,", ""))
 	tk.MustQuery("select d from t where d").Check(testkit.Rows("0", "1", "0,1"))
+}
+
+func (s *testIntegrationSerialSuite) TestPartitionPruningRelaxOP(c *C) {
+	// Discovered while looking at issue 19941 (not completely related)
+	// relaxOP relax the op > to >= and < to <=
+	// Sometime we need to relax the condition, for example:
+	// col < const => f(col) <= const
+	// datetime < 2020-02-11 16:18:42 => to_days(datetime) <= to_days(2020-02-11)
+	// We can't say:
+	// datetime < 2020-02-11 16:18:42 => to_days(datetime) < to_days(2020-02-11)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec(`CREATE TABLE t1 (d date NOT NULL) PARTITION BY RANGE (YEAR(d))
+	 (PARTITION p2016 VALUES LESS THAN (2017), PARTITION p2017 VALUES LESS THAN (2018), PARTITION p2018 VALUES LESS THAN (2019),
+	 PARTITION p2019 VALUES LESS THAN (2020), PARTITION pmax VALUES LESS THAN MAXVALUE)`)
+
+	tk.MustExec(`INSERT INTO t1 VALUES ('2016-01-01'), ('2016-06-01'), ('2016-09-01'), ('2017-01-01'),
+	('2017-06-01'), ('2017-09-01'), ('2018-01-01'), ('2018-06-01'), ('2018-09-01'), ('2018-10-01'),
+	('2018-11-01'), ('2018-12-01'), ('2018-12-31'), ('2019-01-01'), ('2019-06-01'), ('2019-09-01'),
+	('2020-01-01'), ('2020-06-01'), ('2020-09-01');`)
+
+	tk.MustQuery("SELECT COUNT(*) FROM t1 WHERE d < '2018-01-01'").Check(testkit.Rows("6"))
+	tk.MustQuery("SELECT COUNT(*) FROM t1 WHERE d > '2018-01-01'").Check(testkit.Rows("12"))
 }
