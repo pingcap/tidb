@@ -253,183 +253,203 @@ func mustDecodeStr(c *C, b []byte) string {
 
 func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 	infVal, _ := strconv.ParseFloat("+Inf", 64)
+
+	float64FromTableDefaultWidth := ColumnInfo{
+		Table:        "fromTable",
+		ColumnLength: 22,
+		Decimal:      31,
+	}
+
+	float32FromTableDefaultWidth := ColumnInfo{
+		Table:        "fromTable",
+		ColumnLength: 12,
+		Decimal:      31,
+	}
+
 	tests := []struct {
-		fVal    float64
-		out     string
-		prec    int
-		bitSize int
+		fVal       float64
+		out        string
+		columnInfo ColumnInfo
+		bitSize    int
 	}{
 		{
 			99999999999999999999,
 			"1e20",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			1e15,
 			"1e15",
-			-1,
+			float64FromTableDefaultWidth,
+			64,
+		},
+		{
+			1e15,
+			"1e15",
+			ColumnInfo{
+				Table:        "",
+				ColumnLength: 22,
+				Decimal:      31,
+			},
 			64,
 		},
 		{
 			9e14,
 			"900000000000000",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			-9999999999999999,
 			"-1e16",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			999999999999999,
 			"999999999999999",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			0.000000000000001,
 			"0.000000000000001",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			0.0000000000000009,
 			"9e-16",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			-0.0000000000000009,
 			"-9e-16",
-			-1,
-			64,
-		},
-		{
-			0.11111,
-			"0.111",
-			3,
-			64,
-		},
-		{
-			0.11111,
-			"0.111",
-			3,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			0.1111111111111111111,
-			"0.11111111",
-			-1,
+			"0.111111",
+			float32FromTableDefaultWidth,
 			32,
 		},
 		{
 			0.1111111111111111111,
 			"0.1111111111111111",
-			-1,
-			64,
-		},
-		{
-			0.0000000000000009,
-			"9e-16",
-			3,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			0,
 			"0",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			-340282346638528860000000000000000000000,
 			"-3.40282e38",
-			-1,
+			float32FromTableDefaultWidth,
 			32,
 		},
 		{
 			-34028236,
 			"-34028236.00",
-			2,
+			ColumnInfo{
+				Table:        "fromTable",
+				ColumnLength: 12,
+				Decimal:      2,
+			},
 			32,
 		},
 		{
 			-17976921.34,
 			"-17976921.34",
-			2,
+			ColumnInfo{
+				Table:        "fromTable",
+				ColumnLength: 22,
+				Decimal:      2,
+			},
 			64,
 		},
 		{
 			-3.402823466e+38,
 			"-3.40282e38",
-			-1,
+			float32FromTableDefaultWidth,
 			32,
 		},
 		{
 			-1.7976931348623157e308,
 			"-1.7976931348623157e308",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			10.0e20,
 			"1e21",
-			-1,
+			float32FromTableDefaultWidth,
 			32,
 		},
 		{
 			1e20,
 			"1e20",
-			-1,
+			float32FromTableDefaultWidth,
 			32,
 		},
 		{
 			10.0,
 			"10",
-			-1,
+			float32FromTableDefaultWidth,
 			32,
 		},
 		{
 			999999986991104,
 			"1e15",
-			-1,
+			float32FromTableDefaultWidth,
 			32,
 		},
 		{
 			1e15,
 			"1e15",
-			-1,
+			float32FromTableDefaultWidth,
 			32,
 		},
 		{
 			infVal,
 			"0",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			-infVal,
 			"0",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			1e14,
 			"100000000000000",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
 		{
 			1e308,
 			"1e308",
-			-1,
+			float64FromTableDefaultWidth,
 			64,
 		},
+		{
+			0,
+			"0",
+			float32FromTableDefaultWidth,
+			32,
+		},
 	}
+
 	for _, t := range tests {
-		c.Assert(string(appendFormatFloat(nil, t.fVal, t.prec, t.bitSize)), Equals, t.out)
+		c.Assert(string(appendFormatFloat(nil, t.fVal, t.bitSize, t.columnInfo.Decimal, t.columnInfo.ColumnLength, t.columnInfo.Table == "")), Equals, t.out)
 	}
 }
 

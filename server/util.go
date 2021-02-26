@@ -37,10 +37,12 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -307,18 +309,10 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 			}
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeFloat:
-			prec := -1
-			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
-				prec = int(col.Decimal)
-			}
-			tmp = appendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), prec, 32)
+			tmp = appendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), 32, col.Decimal, col.ColumnLength, col.Table == "")
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeDouble:
-			prec := types.UnspecifiedLength
-			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
-				prec = int(col.Decimal)
-			}
-			tmp = appendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
+			tmp = appendFormatFloat(tmp[:0], row.GetFloat64(i), 64, col.Decimal, col.ColumnLength, col.Table == "")
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeNewDecimal:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
@@ -359,52 +353,118 @@ func lengthEncodedIntSize(n uint64) int {
 }
 
 const (
-	expFormatBig     = 1e15
-	expFormatSmall   = 1e-15
-	defaultMySQLPrec = 5
+	expFormatBig       = 1e15
+	expFormatSmall     = 1e-15
+	defaultMySQLPrec   = 5
+	defaultMySQLPrec64 = 16
 )
 
-func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
+/*
+	Formats a float value into a string (byte slice) and returns.
+
+	The rounding/formatting is split into the following cases:
+	1. Scientific notation (1.23.e4): Used for big numbers except when value comes from a custom width column or from the select part of the query
+	1. mysql.TypeDouble: return string with as much precision as needed (precision = -1)
+	2. mysql.TypeFloat: return a rounded value that corresponds to mysql's (precision = 5)
+	3. mysql.TypeDouble(m,n):
+		3.1 If the columnLength < defaultMySQLPrec64, return string with as much precision as needed (precision = n)
+		3.2 else: return rounded string to precision defaultMySQLPrec64, and padded with 0's.
+	4. mysql.TypeFloat(m,n): return a rounded value rounded with (precision = 5) and formatted with (precision = n)
+
+	Note: 	Custom float/double column width is deprecated in mysql 8.0.14.
+			However for compatibility, we still try to make the output the same as mysql for these types.
+*/
+func appendFormatFloat(in []byte, fVal float64, bitSize int, colDecimal uint8, colLength uint32, isFromSelect bool) []byte {
+	isCustomColumnWidth := false
+	prec := types.UnspecifiedLength
+	if colDecimal > 0 && colDecimal != mysql.NotFixedDec {
+		prec = int(colDecimal)
+		isCustomColumnWidth = true
+	}
+
 	absVal := math.Abs(fVal)
 	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
 		return []byte{'0'}
 	}
 	isEFormat := false
+	// Scientific format (1.2e3) should be used for big numbers. However, it is never used for columns with custom length/decimal
+	if !isCustomColumnWidth || isFromSelect {
+		if bitSize == 32 {
+			isEFormat = float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)
+		} else {
+			isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
+		}
+	}
+
+	switch {
+	case isEFormat:
+		return formatFloatScientificNotation(in, fVal, prec, bitSize)
+	case bitSize == 32 && isCustomColumnWidth:
+		return strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
+	case bitSize == 32:
+		roundedValue := roundFloatToPrecision(fVal, defaultMySQLPrec)
+		return strconv.AppendFloat(in, roundedValue, 'f', -1, bitSize)
+	case isCustomColumnWidth && colLength > defaultMySQLPrec64:
+		roundedValue := roundFloatToPrecision(fVal, defaultMySQLPrec64)
+		valueStr := strconv.FormatFloat(roundedValue, 'f', -1, bitSize)
+		// Pad with 0's if the value has no decimals
+		if len(strings.Split(valueStr, ".")) == 1 {
+			valueStr = valueStr + fmt.Sprintf(".%0*v", prec, 0)
+		}
+		return []byte(valueStr)
+	default:
+		return strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
+	}
+}
+
+func roundFloatToPrecision(fValue float64, precision int) float64 {
+	base := math.Pow10(precision)
+
+	// Calculate the mantissa and exponent (scientific notation)
+	exponent := math.Floor(math.Log10(math.Abs(fValue)))
+	mantissa := fValue / math.Pow(10, exponent)
+
+	// Round the mantissa to <precision> number of digits, and multiply with exponent to get the result
+	roundedValue := math.Round(mantissa*base) / base * math.Pow(10, exponent)
+
+	if math.IsNaN(roundedValue) {
+		return 0
+	}
+	return roundedValue
+}
+
+func formatFloatScientificNotation(in []byte, fVal float64, prec, bitSize int) []byte {
+	absVal := math.Abs(fVal)
+	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
+		return []byte{'0'}
+	}
 	if bitSize == 32 {
-		isEFormat = float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)
-	} else {
-		isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
+		prec = defaultMySQLPrec
 	}
 	var out []byte
-	if isEFormat {
-		if bitSize == 32 {
-			prec = defaultMySQLPrec
-		}
-		out = strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
-		valStr := out[len(in):]
-		// remove the '+' from the string for compatibility.
-		plusPos := bytes.IndexByte(valStr, '+')
-		if plusPos > 0 {
-			plusPosInOut := len(in) + plusPos
-			out = append(out[:plusPosInOut], out[plusPosInOut+1:]...)
-		}
-		// remove extra '0'
-		ePos := bytes.IndexByte(valStr, 'e')
-		pointPos := bytes.IndexByte(valStr, '.')
-		ePosInOut := len(in) + ePos
-		pointPosInOut := len(in) + pointPos
-		validPos := ePosInOut
-		for i := ePosInOut - 1; i >= pointPosInOut; i-- {
-			if out[i] == '0' || out[i] == '.' {
-				validPos = i
-			} else {
-				break
-			}
-		}
-		out = append(out[:validPos], out[ePosInOut:]...)
-	} else {
-		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
+	out = strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
+	valStr := out[len(in):]
+	// remove the '+' from the string for compatibility.
+	plusPos := bytes.IndexByte(valStr, '+')
+	if plusPos > 0 {
+		plusPosInOut := len(in) + plusPos
+		out = append(out[:plusPosInOut], out[plusPosInOut+1:]...)
 	}
+	// remove extra '0'
+	ePos := bytes.IndexByte(valStr, 'e')
+	pointPos := bytes.IndexByte(valStr, '.')
+	ePosInOut := len(in) + ePos
+	pointPosInOut := len(in) + pointPos
+	validPos := ePosInOut
+	for i := ePosInOut - 1; i >= pointPosInOut; i-- {
+		if out[i] == '0' || out[i] == '.' {
+			validPos = i
+		} else {
+			break
+		}
+	}
+	out = append(out[:validPos], out[ePosInOut:]...)
+
 	return out
 }
 
