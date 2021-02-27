@@ -29,9 +29,8 @@ import (
 )
 
 type tiflashTestSuite struct {
-	cluster cluster.Cluster
-	store   kv.Storage
-	dom     *domain.Domain
+	store kv.Storage
+	dom   *domain.Domain
 	*parser.Parser
 }
 
