@@ -152,6 +152,16 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 	}
 }
 
+// GetRegionCache returns the region cache.
+func (s *RegionRequestSender) GetRegionCache() *RegionCache {
+	return s.regionCache
+}
+
+// GetClient returns the RPC client.
+func (c *RegionRequestSender) GetClient() Client {
+	return c.client
+}
+
 // SetStoreAddr specifies the dest store address.
 func (s *RegionRequestSender) SetStoreAddr(addr string) {
 	s.storeAddr = addr

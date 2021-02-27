@@ -28,16 +28,12 @@ import (
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
 type RegionBatchRequestSender struct {
 	*tikv.RegionRequestSender
-	regionCache *tikv.RegionCache
-	client      tikv.Client
 }
 
 // NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
 func NewRegionBatchRequestSender(cache *tikv.RegionCache, client tikv.Client) *RegionBatchRequestSender {
 	return &RegionBatchRequestSender{
 		RegionRequestSender: tikv.NewRegionRequestSender(cache, client),
-		regionCache:         cache,
-		client:              client,
 	}
 }
 
@@ -53,7 +49,7 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *tikv.Backoffer, ctxs
 		ctx, cancel = rawHook.(*tikv.RPCCanceller).WithCancel(ctx)
 	}
 	start := time.Now()
-	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
+	resp, err = ss.GetClient().SendRequest(ctx, rpcCtx.Addr, req, timout)
 	if ss.Stats != nil {
 		tikv.RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
 	}
@@ -81,7 +77,7 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *tikv.Backoffer, ctxs []copTas
 	for _, failedCtx := range ctxs {
 		ctx := failedCtx.ctx
 		if ctx.Meta != nil {
-			ss.regionCache.OnSendFail(bo, ctx, ss.NeedReloadRegion(ctx), err)
+			ss.GetRegionCache().OnSendFail(bo, ctx, ss.NeedReloadRegion(ctx), err)
 		}
 	}
 
