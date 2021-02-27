@@ -194,18 +194,6 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	return nil
 }
 
-// getJoinKeyFromChkRow fetches join keys from row and calculate the hash value.
-func (*hashRowContainer) getJoinKeyFromChkRow(sc *stmtctx.StatementContext, row chunk.Row, hCtx *hashContext) (hasNull bool, key uint64, err error) {
-	for _, i := range hCtx.keyColIdx {
-		if row.IsNull(i) {
-			return true, 0, nil
-		}
-	}
-	hCtx.initHash(1)
-	err = codec.HashChunkRow(sc, hCtx.hashVals[0], row, hCtx.allTypes, hCtx.keyColIdx, hCtx.buf)
-	return false, hCtx.hashVals[0].Sum64(), err
-}
-
 // NumChunks returns the number of chunks in the rowContainer
 func (c *hashRowContainer) NumChunks() int {
 	return c.rowContainer.NumChunks()
