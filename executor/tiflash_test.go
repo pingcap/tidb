@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -34,7 +33,6 @@ type tiflashTestSuite struct {
 	store   kv.Storage
 	dom     *domain.Domain
 	*parser.Parser
-	ctx *mock.Context
 }
 
 func (s *tiflashTestSuite) SetUpSuite(c *C) {
