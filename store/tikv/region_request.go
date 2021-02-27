@@ -158,8 +158,8 @@ func (s *RegionRequestSender) GetRegionCache() *RegionCache {
 }
 
 // GetClient returns the RPC client.
-func (c *RegionRequestSender) GetClient() Client {
-	return c.client
+func (s *RegionRequestSender) GetClient() Client {
+	return s.client
 }
 
 // SetStoreAddr specifies the dest store address.
