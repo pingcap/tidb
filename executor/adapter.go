@@ -887,14 +887,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		return
 	}
 	var sql stringutil.StringerFunc
-	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
-	if sessVars.EnableRedactLog {
-		sql = FormatSQL(normalizedSQL, nil)
-	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
-		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
+	if a.IsPrepared() {
+		sql = FormatSQL(a.GetTextToLog(), sessVars.PreparedParams)
 	} else {
-		sql = FormatSQL(a.Text, sessVars.PreparedParams)
+		sql = FormatSQL(a.GetTextToLog(), nil)
 	}
+	_, digest := sessVars.StmtCtx.SQLDigest()
 
 	var indexNames string
 	if len(sessVars.StmtCtx.IndexNames) > 0 {
@@ -1160,7 +1158,7 @@ func (a *ExecStmt) GetTextToLog() string {
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {
-		sql = a.Text
+		sql = a.Ctx.GetSessionVars().StmtCtx.OriginalSQL
 	}
 	return sql
 }
