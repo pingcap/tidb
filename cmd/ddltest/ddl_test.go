@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store"
+	tidbdriver "github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1060,5 +1061,5 @@ func addEnvPath(newPath string) {
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-	store.Register("tikv", store.TiKVDriver{})
+	store.Register("tikv", tidbdriver.TiKVDriver{})
 }
