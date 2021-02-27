@@ -50,7 +50,7 @@ gosec:tools/bin/gosec
 
 check-static: tools/bin/golangci-lint
 	tools/bin/golangci-lint run -v --disable-all --deadline=3m \
-	  --enable=deadcode \
+	  --enable=errcheck \
 	   --max-issues-per-linter=0 \
 	   --max-same-issues=0 \
 	   --enable=misspell \
