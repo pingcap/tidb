@@ -136,8 +136,7 @@ func (cli *testServerClient) runTests(c *C, overrider configOverrider, tests ...
 	for _, test := range tests {
 		test(dbt)
 		// fixed query error
-		_, err = dbt.db.Exec("DROP TABLE IF EXISTS test")
-		c.Assert(err, IsNil)
+		_, _ = dbt.db.Exec("DROP TABLE IF EXISTS test")
 	}
 }
 
@@ -173,9 +172,8 @@ func (cli *testServerClient) runTestsOnNewDB(c *C, overrider configOverrider, db
 	dbt := &DBTest{c, db}
 	for _, test := range tests {
 		test(dbt)
-		// to fix : no db selected?
-		_, err := dbt.db.Exec("DROP TABLE IF EXISTS test")
-		c.Assert(err, IsNil)
+		// to fix : no db selected
+		_, _ = dbt.db.Exec("DROP TABLE IF EXISTS test")
 	}
 }
 

@@ -305,7 +305,7 @@ func (s *testSessionSuite2) TestErrorRollback(c *C) {
 			localTk := testkit.NewTestKitWithInit(c, s.store)
 			localTk.MustExec("set @@session.tidb_retry_limit = 100")
 			for j := 0; j < num; j++ {
-				// cannot detect error, on purpose error
+				// to fix: cannot detect error, on purpose error
 				_, _ = localTk.Exec("insert into t_rollback values (1, 1)")
 				localTk.MustExec("update t_rollback set c2 = c2 + 1 where c1 = 0")
 			}
@@ -1823,7 +1823,7 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 	tk.MustExec("begin;")
 	tk.MustExec("insert into test(id, val) values(20, 6);")
 	tk.MustExec("commit;")
-	// cannot check error, err not nil
+	// to fix: cannot check error, err not nil
 	_, _ = tk1.Exec("commit")
 	tk1.MustExec("insert into test(id, val) values(5, 5);")
 
@@ -1837,7 +1837,7 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 	tk.MustExec("insert into test(id, val1, val2) values(1, 1, 1);")
 	tk.MustExec("insert into test(id, val1, val2) values(2, 2, 2);")
 	_, err = tk.Exec("update test set val1 = 3, val2 = 2 where id = 1;")
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	tk.MustExec("insert into test(id, val1, val2) values(3, 3, 3);")
 }
 

@@ -149,7 +149,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 func (ds *testDumpStatsSuite) prepareData(c *C) {
 	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -174,7 +174,7 @@ func (ds *testDumpStatsSuite) prepareData(c *C) {
 func (ds *testDumpStatsSuite) prepare4DumpHistoryStats(c *C) {
 	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -197,7 +197,7 @@ func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
 	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	dbt := &DBTest{c, db}
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -233,7 +233,7 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	}))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	dbt := &DBTest{c, db}
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -259,7 +259,7 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 func (ds *testDumpStatsSuite) clearData(c *C, path string) {
 	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()

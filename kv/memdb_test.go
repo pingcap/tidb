@@ -94,23 +94,22 @@ func (s *testMemDBSuite) TestIterator(c *C) {
 	var i int
 
 	for it, _ := db.Iter(nil, nil); it.Valid(); {
-		// to fix: error
-		err := it.Next()
-		c.Assert(err, IsNil)
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
 		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
 		c.Assert(it.Value(), BytesEquals, buf[:])
+		err := it.Next()
+		c.Assert(err, IsNil)
 		i++
 	}
 	c.Assert(i, Equals, cnt)
 
 	i--
 	for it, _ := db.IterReverse(nil); it.Valid(); {
-		err := it.Next()
-		c.Assert(err, IsNil)
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
 		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
 		c.Assert(it.Value(), BytesEquals, buf[:])
+		err := it.Next()
+		c.Assert(err, IsNil)
 		i--
 	}
 	c.Assert(i, Equals, -1)

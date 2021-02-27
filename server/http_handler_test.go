@@ -509,7 +509,7 @@ func (ts *basicHTTPHandlerTestSuite) stopServer(c *C) {
 func (ts *basicHTTPHandlerTestSuite) prepareData(c *C) {
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -546,7 +546,7 @@ partition by range (a)
 	c.Assert(err, IsNil)
 	_, err = txn2.Exec("insert into tidb.pt values (256, 'b')")
 	c.Assert(err, IsNil)
-	_, err = txn2.Exec("insert into tidt values (666, ")
+	_, err = txn2.Exec("insert into tidb.pt values (666, 'def')")
 	c.Assert(err, IsNil)
 	err = txn2.Commit()
 	c.Assert(err, IsNil)
@@ -664,7 +664,7 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1050,7 +1050,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1147,7 +1147,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	// test check_mb4_value_in_utf8
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1298,7 +1298,7 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()

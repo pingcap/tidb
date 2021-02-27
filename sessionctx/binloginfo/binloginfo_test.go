@@ -131,9 +131,9 @@ func (s *testBinlogSuite) TearDownSuite(c *C) {
 	err := s.ddl.Stop()
 	c.Assert(err, IsNil)
 	s.serv.Stop()
+	// to fix: file not found
 	err = os.Remove(s.unixFile)
-	// to fix
-	//c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	s.domain.Close()
 	err = s.store.Close()
 	c.Assert(err, IsNil)

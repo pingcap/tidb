@@ -1498,7 +1498,6 @@ func (s *testPessimisticSuite) TestKillWaitLockTxn(c *C) {
 	err := <-errCh
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("rollback")
-	// Query execution was interrupted
 	c.Assert(err, NotNil)
 	// reset kill
 	atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0)

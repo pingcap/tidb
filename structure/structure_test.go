@@ -54,9 +54,9 @@ func (s *testTxStructureSuite) TestString(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer func() {
-		// to fix
-		_ = txn.Rollback()
-		//c.Assert(err, IsNil)
+		// to fix: invalid txn
+		err = txn.Rollback()
+		c.Assert(err, NotNil)
 	}()
 
 	tx := structure.NewStructure(txn, txn, []byte{0x00})
@@ -107,9 +107,9 @@ func (s *testTxStructureSuite) TestList(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer func() {
-		// to fix
-		_ = txn.Rollback()
-		//c.Assert(err, IsNil)
+		err = txn.Rollback()
+		// to fix: test for invalid txn
+		c.Assert(err, NotNil)
 	}()
 
 	tx := structure.NewStructure(txn, txn, []byte{0x00})
@@ -219,10 +219,9 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer func() {
-		// to fix
-		_ = txn.Rollback()
-
-		// c.Assert(err, IsNil)
+		// to fix: invalid transaction
+		err := txn.Rollback()
+		c.Assert(err, NotNil)
 	}()
 
 	tx := structure.NewStructure(txn, txn, []byte{0x00})

@@ -1124,7 +1124,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		// to fix, occasional error
+		// to fix, Table 'test.ttt' doesn't exist
 		_ = Preprocess(s.ctx, stmt, s.is)
 		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
