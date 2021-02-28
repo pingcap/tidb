@@ -118,10 +118,10 @@ func (s *TestGracefulShutdownSuite) TestGracefulShutdown(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	go func(){
-err := db.Close()
-c.Assert(err, IsNil)
-}()
+	defer func(){
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(10*time.Second))
 	defer cancel()
