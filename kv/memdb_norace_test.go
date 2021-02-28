@@ -37,7 +37,8 @@ func (s testMemDBSuite) TestRandom(c *C) {
 	p1 := newMemDB()
 	p2 := leveldb.New(comparer.DefaultComparer, 4*1024)
 	for _, k := range keys {
-		p1.Set(k, k)
+		err := p1.Set(k, k)
+		c.Assert(err, IsNil)
 		_ = p2.Put(k, k)
 	}
 
@@ -50,11 +51,13 @@ func (s testMemDBSuite) TestRandom(c *C) {
 		op := rand.Float64()
 		if op < 0.35 {
 			p1.DeleteKey(k)
-			p2.Delete(k)
+			// to fix: delete key not found
+			_ = p2.Delete(k)
 		} else {
 			newValue := make([]byte, rand.Intn(19)+1)
 			rand.Read(newValue)
-			p1.Set(k, newValue)
+			err := p1.Set(k, newValue)
+			c.Assert(err, IsNil)
 			_ = p2.Put(k, newValue)
 		}
 	}
@@ -102,14 +105,16 @@ func (s testMemDBSuite) testRandomDeriveRecur(c *C, db *memdb, golden *leveldb.D
 	h := db.Staging()
 	opLog := make([][2][]byte, 0, len(keys))
 	for i := range keys {
-		db.Set(keys[i], vals[i])
+		err := db.Set(keys[i], vals[i])
+		c.Assert(err, IsNil)
 		old, err := golden.Get(keys[i])
 		if err != nil {
 			opLog = append(opLog, [2][]byte{keys[i], nil})
 		} else {
 			opLog = append(opLog, [2][]byte{keys[i], old})
 		}
-		golden.Put(keys[i], vals[i])
+		err = golden.Put(keys[i], vals[i])
+		c.Assert(err, IsNil)
 	}
 
 	if depth < 2000 {
@@ -121,9 +126,11 @@ func (s testMemDBSuite) testRandomDeriveRecur(c *C, db *memdb, golden *leveldb.D
 		db.Cleanup(h)
 		for i := len(opLog) - 1; i >= 0; i-- {
 			if opLog[i][1] == nil {
-				golden.Delete(opLog[i][0])
+				err := golden.Delete(opLog[i][0])
+				c.Assert(err, IsNil)
 			} else {
-				golden.Put(opLog[i][0], opLog[i][1])
+				err := golden.Put(opLog[i][0], opLog[i][1])
+				c.Assert(err, IsNil)
 			}
 		}
 		opLog = nil
