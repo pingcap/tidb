@@ -56,7 +56,7 @@ func (s testMockSuite) TestInterface(c *C) {
 		_, err = transaction.IterReverse(Key("lock"))
 		c.Check(err, IsNil)
 	}
-	// to fix: Fcannot assert err, e.g. KV error safe to retry %s
+	// to fix: cannot assert err, e.g. KV error safe to retry %s
 	_ = transaction.Commit(context.Background())
 
 	transaction, err = storage.Begin()
