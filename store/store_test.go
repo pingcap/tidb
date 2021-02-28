@@ -46,7 +46,10 @@ func (s *brokenStore) Open(schema string) (kv.Storage, error) {
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	TestingT(t)
 }
 
@@ -182,7 +185,10 @@ func (s *testKVSuite) TestGetSet(c *C) {
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
+	defer func() {
+		err := txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+	}()
 
 	mustGet(c, txn)
 	mustDel(c, txn)
@@ -201,7 +207,10 @@ func (s *testKVSuite) TestSeek(c *C) {
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
+	defer func() {
+		err := txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+	}()
 
 	checkSeek(c, txn)
 	mustDel(c, txn)
@@ -284,10 +293,14 @@ func (s *testKVSuite) TestDelete2(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	val := []byte("test")
-	txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0003"), val)
-	txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0004"), val)
-	txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0003"), val)
-	txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0004"), val)
+	err = txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0003"), val)
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0004"), val)
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0003"), val)
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0004"), val)
+	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
@@ -316,7 +329,10 @@ func (s *testKVSuite) TestDelete2(c *C) {
 
 func (s *testKVSuite) TestSetNil(c *C) {
 	txn, err := s.s.Begin()
-	defer txn.Commit(context.Background())
+	defer func() {
+		err := txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+	}()
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("1"), nil)
 	c.Assert(err, NotNil)
@@ -325,17 +341,22 @@ func (s *testKVSuite) TestSetNil(c *C) {
 func (s *testKVSuite) TestBasicSeek(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
-	txn.Set([]byte("1"), []byte("1"))
+	err = txn.Set([]byte("1"), []byte("1"))
+	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
+	defer func() {
+		err := txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+	}()
 
 	it, err := txn.Iter([]byte("2"), nil)
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), Equals, false)
-	txn.Delete([]byte("1"))
+	err = txn.Delete([]byte("1"))
+	c.Assert(err, IsNil)
 }
 
 func (s *testKVSuite) TestBasicTable(c *C) {
@@ -343,13 +364,17 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 	c.Assert(err, IsNil)
 	for i := 1; i < 5; i++ {
 		b := []byte(strconv.Itoa(i))
-		txn.Set(b, b)
+		err = txn.Set(b, b)
+		c.Assert(err, IsNil)
 	}
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
+	defer func() {
+		err := txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+	}()
 
 	err = txn.Set([]byte("1"), []byte("1"))
 	c.Assert(err, IsNil)
@@ -366,7 +391,8 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 	err = txn.Delete([]byte("0"))
 	c.Assert(err, IsNil)
 
-	txn.Delete([]byte("1"))
+	err = txn.Delete([]byte("1"))
+	c.Assert(err, IsNil)
 	it, err = txn.Iter([]byte("0"), nil)
 	c.Assert(err, IsNil)
 	c.Assert(string(it.Key()), Equals, "2")
@@ -405,7 +431,10 @@ func (s *testKVSuite) TestRollback(c *C) {
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
+	defer func() {
+		err := txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+	}()
 
 	for i := startIndex; i < testCount; i++ {
 		_, err := txn.Get(context.TODO(), []byte(strconv.Itoa(i)))
@@ -429,13 +458,15 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	for _, row := range rows {
-		txn.Set([]byte(row.key), []byte(row.value))
+		err = txn.Set([]byte(row.key), []byte(row.value))
+		c.Assert(err, IsNil)
 	}
 
 	it, err := txn.Iter(nil, nil)
 	c.Assert(err, IsNil)
 	for it.Valid() {
-		it.Next()
+		err := it.Next()
+		c.Assert(err, IsNil)
 	}
 
 	it, err = txn.Iter([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"), nil)
@@ -443,7 +474,8 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 	c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
 
 	for _, row := range rows {
-		txn.Delete([]byte(row.key))
+		err = txn.Delete([]byte(row.key))
+		c.Assert(err, IsNil)
 	}
 }
 
@@ -490,7 +522,8 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(b, b)
+	err = txn.Set(b, b)
+	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
@@ -501,7 +534,8 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 			// to pass `go tool vet -shadow` check.
 			txn1, err1 := s.s.Begin()
 			c.Assert(err1, IsNil)
-			txn1.Set(b, []byte("newValue"))
+			err = txn1.Set(b, []byte("newValue"))
+			c.Assert(err, IsNil)
 			err1 = txn1.Commit(context.Background())
 			if err1 == nil {
 				atomic.AddInt64(&success, 1)
@@ -523,8 +557,10 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 func (s *testKVSuite) TestConditionUpdate(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
-	txn.Delete([]byte("b"))
-	kv.IncInt64(txn, []byte("a"), 1)
+	err = txn.Delete([]byte("b"))
+	c.Assert(err, IsNil)
+	_, err = kv.IncInt64(txn, []byte("a"), 1)
+	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
@@ -604,8 +640,12 @@ func (s *testKVSuite) TestIsolationInc(c *C) {
 	// delete
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
-	txn.Delete([]byte("key"))
+	defer func() {
+		err := txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+	}()
+	err = txn.Delete([]byte("key"))
+	c.Assert(err, IsNil)
 }
 
 func (s *testKVSuite) TestIsolationMultiInc(c *C) {
@@ -649,7 +689,8 @@ func (s *testKVSuite) TestIsolationMultiInc(c *C) {
 				return err1
 			}
 			c.Assert(id, Equals, int64(threadCnt*incCnt))
-			txn.Delete(key)
+			err := txn.Delete(key)
+			c.Assert(err, IsNil)
 		}
 		return nil
 	})
@@ -658,10 +699,14 @@ func (s *testKVSuite) TestIsolationMultiInc(c *C) {
 
 func (s *testKVSuite) TestRetryOpenStore(c *C) {
 	begin := time.Now()
-	Register("dummy", &brokenStore{})
+	err := Register("dummy", &brokenStore{})
+	c.Assert(err, IsNil)
 	store, err := newStoreWithRetry("dummy://dummy-store", 3)
 	if store != nil {
-		defer store.Close()
+		defer func() {
+			err := store.Close()
+			c.Assert(err, IsNil)
+		}()
 	}
 	c.Assert(err, NotNil)
 	elapse := time.Since(begin)
@@ -669,10 +714,14 @@ func (s *testKVSuite) TestRetryOpenStore(c *C) {
 }
 
 func (s *testKVSuite) TestOpenStore(c *C) {
-	Register("open", &brokenStore{})
+	err := Register("open", &brokenStore{})
+	c.Assert(err, IsNil)
 	store, err := newStoreWithRetry(":", 3)
 	if store != nil {
-		defer store.Close()
+		defer func() {
+			err := store.Close()
+			c.Assert(err, IsNil)
+		}()
 	}
 	c.Assert(err, NotNil)
 }

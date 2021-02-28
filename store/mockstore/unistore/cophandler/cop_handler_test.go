@@ -460,9 +460,18 @@ func newTestStore(dbPrefix string, logPrefix string) (*testStore, error) {
 	kvPath := filepath.Join(dbPath, "kv")
 	raftPath := filepath.Join(dbPath, "raft")
 	snapPath := filepath.Join(dbPath, "snap")
-	os.MkdirAll(kvPath, os.ModePerm)
-	os.MkdirAll(raftPath, os.ModePerm)
-	os.Mkdir(snapPath, os.ModePerm)
+	err = os.MkdirAll(kvPath, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
+	err = os.MkdirAll(raftPath, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
+	err = os.Mkdir(snapPath, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
 	return &testStore{
 		db:      db,
 		locks:   lockstore.NewMemStore(4096),

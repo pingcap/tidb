@@ -54,7 +54,8 @@ func (s *testSnapshotSuite) TearDownSuite(c *C) {
 		k := scanner.Key()
 		err = txn.Delete(k)
 		c.Assert(err, IsNil)
-		scanner.Next()
+		err := scanner.Next()
+		c.Assert(err, IsNil)
 	}
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -85,7 +86,8 @@ func (s *testSnapshotSuite) checkAll(keys []kv.Key, c *C) {
 		v2, ok := m[string(k)]
 		c.Assert(ok, IsTrue, Commentf("key: %q", k))
 		c.Assert(v, BytesEquals, v2)
-		scan.Next()
+		err := scan.Next()
+		c.Assert(err, IsNil)
 	}
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -266,7 +268,8 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 
 	// Commit the primary key
 	committer.commitTS = txn.StartTS() + 1
-	committer.commitMutations(bo, committer.mutationsOfKeys([][]byte{committer.primary()}))
+	err = committer.commitMutations(bo, committer.mutationsOfKeys([][]byte{committer.primary()}))
+	c.Assert(err, IsNil)
 
 	snapshot = newTiKVSnapshot(s.store, kv.MaxVersion, 0)
 	start = time.Now()

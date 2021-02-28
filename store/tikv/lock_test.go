@@ -210,7 +210,8 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
+	err = txn.Set(kv.Key("key"), []byte("value"))
+	c.Assert(err, IsNil)
 	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
 
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
@@ -250,7 +251,8 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
+	err = txn.Set(kv.Key("key"), []byte("value"))
+	c.Assert(err, IsNil)
 	s.prewriteTxn(c, txn.(*tikvTxn))
 
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
@@ -276,8 +278,10 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
-	txn.Set(kv.Key("second"), []byte("xxx"))
+	err = txn.Set(kv.Key("key"), []byte("value"))
+	c.Assert(err, IsNil)
+	err = txn.Set(kv.Key("second"), []byte("xxx"))
+	c.Assert(err, IsNil)
 	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
 
 	o := s.store.GetOracle()
@@ -327,8 +331,10 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
-	txn.Set(kv.Key("second"), []byte("xxx"))
+	err = txn.Set(kv.Key("key"), []byte("value"))
+	c.Assert(err, IsNil)
+	err = txn.Set(kv.Key("second"), []byte("xxx"))
+	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 0)
 	c.Assert(err, IsNil)
 	// Increase lock TTL to make CI more stable.
@@ -434,7 +440,8 @@ func (s *testLockSuite) ttlEquals(c *C, x, y uint64) {
 func (s *testLockSuite) TestLockTTL(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
+	err = txn.Set(kv.Key("key"), []byte("value"))
+	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond)
 	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 3100)
 	l := s.mustGetLock(c, []byte("key"))
@@ -444,10 +451,12 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	txn, err = s.store.Begin()
 	start := time.Now()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
+	err = txn.Set(kv.Key("key"), []byte("value"))
+	c.Assert(err, IsNil)
 	for i := 0; i < 2048; i++ {
 		k, v := randKV(1024, 1024)
-		txn.Set(kv.Key(k), []byte(v))
+		err = txn.Set(kv.Key(k), []byte(v))
+		c.Assert(err, IsNil)
 	}
 	s.prewriteTxn(c, txn.(*tikvTxn))
 	l = s.mustGetLock(c, []byte("key"))
@@ -458,7 +467,8 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond * 50)
-	txn.Set(kv.Key("key"), []byte("value"))
+	err = txn.Set(kv.Key("key"), []byte("value"))
+	c.Assert(err, IsNil)
 	s.prewriteTxn(c, txn.(*tikvTxn))
 	l = s.mustGetLock(c, []byte("key"))
 	s.ttlEquals(c, l.TTL, defaultLockTTL+uint64(time.Since(start)/time.Millisecond))
@@ -468,15 +478,19 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	// The first transaction is a normal transaction with a long TTL
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("k1"), []byte("v1"))
-	txn.Set(kv.Key("k2"), []byte("v2"))
+	err = txn.Set(kv.Key("k1"), []byte("v1"))
+	c.Assert(err, IsNil)
+	err = txn.Set(kv.Key("k2"), []byte("v2"))
+	c.Assert(err, IsNil)
 	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 20000)
 
 	// The second transaction is an async commit transaction
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("k3"), []byte("v3"))
-	txn.Set(kv.Key("k4"), []byte("v4"))
+	err = txn.Set(kv.Key("k3"), []byte("v3"))
+	c.Assert(err, IsNil)
+	err = txn.Set(kv.Key("k4"), []byte("v4"))
+	c.Assert(err, IsNil)
 	tikvTxn := txn.(*tikvTxn)
 	committer, err := newTwoPhaseCommitterWithInit(tikvTxn, 0)
 	c.Assert(err, IsNil)
@@ -535,7 +549,8 @@ func init() {
 func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
+	err = txn.Set(kv.Key("key"), []byte("value"))
+	c.Assert(err, IsNil)
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 
 	mockValue := fmt.Sprintf(`return(%d)`, txn.StartTS())

@@ -75,7 +75,10 @@ func clearStorage(store *KVStore) error {
 		return errors.Trace(err)
 	}
 	for iter.Valid() {
-		txn.Delete(iter.Key())
+		err := txn.Delete(iter.Key())
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if err := iter.Next(); err != nil {
 			return errors.Trace(err)
 		}
@@ -109,7 +112,8 @@ func (s *testTiclientSuite) TearDownSuite(c *C) {
 		k := scanner.Key()
 		err = txn.Delete(k)
 		c.Assert(err, IsNil)
-		scanner.Next()
+		err := scanner.Next()
+		c.Assert(err, IsNil)
 	}
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
