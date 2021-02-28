@@ -573,7 +573,10 @@ func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
 		},
 		tls.TLS_AES_128_GCM_SHA256, func(c *x509.Certificate) {
 			var url url.URL
-			url.UnmarshalBinary([]byte("spiffe://mesh.pingcap.com/ns/timesh/sa/me1"))
+			err := url.UnmarshalBinary([]byte("spiffe://mesh.pingcap.com/ns/timesh/sa/me1"))
+			if err != nil {
+				panic(err)
+			}
 			c.URIs = append(c.URIs, &url)
 		})
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
@@ -1038,7 +1041,8 @@ func (s *testPrivilegeSuite) TestLoadDataPrivilege(c *C) {
 		err = os.Remove(path)
 		c.Assert(err, IsNil)
 	}()
-	fp.WriteString("1\n")
+	_, err = fp.WriteString("1\n")
+	c.Assert(err, IsNil)
 
 	se := newSession(c, s.store, s.dbName)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
