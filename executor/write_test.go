@@ -2412,7 +2412,10 @@ func (s *testBypassSuite) TestLatch(c *C) {
 		mockstore.WithTxnLocalLatches(64),
 	)
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	dom, err1 := session.BootstrapSession(store)
 	c.Assert(err1, IsNil)
