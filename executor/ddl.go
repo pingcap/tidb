@@ -193,6 +193,9 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 			err = nil
 		}
 	}
+	if err == nil {
+		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	}
 	return err
 }
 
@@ -227,7 +230,15 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 		return errors.New("Drop 'mysql' database is forbidden")
 	}
 
-	err := domain.GetDomain(e.ctx).DDL().DropSchema(e.ctx, dbName)
+	var err error
+	defer func() {
+		if err == nil {
+			tables := e.is.SchemaTables(dbName)
+			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(len(tables)))
+		}
+	}()
+
+	err = domain.GetDomain(e.ctx).DDL().DropSchema(e.ctx, dbName)
 	if infoschema.ErrDatabaseNotExists.Equal(err) {
 		if s.IfExists {
 			err = nil

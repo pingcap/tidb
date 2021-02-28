@@ -378,6 +378,20 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 	err = tk.ExecToErr("select * from t;")
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 
+	tk.MustExec("drop database if exists drop_test;")
+	tk.MustExec("create database drop_test;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.MustExec("use drop_test;")
+	tk.MustExec("create table r1 (i int);")
+	tk.MustExec("create table r2 (i int);")
+	tk.MustExec("create table r3 (i int);")
+	tk.MustExec("drop database drop_test;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(3))
+	tk.MustExec("create database drop_test;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.MustExec("drop database drop_test;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+
 	_, err = tk.Exec("drop database mysql")
 	c.Assert(err, NotNil)
 
