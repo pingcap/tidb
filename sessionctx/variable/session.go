@@ -164,9 +164,12 @@ type TransactionContext struct {
 	IsPessimistic  bool
 	// IsStaleness indicates whether the txn is read only staleness txn.
 	IsStaleness bool
-	Isolation   string
-	LockExpire  uint32
-	ForUpdate   uint32
+	// IsExplicit indicates whether the txn is an interactive txn, which is typically started with a BEGIN
+	// or START TRANSACTION statement, or by setting autocommit to 0.
+	IsExplicit bool
+	Isolation  string
+	LockExpire uint32
+	ForUpdate  uint32
 	// TxnScope indicates the value of txn_scope
 	TxnScope string
 
@@ -433,6 +436,9 @@ type SessionVars struct {
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
+	// Port is the port of the connected socket
+	Port string
+
 	// CurrentDB is the default database of this session.
 	CurrentDB string
 
@@ -500,7 +506,6 @@ type SessionVars struct {
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
 
-	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -573,6 +578,9 @@ type SessionVars struct {
 
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
+
+	// EnableListTablePartition enables list table partition feature.
+	EnableListTablePartition bool
 
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
@@ -784,7 +792,7 @@ type SessionVars struct {
 	PartitionPruneMode atomic2.String
 
 	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
-	TxnScope string
+	TxnScope oracle.TxnScope
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
@@ -819,7 +827,10 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
 		return oracle.GlobalTxnScope
 	}
-	return s.TxnScope
+	if s.TxnScope.GetVarValue() == oracle.LocalTxnScope {
+		return s.TxnScope.GetTxnScope()
+	}
+	return oracle.GlobalTxnScope
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -963,7 +974,7 @@ func NewSessionVars() *SessionVars {
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    config.GetTxnScopeFromConfig(),
+		TxnScope:                    oracle.GetTxnScope(),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 		Enable1PC:                   DefTiDBEnable1PC,
@@ -1171,6 +1182,15 @@ func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 	return s.Status&flag > 0
 }
 
+// SetInTxn sets whether the session is in transaction.
+// It also updates the IsExplicit flag in TxnCtx if val is true.
+func (s *SessionVars) SetInTxn(val bool) {
+	s.SetStatusFlag(mysql.ServerStatusInTrans, val)
+	if val {
+		s.TxnCtx.IsExplicit = true
+	}
+}
+
 // InTxn returns if the session is in transaction.
 func (s *SessionVars) InTxn() bool {
 	return s.GetStatusFlag(mysql.ServerStatusInTrans)
@@ -1359,7 +1379,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		isAutocommit := TiDBOptOn(val)
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
-			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
+			s.SetInTxn(false)
 		}
 	case AutoIncrementIncrement:
 		// AutoIncrementIncrement is valid in [1, 65535].
@@ -1505,6 +1525,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
 		s.EnableTablePartition = val
+	case TiDBEnableListTablePartition:
+		s.EnableListTablePartition = TiDBOptOn(val)
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
@@ -1586,6 +1608,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if err != nil {
 			logutil.BgLogger().Warn(err.Error())
 			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
+			if err != nil {
+				return err
+			}
 		}
 		switch name {
 		case CollationConnection:
@@ -1680,7 +1705,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:
-		s.TxnScope = val
+		switch val {
+		case oracle.GlobalTxnScope:
+			s.TxnScope = oracle.NewGlobalTxnScope()
+		case oracle.LocalTxnScope:
+			s.TxnScope = oracle.GetTxnScope()
+		default:
+			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
+		}
 	case TiDBMemoryUsageAlarmRatio:
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
 	case TiDBEnableRateLimitAction:

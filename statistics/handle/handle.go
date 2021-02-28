@@ -323,6 +323,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 	globalStats.Hg = make([]*statistics.Histogram, globalStats.Num)
 	globalStats.Cms = make([]*statistics.CMSketch, globalStats.Num)
 	globalStats.TopN = make([]*statistics.TopN, globalStats.Num)
+	globalStats.Fms = make([]*statistics.FMSketch, globalStats.Num)
 
 	// The first dimension of slice is means the number of column or index stats in the globalStats.
 	// The second dimension of slice is means the number of partition tables.
@@ -349,7 +350,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		}
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
-		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, false, 0)
+		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
 		if err != nil {
 			return
 		}
@@ -409,10 +410,28 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 			return
 		}
 
-		// Merge NDV
-		err = errors.Errorf("TODO: The merge function of the NDV has not been implemented yet")
-		if err != nil {
-			return
+		// Update NDV of global-level stats
+		if isIndex == 0 {
+			// For the column stats, we should merge the FMSketch first. And use the FMSketch to calculate the new NDV.
+			// merge FMSketch
+			globalStats.Fms[i] = allFms[i][0].Copy()
+			for j := uint64(1); j < partitionNum; j++ {
+				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+			}
+
+			// update the NDV
+			globalStatsNDV := globalStats.Fms[i].NDV()
+			if globalStatsNDV > globalStats.Count {
+				globalStatsNDV = globalStats.Count
+			}
+			globalStats.Hg[i].NDV = globalStatsNDV
+		} else {
+			// For the index stats, we get the final NDV by accumulating the NDV of each bucket in the index histogram.
+			globalStatsNDV := int64(0)
+			for _, bucket := range globalStats.Hg[i].Buckets {
+				globalStatsNDV += bucket.NDV
+			}
+			globalStats.Hg[i].NDV = globalStatsNDV
 		}
 	}
 	return

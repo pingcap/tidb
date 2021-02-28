@@ -122,13 +122,13 @@ type tikvHandlerTool struct {
 // newTikvHandlerTool checks and prepares for tikv handler.
 // It would panic when any error happens.
 func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
-	var tikvStore tikv.Storage
+	var tikvStore helper.Storage
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
 		panic("Invalid KvStore with illegal driver")
 	}
 
-	if tikvStore, ok = store.store.(tikv.Storage); !ok {
+	if tikvStore, ok = store.store.(helper.Storage); !ok {
 		panic("Invalid KvStore with illegal store")
 	}
 
@@ -1349,24 +1349,6 @@ func (h tableHandler) handleDiskUsageRequest(tbl table.Table, w http.ResponseWri
 		return
 	}
 	writeData(w, stats.StorageSize)
-}
-
-type hotRegion struct {
-	helper.TblIndex
-	helper.RegionMetric
-}
-type hotRegions []hotRegion
-
-func (rs hotRegions) Len() int {
-	return len(rs)
-}
-
-func (rs hotRegions) Less(i, j int) bool {
-	return rs[i].MaxHotDegree > rs[j].MaxHotDegree || (rs[i].MaxHotDegree == rs[j].MaxHotDegree && rs[i].FlowBytes > rs[j].FlowBytes)
-}
-
-func (rs hotRegions) Swap(i, j int) {
-	rs[i], rs[j] = rs[j], rs[i]
 }
 
 // ServeHTTP handles request of get region by ID.

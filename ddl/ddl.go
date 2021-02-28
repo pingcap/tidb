@@ -80,8 +80,6 @@ const (
 )
 
 var (
-	// TableIndexCountLimit is limit of the number of indexes in a table.
-	TableIndexCountLimit = uint32(64)
 	// EnableSplitTableRegion is a flag to decide whether to split a new region for
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
@@ -444,18 +442,6 @@ func (d *ddl) OwnerManager() owner.Manager {
 // GetID implements DDL.GetID interface.
 func (d *ddl) GetID() string {
 	return d.uuid
-}
-
-func checkJobMaxInterval(job *model.Job) time.Duration {
-	// The job of adding index takes more time to process.
-	// So it uses the longer time.
-	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-		return 3 * time.Second
-	}
-	if job.Type == model.ActionCreateTable || job.Type == model.ActionCreateSchema {
-		return 500 * time.Millisecond
-	}
-	return 1 * time.Second
 }
 
 var (
