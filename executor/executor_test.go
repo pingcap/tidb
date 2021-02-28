@@ -5238,7 +5238,6 @@ func (s *testSuite) TestSummaryFailedUpdate(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
-	tk.MustQuery("select stmt_type from %s.statements_summary where digest_text = 'update t set t . a = t . a - ? where t . a in ( select a from t where a < ? )'", util.InformationSchemaName)).Check(testkit.Rows("Update"))
 	tk.MustQuery(fmt.Sprintf("select stmt_type from %s.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )'", util.InformationSchemaName)).Check(testkit.Rows("Update"))
 }
 
