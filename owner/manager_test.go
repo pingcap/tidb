@@ -83,8 +83,7 @@ func TestSingle(t *testing.T) {
 		t.Fatalf("DDL start failed %v", err)
 	}
 	defer func() {
-		err = d.Stop()
-		t.Fatal(err, IsNil)
+		_ = d.Stop()
 	}()
 
 	isOwner := checkOwner(d, true)
