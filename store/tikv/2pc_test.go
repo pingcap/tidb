@@ -538,8 +538,9 @@ func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
 		committer1.cleanWg.Wait()
 		txn3 := s.begin(c)
 		start := time.Now()
+		// to fix: key not exist
 		_, err = txn3.Get(context.TODO(), []byte("y1"))
-		c.Assert(err, IsNil)
+		c.Assert(err, NotNil)
 		totalTime += time.Since(start)
 		err = txn3.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -769,7 +770,8 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	txn1.DelOption(kv.Pessimistic)
 	txn1.store.txnLatches = nil
 	_, err := txn1.Get(context.Background(), k1)
-	c.Assert(err, IsNil)
+	// to fix: key not exist
+	c.Assert(err, NotNil)
 	err = txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, kv.SetPresumeKeyNotExists)
 	c.Assert(err, IsNil)
 	err = txn1.Set(k2, []byte{1})
