@@ -57,7 +57,6 @@ func (s *testSuite) TestMeta(c *C) {
 	defer func() {
 		// to fix : occasion failure
 		_ = txn.Rollback()
-		//c.Assert(err, IsNil)
 	}()
 
 	t := meta.NewMeta(txn)
@@ -493,7 +492,6 @@ func (s *testSuite) TestDDL(c *C) {
 	defer func() {
 		// to fix : occasion failure
 		_ = txn1.Rollback()
-		//c.Assert(err, IsNil)
 	}()
 
 	m := meta.NewMeta(txn1, meta.AddIndexJobListKey)
