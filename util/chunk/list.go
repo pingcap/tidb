@@ -42,6 +42,7 @@ type RowPtr struct {
 	RowIdx uint32
 }
 
+// nolint:varcheck
 var chunkListLabel fmt.Stringer = stringutil.StringerStr("chunk.List")
 
 // NewList creates a new List with field types, init chunk size and max chunk size.

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
+// nolint:varcheck
 // Error instances.
 var (
 	// All the exported errors are defined here:

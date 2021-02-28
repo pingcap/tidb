@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
+// nolint:varcheck
 var (
 	// errWorkerClosed means we have already closed the DDL worker.
 	errInvalidWorker = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDDLWorker)

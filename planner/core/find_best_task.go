@@ -90,6 +90,7 @@ func (c *PlanCounterTp) IsForce() bool {
 	return *c != -1
 }
 
+// nolint:varcheck
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
 var wholeTaskTypes = [...]property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.RootTaskType}
