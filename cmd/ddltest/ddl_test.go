@@ -304,10 +304,10 @@ func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
 		}
 		log.Warnf("ping addr %v failed, retry count %d err %v", addr, i, err)
 
-	err = db.Close()
-	if err != nil {
-		panic(err)
-	}
+		err = db.Close()
+		if err != nil {
+			panic(err)
+		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
 	}
