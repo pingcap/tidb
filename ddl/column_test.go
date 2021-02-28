@@ -54,7 +54,8 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 
 	s.dbInfo = testSchemaInfo(c, d, "test_column")
 	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
-	d.Stop()
+	err := d.Stop()
+	c.Assert(err, IsNil)
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
@@ -189,7 +190,10 @@ func (s *testColumnSuite) TestColumn(c *C) {
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	tblInfo := testTableInfo(c, d, "t1", 3)
 	ctx := testNewContext(d)
@@ -344,7 +348,10 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 	}
 	defer func() {
 		if txn, err1 := ctx.Txn(true); err1 == nil {
-			txn.Commit(context.Background())
+			err = txn.Commit(context.Background())
+			if err != nil {
+				panic(err)
+			}
 		}
 	}()
 	key := t.RecordKey(handle)
@@ -743,13 +750,16 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	rows := [][]types.Datum{updatedRow, newRow}
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, rows[i]) {
 			return false, errors.Errorf("%v not equal to %v", data, rows[i])
 		}
 		i++
 		return true, nil
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if i != 2 {
 		return errors.Errorf("expect 2, got %v", i)
 	}
@@ -908,7 +918,8 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	d.Stop()
+	err = d.Stop()
+	c.Assert(err, IsNil)
 }
 
 func (s *testColumnSuite) TestAddColumns(c *C) {
@@ -992,7 +1003,8 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
-	d.Stop()
+	err = d.Stop()
+	c.Assert(err, IsNil)
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
@@ -1067,7 +1079,8 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	d.Stop()
+	err = d.Stop()
+	c.Assert(err, IsNil)
 }
 
 func (s *testColumnSuite) TestDropColumns(c *C) {
@@ -1135,7 +1148,8 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
-	d.Stop()
+	err = d.Stop()
+	c.Assert(err, IsNil)
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
@@ -1146,7 +1160,10 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		WithLease(testLease),
 	)
 	ctx := testNewContext(d)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 	tests := []struct {
 		origin string
 		to     string
@@ -1211,7 +1228,10 @@ func (s *testColumnSuite) TestAutoConvertBlobTypeByLength(c *C) {
 	)
 	// Close the customized ddl(worker goroutine included) after the test is finished, otherwise, it will
 	// cause go routine in TiDB leak test.
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	sql := fmt.Sprintf("create table t0(c0 Blob(%d), c1 Blob(%d), c2 Blob(%d), c3 Blob(%d))",
 		tinyBlobMaxLength-1, blobMaxLength-1, mediumBlobMaxLength-1, longBlobMaxLength-1)
