@@ -43,7 +43,7 @@ const (
 	MPPErrEstablishConnMultiTimes
 )
 
-//nolint:varcheck
+// nolint:varcheck
 const (
 	taskInit int32 = iota
 	taskRunning
