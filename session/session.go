@@ -145,6 +145,7 @@ type Session interface {
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
+	SetPort(port string)
 }
 
 var (
@@ -440,7 +441,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	defer func() {
 		s.txn.changeToInvalid()
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 	}()
 	if s.txn.IsReadOnly() {
 		return nil
@@ -499,7 +500,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
 		// of any previously committed transactions.
 		s.txn.SetOption(kv.GuaranteeLinearizability,
-			!s.GetSessionVars().IsAutocommit() && s.GetSessionVars().GuaranteeLinearizability)
+			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
 
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
@@ -611,7 +612,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	}
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
-	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	s.sessionVars.SetInTxn(false)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -697,7 +698,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		s.sessionVars.RetryInfo.Retrying = false
 		// retryCnt only increments on retryable error, so +1 here.
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 		if err != nil {
 			s.RollbackTxn(ctx)
 		}
@@ -791,7 +792,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			zap.String("txn", s.txn.GoString()))
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 	}
 	return err
 }
@@ -1232,6 +1233,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
+		Port:             s.sessionVars.Port,
 		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
 		Plan:             p,
@@ -1636,7 +1638,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
 		defer func() {
 			sessVars.LastQueryInfo = variable.QueryInfo{
-				TxnScope:    sessVars.TxnScope,
+				TxnScope:    sessVars.CheckAndGetTxnScope(),
 				StartTS:     sessVars.TxnCtx.StartTS,
 				ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
 			}
@@ -1902,7 +1904,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.txn.SetOption(kv.Pessimistic, true)
 		}
 		if !s.sessionVars.IsAutocommit() {
-			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+			s.sessionVars.SetInTxn(true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 		s.txn.SetVars(s.sessionVars.KVVars)
@@ -2788,7 +2790,7 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	}
 	var txn kv.Transaction
 	var err error
-	txnScope := s.GetSessionVars().TxnScope
+	txnScope := s.GetSessionVars().CheckAndGetTxnScope()
 	switch option.Mode {
 	case ast.TimestampBoundReadTimestamp:
 		txn, err = s.store.BeginWithStartTS(txnScope, option.StartTS)
@@ -2969,4 +2971,8 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 		}
 	}
 	return err
+}
+
+func (s *session) SetPort(port string) {
+	s.sessionVars.Port = port
 }

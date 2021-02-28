@@ -63,8 +63,6 @@ const (
 	DefTableColumnCountLimit = 1017
 	// Def TableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
-	// DefTxnScope is the default value for TxnScope
-	DefTxnScope = "global"
 )
 
 // Valid config maps

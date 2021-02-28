@@ -19,20 +19,23 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
-	store kv.Storage
-	do    *domain.Domain
+	store    kv.Storage
+	do       *domain.Domain
+	testData testutil.TestData
 }
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	// Add the hook here to avoid data race.
 	var err error
 	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_suite")
 	c.Assert(err, IsNil)
 }
 
@@ -40,6 +43,7 @@ func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.do.Close()
 	c.Assert(s.store.Close(), IsNil)
 	testleak.AfterTest(c)()
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testIntegrationSuite) TestChangeVerTo2Behavior(c *C) {
@@ -184,4 +188,29 @@ func (s *testIntegrationSuite) TestIncAnalyzeOnVer2(c *C) {
 		"test t  idx 1 2 3",
 		"test t  idx 1 4 4",
 	))
+}
+
+func (s *testIntegrationSuite) TestExpBackoffEstimation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table exp_backoff(a int, b int, c int, d int, index idx(a, b, c, d))")
+	tk.MustExec("insert into exp_backoff values(1, 1, 1, 1), (1, 1, 1, 2), (1, 1, 2, 3), (1, 2, 2, 4), (1, 2, 3, 5)")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("analyze table exp_backoff")
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	// The test cases are:
+	// Query a = 1, b = 1, c = 1, d >= 3 and d <= 5 separately. We got 5, 3, 2, 3.
+	// And then query and a = 1 and b = 1 and c = 1 and d >= 3 and d <= 5. It's result should follow the exp backoff,
+	// which is 2/5 * (3/5)^{1/2} * (3/5)*{1/4} * 1^{1/8} * 5 = 1.3634.
+	for i := 0; i < len(input); i++ {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
 }
