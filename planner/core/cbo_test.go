@@ -209,7 +209,8 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
@@ -411,7 +412,8 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
 	}
 	h := dom.StatsHandle()
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")
@@ -554,7 +556,8 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
 	dom.StatsHandle().Clear()
-	dom.StatsHandle().Update(dom.InfoSchema())
+	err = dom.StatsHandle().Update(dom.InfoSchema())
+	c.Assert(err, IsNil)
 	// Using the histogram (a, b) to estimate `a = 5` will get 1.22, while using the CM Sketch to estimate
 	// the `a = 5 and c = 5` will get 10, it is not consistent.
 	tk.MustQuery("explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5").
