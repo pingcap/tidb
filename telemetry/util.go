@@ -24,7 +24,10 @@ import (
 // hashString returns the SHA1 checksum in hex of the string.
 func hashString(text string) string {
 	hash := sha1.New()
-	hash.Write([]byte(text))
+	_, err := hash.Write([]byte(text))
+	if err != nil {
+		panic(err)
+	}
 	hashed := hash.Sum(nil)
 	return fmt.Sprintf("%x", hashed)
 }
