@@ -887,7 +887,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		return
 	}
 	var sql stringutil.StringerFunc
-	if a.IsPrepared() {
+	if a.IsPrepared() && !sessVars.EnableRedactLog {
 		sql = FormatSQL(a.GetTextToLog(), sessVars.PreparedParams)
 	} else {
 		sql = FormatSQL(a.GetTextToLog(), nil)
