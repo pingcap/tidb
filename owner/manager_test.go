@@ -200,10 +200,12 @@ func TestCluster(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DDL start failed %v", err)
 	}
-	err = d3.Stop()
-	if err != nil {
-		t.Fatal(err, IsNil)
-	}
+	defer func() {
+		err = d3.Stop()
+		if err != nil {
+			t.Fatal(err, IsNil)
+		}
+	}()
 	isOwner = checkOwner(d3, false)
 	if isOwner {
 		t.Fatalf("expect false, got isOwner:%v", isOwner)
