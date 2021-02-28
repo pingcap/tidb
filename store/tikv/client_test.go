@@ -177,11 +177,11 @@ func (s *testClientSuite) TestCollapseResolveLock(c *C) {
 	// Collapse ResolveLock.
 	resolveLockReq := buildResolveLockReq(1, 10, 20, nil)
 	wg.Add(1)
-	defer func() {
+	go func() {
 		_, err := client.SendRequest(ctx, "", resolveLockReq, time.Second)
 		c.Assert(err, IsNil)
 	}()
-	defer func() {
+	go func() {
 		_, err := client.SendRequest(ctx, "", resolveLockReq, time.Second)
 		c.Assert(err, IsNil)
 	}()
@@ -198,11 +198,11 @@ func (s *testClientSuite) TestCollapseResolveLock(c *C) {
 	// Don't collapse ResolveLockLite.
 	resolveLockLiteReq := buildResolveLockReq(1, 10, 20, [][]byte{[]byte("foo")})
 	wg.Add(1)
-	defer func() {
+	go func() {
 		_, err := client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
 		c.Assert(err, IsNil)
 	}()
-	defer func() {
+	go func() {
 		_, err := client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
 		c.Assert(err, IsNil)
 	}()
@@ -218,11 +218,11 @@ func (s *testClientSuite) TestCollapseResolveLock(c *C) {
 		{Txn: 10, Status: 20},
 	})
 	wg.Add(1)
-	defer func() {
+	go func() {
 		_, err := client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
 		c.Assert(err, IsNil)
 	}()
-	defer func() {
+	go func() {
 		_, err := client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
 		c.Assert(err, IsNil)
 	}()
@@ -235,15 +235,15 @@ func (s *testClientSuite) TestCollapseResolveLock(c *C) {
 
 	// Mixed
 	wg.Add(1)
-	defer func() {
+	go func() {
 		_, err := client.SendRequest(ctx, "", resolveLockReq, time.Second)
 		c.Assert(err, IsNil)
 	}()
-	defer func() {
+	go func() {
 		_, err := client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
 		c.Assert(err, IsNil)
 	}()
-	defer func() {
+	go func() {
 		_, err := client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
 		c.Assert(err, IsNil)
 	}()
