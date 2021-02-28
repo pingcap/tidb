@@ -253,7 +253,10 @@ func prepareTestData(se *session, mutations *tikv.PlainMutations, oldTblInfo tab
 func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 	ctx := context.Background()
 	store := newStore(c, "test_schema_amender")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	se := &session{
 		store:       store,
 		parser:      parser.New(),

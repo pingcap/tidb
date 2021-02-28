@@ -38,7 +38,10 @@ import (
 
 func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	CustomVerboseFlag = true
 	SetSchemaLease(20 * time.Millisecond)
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -76,7 +79,10 @@ func (s *testMainSuite) TearDownSuite(c *C) {
 
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	store, dom := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	defer dom.Close()
 	se, err := createSession(store)
 	c.Assert(err, IsNil)
