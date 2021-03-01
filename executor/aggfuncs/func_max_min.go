@@ -143,8 +143,8 @@ const (
 	DefPartialResult4MaxMinFloat32Size = int64(unsafe.Sizeof(partialResult4MaxMinFloat32{}))
 	// DefPartialResult4MaxMinFloat64Size is the size of partialResult4MaxMinFloat64
 	DefPartialResult4MaxMinFloat64Size = int64(unsafe.Sizeof(partialResult4MaxMinFloat64{}))
-	// DefPartialResult4TimeSize is the size of partialResult4Time
-	DefPartialResult4TimeSize = int64(unsafe.Sizeof(partialResult4Time{}))
+	// DefPartialResult4MaxMinTimeSize is the size of partialResult4MaxMinTime
+	DefPartialResult4MaxMinTimeSize = int64(unsafe.Sizeof(partialResult4MaxMinTime{}))
 	// DefPartialResult4MaxMinDurationSize is the size of partialResult4MaxMinDuration
 	DefPartialResult4MaxMinDurationSize = int64(unsafe.Sizeof(partialResult4MaxMinDuration{}))
 	// DefPartialResult4MaxMinStringSize is the size of partialResult4MaxMinString
@@ -155,6 +155,8 @@ const (
 	DefPartialResult4MaxMinEnumSize = int64(unsafe.Sizeof(partialResult4MaxMinEnum{}))
 	// DefPartialResult4MaxMinSetSize is the size of partialResult4MaxMinSet
 	DefPartialResult4MaxMinSetSize = int64(unsafe.Sizeof(partialResult4MaxMinSet{}))
+	// DefMaxMinHeapSize is the size of maxMinHeap
+	DefMaxMinHeapSize = int64(unsafe.Sizeof(maxMinHeap{}))
 )
 
 type partialResult4MaxMinInt struct {
@@ -191,7 +193,7 @@ type partialResult4MaxMinFloat64 struct {
 	heap   *maxMinHeap
 }
 
-type partialResult4Time struct {
+type partialResult4MaxMinTime struct {
 	val    types.Time
 	isNull bool
 	heap   *maxMinHeap
@@ -237,9 +239,6 @@ type maxMin4Int struct {
 func (e *maxMin4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinInt)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
-		return types.CompareInt64(i.(int64), j.(int64))
-	})
 	return PartialResult(p), DefPartialResult4MaxMinIntSize
 }
 
@@ -247,7 +246,6 @@ func (e *maxMin4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinInt)(pr)
 	p.val = 0
 	p.isNull = true
-	p.heap.Reset()
 }
 
 func (e *maxMin4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -299,6 +297,19 @@ func (e *maxMin4Int) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 
 type maxMin4IntSliding struct {
 	maxMin4Int
+}
+
+func (e *maxMin4IntSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p, memDelta := e.maxMin4Int.AllocPartialResult()
+	(*partialResult4MaxMinInt)(p).heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	})
+	return p, memDelta + DefMaxMinHeapSize
+}
+
+func (e *maxMin4IntSliding) ResetPartialResult(pr PartialResult) {
+	e.maxMin4Int.ResetPartialResult(pr)
+	(*partialResult4MaxMinInt)(pr).heap.Reset()
 }
 
 func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -360,9 +371,6 @@ type maxMin4Uint struct {
 func (e *maxMin4Uint) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinUint)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
-		return types.CompareUint64(i.(uint64), j.(uint64))
-	})
 	return PartialResult(p), DefPartialResult4MaxMinUintSize
 }
 
@@ -370,7 +378,6 @@ func (e *maxMin4Uint) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinUint)(pr)
 	p.val = 0
 	p.isNull = true
-	p.heap.Reset()
 }
 
 func (e *maxMin4Uint) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -423,6 +430,19 @@ func (e *maxMin4Uint) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 
 type maxMin4UintSliding struct {
 	maxMin4Uint
+}
+
+func (e *maxMin4UintSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p, memDelta := e.maxMin4Uint.AllocPartialResult()
+	(*partialResult4MaxMinUint)(p).heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
+		return types.CompareUint64(i.(uint64), j.(uint64))
+	})
+	return p, memDelta + DefMaxMinHeapSize
+}
+
+func (e *maxMin4UintSliding) ResetPartialResult(pr PartialResult) {
+	e.maxMin4Uint.ResetPartialResult(pr)
+	(*partialResult4MaxMinUint)(pr).heap.Reset()
 }
 
 func (e *maxMin4UintSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -485,9 +505,6 @@ type maxMin4Float32 struct {
 func (e *maxMin4Float32) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinFloat32)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
-		return types.CompareFloat64(float64(i.(float32)), float64(j.(float32)))
-	})
 	return PartialResult(p), DefPartialResult4MaxMinFloat32Size
 }
 
@@ -495,7 +512,6 @@ func (e *maxMin4Float32) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinFloat32)(pr)
 	p.val = 0
 	p.isNull = true
-	p.heap.Reset()
 }
 
 func (e *maxMin4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -548,6 +564,19 @@ func (e *maxMin4Float32) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 
 type maxMin4Float32Sliding struct {
 	maxMin4Float32
+}
+
+func (e *maxMin4Float32Sliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p, memDelta := e.maxMin4Float32.AllocPartialResult()
+	(*partialResult4MaxMinFloat32)(p).heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
+		return types.CompareFloat64(float64(i.(float32)), float64(j.(float32)))
+	})
+	return p, memDelta + DefMaxMinHeapSize
+}
+
+func (e *maxMin4Float32Sliding) ResetPartialResult(pr PartialResult) {
+	e.maxMin4Float32.ResetPartialResult(pr)
+	(*partialResult4MaxMinFloat32)(pr).heap.Reset()
 }
 
 func (e *maxMin4Float32Sliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -609,9 +638,6 @@ type maxMin4Float64 struct {
 func (e *maxMin4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinFloat64)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
-		return types.CompareFloat64(i.(float64), j.(float64))
-	})
 	return PartialResult(p), DefPartialResult4MaxMinFloat64Size
 }
 
@@ -619,7 +645,6 @@ func (e *maxMin4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinFloat64)(pr)
 	p.val = 0
 	p.isNull = true
-	p.heap.Reset()
 }
 
 func (e *maxMin4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -671,6 +696,19 @@ func (e *maxMin4Float64) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 
 type maxMin4Float64Sliding struct {
 	maxMin4Float64
+}
+
+func (e *maxMin4Float64Sliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p, memDelta := e.maxMin4Float64.AllocPartialResult()
+	(*partialResult4MaxMinFloat64)(p).heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
+		return types.CompareFloat64(i.(float64), j.(float64))
+	})
+	return p, memDelta + DefMaxMinHeapSize
+}
+
+func (e *maxMin4Float64Sliding) ResetPartialResult(pr PartialResult) {
+	e.maxMin4Float64.ResetPartialResult(pr)
+	(*partialResult4MaxMinFloat64)(pr).heap.Reset()
 }
 
 func (e *maxMin4Float64Sliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -732,18 +770,12 @@ type maxMin4Decimal struct {
 func (e *maxMin4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinDecimal)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
-		src := i.(types.MyDecimal)
-		dst := j.(types.MyDecimal)
-		return src.Compare(&dst)
-	})
 	return PartialResult(p), DefPartialResult4MaxMinDecimalSize
 }
 
 func (e *maxMin4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	p.isNull = true
-	p.heap.Reset()
 }
 
 func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -801,6 +833,21 @@ func (e *maxMin4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 
 type maxMin4DecimalSliding struct {
 	maxMin4Decimal
+}
+
+func (e *maxMin4DecimalSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p, memDelta := e.maxMin4Decimal.AllocPartialResult()
+	(*partialResult4MaxMinDecimal)(p).heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
+		src := i.(types.MyDecimal)
+		dst := j.(types.MyDecimal)
+		return src.Compare(&dst)
+	})
+	return p, memDelta + DefMaxMinHeapSize
+}
+
+func (e *maxMin4DecimalSliding) ResetPartialResult(pr PartialResult) {
+	e.maxMin4Decimal.ResetPartialResult(pr)
+	(*partialResult4MaxMinDecimal)(pr).heap.Reset()
 }
 
 func (e *maxMin4DecimalSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -869,17 +916,12 @@ type maxMin4String struct {
 func (e *maxMin4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinString)
 	p.isNull = true
-	tp := e.args[0].GetType()
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
-		return types.CompareString(i.(string), j.(string), tp.Collate)
-	})
 	return PartialResult(p), DefPartialResult4MaxMinStringSize
 }
 
 func (e *maxMin4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinString)(pr)
 	p.isNull = true
-	p.heap.Reset()
 }
 
 func (e *maxMin4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -945,6 +987,20 @@ type maxMin4StringSliding struct {
 	maxMin4String
 }
 
+func (e *maxMin4StringSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p, memDelta := e.maxMin4String.AllocPartialResult()
+	tp := e.args[0].GetType()
+	(*partialResult4MaxMinString)(p).heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
+		return types.CompareString(i.(string), j.(string), tp.Collate)
+	})
+	return p, memDelta + DefMaxMinHeapSize
+}
+
+func (e *maxMin4StringSliding) ResetPartialResult(pr PartialResult) {
+	e.maxMin4String.ResetPartialResult(pr)
+	(*partialResult4MaxMinString)(pr).heap.Reset()
+}
+
 func (e *maxMin4StringSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinString)(pr)
 	for _, row := range rowsInGroup {
@@ -1002,24 +1058,18 @@ type maxMin4Time struct {
 }
 
 func (e *maxMin4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	p := new(partialResult4Time)
+	p := new(partialResult4MaxMinTime)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
-		src := i.(types.Time)
-		dst := j.(types.Time)
-		return src.Compare(dst)
-	})
-	return PartialResult(p), DefPartialResult4TimeSize
+	return PartialResult(p), DefPartialResult4MaxMinTimeSize
 }
 
 func (e *maxMin4Time) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4Time)(pr)
+	p := (*partialResult4MaxMinTime)(pr)
 	p.isNull = true
-	p.heap.Reset()
 }
 
 func (e *maxMin4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
-	p := (*partialResult4Time)(pr)
+	p := (*partialResult4MaxMinTime)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
 		return nil
@@ -1029,7 +1079,7 @@ func (e *maxMin4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 }
 
 func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4Time)(pr)
+	p := (*partialResult4MaxMinTime)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalTime(sctx, row)
 		if err != nil {
@@ -1052,7 +1102,7 @@ func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 }
 
 func (e *maxMin4Time) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
-	p1, p2 := (*partialResult4Time)(src), (*partialResult4Time)(dst)
+	p1, p2 := (*partialResult4MaxMinTime)(src), (*partialResult4MaxMinTime)(dst)
 	if p1.isNull {
 		return 0, nil
 	}
@@ -1071,8 +1121,23 @@ type maxMin4TimeSliding struct {
 	maxMin4Time
 }
 
+func (e *maxMin4TimeSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p, memDelta := e.maxMin4Time.AllocPartialResult()
+	(*partialResult4MaxMinTime)(p).heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
+		src := i.(types.Time)
+		dst := j.(types.Time)
+		return src.Compare(dst)
+	})
+	return p, memDelta + DefMaxMinHeapSize
+}
+
+func (e *maxMin4TimeSliding) ResetPartialResult(pr PartialResult) {
+	e.maxMin4Time.ResetPartialResult(pr)
+	(*partialResult4MaxMinTime)(pr).heap.Reset()
+}
+
 func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4Time)(pr)
+	p := (*partialResult4MaxMinTime)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalTime(sctx, row)
 		if err != nil {
@@ -1093,7 +1158,7 @@ func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 }
 
 func (e *maxMin4TimeSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4Time)(pr)
+	p := (*partialResult4MaxMinTime)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
 		input, isNull, err := e.args[0].EvalTime(sctx, rows[lastEnd+i])
 		if err != nil {
@@ -1130,18 +1195,12 @@ type maxMin4Duration struct {
 func (e *maxMin4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinDuration)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
-		src := i.(types.Duration)
-		dst := j.(types.Duration)
-		return src.Compare(dst)
-	})
 	return PartialResult(p), DefPartialResult4MaxMinDurationSize
 }
 
 func (e *maxMin4Duration) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinDuration)(pr)
 	p.isNull = true
-	p.heap.Reset()
 }
 
 func (e *maxMin4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -1195,6 +1254,21 @@ func (e *maxMin4Duration) MergePartialResult(sctx sessionctx.Context, src, dst P
 
 type maxMin4DurationSliding struct {
 	maxMin4Duration
+}
+
+func (e *maxMin4DurationSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p, memDelta := e.maxMin4Duration.AllocPartialResult()
+	(*partialResult4MaxMinDuration)(p).heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
+		src := i.(types.Duration)
+		dst := j.(types.Duration)
+		return src.Compare(dst)
+	})
+	return p, memDelta + DefMaxMinHeapSize
+}
+
+func (e *maxMin4DurationSliding) ResetPartialResult(pr PartialResult) {
+	e.maxMin4Duration.ResetPartialResult(pr)
+	(*partialResult4MaxMinDuration)(pr).heap.Reset()
 }
 
 func (e *maxMin4DurationSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {

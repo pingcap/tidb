@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/types"
@@ -261,7 +262,7 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv.CopRuntimeStats, respTime time.Duration) {
+func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	callee := copStats.CalleeAddress
 	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
@@ -334,7 +335,7 @@ func (r *selectResult) Close() error {
 // CopRuntimeStats is a interface uses to check whether the result has cop runtime stats.
 type CopRuntimeStats interface {
 	// GetCopRuntimeStats gets the cop runtime stats information.
-	GetCopRuntimeStats() *tikv.CopRuntimeStats
+	GetCopRuntimeStats() *copr.CopRuntimeStats
 }
 
 type selectResultRuntimeStats struct {
@@ -347,7 +348,7 @@ type selectResultRuntimeStats struct {
 	CoprCacheHitNum  int64
 }
 
-func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
+func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime = append(s.copRespTime, respTime)
 	if copStats.ScanDetail != nil {
 		s.procKeys = append(s.procKeys, copStats.ScanDetail.ProcessedKeys)
