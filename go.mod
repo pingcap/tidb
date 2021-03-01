@@ -86,3 +86,7 @@ require (
 )
 
 go 1.13
+
+replace github.com/tikv/pd => github.com/rleungx/pd v1.1.0-beta.0.20210226053450-79327f4f30d9
+
+replace github.com/pingcap/kvproto => github.com/rleungx/kvproto v0.0.0-20210226071722-fc6ac4074310

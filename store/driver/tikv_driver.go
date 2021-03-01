@@ -121,12 +121,15 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		CAPath:   d.security.ClusterSSLCA,
 		CertPath: d.security.ClusterSSLCert,
 		KeyPath:  d.security.ClusterSSLKey,
-	}, pd.WithGRPCDialOptions(
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
-			Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
-		}),
-	), pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second))
+	},
+		pd.WithGRPCDialOptions(
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
+				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
+			}),
+		),
+		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
+		pd.WithRedirectionOption(d.pdConfig.EnableRedirection))
 	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {

@@ -370,6 +370,9 @@ local-agent-host-port = ""
 [pd-client]
 # Max time which PD client will wait for the PD server in seconds.
 pd-server-timeout = 3
+# The client will redirect the requests to the PD or allocator leader through the follower
+# if there is a network partition problem between TiDB and PD or allocator leader.
+enable-redirection = false
 
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
