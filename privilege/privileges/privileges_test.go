@@ -571,13 +571,11 @@ func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
 				util.MockPkixAttribute(util.CommonName, "tester1"),
 			},
 		},
-		tls.TLS_AES_128_GCM_SHA256, func(c *x509.Certificate) {
+		tls.TLS_AES_128_GCM_SHA256, func(cert *x509.Certificate) {
 			var url url.URL
 			err := url.UnmarshalBinary([]byte("spiffe://mesh.pingcap.com/ns/timesh/sa/me1"))
-			if err != nil {
-				panic(err)
-			}
-			c.URIs = append(c.URIs, &url)
+			c.Assert(err, IsNil)
+			cert.URIs = append(cert.URIs, &url)
 		})
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
