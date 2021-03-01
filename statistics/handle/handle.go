@@ -361,8 +361,9 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		if err != nil {
 			return
 		}
+		// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
 		if partitionStats == nil {
-			err = errors.Errorf("[stats] error occurred when read partition-level stats of the table with tableID %d and partitionID %d", physicalID, partitionID)
+			err = types.ErrBuildGlobalLevelStatsFailed
 			return
 		}
 		for i := 0; i < globalStats.Num; i++ {

@@ -576,6 +576,21 @@ func TryGetCommonPkColumnIds(tbl *model.TableInfo) []int64 {
 	return pkColIds
 }
 
+// PrimaryPrefixColumnIDs get prefix column ids in primary key.
+func PrimaryPrefixColumnIDs(tbl *model.TableInfo) (prefixCols []int64) {
+	for _, idx := range tbl.Indices {
+		if !idx.Primary {
+			continue
+		}
+		for _, col := range idx.Columns {
+			if col.Length > 0 && tbl.Columns[col.Offset].Flen > col.Length {
+				prefixCols = append(prefixCols, tbl.Columns[col.Offset].ID)
+			}
+		}
+	}
+	return
+}
+
 // TryGetCommonPkColumns get the primary key columns if the table has common handle.
 func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	var pkCols []*table.Column
