@@ -200,6 +200,12 @@ type Column struct {
 
 	OrigName string
 	IsHidden bool
+
+	// IsPrefix indicates whether this column is a prefix column in index.
+	//
+	// for example:
+	// 	pk(col1, col2), index(col1(10)), key: col1(10)_col1_col2 => index's col1 will be true
+	// 	pk(col1(10), col2), index(col1), key: col1_col1(10)_col2 => pk's col1 will be true
 	IsPrefix bool
 
 	// InOperand indicates whether this column is the inner operand of column equal condition converted

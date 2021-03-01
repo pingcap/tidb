@@ -20,16 +20,32 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 type testClusteredSuiteBase struct{ testSessionSuiteBase }
-type testClusteredSuite struct{ testClusteredSuiteBase }
+type testClusteredSuite struct {
+	testClusteredSuiteBase
+	testData testutil.TestData
+}
 type testClusteredSerialSuite struct{ testClusteredSuiteBase }
 
 func (s *testClusteredSuiteBase) newTK(c *C) *testkit.TestKit {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	return tk
+}
+
+func (s *testClusteredSuite) SetUpSuite(c *C) {
+	s.testClusteredSuiteBase.SetUpSuite(c)
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "clustered_index_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testClusteredSuite) TearDownSuite(c *C) {
+	s.testClusteredSuiteBase.TearDownSuite(c)
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testClusteredSuite) TestClusteredUnionScan(c *C) {
@@ -63,39 +79,27 @@ func (s *testClusteredSuite) TestClusteredPrefixColumn(c *C) {
 func (s *testClusteredSuite) TestClusteredPrefixColumn2(c *C) {
 	tk := s.newTK(c)
 	tk.MustExec("drop table if exists t1, t2")
-
 	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100), c3 varchar(100), primary key (c1,c2), key idx1 (c2(1)))")
 	tk.MustExec("insert into t1 select 'a', 'cd', 'ef'")
-	tk.MustQuery("explain select c2 from t1 use index(idx1)").Check(testkit.Rows(
-		`Projection_3 10000.00 root  test.t1.c2`,
-		`└─IndexReader_5 10000.00 root  index:IndexFullScan_4`,
-		`  └─IndexFullScan_4 10000.00 cop[tikv] table:t1, index:idx1(c2) keep order:false, stats:pseudo`))
-	tk.MustQuery("select c2 from t1 use index(idx1)").Check(testkit.Rows("cd"))
-	tk.MustQuery("select count(1) from t1 use index(idx1) where c2 = 'cd'").Check(testkit.Rows("1"))
-	tk.MustQuery("explain select count(1) from t1 use index(idx1) where c2 = 'cd'").Check(testkit.Rows(
-		`StreamAgg_20 1.00 root  funcs:count(Column#6)->Column#4`,
-		`└─IndexReader_21 1.00 root  index:StreamAgg_9`,
-		`  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#6`,
-		`    └─Selection_19 10.00 cop[tikv]  eq(test.t1.c2, "cd")`,
-		`      └─IndexRangeScan_18 10.00 cop[tikv] table:t1, index:idx1(c2) range:["c","c"], keep order:false, stats:pseudo`))
-
 	tk.MustExec("create table t2(c1 varchar(100), c2 varchar(100), c3 varchar(100), primary key (c1,c2(1)), key idx1 (c1,c2))")
 	tk.MustExec("insert into t2 select 'a', 'cd', 'ef'")
-	tk.MustQuery("explain select c2 from t2 use index(idx1)").Check(testkit.Rows(
-		`Projection_3 10000.00 root  test.t2.c2`,
-		`└─IndexReader_5 10000.00 root  index:IndexFullScan_4`,
-		`  └─IndexFullScan_4 10000.00 cop[tikv] table:t2, index:idx1(c1, c2) keep order:false, stats:pseudo`))
-	tk.MustQuery("select c2 from t2 use index(idx1)").Check(testkit.Rows("cd"))
-	tk.MustQuery("select count(1) from t2 use index(idx1) where c2 = 'cd'").Check(testkit.Rows("1"))
-	tk.MustQuery("explain select count(1) from t2 use index(idx1) where c2 = 'cd'").Check(testkit.Rows(
-		`StreamAgg_20 1.00 root  funcs:count(Column#6)->Column#4`,
-		`└─IndexReader_21 1.00 root  index:StreamAgg_9`,
-		`  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#6`,
-		`    └─Selection_19 10.00 cop[tikv]  eq(test.t2.c2, "cd")`,
-		`      └─IndexFullScan_18 10000.00 cop[tikv] table:t2, index:idx1(c1, c2) keep order:false, stats:pseudo`))
 
-
-	tk.MustQuery("create table t(c varchar(100) primary key clustered")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
 }
 
 func (s *testClusteredSuite) TestClusteredUnionScanIndexLookup(c *C) {
