@@ -99,7 +99,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
-	needGlobalStats := pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic
+	needGlobalStats := pruneMode == variable.Dynamic
 	type globalStatsKey struct {
 		tableID int64
 		indexID int64
@@ -810,7 +810,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 		sqlexec.MustFormatSQL(sql, "select count(*) from %n.%n", dbInfo.Name.L, e.tblInfo.Name.L)
 
 		pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
-		if pruneMode != variable.DynamicOnly && e.tblInfo.ID != e.tableID.GetStatisticsID() {
+		if pruneMode != variable.Dynamic && e.tblInfo.ID != e.tableID.GetStatisticsID() {
 			for _, definition := range e.tblInfo.Partition.Definitions {
 				if definition.ID == e.tableID.GetStatisticsID() {
 					sqlexec.MustFormatSQL(sql, " partition(%n)", definition.Name.L)
@@ -860,7 +860,7 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 	txn.SetOption(kv.Priority, kv.PriorityLow)
 	txn.SetOption(kv.IsolationLevel, kv.RC)
 	txn.SetOption(kv.NotFillCache, true)
-	return nil, nil
+	return rollbackFn, nil
 }
 
 // buildSampTask build sample tasks.
