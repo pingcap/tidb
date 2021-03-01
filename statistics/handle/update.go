@@ -720,7 +720,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		return nil
 	}
 	var tbl *statistics.Table
-	if table.Meta().GetPartitionInfo() == nil || h.CurrentPruneMode() == variable.DynamicOnly {
+	if table.Meta().GetPartitionInfo() == nil || h.CurrentPruneMode() == variable.Dynamic {
 		tbl = h.GetTableStats(table.Meta())
 	} else {
 		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
@@ -905,7 +905,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			pi := tblInfo.GetPartitionInfo()
-			if pi == nil || pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
@@ -914,17 +914,20 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 				}
 				continue
 			}
-			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
-				for _, def := range pi.Definitions {
-					sql := "analyze table %n.%n partition %n"
-					statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-					analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
-					if analyzed {
-						return
-					}
-					continue
+			if pruneMode == variable.Dynamic {
+				analyzed := h.autoAnalyzePartitionTable(tblInfo, pi, db, start, end, autoAnalyzeRatio)
+				if analyzed {
+					return
 				}
 				continue
+			}
+			for _, def := range pi.Definitions {
+				sql := "analyze table %n.%n partition %n"
+				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				if analyzed {
+					return
+				}
 			}
 		}
 	}
@@ -947,6 +950,65 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 			h.execAutoAnalyze(tableStatsVer, sql+" index %n", append(params, idx.Name.O)...)
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, start, end time.Time, ratio float64) bool {
+	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+	partitionNames := make([]interface{}, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
+		if partitionStatsTbl.Pseudo || partitionStatsTbl.Count < AutoAnalyzeMinCnt {
+			continue
+		}
+		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
+			partitionNames = append(partitionNames, def.Name.O)
+			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
+		}
+	}
+	getSQL := func(prefix, suffix string, numPartitions int) string {
+		var sqlBuilder strings.Builder
+		sqlBuilder.WriteString(prefix)
+		for i := 0; i < numPartitions; i++ {
+			if i != 0 {
+				sqlBuilder.WriteString(",")
+			}
+			sqlBuilder.WriteString(" %n")
+		}
+		sqlBuilder.WriteString(suffix)
+		return sqlBuilder.String()
+	}
+	if len(partitionNames) > 0 {
+		logutil.BgLogger().Info("[stats] auto analyze triggered")
+		sql := getSQL("analyze table %n.%n partition", "", len(partitionNames))
+		params := append([]interface{}{db, tblInfo.Name.O}, partitionNames...)
+		statsTbl := h.GetTableStats(tblInfo)
+		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+		h.execAutoAnalyze(tableStatsVer, sql, params...)
+		return true
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		for _, def := range pi.Definitions {
+			partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
+			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
+				partitionNames = append(partitionNames, def.Name.O)
+				statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
+			}
+		}
+		if len(partitionNames) > 0 {
+			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed")
+			sql := getSQL("analyze table %n.%n partition", " index %n", len(partitionNames))
+			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames...)
+			params = append(params, idx.Name.O)
+			statsTbl := h.GetTableStats(tblInfo)
+			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+			h.execAutoAnalyze(tableStatsVer, sql, params...)
 			return true
 		}
 	}

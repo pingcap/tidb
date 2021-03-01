@@ -64,7 +64,8 @@ func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 	txn, err := ctx.Txn(false)
 	c.Assert(err, IsNil)
 	defer func() {
-		txn.Rollback()
+		err = txn.Rollback()
+		c.Assert(err, IsNil)
 	}()
 
 	it, err := idx.SeekFirst(txn)
@@ -103,7 +104,10 @@ func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(false)
 	c.Assert(err, IsNil)
-	defer txn.Rollback()
+	defer func(){
+		err := txn.Rollback()
+		c.Assert(err, IsNil)
+	}()
 
 	it, err := idx.SeekFirst(txn)
 	c.Assert(err, IsNil)
