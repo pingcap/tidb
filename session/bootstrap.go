@@ -1160,8 +1160,8 @@ func upgradeToVer51(s Session, ver int64) {
 		mustExecute(s, "COMMIT")
 	}()
 	mustExecute(s, h.LockBindInfoSQL())
-	var recordSets []sqlexec.RecordSet
-	recordSets, err = s.ExecuteInternal(context.Background(),
+	var rs sqlexec.RecordSet
+	rs, err = s.ExecuteInternal(context.Background(),
 		`SELECT bind_sql, default_db, status, create_time, charset, collation, source
 			FROM mysql.bind_info
 			WHERE source != 'builtin'
@@ -1169,15 +1169,15 @@ func upgradeToVer51(s Session, ver int64) {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
 	}
-	if len(recordSets) > 0 {
-		defer terror.Call(recordSets[0].Close)
+	if rs != nil {
+		defer terror.Call(rs.Close)
 	}
-	req := recordSets[0].NewChunk()
+	req := rs.NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	p := parser.New()
 	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 	for {
-		err = recordSets[0].Next(context.TODO(), req)
+		err = rs.Next(context.TODO(), req)
 		if err != nil {
 			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
 		}
