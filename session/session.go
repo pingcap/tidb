@@ -664,12 +664,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if err != nil {
 				return err
 			}
-			pessTxnConf := config.GetGlobalConfig().PessimisticTxn
-			if pessTxnConf.Enable {
-				if s.sessionVars.TxnMode == ast.Pessimistic {
-					s.sessionVars.TxnCtx.IsPessimistic = true
-				}
-			}
+			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		} else {
 			s.PrepareTxnCtx(ctx)
 		}
