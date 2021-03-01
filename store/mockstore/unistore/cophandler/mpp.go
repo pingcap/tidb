@@ -44,9 +44,7 @@ const (
 )
 
 const (
-	// nolint:varcheck
-	taskInit int32 = iota
-	taskRunning
+	taskRunning int32 = iota
 	taskFailed
 	taskFinished
 )
