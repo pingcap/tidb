@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -3794,13 +3795,13 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert")
 
 	enableOOM := func(tk *testkit.TestKit, name, sql string) {
 		c.Logf("enable OOM, testcase: %v", name)
 		// larger than 4 copResponse, smaller than 5 copResponse
-		quota := 5*tikv.MockResponseSizeForTest - 100
+		quota := 5*copr.MockResponseSizeForTest - 100
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
@@ -3815,7 +3816,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 
 	disableOOM := func(tk *testkit.TestKit, name, sql string) {
 		c.Logf("disable OOM, testcase: %v", name)
-		quota := 5*tikv.MockResponseSizeForTest - 100
+		quota := 5*copr.MockResponseSizeForTest - 100
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
@@ -3824,7 +3825,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
 	}
 
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockWaitMax", `return(true)`)
 	// assert oom action and switch
 	for _, testcase := range testcases {
 		se, err := session.CreateSession4Test(s.store)
@@ -3855,7 +3856,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		enableOOM(tk, testcase.name, testcase.sql)
 		se.Close()
 	}
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockWaitMax")
 
 	// assert oom fallback
 	for _, testcase := range testcases {
@@ -4207,11 +4208,10 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(err, IsNil)
 
 	var sb strings.Builder
-	ctx := format.NewRestoreCtx(0, &sb)
+	ctx := format.NewRestoreCtx(format.RestoreStringDoubleQuotes, &sb)
 	err = stmt.Restore(ctx)
 	c.Assert(err, IsNil)
-	// FIXME: well... so the restore function is vulnerable...
-	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\xbf' OR 1=1 /* LIMIT 1")
+	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
 
 	// test invalid sql
 	_, err = exec.ParseWithParams(context.TODO(), "SELECT")
