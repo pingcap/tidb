@@ -54,7 +54,6 @@ var (
 	errTooLongKey                             = dbterror.ClassDDL.NewStd(mysql.ErrTooLongKey)
 	errKeyColumnDoesNotExits                  = dbterror.ClassDDL.NewStd(mysql.ErrKeyColumnDoesNotExits)
 	errUnknownTypeLength                      = dbterror.ClassDDL.NewStd(mysql.ErrUnknownTypeLength)
-	errUnknownFractionLength                  = dbterror.ClassDDL.NewStd(mysql.ErrUnknownFractionLength)
 	errInvalidDDLJobVersion                   = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDDLJobVersion)
 	errInvalidUseOfNull                       = dbterror.ClassDDL.NewStd(mysql.ErrInvalidUseOfNull)
 	errTooManyFields                          = dbterror.ClassDDL.NewStd(mysql.ErrTooManyFields)
@@ -98,7 +97,6 @@ var (
 	errUnsupportedRebuildPartition    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "rebuild partition"), nil))
 	errUnsupportedRemovePartition     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "remove partitioning"), nil))
 	errUnsupportedRepairPartition     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "repair partition"), nil))
-	errUnsupportedExchangePartition   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "exchange partition"), nil))
 	// ErrGeneratedColumnFunctionIsNotAllowed returns for unsupported functions for generated columns.
 	ErrGeneratedColumnFunctionIsNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	// ErrGeneratedColumnRowValueIsNotAllowed returns for generated columns referring to row values.

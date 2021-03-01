@@ -3324,12 +3324,6 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 	return handles, validLookUpContents
 }
 
-type kvRangeBuilderFromFunc func(pid int64) ([]kv.KeyRange, error)
-
-func (h kvRangeBuilderFromFunc) buildKeyRange(pid int64) ([]kv.KeyRange, error) {
-	return h(pid)
-}
-
 type kvRangeBuilderFromRangeAndPartition struct {
 	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
