@@ -407,7 +407,7 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 	return nil
 }
 
-func getHandleDatum(tbl table.Table, row chunk.Row) []types.Datum {
+func getCommonHandleDatum(tbl table.Table, row chunk.Row) []types.Datum {
 	if !tbl.Meta().IsCommonHandle {
 		return nil
 	}
@@ -442,7 +442,7 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 		idxVals = append(idxVals, chk.GetRow(0).GetDatum(oldCol.Offset, &oldCol.FieldType))
 	}
 
-	rsData := tables.TryGetHandleRestoredDataWrapper(a.tblInfoAtCommit, getHandleDatum(a.tblInfoAtCommit, chk.GetRow(0)), nil)
+	rsData := tables.TryGetHandleRestoredDataWrapper(a.tblInfoAtCommit, getCommonHandleDatum(a.tblInfoAtCommit, chk.GetRow(0)), nil)
 
 	// Generate index key buf.
 	newIdxKey, distinct, err := tablecodec.GenIndexKey(sctx.GetSessionVars().StmtCtx,
