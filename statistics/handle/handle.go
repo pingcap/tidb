@@ -48,8 +48,8 @@ import (
 )
 
 const (
-	// GLOBAL_STATS represents the global-stats for a partitioned table.
-	GLOBAL_STATS = "global"
+	// TiDBGlobalStats represents the global-stats for a partitioned table.
+	TiDBGlobalStats = "global"
 )
 
 // statsCache caches the tables in memory for Handle.

@@ -1630,9 +1630,9 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 			}
 		}
 		if !found {
-			if name.L == handle.GLOBAL_STATS {
+			if name.L == handle.TiDBGlobalStats {
 				ids = append(ids, tblInfo.ID)
-				names = append(names, handle.GLOBAL_STATS)
+				names = append(names, handle.TiDBGlobalStats)
 				continue
 			}
 			return nil, nil, fmt.Errorf("can not found the specified partition name %s in the table definition", name.O)
