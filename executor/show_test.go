@@ -551,7 +551,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	tk.MustExec("drop view if exists v")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
-	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`  "))
+	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE('{}', '{}') AS `col`  "))
 	tk.MustExec("drop view if exists v")
 
 	tk.MustExec("drop table if exists t1")
@@ -828,6 +828,23 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("create table t(a int, b char(10) as (_utf8'a'));")
 	result = tk.MustQuery("show create table t;").Rows()[0][1]
 	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
+
+	// Test issue #
+	tk.MustExec("drop table if exists c_st_tab;")
+	tk.MustExec("create table c_st_tab (" +
+		"st_id varchar(36) not null," +
+		"bj_id varchar(36)," +
+		"st_code varchar(150)," +
+		"st_name varchar(150)," +
+		"primary key (st_id)" +
+		");")
+	tk.MustExec("insert into c_st_tab values(1,1,1,1)")
+	tk.MustExec("create or replace ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER view v_st_tab " +
+		"as select c.bj_id, " +
+		"group_concat(c.st_code) as st_code, " +
+		"group_concat(c.st_name) as st_name " +
+		"from c_st_tab c group by c.bj_id;")
+	tk.MustQuery("select * from v_st_tab").Check(testkit.Rows("1 1 1"))
 
 	// Test show list partition table
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
