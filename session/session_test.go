@@ -3257,14 +3257,7 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.Labels = map[string]string{}
-		})
-	}()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Labels["zone"] = ""
-	})
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope",`return("")`)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
@@ -3275,9 +3268,9 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Labels["zone"] = "bj"
-	})
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope",`return("bj")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
