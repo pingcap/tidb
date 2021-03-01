@@ -9,12 +9,12 @@
           "└─Apply_13 2.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#16)",
           "  ├─TableReader_15(Build) 2.00 root  data:TableFullScan_14",
           "  │ └─TableFullScan_14 2.00 cop[tikv] table:t keep order:false",
-          "  └─StreamAgg_20(Probe) 1.00 root  funcs:count(1)->Column#16",
-          "    └─IndexJoin_36 2.00 root  inner join, inner:TableReader_35, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
-          "      ├─IndexReader_29(Build) 2.00 root  index:IndexRangeScan_28",
-          "      │ └─IndexRangeScan_28 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false",
-          "      └─TableReader_35(Probe) 1.00 root  data:TableRangeScan_34",
-          "        └─TableRangeScan_34 1.00 cop[tikv] table:t1 range: decided by [test.t.a], keep order:false"
+          "  └─StreamAgg_17(Probe) 1.00 root  funcs:count(1)->Column#16",
+          "    └─IndexJoin_33 2.00 root  inner join, inner:TableReader_32, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
+          "      ├─IndexReader_26(Build) 2.00 root  index:IndexRangeScan_25",
+          "      │ └─IndexRangeScan_25 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false",
+          "      └─TableReader_32(Probe) 1.00 root  data:TableRangeScan_31",
+          "        └─TableRangeScan_31 1.00 cop[tikv] table:t1 range: decided by [test.t.a], keep order:false"
         ]
       },
       {
