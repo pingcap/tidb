@@ -53,11 +53,6 @@ func (s *testTxStructureSuite) TearDownSuite(c *C) {
 func (s *testTxStructureSuite) TestString(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	defer func() {
-		// to fix: invalid txn
-		err = txn.Rollback()
-		c.Assert(err, NotNil)
-	}()
 
 	tx := structure.NewStructure(txn, txn, []byte{0x00})
 
@@ -106,11 +101,6 @@ func (s *testTxStructureSuite) TestString(c *C) {
 func (s *testTxStructureSuite) TestList(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	defer func() {
-		err = txn.Rollback()
-		// to fix: test for invalid txn
-		c.Assert(err, NotNil)
-	}()
 
 	tx := structure.NewStructure(txn, txn, []byte{0x00})
 
@@ -218,11 +208,6 @@ func (s *testTxStructureSuite) TestList(c *C) {
 func (s *testTxStructureSuite) TestHash(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	defer func() {
-		// to fix: invalid transaction
-		err := txn.Rollback()
-		c.Assert(err, NotNil)
-	}()
 
 	tx := structure.NewStructure(txn, txn, []byte{0x00})
 
