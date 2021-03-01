@@ -431,9 +431,7 @@ func (e *LoadDataInfo) isInQuoter(bs []byte) bool {
 		case escaped:
 			i++
 		default:
-
 		}
-
 	}
 	return inQuoter
 }
