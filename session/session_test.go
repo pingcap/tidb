@@ -3256,7 +3256,11 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
-	defer config.RestoreFunc()()
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Labels = map[string]string{}
+		})
+	}()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Labels["zone"] = ""
 	})
@@ -3291,7 +3295,11 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
-	defer config.RestoreFunc()()
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Labels = map[string]string{}
+		})
+	}()
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
 	if *withTiKV {

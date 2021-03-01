@@ -7479,7 +7479,11 @@ func (s *testSuite) TestIssue15563(c *C) {
 }
 
 func (s *testSerialSuite) TestStalenessTransaction(c *C) {
-	defer config.RestoreFunc()()
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Labels = map[string]string{}
+		})
+	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	testcases := []struct {

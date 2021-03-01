@@ -170,7 +170,11 @@ engines = ["tikv", "tiflash", "tidb"]
 }
 
 func (s *testConfigSuite) TestTxnScopeValue(c *C) {
-	defer RestoreFunc()()
+	defer func() {
+		UpdateGlobal(func(conf *Config) {
+			conf.Labels = map[string]string{}
+		})
+	}()
 	UpdateGlobal(func(conf *Config) {
 		conf.Labels["zone"] = "bj"
 	})
