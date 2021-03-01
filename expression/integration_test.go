@@ -7936,6 +7936,13 @@ func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollationIndexEncod
 	tk.MustQuery("select * from t use index(e)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
 	tk.MustQuery("select * from t use index(ue)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
 	tk.MustExec("admin check table t")
+	tk.MustExec("admin recover index t a")
+	tk.MustExec("alter table t add column n char(10) COLLATE utf8mb4_unicode_ci")
+	tk.MustExec("alter table t add index n(n)")
+	tk.MustExec("update t set n = '吧';")
+	tk.MustQuery("select * from t").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
+	tk.MustQuery("select * from t use index(n)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
+	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a varchar(255) COLLATE utf8_general_ci primary key clustered, b int) partition by range columns(a) " +

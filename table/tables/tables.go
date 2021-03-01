@@ -497,7 +497,7 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 		if err != nil {
 			return err
 		}
-		if err := t.buildIndexForRow(ctx, h, newVs, idx, txn, untouched, opts...); err != nil {
+		if err := t.buildIndexForRow(ctx, h, newVs, newData, idx, txn, untouched, opts...); err != nil {
 			return err
 		}
 	}
@@ -1150,13 +1150,13 @@ func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, h kv.Handle, 
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
+func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals []types.Datum, newData []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
 	var opts []table.CreateIdxOptFunc
 	opts = append(opts, popts...)
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
-	rsData := TryGetHandleRestoredDataWrapper(t, vals, nil)
+	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil)
 	if _, err := idx.Create(ctx, txn.GetUnionStore(), vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.

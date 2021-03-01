@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
@@ -406,6 +407,19 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 	return nil
 }
 
+func getHandleDatum(tbl table.Table, row chunk.Row) []types.Datum {
+	if !tbl.Meta().IsCommonHandle {
+		return nil
+	}
+	datumBuf := make([]types.Datum, 0, 4)
+	for _, col := range tbl.Cols() {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			datumBuf = append(datumBuf, row.GetDatum(col.Offset, &col.FieldType))
+		}
+	}
+	return datumBuf
+}
+
 func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx sessionctx.Context, kvMap map[string][]byte,
 	key []byte, kvHandle kv.Handle, keyOnly bool) ([]byte, []byte, error) {
 	chk := a.chk
@@ -428,7 +442,7 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 		idxVals = append(idxVals, chk.GetRow(0).GetDatum(oldCol.Offset, &oldCol.FieldType))
 	}
 
-	rsData := tables.TryGetHandleRestoredDataWrapper(a.tblInfoAtCommit, idxVals, nil)
+	rsData := tables.TryGetHandleRestoredDataWrapper(a.tblInfoAtCommit, getHandleDatum(a.tblInfoAtCommit, chk.GetRow(0)), nil)
 
 	// Generate index key buf.
 	newIdxKey, distinct, err := tablecodec.GenIndexKey(sctx.GetSessionVars().StmtCtx,

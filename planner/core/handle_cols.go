@@ -256,3 +256,17 @@ func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldType {
 func NewIntHandleCols(col *expression.Column) HandleCols {
 	return &IntHandleCols{col: col}
 }
+
+func GetHandleDatum(cols HandleCols, row chunk.Row) []types.Datum {
+	if cols.IsInt() {
+		return nil
+	}
+	cb := cols.(*CommonHandleCols)
+
+	datumBuf := make([]types.Datum, 0, 4)
+	for _, col := range cb.columns {
+		datumBuf = append(datumBuf, row.GetDatum(col.Index, col.RetType))
+	}
+
+	return datumBuf
+}
