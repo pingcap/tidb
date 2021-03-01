@@ -409,7 +409,8 @@ func (*testSuite) TestT(c *C) {
 	dom.autoAnalyzeWorker(nil)
 	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
 	pb := &dto.Metric{}
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	c.Assert(pb.GetCounter().GetValue(), Equals, float64(2))
 
 	scope := dom.GetScope("status")
