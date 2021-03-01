@@ -44,10 +44,10 @@ func (s *testSafePointSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSafePointSuite) beginTxn(c *C) *tikvTxn {
+func (s *testSafePointSuite) beginTxn(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 func mymakeKeys(rowNum int, prefix string) []kv.Key {
