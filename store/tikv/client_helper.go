@@ -16,6 +16,7 @@ package tikv
 import (
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -80,6 +81,15 @@ func (ch *ClientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 	}
 	sender.Stats = ch.Stats
 	req.Context.ResolvedLocks = ch.resolvedLocks.GetAll()
+	failpoint.Inject("assertStaleReadFlag", func(val failpoint.Value) {
+		if val.(bool) {
+			if len(opts) > 0 {
+				if !req.StaleRead {
+					panic("req.StaleRead should be true")
+				}
+			}
+		}
+	})
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType, opts...)
 	return resp, ctx, sender.GetStoreAddr(), err
 }

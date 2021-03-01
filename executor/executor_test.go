@@ -7566,6 +7566,8 @@ func (s *testSerialSuite) TestStalenessTransaction(c *C) {
 }
 
 func (s *testSerialSuite) TestStaleReadKVRequest(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -7575,33 +7577,39 @@ func (s *testSerialSuite) TestStaleReadKVRequest(c *C) {
 		name     string
 		sql      string
 		txnScope string
+		zone     string
 	}{
 		{
 			name:     "coprocessor read",
 			sql:      "select * from t",
-			txnScope: "sh",
+			txnScope: "local",
+			zone:     "sh",
 		},
 		{
 			name:     "point get read",
 			sql:      "select * from t where id = 1",
-			txnScope: "bj",
+			txnScope: "local",
+			zone:     "bj",
 		},
 		{
 			name:     "batch point get read",
 			sql:      "select * from t where id in (1,2,3)",
-			txnScope: "hz",
+			txnScope: "local",
+			zone:     "hz",
 		},
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
+		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
+		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v")`, testcase.txnScope))
+		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`)
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleFlag", `return(true)`), IsNil)
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v")`, testcase.txnScope)), IsNil)
 		tk.MustQuery(testcase.sql)
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleFlag")
 		tk.MustExec(`commit`)
+		failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag")
 	}
 }
 
