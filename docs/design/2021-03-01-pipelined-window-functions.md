@@ -34,7 +34,7 @@ The current window function implementation is like this (with a focus on process
    2. rowFrameWindowProcessor, dealt with partition with ROWS frame constraint, i.e. a fixed length bounding window sliding over rows, each step produced a new value given the rows within the window. Note the window can have unbounded preceding and following.
    3. rangeFrameWindowProcessor, with RANGES frame constraint, i.e. the window is defined by value range, so it can vary (a lot) from row to row.
 6. For RN, it only uses `aggWindowProcessor`, as [the MySQL document](https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html) pointed out  
-> Standard SQL specifies that window functions that operate on the entire partition should have no frame clause. MySQL permits a frame clause for such functions but ignores it. These functions use the entire partition even if a frame is specified:
+> Standard SQL specifies that window functions that operate on the entire partition should have no frame clause. MySQL permits a frame clause for such functions but ignores it. These functions use the entire partition even if a frame is specified:  
 * CUME_DIST()
 * DENSE_RANK()
 * LAG()
@@ -102,7 +102,7 @@ Pipelining won't cause any compatibility issue.
 
 ## Implementation
 
-* [ ] Create PipelinedWindowExec based on current implementation and modify the windowProcessor interface
+* [ ] Create PipelinedWindowExec based on current implementation and modify the windowProcessor interface (see [PR23022](https://github.com/pingcap/tidb/pull/23022))
 * [ ] Change data flow, make Next() pulling data from windowProcessor, and windowProcessor calls fetchChild and process data at maximum effort
 * [ ] Modify Slide semantic and add FinishUpdate function on SlidingWindowAggFunc interface, and modify correspondingly on each window function (
 * [ ] Done pipelining for SlidingWindowAggFunc, add test to make sure it is correct 
