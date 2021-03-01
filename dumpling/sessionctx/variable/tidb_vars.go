@@ -659,7 +659,7 @@ const (
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = false
-	DefTiDBPartitionPruneMode          = "static-only"
+	DefTiDBPartitionPruneMode          = "static"
 	DefTiDBEnableRateLimitAction       = true
 	DefTiDBEnableAsyncCommit           = false
 	DefTiDBEnable1PC                   = false
