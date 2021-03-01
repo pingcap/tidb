@@ -121,7 +121,7 @@ func (s *Schema) IsUnique(col *Column) bool {
 func (s *Schema) ColumnIndex(col *Column) int {
 	backupIdx := -1
 	for i, c := range s.Columns {
-		if c.UniqueID == col.UniqueID && !c.IsPrefix {
+		if c.UniqueID == col.UniqueID {
 			backupIdx = i
 			if c.IsPrefix {
 				// instead of returning a prefix column
