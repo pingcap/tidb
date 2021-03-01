@@ -3849,9 +3849,9 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		err := failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
 		c.Assert(err, IsNil)
 	}()
-  err := failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert", `return(true)`)
-  c.Assert(err, IsNil)
-  defer func() {
+	err = failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert", `return(true)`)
+	c.Assert(err, IsNil)
+	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert")
 		c.Assert(err, IsNil)
 	}()
@@ -3916,7 +3916,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		se.Close()
 	}
 	err = failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockWaitMax")
-  c.Assert(err, IsNil)
+	c.Assert(err, IsNil)
 
 	// assert oom fallback
 	for _, testcase := range testcases {
