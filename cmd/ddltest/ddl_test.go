@@ -306,7 +306,8 @@ func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
 
 		err = db.Close()
 		if err != nil {
-			panic(err)
+			log.Warnf("close db failed, retry count %d err %v", i, err)
+			break
 		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
