@@ -120,10 +120,9 @@ func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int
 		stmt, err := exec.ParseWithParams(ctx, sql, params...)
 		// TODO: An ugly way to set @@tidb_partition_prune_mode. Need to be improved.
 		if _, ok := stmt.(*ast.AnalyzeTableStmt); ok {
-			// TODO: do we need a lock?
-			pruneMode := h.mu.ctx.GetSessionVars().PartitionPruneMode.Load()
+			pruneMode := h.CurrentPruneMode()
 			if session, ok := exec.(sessionctx.Context); ok {
-				session.GetSessionVars().PartitionPruneMode.Store(pruneMode)
+				session.GetSessionVars().PartitionPruneMode.Store(string(pruneMode))
 			}
 		}
 		if err != nil {
