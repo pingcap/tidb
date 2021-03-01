@@ -755,17 +755,19 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 			}
 		}
 
+		// The scalar function must be this form: fn(col), otherwise it's not supported by the current partition pruning.
+		// For example, 'partition by (col1 + 3)' or 'partition by (col1 * col2)' is not supported.
+		// For the former one, it's theoretically possible to do better.
 		fn = raw
 		args := fn.GetArgs()
-		monotonous = getMonotoneMode(raw.FuncName.L)
-		if monotonous == monotoneModeInvalid {
+		if len(args) != 1 {
 			return nil, nil, monotonous, nil
 		}
-		if len(args) > 0 {
-			arg0 := args[0]
-			if c, ok1 := arg0.(*expression.Column); ok1 {
-				col = c
-			}
+		arg0 := args[0]
+		var ok bool
+		col, ok = arg0.(*expression.Column)
+		if !ok {
+			return nil, nil, monotonous, nil
 		}
 	case *expression.Column:
 		col = raw
@@ -859,7 +861,7 @@ func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Ex
 func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expression,
 	pruner *rangePruner) partitionRangeOR {
 	col, ok := args[0].(*expression.Column)
-	if !ok || col.ID != pruner.col.ID || pruner.monotonous == monotoneModeInvalid {
+	if !ok || col.ID != pruner.col.ID {
 		return pruner.fullRange()
 	}
 
@@ -980,13 +982,6 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	} else {
 		// If the partition expression is col, use constExpr.
 		constExpr = con
-	}
-	// If the partition expression is related with more than one columns such as 'a + b' or 'a * b' or something else,
-	// the constExpr may not a really constant when coming here.
-	// Suppose the partition expression is 'a + b' and we have a condition 'a = 2',
-	// the constExpr is '2 + b' after the replacement which we can't evaluate.
-	if !constExpr.ConstItem(sctx.GetSessionVars().StmtCtx) {
-		return ret, false
 	}
 	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
 	if err == nil && !isNull {
