@@ -1224,51 +1224,6 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	return ret, nil
 }
 
-// getGenExprs gets generated expressions map.
-func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, exprCols *expression.Schema, names types.NameSlice) (
-	map[model.TableColumnID]expression.Expression, error) {
-	tblInfo := tbl.Meta()
-	genExprsMap := make(map[model.TableColumnID]expression.Expression)
-	exprs := make([]expression.Expression, 0, len(tbl.Cols()))
-	genExprIdxs := make([]model.TableColumnID, len(tbl.Cols()))
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	mockTablePlan.SetSchema(exprCols)
-	mockTablePlan.names = names
-	for i, colExpr := range mockTablePlan.Schema().Columns {
-		col := tbl.Cols()[i]
-		var expr expression.Expression
-		expr = colExpr
-		if col.IsGenerated() && !col.GeneratedStored {
-			var err error
-			expr, _, err = b.rewrite(ctx, col.GeneratedExpr, mockTablePlan, nil, true)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			found := false
-			for _, column := range idx.Columns {
-				if strings.EqualFold(col.Name.L, column.Name.L) {
-					found = true
-					break
-				}
-			}
-			if found {
-				genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ColumnInfo.ID}
-				genExprsMap[genColumnID] = expr
-				genExprIdxs[i] = genColumnID
-			}
-		}
-		exprs = append(exprs, expr)
-	}
-	// Re-iterate expressions to handle those virtual generated columns that refers to the other generated columns.
-	for i, expr := range exprs {
-		exprs[i] = expression.ColumnSubstitute(expr, mockTablePlan.Schema(), exprs)
-		if _, ok := genExprsMap[genExprIdxs[i]]; ok {
-			genExprsMap[genExprIdxs[i]] = exprs[i]
-		}
-	}
-	return genExprsMap, nil
-}
-
 // FindColumnInfoByID finds ColumnInfo in cols by ID.
 func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInfo {
 	for _, info := range colInfos {
@@ -1446,6 +1401,10 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 
 	for _, idx := range indices {
 		idxInfo := idx.Meta()
+		if tblInfo.IsCommonHandle && idxInfo.Primary {
+			// Skip checking clustered index.
+			continue
+		}
 		if idxInfo.State != model.StatePublic {
 			logutil.Logger(ctx).Info("build physical index lookup reader, the index isn't public",
 				zap.String("index", idxInfo.Name.O),

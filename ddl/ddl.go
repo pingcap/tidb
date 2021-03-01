@@ -80,8 +80,6 @@ const (
 )
 
 var (
-	// TableIndexCountLimit is limit of the number of indexes in a table.
-	TableIndexCountLimit = uint32(64)
 	// EnableSplitTableRegion is a flag to decide whether to split a new region for
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
