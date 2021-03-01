@@ -676,12 +676,42 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(result.Rows()[0][9], Equals, "0")
 }
 
+func (s *testStatsSuite) TestShowGlobalStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t values (1), (2), (3), (4)")
+	tk.MustExec("analyze table t with 1 buckets")
+	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 2)
+	c.Assert(len(tk.MustQuery("show stats_meta where partition_name='global'").Rows()), Equals, 0)
+	c.Assert(len(tk.MustQuery("show stats_buckets").Rows()), Equals, 4) // 2 partitions * (1 for the column_a and 1 for the index_a)
+	c.Assert(len(tk.MustQuery("show stats_buckets where partition_name='global'").Rows()), Equals, 0)
+	c.Assert(len(tk.MustQuery("show stats_histograms").Rows()), Equals, 4)
+	c.Assert(len(tk.MustQuery("show stats_histograms where partition_name='global'").Rows()), Equals, 0)
+	c.Assert(len(tk.MustQuery("show stats_healthy").Rows()), Equals, 2)
+	c.Assert(len(tk.MustQuery("show stats_healthy where partition_name='global'").Rows()), Equals, 0)
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t with 1 buckets")
+	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 3)
+	c.Assert(len(tk.MustQuery("show stats_meta where partition_name='global'").Rows()), Equals, 1)
+	c.Assert(len(tk.MustQuery("show stats_buckets").Rows()), Equals, 6)
+	c.Assert(len(tk.MustQuery("show stats_buckets where partition_name='global'").Rows()), Equals, 2)
+	c.Assert(len(tk.MustQuery("show stats_histograms").Rows()), Equals, 6)
+	c.Assert(len(tk.MustQuery("show stats_histograms where partition_name='global'").Rows()), Equals, 2)
+	c.Assert(len(tk.MustQuery("show stats_healthy").Rows()), Equals, 3)
+	c.Assert(len(tk.MustQuery("show stats_healthy where partition_name='global'").Rows()), Equals, 1)
+}
+
 func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1;")
-	testKit.MustExec("set @@tidb_partition_prune_mode = 'static-only';")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	testKit.MustExec("create table t(a int, b int, c int) PARTITION BY HASH(a) PARTITIONS 3;")
 	testKit.MustExec("create table t1(a int);")
 	testKit.MustExec("insert into t values(1,1,1),(3,12,3),(4,20,4),(2,7,2),(5,21,5);")
@@ -703,17 +733,17 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	result = testKit.MustQuery("show stats_histograms where table_name = 't1';").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
 
-	// Test the 'dynamic-only' mode
-	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only';")
-	err := testKit.ExecToErr("analyze table t, t1;")
-	c.Assert(err.Error(), Equals, "TODO: The merge function of the NDV has not been implemented yet")
+	// Test the 'dynamic' mode
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	testKit.MustExec("analyze table t, t1;")
 	result = testKit.MustQuery("show stats_meta where table_name = 't'").Sort()
-	c.Assert(len(result.Rows()), Equals, 3)
-	c.Assert(result.Rows()[0][5], Equals, "1")
-	c.Assert(result.Rows()[1][5], Equals, "2")
+	c.Assert(len(result.Rows()), Equals, 4)
+	c.Assert(result.Rows()[0][5], Equals, "5")
+	c.Assert(result.Rows()[1][5], Equals, "1")
 	c.Assert(result.Rows()[2][5], Equals, "2")
+	c.Assert(result.Rows()[3][5], Equals, "2")
 	result = testKit.MustQuery("show stats_histograms where table_name = 't';").Sort()
-	c.Assert(len(result.Rows()), Equals, 15)
+	c.Assert(len(result.Rows()), Equals, 20)
 
 	result = testKit.MustQuery("show stats_meta where table_name = 't1';").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
@@ -721,15 +751,51 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	result = testKit.MustQuery("show stats_histograms where table_name = 't1';").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
 
-	err = testKit.ExecToErr("analyze table t index idx_t_ab, idx_t_b;")
-	c.Assert(err.Error(), Equals, "TODO: The merge function of the NDV has not been implemented yet")
+	testKit.MustExec("analyze table t index idx_t_ab, idx_t_b;")
 	result = testKit.MustQuery("show stats_meta where table_name = 't'").Sort()
-	c.Assert(len(result.Rows()), Equals, 3)
-	c.Assert(result.Rows()[0][5], Equals, "1")
-	c.Assert(result.Rows()[1][5], Equals, "2")
+	c.Assert(len(result.Rows()), Equals, 4)
+	c.Assert(result.Rows()[0][5], Equals, "5")
+	c.Assert(result.Rows()[1][5], Equals, "1")
 	c.Assert(result.Rows()[2][5], Equals, "2")
+	c.Assert(result.Rows()[3][5], Equals, "2")
 	result = testKit.MustQuery("show stats_histograms where table_name = 't';").Sort()
-	c.Assert(len(result.Rows()), Equals, 15)
+	c.Assert(len(result.Rows()), Equals, 20)
+}
+
+func (s *testStatsSuite) TestGlobalStatsData(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`
+create table t (
+	a int,
+	key(a)
+)
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20)
+)`)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	tk.MustExec("analyze table t")
+
+	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(
+		testkit.Rows("0 5", "0 3", "0 2")) // global row-count = sum(partition row-count)
+
+	// distinct, null_count, tot_col_size should be the sum of their values in partition-stats, and correlation should be 0
+	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
+		testkit.Rows("4 1 4 0", "2 1 2 1", "2 0 2 1"))
+
+	tk.MustQuery("show stats_buckets where is_index=0").Check(
+		testkit.Rows("test t global a 0 0 2 1 1 5 0", "test t global a 0 1 4 1 5 15 0",
+			"test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 5 5 0",
+			"test t p1 a 0 0 1 1 11 11 0", "test t p1 a 0 1 2 1 15 15 0"))
+	tk.MustQuery("show stats_buckets where is_index=1").Check(
+		testkit.Rows("test t global a 1 0 2 1 1 5 0", "test t global a 1 1 4 1 5 15 0",
+			"test t p0 a 1 0 1 1 1 1 0", "test t p0 a 1 1 2 1 5 5 0",
+			"test t p1 a 1 0 1 1 11 11 0", "test t p1 a 1 1 2 1 15 15 0"))
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {

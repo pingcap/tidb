@@ -322,8 +322,8 @@
         "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
       ],
       [
-        "TableReader_7 1.33 root  data:Selection_6",
-        "└─Selection_6 1.33 cop[tikv]  eq(test.tint.b, 1)",
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.b, 1)",
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
@@ -332,8 +332,8 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
-        "TableReader_7 1.01 root  data:Selection_6",
-        "└─Selection_6 1.01 cop[tikv]  eq(test.tint.b, 8)",
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.b, 8)",
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [

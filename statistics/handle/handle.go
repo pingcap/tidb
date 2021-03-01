@@ -118,6 +118,13 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
 		stmt, err := exec.ParseWithParams(ctx, sql, params...)
+		// TODO: An ugly way to set @@tidb_partition_prune_mode. Need to be improved.
+		if _, ok := stmt.(*ast.AnalyzeTableStmt); ok {
+			pruneMode := h.CurrentPruneMode()
+			if session, ok := exec.(sessionctx.Context); ok {
+				session.GetSessionVars().PartitionPruneMode.Store(string(pruneMode))
+			}
+		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -323,6 +330,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 	globalStats.Hg = make([]*statistics.Histogram, globalStats.Num)
 	globalStats.Cms = make([]*statistics.CMSketch, globalStats.Num)
 	globalStats.TopN = make([]*statistics.TopN, globalStats.Num)
+	globalStats.Fms = make([]*statistics.FMSketch, globalStats.Num)
 
 	// The first dimension of slice is means the number of column or index stats in the globalStats.
 	// The second dimension of slice is means the number of partition tables.
@@ -349,22 +357,26 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		}
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
-		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, false, 0)
+		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
 		if err != nil {
 			return
 		}
+		// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
 		if partitionStats == nil {
-			err = errors.Errorf("[stats] error occurred when read partition-level stats of the table with tableID %d and partitionID %d", physicalID, partitionID)
+			err = types.ErrBuildGlobalLevelStatsFailed
 			return
 		}
-		globalStats.Count += partitionStats.Count
 		for i := 0; i < globalStats.Num; i++ {
 			ID := tableInfo.Columns[i].ID
 			if isIndex != 0 {
 				// If the statistics is the index stats, we should use the index ID to replace the column ID.
 				ID = idxID
 			}
-			hg, cms, topN, fms := partitionStats.GetStatsInfo(ID, isIndex == 1)
+			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(ID, isIndex == 1)
+			if i == 0 {
+				// In a partition, we will only update globalStats.Count once
+				globalStats.Count += count
+			}
 			allHg[i] = append(allHg[i], hg)
 			allCms[i] = append(allCms[i], cms)
 			allTopN[i] = append(allTopN[i], topN)
@@ -409,10 +421,28 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 			return
 		}
 
-		// Merge NDV
-		err = errors.Errorf("TODO: The merge function of the NDV has not been implemented yet")
-		if err != nil {
-			return
+		// Update NDV of global-level stats
+		if isIndex == 0 {
+			// For the column stats, we should merge the FMSketch first. And use the FMSketch to calculate the new NDV.
+			// merge FMSketch
+			globalStats.Fms[i] = allFms[i][0].Copy()
+			for j := uint64(1); j < partitionNum; j++ {
+				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+			}
+
+			// update the NDV
+			globalStatsNDV := globalStats.Fms[i].NDV()
+			if globalStatsNDV > globalStats.Count {
+				globalStatsNDV = globalStats.Count
+			}
+			globalStats.Hg[i].NDV = globalStatsNDV
+		} else {
+			// For the index stats, we get the final NDV by accumulating the NDV of each bucket in the index histogram.
+			globalStatsNDV := int64(0)
+			for _, bucket := range globalStats.Hg[i].Buckets {
+				globalStatsNDV += bucket.NDV
+			}
+			globalStats.Hg[i].NDV = globalStatsNDV
 		}
 	}
 	return
@@ -802,7 +832,15 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 		table = table.Copy()
 	}
 	table.Pseudo = false
-	rows, _, err := reader.read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
+
+	rows, _, err := reader.read("select modify_count, count from mysql.stats_meta where table_id = %?", physicalID)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	table.ModifyCount = rows[0].GetInt64(0)
+	table.Count = rows[0].GetInt64(1)
+
+	rows, _, err = reader.read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
 	// Check deleted table.
 	if err != nil || len(rows) == 0 {
 		return nil, nil
