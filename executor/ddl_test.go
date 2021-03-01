@@ -488,7 +488,6 @@ func (s *testSuite6) TestAlterDatabase(c *C) {
 	tk.MustExec("drop database alter_db_test;")
 }
 
-
 func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
