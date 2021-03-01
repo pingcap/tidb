@@ -58,12 +58,12 @@ func (txn *wrapTxn) Valid() bool {
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Supported.")
+	return nil, errors.Errorf("Not Support.")
 }
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
-func (c *Context) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Supported.")
+func (c *Context) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) ([]sqlexec.RecordSet, error) {
+	return nil, errors.Errorf("Not Support.")
 }
 
 type mockDDLOwnerChecker struct{}
