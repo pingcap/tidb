@@ -431,7 +431,7 @@ func (c *twoPhaseCommitter) extractKeyExistsErrFromHandle(key kv.Key, value []by
 		if err != nil {
 			return c.genKeyExistsError(name, key.String(), err)
 		}
-		if len([]rune(str)) > col.Length {
+		if col.Length > 0 && len([]rune(str)) > col.Length {
 			str = string([]rune(str)[:col.Length])
 		}
 		valueStr = append(valueStr, str)
