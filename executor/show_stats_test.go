@@ -175,7 +175,7 @@ func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {
 
 func (s *testShowStatsSuite) TestShowPartitionStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+	testkit.WithPruneMode(tk, variable.Static, func() {
 		tk.MustExec("set @@session.tidb_enable_table_partition=1")
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")

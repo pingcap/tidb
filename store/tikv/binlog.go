@@ -39,7 +39,7 @@ type BinlogWriteResult interface {
 }
 
 type binlogExecutor struct {
-	txn *tikvTxn
+	txn *KVTxn
 }
 
 func (e *binlogExecutor) Skip() {

@@ -166,13 +166,13 @@ func (s *KVStore) runSafePointChecker() {
 }
 
 // Begin a global transaction.
-func (s *KVStore) Begin() (kv.Transaction, error) {
+func (s *KVStore) Begin() (*KVTxn, error) {
 	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
 }
 
 // BeginWithTxnScope begins a transaction with the given txnScope (local or
 // global)
-func (s *KVStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
+func (s *KVStore) BeginWithTxnScope(txnScope string) (*KVTxn, error) {
 	txn, err := newTiKVTxn(s, txnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -181,7 +181,7 @@ func (s *KVStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
 }
 
 // BeginWithStartTS begins a transaction with startTS.
-func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
+func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -190,7 +190,7 @@ func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transact
 }
 
 // BeginWithExactStaleness begins transaction with given staleness
-func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
