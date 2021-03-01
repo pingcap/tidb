@@ -480,7 +480,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
 	// Because the statistics of partition p1 are missing, the construction of global-level stats will fail.
 	tk.MustExec("analyze table t4 partition p1;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 [stats] build global-level stats failed due to missing partition-level stats"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8131 Build global-level stats failed due to missing partition-level stats"))
 	// Although the global-level stats build failed, we build partition-level stats for partition p1 success.
 	result := tk.MustQuery("show stats_meta where table_name = 't4'").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
