@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/statistics/handle"
 	"strings"
 	"time"
 
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
