@@ -742,9 +742,10 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 	var fn *expression.ScalarFunction
 	switch raw := partExpr.(type) {
 	case *expression.ScalarFunction:
-		// Special handle for floor(unix_timestamp(ts)) as partition expression.
-		// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
-		if raw.FuncName.L == ast.Floor {
+		switch raw.FuncName.L {
+		case ast.Floor:
+			// Special handle for floor(unix_timestamp(ts)) as partition expression.
+			// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
 			if ut, ok := raw.GetArgs()[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
 				args := ut.GetArgs()
 				if len(args) == 1 {
@@ -753,21 +754,25 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 					}
 				}
 			}
-		}
-
-		// The scalar function must be this form: fn(col), otherwise it's not supported by the current partition pruning.
-		// For example, 'partition by (col1 + 3)' or 'partition by (col1 * col2)' is not supported.
-		// For the former one, it's theoretically possible to do better.
-		fn = raw
-		args := fn.GetArgs()
-		if len(args) != 1 {
-			return nil, nil, monotonous, nil
-		}
-		arg0 := args[0]
-		var ok bool
-		col, ok = arg0.(*expression.Column)
-		if !ok {
-			return nil, nil, monotonous, nil
+		case ast.Plus, ast.Minus, ast.Mul, ast.Div:
+			// partition by (col op const) where op in [+ - * /]
+			if arg1, ok1 := raw.GetArgs()[0].(*expression.Column); ok1 {
+				if _, ok2 := raw.GetArgs()[1].(*expression.Constant); ok2 {
+					if raw.FuncName.L == ast.Div {
+						monotonous = monotoneModeNonStrict
+					} else {
+						monotonous = monotoneModeStrict
+					}
+					return arg1, raw, monotonous, nil
+				}
+			}
+		default:
+			monotonous = getMonotoneMode(raw.FuncName.L)
+			if monotonous != monotoneModeInvalid {
+				if col, ok := raw.GetArgs()[0].(*expression.Column); ok {
+					return col, raw, monotonous, nil
+				}
+			}
 		}
 	case *expression.Column:
 		col = raw
