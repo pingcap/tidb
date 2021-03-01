@@ -43,7 +43,7 @@ func TestExportManifest(t *testing.T) {
 	exported := plugin.ExportManifest(manifest)
 	err := exported.OnInit(context.Background(), exported)
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
 	}
 	audit := plugin.DeclareAuditManifest(exported)
 	audit.OnGeneralEvent(context.Background(), nil, plugin.Log, "QUERY")
