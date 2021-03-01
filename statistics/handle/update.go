@@ -720,7 +720,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		return nil
 	}
 	var tbl *statistics.Table
-	if table.Meta().GetPartitionInfo() == nil || h.CurrentPruneMode() == variable.DynamicOnly {
+	if table.Meta().GetPartitionInfo() == nil || h.CurrentPruneMode() == variable.Dynamic {
 		tbl = h.GetTableStats(table.Meta())
 	} else {
 		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
@@ -914,7 +914,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 				}
 				continue
 			}
-			if pruneMode == variable.DynamicOnly {
+			if pruneMode == variable.Dynamic {
 				analyzed := h.autoAnalyzePartitionTable(tblInfo, pi, db, start, end, autoAnalyzeRatio)
 				if analyzed {
 					return
