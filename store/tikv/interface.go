@@ -62,10 +62,6 @@ type Storage interface {
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver kv.Version) kv.Snapshot
-	// GetClient gets a client instance.
-	GetClient() kv.Client
-	// GetMPPClient gets a mpp client instance.
-	GetMPPClient() kv.MPPClient
 	// Close store
 	Close() error
 	// UUID return a unique ID which represents a Storage.
