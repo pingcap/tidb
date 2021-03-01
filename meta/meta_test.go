@@ -480,10 +480,6 @@ func (s *testSuite) TestDDL(c *C) {
 	// Test for add index job.
 	txn1, err := store.Begin()
 	c.Assert(err, IsNil)
-	defer func() {
-		// to fix : occasion failure
-		_ = txn1.Rollback()
-	}()
 
 	m := meta.NewMeta(txn1, meta.AddIndexJobListKey)
 	err = m.EnQueueDDLJob(job)
