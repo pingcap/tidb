@@ -758,9 +758,6 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		fn = raw
 		args := fn.GetArgs()
 		monotonous = getMonotoneMode(raw.FuncName.L)
-		if expression.ExtractColumnSet(args).Len() > 1 {
-			monotonous = monotoneModeInvalid
-		}
 		if monotonous == monotoneModeInvalid {
 			return nil, nil, monotonous, nil
 		}
