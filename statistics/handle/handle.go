@@ -821,7 +821,15 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 		table = table.Copy()
 	}
 	table.Pseudo = false
-	rows, _, err := reader.read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
+
+	rows, _, err := reader.read("select modify_count, count from mysql.stats_meta where table_id = %?", physicalID)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	table.ModifyCount = rows[0].GetInt64(0)
+	table.Count = rows[0].GetInt64(1)
+
+	rows, _, err = reader.read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
 	// Check deleted table.
 	if err != nil || len(rows) == 0 {
 		return nil, nil
