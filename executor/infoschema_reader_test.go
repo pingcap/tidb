@@ -418,7 +418,7 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test;")
-	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+	testkit.WithPruneMode(tk, variable.Static, func() {
 		c.Assert(h.RefreshVars(), IsNil)
 		tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
 		tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
@@ -462,7 +462,7 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions1';").Check(testkit.Rows("p0 RANGE COLUMNS id", "p1 RANGE COLUMNS id", "p2 RANGE COLUMNS id"))
 	tk.MustExec("DROP TABLE test_partitions1")
 
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table test_partitions (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (2));")
 	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions';").Check(testkit.Rows("p0 LIST `a`", "p1 LIST `a`"))
 	tk.MustExec("drop table test_partitions")

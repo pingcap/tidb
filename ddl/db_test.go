@@ -3328,7 +3328,7 @@ func (s *testDBSuite1) TestRenameMultiTables(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
-	sql := fmt.Sprintf("rename table t1 to t3, t2 to t4")
+	sql := "rename table t1 to t3, t2 to t4"
 	_, err := tk.Exec(sql)
 	c.Assert(err, IsNil)
 
@@ -6540,7 +6540,7 @@ func (s *testDBSuite4) TestCreateTableWithDecimalWithDoubleZero(c *C) {
 func (s *testDBSuite4) TestIssue22207(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly;")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("set @@session.tidb_enable_exchange_partition = 1;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("drop table if exists t2;")
