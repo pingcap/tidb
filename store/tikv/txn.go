@@ -172,10 +172,7 @@ func (txn *KVTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 	return txn.us.IterReverse(k)
 }
 
-// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-// The returned iterator will iterate from greater key to smaller key.
-// If k is nil, the returned iterator will be positioned at the last key.
-// TODO: Add lower bound limit
+// Delete removes the entry for key k from kv store.
 func (txn *KVTxn) Delete(k kv.Key) error {
 	return txn.us.GetMemBuffer().Delete(k)
 }
