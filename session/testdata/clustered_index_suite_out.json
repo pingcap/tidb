@@ -1,6 +1,6 @@
 [
   {
-    "name": "TestClusteredPrefixColumn2",
+    "name": "TestClusteredPrefixColumn",
     "cases": [
       {
         "SQL": "select c2 from t1 use index(idx1)",

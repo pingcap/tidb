@@ -74,10 +74,7 @@ func (s *testClusteredSuite) TestClusteredPrefixColumn(c *C) {
 	tk.MustExec("insert into t1 values('PvtYW2', 1, 1)")
 	tk.MustQuery("select cb from t1").Check(testkit.Rows("PvtYW2"))
 	tk.MustQuery("select * from t1").Check(testkit.Rows("PvtYW2 1 1"))
-}
 
-func (s *testClusteredSuite) TestClusteredPrefixColumn2(c *C) {
-	tk := s.newTK(c)
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100), c3 varchar(100), primary key (c1,c2), key idx1 (c2(1)))")
 	tk.MustExec("insert into t1 select 'a', 'cd', 'ef'")
