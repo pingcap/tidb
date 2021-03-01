@@ -118,10 +118,10 @@ func (s *testTiclientSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testTiclientSuite) beginTxn(c *C) *tikvTxn {
+func (s *testTiclientSuite) beginTxn(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 func (s *testTiclientSuite) TestSingleKey(c *C) {

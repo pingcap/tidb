@@ -25,9 +25,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -271,4 +273,35 @@ func (s *tikvStore) Close() error {
 // GetMemCache return memory manager of the storage
 func (s *tikvStore) GetMemCache() kv.MemManager {
 	return s.memCache
+}
+
+// Begin a global transaction.
+func (s *tikvStore) Begin() (kv.Transaction, error) {
+	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
+}
+
+func (s *tikvStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithTxnScope(txnScope)
+	if err != nil {
+		return txn, errors.Trace(err)
+	}
+	return txn_driver.NewTiKVTxn(txn), err
+}
+
+// BeginWithStartTS begins a transaction with startTS.
+func (s *tikvStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithStartTS(txnScope, startTS)
+	if err != nil {
+		return txn, errors.Trace(err)
+	}
+	return txn_driver.NewTiKVTxn(txn), err
+}
+
+// BeginWithExactStaleness begins transaction with given staleness
+func (s *tikvStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithExactStaleness(txnScope, prevSec)
+	if err != nil {
+		return txn, errors.Trace(err)
+	}
+	return txn_driver.NewTiKVTxn(txn), err
 }
