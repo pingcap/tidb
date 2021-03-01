@@ -15,6 +15,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"time"
@@ -377,6 +378,39 @@ func (s *testPrepareSuite) TestPrepareWithWindowFunction(c *C) {
 	tk.MustExec("prepare stmt2 from 'select count(a) over (order by a rows between ? preceding and ? preceding) from window_prepare'")
 	tk.MustExec("set @a=0, @b=1;")
 	tk.MustQuery("execute stmt2 using @a, @b").Check(testkit.Rows("0", "0"))
+}
+
+func (s *testPrepareSuite) TestPrepareWithSnapshot(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t select 1, 2")
+	tk.MustExec("begin")
+	ts := tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+	tk.MustExec("commit")
+	tk.MustExec("update t set v = 3 where id = 1")
+	tk.MustExec("prepare s1 from 'select * from t where id = 1';")
+	tk.MustExec("prepare s2 from 'select * from t';")
+	tk.MustExec("set @@tidb_snapshot = " + ts)
+	tk.MustQuery("execute s1").Check(testkit.Rows("1 2"))
+	tk.MustQuery("execute s2").Check(testkit.Rows("1 2"))
 }
 
 func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
@@ -829,4 +863,33 @@ func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
 	tk.MustExec("set @v2=3.0")
 	tk.MustExec(`prepare stmt2 from "select sum(b) from t group by ?, ?"`)
 	tk.MustQuery(`execute stmt2 using @v1, @v2`).Check(testkit.Rows("10"))
+}
+
+// Test for issue https://github.com/pingcap/tidb/issues/22167
+func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ta, tb")
+	tk.MustExec("CREATE TABLE ta(k varchar(32) NOT NULL DEFAULT ' ')")
+	tk.MustExec("CREATE TABLE tb (k varchar(32) NOT NULL DEFAULT ' ', s varchar(1) NOT NULL DEFAULT ' ')")
+	tk.MustExec("insert into ta values ('a')")
+	tk.MustExec("set @a=2, @b=1")
+	tk.MustExec(`prepare stmt from "select * from ta a left join tb b on 1 where ? = 1 or b.s is not null"`)
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("a <nil> <nil>"))
 }

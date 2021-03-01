@@ -147,12 +147,29 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	}
 	ctx := context.Background()
 	if len(args) == 0 {
-		var rss []sqlexec.RecordSet
-		rss, err = tk.Se.Execute(ctx, sql)
-		if err == nil && len(rss) > 0 {
-			return rss[0], nil
+		sc := tk.Se.GetSessionVars().StmtCtx
+		prevWarns := sc.GetWarnings()
+		stmts, err := tk.Se.Parse(ctx, sql)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		return nil, errors.Trace(err)
+		warns := sc.GetWarnings()
+		parserWarns := warns[len(prevWarns):]
+		var rs0 sqlexec.RecordSet
+		for i, stmt := range stmts {
+			rs, err := tk.Se.ExecuteStmt(ctx, stmt)
+			if i == 0 {
+				rs0 = rs
+			}
+			if err != nil {
+				tk.Se.GetSessionVars().StmtCtx.AppendError(err)
+				return nil, errors.Trace(err)
+			}
+		}
+		if len(parserWarns) > 0 {
+			tk.Se.GetSessionVars().StmtCtx.AppendWarnings(parserWarns)
+		}
+		return rs0, nil
 	}
 	stmtID, _, _, err := tk.Se.PrepareStmt(sql)
 	if err != nil {

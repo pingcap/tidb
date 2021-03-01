@@ -331,20 +331,26 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	isZero := allocZeroSlice(n)
 	defer deallocateZeroSlice(isZero)
 	for _, expr := range exprList {
-		eType := expr.GetType().EvalType()
-		if expr.GetType().Hybrid() {
-			eType = types.ETInt
+		tp := expr.GetType()
+		eType := tp.EvalType()
+		if CanImplicitEvalReal(expr) {
+			eType = types.ETReal
 		}
 		buf, err := globalColumnAllocator.get(eType, n)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
+		// Take the implicit evalReal path if possible.
+		if CanImplicitEvalReal(expr) {
+			if err := implicitEvalReal(ctx, expr, input, buf); err != nil {
+				return nil, nil, err
+			}
+		} else if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
 			return nil, nil, err
 		}
 
-		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, isZero)
+		err = toBool(ctx.GetSessionVars().StmtCtx, tp, eType, buf, sel, isZero)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -384,7 +390,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -443,11 +449,28 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err := types.StrToFloat(sc, buf.GetString(i), false)
-				if err != nil {
-					return err
+				var fVal float64
+				var err error
+				sVal := buf.GetString(i)
+				if tp.Hybrid() {
+					switch tp.Tp {
+					case mysql.TypeEnum, mysql.TypeSet:
+						fVal = float64(len(sVal))
+					case mysql.TypeBit:
+						var bl types.BinaryLiteral = buf.GetBytes(i)
+						iVal, err := bl.ToInt(sc)
+						if err != nil {
+							return err
+						}
+						fVal = float64(iVal)
+					}
+				} else {
+					fVal, err = types.StrToFloat(sc, sVal, false)
+					if err != nil {
+						return err
+					}
 				}
-				if iVal == 0 {
+				if fVal == 0 {
 					isZero[i] = 0
 				} else {
 					isZero[i] = 1
@@ -471,6 +494,30 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
 	}
 	return nil
+}
+
+func implicitEvalReal(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+		err = expr.VecEvalReal(ctx, input, result)
+	} else {
+		ind, n := 0, input.NumRows()
+		iter := chunk.NewIterator4Chunk(input)
+		result.ResizeFloat64(n, false)
+		f64s := result.Float64s()
+		for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+			value, isNull, err := expr.EvalReal(ctx, it)
+			if err != nil {
+				return err
+			}
+			if isNull {
+				result.SetNull(ind, isNull)
+			} else {
+				f64s[ind] = value
+			}
+			ind++
+		}
+	}
+	return
 }
 
 // EvalExpr evaluates this expr according to its type.
@@ -709,11 +756,18 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
+	if ContainMutableConst(ctx, []Expression{expr}) {
+		ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
+	}
+	return evaluateExprWithNull(ctx, schema, expr)
+}
+
+func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i] = EvaluateExprWithNull(ctx, schema, arg)
+			args[i] = evaluateExprWithNull(ctx, schema, arg)
 		}
 		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
 	case *Column:

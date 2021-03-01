@@ -329,11 +329,24 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if er.aggrMap != nil {
 			index, ok = er.aggrMap[v]
 		}
-		if !ok {
-			er.err = ErrInvalidGroupFuncUse
+		if ok {
+			// index < 0 indicates this is a correlated aggregate belonging to outer query,
+			// for which a correlated column will be created later, so we append a null constant
+			// as a temporary result expression.
+			if index < 0 {
+				er.ctxStackAppend(expression.NewNull(), types.EmptyName)
+			} else {
+				// index >= 0 indicates this is a regular aggregate column
+				er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+			}
 			return inNode, true
 		}
-		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+		// replace correlated aggregate in sub-query with its corresponding correlated column
+		if col, ok := er.b.correlatedAggMapper[v]; ok {
+			er.ctxStackAppend(col, types.EmptyName)
+			return inNode, true
+		}
+		er.err = ErrInvalidGroupFuncUse
 		return inNode, true
 	case *ast.ColumnNameExpr:
 		if index, ok := er.b.colMapper[v]; ok {
@@ -520,6 +533,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 				er.handleEQAll(lexpr, rexpr, np)
 			} else {
 				// `a = any(subq)` will be rewriten as `a in (subq)`.
+				er.asScalar = true
 				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, false)
 				if er.err != nil {
 					return v, true
@@ -528,6 +542,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 		} else if v.Op == opcode.NE {
 			if v.All {
 				// `a != all(subq)` will be rewriten as `a not in (subq)`.
+				er.asScalar = true
 				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, true)
 				if er.err != nil {
 					return v, true
@@ -1038,6 +1053,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
+		if v.Tp.EvalType() == types.ETString {
+			arg.SetCoercibility(expression.CoercibilityImplicit)
+		}
+
 		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.sctx, arg, v.Tp)
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.PatternLikeExpr:
@@ -1101,6 +1120,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			arg.GetType().Collate = v.Collate
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
+		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType().Charset, arg.GetType().Collate)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -1443,7 +1463,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	var function expression.Expression
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
-	// Treat predicate 'like' the same way as predicate '=' when it is an exact match.
+	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
 		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
 		if err != nil {
@@ -1457,11 +1477,17 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 				if v.Not {
 					op = ast.NE
 				}
-				types.DefaultTypeForValue(string(patValue), fieldType, char, col)
-				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
-					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
-					op)
+				types.DefaultTypeForValue(string(patValue), fieldType, patExpression.RetType.Charset, patExpression.RetType.Collate)
+				constant := &expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType}
+				constant.SetCoercibility(patExpression.Coercibility())
+				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2], constant, op)
 				isPatternExactMatch = true
+				if collate.NewCollationEnabled() {
+					_, coll := expression.DeriveCollationFromExprs(er.sctx, er.ctxStack[l-1], er.ctxStack[l-2])
+					if coll == "utf8mb4_unicode_ci" || coll == "utf8_unicode_ci" {
+						isPatternExactMatch = false
+					}
+				}
 			}
 		}
 	}
@@ -1502,6 +1528,40 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 	er.ctxStackAppend(function, types.EmptyName)
 }
 
+func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Expression) {
+	stkLen := len(er.ctxStack)
+	expr, lexp, rexp = er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
+	var castFunc func(sessionctx.Context, expression.Expression) expression.Expression
+	switch expression.ResolveType4Between([3]expression.Expression{expr, lexp, rexp}) {
+	case types.ETInt:
+		castFunc = expression.WrapWithCastAsInt
+	case types.ETReal:
+		castFunc = expression.WrapWithCastAsReal
+	case types.ETDecimal:
+		castFunc = expression.WrapWithCastAsDecimal
+	case types.ETString:
+		castFunc = func(ctx sessionctx.Context, e expression.Expression) expression.Expression {
+			// string kind expression do not need cast
+			if e.GetType().EvalType().IsStringKind() {
+				return e
+			}
+			return expression.WrapWithCastAsString(ctx, e)
+		}
+	case types.ETDatetime:
+		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
+		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDatetime))
+		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldType(mysql.TypeDatetime))
+		return
+	default:
+		return
+	}
+
+	expr = castFunc(er.sctx, expr)
+	lexp = castFunc(er.sctx, lexp)
+	rexp = castFunc(er.sctx, rexp)
+	return
+}
+
 func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	stkLen := len(er.ctxStack)
 	er.err = expression.CheckArgsNotMultiColumnRow(er.ctxStack[stkLen-3:]...)
@@ -1509,13 +1569,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		return
 	}
 
-	expr, lexp, rexp := er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
-
-	if expression.GetCmpTp4MinMax([]expression.Expression{expr, lexp, rexp}) == types.ETDatetime {
-		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
-		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDatetime))
-		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldType(mysql.TypeDatetime))
-	}
+	expr, lexp, rexp := er.wrapExpWithCast()
 
 	var op string
 	var l, r expression.Expression

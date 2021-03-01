@@ -431,6 +431,8 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		{[]interface{}{1.298, 1}, 1.3},
 		{[]interface{}{1.298}, 1},
 		{[]interface{}{1.298, 0}, 1},
+		{[]interface{}{-1.5, 0}, -2},
+		{[]interface{}{1.5, 0}, 2},
 		{[]interface{}{23.298, -1}, 20},
 		{[]interface{}{newDec("-1.23")}, newDec("-1")},
 		{[]interface{}{newDec("-1.23"), 1}, newDec("-1.2")},

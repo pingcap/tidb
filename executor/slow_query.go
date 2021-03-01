@@ -928,8 +928,9 @@ type slowQueryRuntimeStats struct {
 // String implements the RuntimeStats interface.
 func (s *slowQueryRuntimeStats) String() string {
 	return fmt.Sprintf("initialize: %s, read_file: %s, parse_log: {time:%s, concurrency:%v}, total_file: %v, read_file: %v, read_size: %s",
-		s.initialize, s.readFile, time.Duration(s.parseLog), s.concurrent,
-		s.totalFileNum, s.readFileNum, memory.BytesToString(s.readFileSize))
+		execdetails.FormatDuration(s.initialize), execdetails.FormatDuration(s.readFile),
+		execdetails.FormatDuration(time.Duration(s.parseLog)), s.concurrent,
+		s.totalFileNum, s.readFileNum, memory.FormatBytes(s.readFileSize))
 }
 
 // Merge implements the RuntimeStats interface.

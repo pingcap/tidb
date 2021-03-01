@@ -1843,7 +1843,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The flow rate of compaction operations per type",
 	},
 	"tikv_compaction_pending_bytes": {
-		PromQL:  `sum(rate(tikv_engine_pending_compaction_bytes{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (cf,instance,db)`,
+		PromQL:  `tikv_engine_pending_compaction_bytes{$LABEL_CONDITIONS}`,
 		Labels:  []string{"instance", "cf", "db"},
 		Comment: "The pending bytes to be compacted",
 	},

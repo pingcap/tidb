@@ -265,7 +265,7 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 
-	value, op, isValidRange := handleUnsignedIntCol(ft, value, op)
+	value, op, isValidRange := handleUnsignedCol(ft, value, op)
 	if !isValidRange {
 		return nil
 	}
@@ -301,15 +301,17 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	return nil
 }
 
-// handleUnsignedIntCol handles the case when unsigned column meets negative integer value.
+// handleUnsignedCol handles the case when unsigned column meets negative value.
 // The three returned values are: fixed constant value, fixed operator, and a boolean
 // which indicates whether the range is valid or not.
-func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
 	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
-	isIntegerType := mysql.IsIntegerType(ft.Tp)
-	isNegativeInteger := (val.Kind() == types.KindInt64 && val.GetInt64() < 0)
+	isNegative := (val.Kind() == types.KindInt64 && val.GetInt64() < 0) ||
+		(val.Kind() == types.KindFloat32 && val.GetFloat32() < 0) ||
+		(val.Kind() == types.KindFloat64 && val.GetFloat64() < 0) ||
+		(val.Kind() == types.KindMysqlDecimal && val.GetMysqlDecimal().IsNegative())
 
-	if !isUnsigned || !isIntegerType || !isNegativeInteger {
+	if !isUnsigned || !isNegative {
 		return val, op, true
 	}
 
@@ -317,7 +319,16 @@ func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (type
 	// Otherwise the value is out of valid range.
 	if op == ast.GT || op == ast.GE || op == ast.NE {
 		op = ast.GE
-		val.SetUint64(0)
+		switch val.Kind() {
+		case types.KindInt64:
+			val.SetUint64(0)
+		case types.KindFloat32:
+			val.SetFloat32(0)
+		case types.KindFloat64:
+			val.SetFloat64(0)
+		case types.KindMysqlDecimal:
+			val.SetMysqlDecimal(new(types.MyDecimal))
+		}
 		return val, op, true
 	}
 

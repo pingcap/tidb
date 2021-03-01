@@ -2420,8 +2420,7 @@ func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			result.AppendNull()
 			continue
 		} else if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
-			result.AppendNull()
-			continue
+			b.tp.Flen = mysql.MaxBlobWidth
 		}
 
 		newStr := base64.StdEncoding.EncodeToString([]byte(str))
