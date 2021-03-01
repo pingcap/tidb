@@ -8538,7 +8538,7 @@ func (s *testIntegrationSuite) TestIssue12209(c *C) {
 }
 
 func (s *testIntegrationSerialSuite) TestCrossDCQuery(c *C) {
-	defer config.RestoreFunc()
+	defer config.RestoreFunc()()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
