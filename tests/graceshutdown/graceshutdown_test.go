@@ -97,7 +97,10 @@ func (s *TestGracefulShutdownSuite) connectTiDB(port int) (db *sql.DB, err error
 		log.Warnf("ping addr %v failed, retry count %d err %v", addr, i, err)
 
 		err = db.Close()
-		c.Assert(err, IsNil)
+		if err != nil {
+			log.Warnf("close db failed, retry count %d err %v", i, err)
+			break
+		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
 	}
