@@ -365,7 +365,7 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, c1 timestamp);")
-	tk.MustExec(`insert t values(1, 0);`)
+	tk.MustExec(`insert t(id) values(1);`)
 	tk.MustExec(`UPDATE t set id = 1 where id = 1;`)
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 0)
 
@@ -1019,8 +1019,10 @@ func (s *testSessionSuite) TestPrepareZero(c *C) {
 	_, rs := tk.Exec("execute s1 using @v1")
 	c.Assert(rs, NotNil)
 	tk.MustExec("set @v2='" + types.ZeroDatetimeStr + "'")
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
 	tk.MustExec("execute s1 using @v2")
 	tk.MustQuery("select v from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 }
 
 func (s *testSessionSuite) TestPrimaryKeyAutoIncrement(c *C) {
@@ -3483,4 +3485,86 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	c.Assert(pi.Info, Equals, "select 1 from t where a = (select sleep(5));")
 	c.Assert(pi.Plan, IsNil)
 	wg.Wait()
+}
+
+func (s *testSessionSuite2) TestNonAutocommitTxnRetry(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t(pk varchar(50), c1 varchar(50), c2 varchar(50), key k1(c1, c2), primary key(pk))")
+	tk1.MustExec("insert into t values ('1', '10', '100')")
+
+	tk1.MustExec("set tidb_disable_txn_auto_retry = 0")
+	tk1.MustExec("set autocommit = 0")
+	tk1.MustExec("set tidb_txn_mode = ''")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("update t set c1 = '11' where pk = '1'")
+	tk1.MustExec("update t set c2 = '101' where pk = '1'")
+	tk2.MustExec("begin optimistic")
+	tk2.MustQuery("select * from t for update").Check(testkit.Rows("1 10 100"))
+	tk2.MustExec("commit")
+	tk1.MustExec("commit")
+	tk2.MustExec("admin check table t")
+	tk2.MustQuery("select * from t use index(k1)").Check(testkit.Rows("1 11 101"))
+	tk2.MustQuery("select * from t where pk = '1'").Check(testkit.Rows("1 11 101"))
+}
+
+func (s *testSessionSuite2) TestAutocommitTxnRetry(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t(pk varchar(50), c1 varchar(50), c2 varchar(50), key k1(c1, c2), primary key(pk))")
+	tk1.MustExec("insert into t values ('1', '10', '100')")
+
+	tk1.MustExec("set tidb_disable_txn_auto_retry = 0")
+	tk1.MustExec("set autocommit = 0")
+	tk1.MustExec("begin optimistic")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("update t set c1 = '11' where pk = '1'")
+	tk1.MustExec("update t set c2 = '101' where pk = '1'")
+	tk2.MustExec("begin optimistic")
+	tk2.MustQuery("select * from t for update").Check(testkit.Rows("1 10 100"))
+	tk2.MustExec("commit")
+	tk1.MustExec("commit")
+	tk2.MustExec("admin check table t")
+	tk2.MustQuery("select * from t use index(k1)").Check(testkit.Rows("1 11 101"))
+	tk2.MustQuery("select * from t where pk = '1'").Check(testkit.Rows("1 11 101"))
+}
+
+func (s *testSessionSuite2) TestRetryWithSet(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t(pk varchar(50), c1 bigint, c2 varchar(50), key k1(c1, c2), primary key(pk))")
+	tk1.MustExec("insert into t values ('1', '10', '100')")
+
+	tk1.MustExec("set tidb_disable_txn_auto_retry = 0")
+	tk1.MustExec("set autocommit = 0")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1 10 100"))
+	tk1.MustExec("set @a=@@tidb_current_ts")
+	tk1.MustExec("update t set c1 = @a where pk = '1'")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("begin optimistic")
+	tk2.MustQuery("select * from t for update").Check(testkit.Rows("1 10 100"))
+	tk2.MustExec("commit")
+	tk1.MustExec("commit")
+	tk1.MustQuery("select c1 > 0 from t").Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite2) TestRetryCommitWithSet(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t(pk varchar(50), c1 varchar(50), c2 varchar(50), key k1(c1, c2), primary key(pk))")
+	tk1.MustExec("insert into t values ('1', '10', '100')")
+
+	tk1.MustExec("set tidb_disable_txn_auto_retry = 0")
+	tk1.MustExec("set autocommit = 0")
+	tk1.MustExec("set tidb_txn_mode = ''")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("update t set c1 = '11' where pk = '1'")
+	tk1.MustExec("update t set c2 = '101' where pk = '1'")
+	tk2.MustExec("begin optimistic")
+	tk2.MustQuery("select * from t for update").Check(testkit.Rows("1 10 100"))
+	tk2.MustExec("commit")
+	tk1.MustExec("set autocommit = 1")
+	tk2.MustExec("admin check table t")
+	tk2.MustQuery("select * from t use index(k1)").Check(testkit.Rows("1 11 101"))
+	tk2.MustQuery("select * from t where pk = '1'").Check(testkit.Rows("1 11 101"))
 }

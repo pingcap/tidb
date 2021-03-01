@@ -741,7 +741,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
 	for {
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) {
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
+			// The judge below will not be hit by all means,
+			// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
+			atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
 			return
 		}
 
@@ -817,8 +820,8 @@ func (cc *clientConn) ShutdownOrNotify() bool {
 		return true
 	}
 	// If the client connection status is dispatching, we can't shutdown it immediately,
-	// so set the status to WaitShutdown as a notification, the client will detect it
-	// and then exit.
+	// so set the status to WaitShutdown as a notification, the loop in clientConn.Run
+	// will detect it and then exit.
 	atomic.StoreInt32(&cc.status, connStatusWaitShutdown)
 	return false
 }
@@ -1384,6 +1387,10 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 
+	if len(stmts) == 0 {
+		return cc.writeOK(ctx)
+	}
+
 	var appendMultiStmtWarning bool
 
 	if len(stmts) > 1 {
@@ -1439,7 +1446,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStm
 
 	if rs != nil {
 		connStatus := atomic.LoadInt32(&cc.status)
-		if connStatus == connStatusShutdown || connStatus == connStatusWaitShutdown {
+		if connStatus == connStatusShutdown {
 			return executor.ErrQueryInterrupted
 		}
 

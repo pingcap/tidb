@@ -329,11 +329,24 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if er.aggrMap != nil {
 			index, ok = er.aggrMap[v]
 		}
-		if !ok {
-			er.err = ErrInvalidGroupFuncUse
+		if ok {
+			// index < 0 indicates this is a correlated aggregate belonging to outer query,
+			// for which a correlated column will be created later, so we append a null constant
+			// as a temporary result expression.
+			if index < 0 {
+				er.ctxStackAppend(expression.NewNull(), types.EmptyName)
+			} else {
+				// index >= 0 indicates this is a regular aggregate column
+				er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+			}
 			return inNode, true
 		}
-		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+		// replace correlated aggregate in sub-query with its corresponding correlated column
+		if col, ok := er.b.correlatedAggMapper[v]; ok {
+			er.ctxStackAppend(col, types.EmptyName)
+			return inNode, true
+		}
+		er.err = ErrInvalidGroupFuncUse
 		return inNode, true
 	case *ast.ColumnNameExpr:
 		if index, ok := er.b.colMapper[v]; ok {
@@ -1107,6 +1120,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			arg.GetType().Collate = v.Collate
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
+		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType().Charset, arg.GetType().Collate)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -1450,7 +1464,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
 	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
-	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
+	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
 		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
 		if err != nil {
 			er.err = err
@@ -1463,11 +1477,17 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 				if v.Not {
 					op = ast.NE
 				}
-				types.DefaultTypeForValue(string(patValue), fieldType, char, col)
-				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
-					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
-					op)
+				types.DefaultTypeForValue(string(patValue), fieldType, patExpression.RetType.Charset, patExpression.RetType.Collate)
+				constant := &expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType}
+				constant.SetCoercibility(patExpression.Coercibility())
+				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2], constant, op)
 				isPatternExactMatch = true
+				if collate.NewCollationEnabled() {
+					_, coll := expression.DeriveCollationFromExprs(er.sctx, er.ctxStack[l-1], er.ctxStack[l-2])
+					if coll == "utf8mb4_unicode_ci" || coll == "utf8_unicode_ci" {
+						isPatternExactMatch = false
+					}
+				}
 			}
 		}
 	}
