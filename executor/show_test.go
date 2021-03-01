@@ -829,7 +829,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	result = tk.MustQuery("show create table t;").Rows()[0][1]
 	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
 
-	// Test issue #
+	// Test issue #23027
 	tk.MustExec("drop table if exists c_st_tab;")
 	tk.MustExec("create table c_st_tab (" +
 		"st_id varchar(36) not null," +
