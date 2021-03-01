@@ -312,6 +312,17 @@ func (s *testSuite6) TestIssue16250(c *C) {
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
 }
 
+func (s *testSuite6) TestIssue12705(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database rrrr;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.MustExec("use rrrr;")
+	tk.MustExec("create table r (i int);")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustExec("drop database rrrr;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+}
+
 func (s testSuite6) TestTruncateSequence(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -381,6 +392,10 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 	tk.MustExec("drop database if exists drop_test;")
 	tk.MustExec("create database drop_test;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.MustExec("drop database drop_test;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustExec("create database drop_test;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
 	tk.MustExec("use drop_test;")
 	tk.MustExec("create table r1 (i int);")
 	tk.MustExec("create table r2 (i int);")
@@ -388,10 +403,6 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 	tk.MustExec("drop database drop_test;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(3))
 	tk.MustExec("create database drop_test;")
-	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
-	tk.MustExec("drop database drop_test;")
-	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
-	tk.MustExec("create database if not exists drop_test DEFAULT CHARACTER SET utf8 DEFAULT COLLATE utf8_general_ci;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
 	tk.MustExec("use drop_test;")
 	tk.MustExec("create table r1 (i int);")
