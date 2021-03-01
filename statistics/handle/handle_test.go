@@ -966,7 +966,7 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 func (s *testStatsSuite) TestStaticPartitionPruneMode(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.StaticOnly) + "'")
+	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, key(a)) partition by range(a) 
 					(partition p0 values less than (10),
@@ -974,16 +974,16 @@ func (s *testStatsSuite) TestStaticPartitionPruneMode(c *C) {
 	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
 	tk.MustExec(`analyze table t`)
 	c.Assert(tk.MustNoGlobalStats("t"), IsTrue)
-	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.DynamicOnly) + "'")
+	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
 	c.Assert(tk.MustNoGlobalStats("t"), IsTrue)
 
-	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.StaticOnly) + "'")
+	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 	tk.MustExec(`insert into t values (4), (5), (6)`)
 	tk.MustExec(`analyze table t partition p0`)
 	c.Assert(tk.MustNoGlobalStats("t"), IsTrue)
-	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.DynamicOnly) + "'")
+	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
 	c.Assert(tk.MustNoGlobalStats("t"), IsTrue)
-	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.StaticOnly) + "'")
+	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 }
 
 var _ = SerialSuites(&statsSerialSuite{})
