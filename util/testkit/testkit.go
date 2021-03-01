@@ -241,7 +241,7 @@ func containGloabl(rs *Result) bool {
 	return false
 }
 
-// MustNoGlobalStats checks if there is no gloabl stats.
+// MustNoGlobalStats checks if there is no global stats.
 func (tk *TestKit) MustNoGlobalStats(table string) bool {
 	if containGloabl(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
 		return false
