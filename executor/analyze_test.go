@@ -52,7 +52,7 @@ var _ = Suite(&testFastAnalyze{})
 
 func (s *testSuite1) TestAnalyzePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+	testkit.WithPruneMode(tk, variable.Static, func() {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
@@ -464,7 +464,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		"test t2  a 0 0 1 1 0 0 0",
 		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615 0"))
 
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec(`create table t3 (id int, v int, primary key(id), index k(v)) partition by hash (id) partitions 4`)
 	tk.MustExec(`insert into t3 values(1, 1), (2, 2), (5, 1), (9, 3), (13, 3), (17, 5), (3, 0)`)
 	tk.MustExec(`analyze table t3`)
@@ -472,7 +472,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		"IndexReader 2.00 root  index:IndexRangeScan",
 		"└─IndexRangeScan 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
 	))
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.DynamicOnly) + `'`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Dynamic) + `'`)
 }
 
 func (s *testSuite1) TestIssue15993(c *C) {
