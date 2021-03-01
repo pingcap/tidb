@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/statistics/handle"
 	"strings"
 	"time"
 
@@ -1598,7 +1599,8 @@ func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo)
 	return handleCols
 }
 
-func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]int64, []string, error) {
+// GetPhysicalIDsAndPartitionNames returns physical IDs and names of these partitions.
+func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]int64, []string, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		if len(partitionNames) != 0 {
@@ -1628,6 +1630,11 @@ func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 			}
 		}
 		if !found {
+			if name.L == handle.GLOBAL_STATS {
+				ids = append(ids, tblInfo.ID)
+				names = append(names, handle.GLOBAL_STATS)
+				continue
+			}
 			return nil, nil, fmt.Errorf("can not found the specified partition name %s in the table definition", name.O)
 		}
 	}
@@ -1649,7 +1656,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			return nil, errors.Errorf("analyze sequence %s is not supported now.", tbl.Name.O)
 		}
 		idxInfo, colInfo := getColsInfo(tbl)
-		physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
+		physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
 		if err != nil {
 			return nil, err
 		}
@@ -1718,7 +1725,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		logutil.BgLogger().Info("analyze partition didn't affect in dynamic-prune-mode", zap.String("table", tblInfo.Name.L), zap.String("partitions", as.PartitionNames[0].L))
 		return p, nil
 	}
-	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
+	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
@@ -1783,7 +1790,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		logutil.BgLogger().Info("analyze partition didn't affect in dynamic-prune-mode", zap.String("table", tblInfo.Name.L), zap.String("partitions", as.PartitionNames[0].L))
 		return p, nil
 	}
-	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
+	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
