@@ -45,7 +45,7 @@ type SchemaAmender interface {
 	AmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange, mutations CommitterMutations) (CommitterMutations, error)
 }
 
-// KVTxn implements Transaction.
+// KVTxn contains methods to interact with a TiKV transaction.
 type KVTxn struct {
 	snapshot  *tikvSnapshot
 	us        kv.UnionStore
@@ -107,6 +107,7 @@ func newTiKVTxnWithExactStaleness(store *KVStore, txnScope string, prevSec uint6
 // SetSuccess is used to probe if kv variables are set or not. It is ONLY used in test cases.
 var SetSuccess = false
 
+// SetVars sets variables to the transaction.
 func (txn *KVTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
@@ -117,6 +118,7 @@ func (txn *KVTxn) SetVars(vars *kv.Variables) {
 	})
 }
 
+// GetVars gets variables from the transaction.
 func (txn *KVTxn) GetVars() *kv.Variables {
 	return txn.vars
 }
@@ -134,6 +136,9 @@ func (txn *KVTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return ret, nil
 }
 
+// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+// Do not use len(value) == 0 or value == nil to represent non-exist.
+// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 func (txn *KVTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
@@ -143,15 +148,22 @@ func (txn *KVTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byt
 	return kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
 }
 
+// Set sets the value for key k as v into kv store.
+// v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
 func (txn *KVTxn) Set(k kv.Key, v []byte) error {
 	txn.setCnt++
 	return txn.us.GetMemBuffer().Set(k, v)
 }
 
+// String implements fmt.Stringer interface.
 func (txn *KVTxn) String() string {
 	return fmt.Sprintf("%d", txn.StartTS())
 }
 
+// Iter creates an Iterator positioned on the first entry that k <= entry's key.
+// If such entry is not found, it returns an invalid Iterator with no error.
+// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
+// The Iterator must be Closed after use.
 func (txn *KVTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	return txn.us.Iter(k, upperBound)
 }
@@ -161,10 +173,13 @@ func (txn *KVTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 	return txn.us.IterReverse(k)
 }
 
+// Delete removes the entry for key k from kv store.
 func (txn *KVTxn) Delete(k kv.Key) error {
 	return txn.us.GetMemBuffer().Delete(k)
 }
 
+// SetOption sets an option with a value, when val is nil, uses the default
+// value of this option.
 func (txn *KVTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
 	txn.snapshot.SetOption(opt, val)
@@ -193,6 +208,7 @@ func (txn *KVTxn) IsPessimistic() bool {
 	return txn.us.GetOption(kv.Pessimistic) != nil
 }
 
+// Commit commits the transaction operations to KV store.
 func (txn *KVTxn) Commit(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvTxn.Commit", opentracing.ChildOf(span.Context()))
@@ -300,6 +316,7 @@ func (txn *KVTxn) close() {
 	txn.valid = false
 }
 
+// Rollback undoes the transaction operations to KV store.
 func (txn *KVTxn) Rollback() error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
@@ -351,6 +368,7 @@ func (txn *KVTxn) onCommitted(err error) {
 	}
 }
 
+// LockKeys tries to lock the entries with the keys in KV store.
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
@@ -569,6 +587,7 @@ func (txn *KVTxn) StartTS() uint64 {
 }
 
 // Valid returns if the transaction is valid.
+// A transaction become invalid after commit or rollback.
 func (txn *KVTxn) Valid() bool {
 	return txn.valid
 }
@@ -583,7 +602,7 @@ func (txn *KVTxn) Size() int {
 	return txn.us.GetMemBuffer().Size()
 }
 
-// Reset reset the MemBuffer to initial states.
+// Reset reset the Transaction to initial states.
 func (txn *KVTxn) Reset() {
 	txn.us.GetMemBuffer().Reset()
 }
