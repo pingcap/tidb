@@ -776,7 +776,7 @@ partition by range (a) (
 	partition p0 values less than (10),
 	partition p1 values less than (20)
 )`)
-	tk.MustExec("set @@tidb_partition_prune_mode='dynamic-only'")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	tk.MustExec("analyze table t")
