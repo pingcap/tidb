@@ -742,22 +742,23 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 	var fn *expression.ScalarFunction
 	switch raw := partExpr.(type) {
 	case *expression.ScalarFunction:
+		args := raw.GetArgs()
 		switch raw.FuncName.L {
 		case ast.Floor:
 			// Special handle for floor(unix_timestamp(ts)) as partition expression.
 			// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
-			if ut, ok := raw.GetArgs()[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
-				args := ut.GetArgs()
-				if len(args) == 1 {
-					if c, ok1 := args[0].(*expression.Column); ok1 {
+			if ut, ok := args[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
+				args1 := ut.GetArgs()
+				if len(args1) == 1 {
+					if c, ok1 := args1[0].(*expression.Column); ok1 {
 						return c, raw, monotoneModeNonStrict, nil
 					}
 				}
 			}
 		case ast.Plus, ast.Minus, ast.Mul, ast.Div:
 			// partition by (col op const) where op in [+ - * /]
-			if arg1, ok1 := raw.GetArgs()[0].(*expression.Column); ok1 {
-				if _, ok2 := raw.GetArgs()[1].(*expression.Constant); ok2 {
+			if arg1, ok1 := args[0].(*expression.Column); ok1 {
+				if _, ok2 := args[1].(*expression.Constant); ok2 {
 					if raw.FuncName.L == ast.Div {
 						monotonous = monotoneModeNonStrict
 					} else {
@@ -767,10 +768,13 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 				}
 			}
 		default:
+			fn = raw
 			monotonous = getMonotoneMode(raw.FuncName.L)
-			if monotonous != monotoneModeInvalid {
-				if col, ok := raw.GetArgs()[0].(*expression.Column); ok {
-					return col, raw, monotonous, nil
+			// Check the partitionExpr is in the form: fn(col, ...)
+			// There should be only one column argument, and it should be the first parameter.
+			if expression.ExtractColumnSet(args).Len() == 1 {
+				if col1, ok := args[0].(*expression.Column); ok {
+					col = col1
 				}
 			}
 		}
