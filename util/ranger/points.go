@@ -164,7 +164,6 @@ func NullRange() []*Range {
 type builder struct {
 	err error
 	sc  *stmtctx.StatementContext
-	ctx *sessionctx.Context
 }
 
 func (r *builder) build(expr expression.Expression) []*point {

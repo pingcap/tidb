@@ -81,12 +81,6 @@ func medianOfMedians(data Interface, left, right, k int) int {
 	}
 }
 
-type pivotFunc func(Interface, int, int) int
-
-func medianOf3Pivot(data Interface, left, right int) int {
-	return (left + right) >> 1
-}
-
 func randomPivot(data Interface, left, right int) int {
 	return left + (rand.Int() % (right - left + 1))
 }

@@ -25,7 +25,6 @@ import (
 )
 
 type Obj struct {
-	val int64
 }
 
 func TestT(t *testing.T) {
