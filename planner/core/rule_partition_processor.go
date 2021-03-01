@@ -757,16 +757,19 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 
 		fn = raw
 		args := fn.GetArgs()
+		monotonous = getMonotoneMode(raw.FuncName.L)
+		if expression.ExtractColumnSet(args).Len() > 1 {
+			monotonous = monotoneModeInvalid
+		}
+		if monotonous == monotoneModeInvalid {
+			return nil, nil, monotonous, nil
+		}
 		if len(args) > 0 {
-			if expression.ExtractColumnSet(args).Len() > 1 {
-				return nil, nil, monotonous, err
-			}
 			arg0 := args[0]
 			if c, ok1 := arg0.(*expression.Column); ok1 {
 				col = c
 			}
 		}
-		monotonous = getMonotoneMode(raw.FuncName.L)
 	case *expression.Column:
 		col = raw
 	}
@@ -859,7 +862,7 @@ func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Ex
 func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expression,
 	pruner *rangePruner) partitionRangeOR {
 	col, ok := args[0].(*expression.Column)
-	if !ok || col.ID != pruner.col.ID {
+	if !ok || col.ID != pruner.col.ID || pruner.monotonous == monotoneModeInvalid {
 		return pruner.fullRange()
 	}
 
