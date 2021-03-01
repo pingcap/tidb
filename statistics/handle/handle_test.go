@@ -762,6 +762,42 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	c.Assert(len(result.Rows()), Equals, 20)
 }
 
+func (s *testStatsSuite) TestGlobalStatsData(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`
+create table t (
+	a int,
+	key(a)
+)
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20)
+)`)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic-only'")
+	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	tk.MustExec("analyze table t")
+
+	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(
+		testkit.Rows("0 5", "0 3", "0 2")) // global row-count = sum(partition row-count)
+
+	// distinct, null_count, tot_col_size should be the sum of their values in partition-stats, and correlation should be 0
+	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
+		testkit.Rows("4 1 4 0", "2 1 2 1", "2 0 2 1"))
+
+	tk.MustQuery("show stats_buckets where is_index=0").Check(
+		testkit.Rows("test t global a 0 0 2 1 1 5 0", "test t global a 0 1 4 1 5 15 0",
+			"test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 5 5 0",
+			"test t p1 a 0 0 1 1 11 11 0", "test t p1 a 0 1 2 1 15 15 0"))
+	tk.MustQuery("show stats_buckets where is_index=1").Check(
+		testkit.Rows("test t global a 1 0 2 1 1 5 0", "test t global a 1 1 4 1 5 15 0",
+			"test t p0 a 1 0 1 1 1 1 0", "test t p0 a 1 1 2 1 5 5 0",
+			"test t p1 a 1 0 1 1 11 11 0", "test t p1 a 1 1 2 1 15 15 0"))
+}
+
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
