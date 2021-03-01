@@ -48,16 +48,12 @@ func (s *testSuite) TestMeta(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer func() {
-		// to fix: close fails
-		_ = store.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
 	}()
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
-	defer func() {
-		// to fix : occasion failure
-		_ = txn.Rollback()
-	}()
 
 	t := meta.NewMeta(txn)
 
@@ -351,11 +347,6 @@ func (s *testSuite) TestDDL(c *C) {
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
-
-	defer func() {
-		// to fix: codeText:"kv:8024", message:"invalid transaction"
-		_ = txn.Rollback()
-	}()
 
 	t := meta.NewMeta(txn)
 
