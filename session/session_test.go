@@ -3289,11 +3289,6 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.Labels = map[string]string{}
-		})
-	}()
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
 	if *withTiKV {
@@ -3383,9 +3378,8 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Labels["zone"] = "dc-1"
-	})
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("dc-1")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	// set txn_scope to local
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
