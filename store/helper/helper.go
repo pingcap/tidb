@@ -572,22 +572,6 @@ func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 	}
 }
 
-func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitionID int64) tableInfoWithKeyRange {
-	sk, ek := tablecodec.GetTableHandleKeyRange(partitionID)
-	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
-	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
-	return tableInfoWithKeyRange{
-		&TableInfo{
-			DB:      db,
-			Table:   table,
-			IsIndex: false,
-			Index:   nil,
-		},
-		startKey,
-		endKey,
-	}
-}
-
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
@@ -603,13 +587,7 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.
 	tables := []tableInfoWithKeyRange{}
 	for _, db := range schemas {
 		for _, table := range db.Tables {
-			if table.Partition != nil {
-				for _, partition := range table.Partition.Definitions {
-					tables = append(tables, newPartitionTableWithKeyRange(db, table, partition.ID))
-				}
-			} else {
-				tables = append(tables, newTableWithKeyRange(db, table))
-			}
+			tables = append(tables, newTableWithKeyRange(db, table))
 			for _, index := range table.Indices {
 				tables = append(tables, newIndexWithKeyRange(db, table, index))
 			}
