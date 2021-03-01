@@ -445,7 +445,7 @@ func (s *testPrepareSerialSuite) TestPrepareCacheForPartition(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("use test")
-	for _, val := range []string{string(variable.StaticOnly), string(variable.DynamicOnly)} {
+	for _, val := range []string{string(variable.Static), string(variable.Dynamic)} {
 		tk.MustExec("set @@tidb_partition_prune_mode = '" + val + "'")
 		// Test for PointGet and IndexRead.
 		tk.MustExec("drop table if exists t_index_read")
