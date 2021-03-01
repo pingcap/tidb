@@ -174,7 +174,8 @@ func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
 type DropStatsStmt struct {
 	stmtNode
 
-	Table *TableName
+	Table          *TableName
+	PartitionNames []model.CIStr
 }
 
 // Restore implements Node interface.
@@ -184,6 +185,15 @@ func (n *DropStatsStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while add table")
 	}
 
+	if len(n.PartitionNames) != 0 {
+		ctx.WriteKeyWord(" PARTITION ")
+	}
+	for i, partition := range n.PartitionNames {
+		if i != 0 {
+			ctx.WritePlain(",")
+		}
+		ctx.WriteName(partition.O)
+	}
 	return nil
 }
 
