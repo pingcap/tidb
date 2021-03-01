@@ -2855,7 +2855,7 @@ func testPartitionAddIndex(tk *testkit.TestKit, c *C, key string) {
 	idxName1 := "idx1"
 
 	f := func(end int, isPK bool) string {
-		dml := fmt.Sprintf("insert into partition_add_idx values")
+		dml := "insert into partition_add_idx values"
 		for i := 0; i < end; i++ {
 			dVal := 1988 + rand.Intn(30)
 			if isPK {
