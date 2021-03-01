@@ -632,39 +632,27 @@ func (s *testChunkSuite) TestSwapColumn(c *check.C) {
 	}
 
 	err := chk1.SwapColumn(0, chk2, 0)
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, check.IsNil)
 	checkRef()
 
 	err = chk1.SwapColumn(0, chk2, 1)
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, check.IsNil)
 	checkRef()
 
 	err = chk2.SwapColumn(1, chk2, 0)
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, check.IsNil)
 	checkRef()
 
 	err = chk2.SwapColumn(1, chk2, 1)
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, check.IsNil)
 	checkRef()
 
 	err = chk2.SwapColumn(1, chk2, 2)
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, check.IsNil)
 	checkRef()
 
 	err = chk2.SwapColumn(2, chk2, 0)
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, check.IsNil)
 	checkRef()
 }
 

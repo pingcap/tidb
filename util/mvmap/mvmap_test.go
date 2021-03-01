@@ -95,7 +95,7 @@ func TestFNVHash(t *testing.T) {
 	hash.Reset()
 	_, err := hash.Write(b)
 	if err != nil {
-		t.Errorf(err.Error())
+		t.Fatal(err)
 	}
 	sum2 := hash.Sum64()
 	if sum1 != sum2 {
