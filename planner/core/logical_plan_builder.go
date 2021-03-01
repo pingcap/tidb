@@ -4684,7 +4684,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 
 	var tableList []*ast.TableName
-	tableList = extractTableList(delete.TableRefs.TableRefs, tableList, true)
+	tableList = extractTableList(delete.TableRefs.TableRefs, tableList, false)
 
 	// Collect visitInfo.
 	if delete.Tables != nil {
@@ -5485,6 +5485,7 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			if x.AsName.L != "" && asName {
 				newTableName := *s
 				newTableName.Name = x.AsName
+				newTableName.Schema = model.NewCIStr("")
 				input = append(input, &newTableName)
 			} else {
 				input = append(input, s)
