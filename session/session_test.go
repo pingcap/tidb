@@ -3849,13 +3849,6 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		err := failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
 		c.Assert(err, IsNil)
 	}()
-	err = failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert", `return(true)`)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert")
-		c.Assert(err, IsNil)
-	}()
-
 	enableOOM := func(tk *testkit.TestKit, name, sql string) {
 		c.Logf("enable OOM, testcase: %v", name)
 		// larger than 4 copResponse, smaller than 5 copResponse
