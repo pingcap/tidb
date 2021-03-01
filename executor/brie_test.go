@@ -54,7 +54,11 @@ func brieTaskInfoToResult(info *brieTaskInfo) string {
 	arr = append(arr, info.execTime.String())
 	arr = append(arr, info.finishTime.String())
 	arr = append(arr, fmt.Sprintf("%d", info.connID))
-	arr = append(arr, info.message)
+	if len(info.message) > 0 {
+		arr = append(arr, info.message)
+	} else {
+		arr = append(arr, "NULL")
+	}
 	return strings.Join(arr, ", ") + "\n"
 }
 
@@ -149,5 +153,5 @@ func (s *testBRIESuite) TestFetchShowBRIE(c *C) {
 	info2Res := brieTaskInfoToResult(info2)
 	globalBRIEQueue.registerTask(ctx, info2)
 	globalBRIEQueue.clearTask(e.ctx.GetSessionVars().StmtCtx)
-	c.Assert(fetchShowBRIEResult(c, e, brieColTypes), Equals, info2Res+"NULL")
+	c.Assert(fetchShowBRIEResult(c, e, brieColTypes), Equals, info2Res)
 }
