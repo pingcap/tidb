@@ -4239,6 +4239,13 @@ DropStatsStmt:
 	{
 		$$ = &ast.DropStatsStmt{Table: $3.(*ast.TableName)}
 	}
+|	"DROP" "STATS" TableName "PARTITION" PartitionNameList
+	{
+		$$ = &ast.DropStatsStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $5.([]model.CIStr),
+		}
+	}
 
 RestrictOrCascadeOpt:
 	{}

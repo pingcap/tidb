@@ -2304,6 +2304,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop view if exists xxx", true, "DROP VIEW IF EXISTS `xxx`"},
 		{"drop view if exists xxx, yyy", true, "DROP VIEW IF EXISTS `xxx`, `yyy`"},
 		{"drop stats t", true, "DROP STATS `t`"},
+		{"drop stats t partition p0", true, "DROP STATS `t` PARTITION `p0`"},
+		{"drop stats t partition p0, p1, p2", true, "DROP STATS `t` PARTITION `p0`,`p1`,`p2`"},
+		{"drop stats t partition global", true, "DROP STATS `t` PARTITION `global`"},
 		// for issue 974
 		{`CREATE TABLE address (
 		id bigint(20) NOT NULL AUTO_INCREMENT,
