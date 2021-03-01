@@ -85,14 +85,6 @@ type nullableKey struct {
 	key kv.Key
 }
 
-// toString is used in log to avoid nil dereference panic.
-func toString(handle kv.Handle) string {
-	if handle == nil {
-		return "<nil>"
-	}
-	return handle.String()
-}
-
 // newContext gets a context. It is only used for adding column in reorganization state.
 func newContext(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
