@@ -35,14 +35,14 @@ The current window function implementation is like this (with a focus on process
    3. rangeFrameWindowProcessor, with RANGES frame constraint, i.e. the window is defined by value range, so it can vary (a lot) from row to row.
 6. For RN, it only uses `aggWindowProcessor`, as [the MySQL document](https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html) pointed out  
 > Standard SQL specifies that window functions that operate on the entire partition should have no frame clause. MySQL permits a frame clause for such functions but ignores it. These functions use the entire partition even if a frame is specified:
-CUME_DIST()
-DENSE_RANK()
-LAG()
-LEAD()
-NTILE()
-PERCENT_RANK()
-RANK()
-ROW_NUMBER()
+* CUME_DIST()
+* DENSE_RANK()
+* LAG()
+* LEAD()
+* NTILE()
+* PERCENT_RANK()
+* RANK()
+* ROW_NUMBER()
 
 7. In aggWindowProcessor, three functions are implemented  
    1. consumeGroupRows: call agg function’s UpdatePartialResult on all rows within a partition
@@ -102,12 +102,12 @@ Pipelining won't cause any compatibility issue.
 
 ## Implementation
 
-[ ] Create PipelinedWindowExec based on current implementation and modify the windowProcessor interface
-[ ] Change data flow, make Next() pulling data from windowProcessor, and windowProcessor calls fetchChild and process data at maximum effort
-[ ] Modify Slide semantic and add FinishUpdate function on SlidingWindowAggFunc interface, and modify correspondingly on each window function (
-[ ] Done pipelining for SlidingWindowAggFunc, add test to make sure it is correct 
-[ ] Modify RN to be SlidingWindowAggFunc, and add planner support
-[ ] Add test for RN
-[ ] Benchmark, make sure it has constant memory consumption and no execution time regression
+* [ ] Create PipelinedWindowExec based on current implementation and modify the windowProcessor interface
+* [ ] Change data flow, make Next() pulling data from windowProcessor, and windowProcessor calls fetchChild and process data at maximum effort
+* [ ] Modify Slide semantic and add FinishUpdate function on SlidingWindowAggFunc interface, and modify correspondingly on each window function (
+* [ ] Done pipelining for SlidingWindowAggFunc, add test to make sure it is correct 
+* [ ] Modify RN to be SlidingWindowAggFunc, and add planner support
+* [ ] Add test for RN
+* [ ] Benchmark, make sure it has constant memory consumption and no execution time regression
 
 
