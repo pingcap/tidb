@@ -257,6 +257,7 @@ func NewIntHandleCols(col *expression.Column) HandleCols {
 	return &IntHandleCols{col: col}
 }
 
+// GetCommonHandleDatum gets the original data for the common handle.
 func GetCommonHandleDatum(cols HandleCols, row chunk.Row) []types.Datum {
 	if cols.IsInt() {
 		return nil
