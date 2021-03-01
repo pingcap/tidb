@@ -64,7 +64,6 @@ type KVStore struct {
 	client       Client
 	pdClient     pd.Client
 	regionCache  *RegionCache
-	coprCache    *coprCache
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
 
@@ -109,7 +108,7 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 }
 
 // NewKVStore creates a new TiKV store instance.
-func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, coprCacheConfig *config.CoprocessorCache) (*KVStore, error) {
+func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client) (*KVStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -121,7 +120,6 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		client:          reqCollapse{client},
 		pdClient:        pdClient,
 		regionCache:     NewRegionCache(pdClient),
-		coprCache:       nil,
 		kv:              spkv,
 		safePoint:       0,
 		spTime:          time.Now(),
@@ -129,12 +127,6 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		replicaReadSeed: rand.Uint32(),
 	}
 	store.lockResolver = newLockResolver(store)
-
-	coprCache, err := newCoprCache(coprCacheConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	store.coprCache = coprCache
 
 	go store.runSafePointChecker()
 
@@ -227,9 +219,6 @@ func (s *KVStore) Close() error {
 		s.txnLatches.Close()
 	}
 	s.regionCache.Close()
-	if s.coprCache != nil {
-		s.coprCache.cache.Close()
-	}
 
 	if err := s.kv.Close(); err != nil {
 		return errors.Trace(err)
@@ -296,21 +285,6 @@ func (s *KVStore) getStalenessTimestamp(bo *Backoffer, txnScope string, prevSec 
 
 func (s *KVStore) nextReplicaReadSeed() uint32 {
 	return atomic.AddUint32(&s.replicaReadSeed, 1)
-}
-
-// GetClient gets a client instance.
-func (s *KVStore) GetClient() kv.Client {
-	return &CopClient{
-		store:           s,
-		replicaReadSeed: s.nextReplicaReadSeed(),
-	}
-}
-
-// GetMPPClient gets a mpp client instance.
-func (s *KVStore) GetMPPClient() kv.MPPClient {
-	return &MPPClient{
-		store: s,
-	}
 }
 
 // GetOracle gets a timestamp oracle client.

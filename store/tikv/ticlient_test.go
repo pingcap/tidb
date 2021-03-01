@@ -51,7 +51,7 @@ func NewTestStore(c *C) *KVStore {
 		c.Assert(err, IsNil)
 		spKV, err := NewEtcdSafePointKV(addrs, tlsConfig)
 		c.Assert(err, IsNil)
-		store, err := NewKVStore("test-store", &CodecPDClient{Client: pdClient}, spKV, NewRPCClient(securityConfig), nil)
+		store, err := NewKVStore("test-store", &CodecPDClient{Client: pdClient}, spKV, NewRPCClient(securityConfig))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)

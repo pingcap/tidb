@@ -93,7 +93,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.Cl
 		return nil, errors.Trace(err)
 	}
 
-	s, err := NewKVStore(uuid, &CodecPDClient{pdCli}, spkv, NewRPCClient(security), nil)
+	s, err := NewKVStore(uuid, &CodecPDClient{pdCli}, spkv, NewRPCClient(security))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
