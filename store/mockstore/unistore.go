@@ -92,27 +92,27 @@ func (s *mockStorage) Describe() string {
 // Begin a global transaction.
 func (s *mockStorage) Begin() (kv.Transaction, error) {
 	txn, err := s.KVStore.Begin()
-	return NewTiKVTxn(txn, err)
+	return newTiKVTxn(txn, err)
 }
 
 func (s *mockStorage) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
 	txn, err := s.KVStore.BeginWithTxnScope(txnScope)
-	return NewTiKVTxn(txn, err)
+	return newTiKVTxn(txn, err)
 }
 
 // BeginWithStartTS begins a transaction with startTS.
 func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
 	txn, err := s.KVStore.BeginWithStartTS(txnScope, startTS)
-	return NewTiKVTxn(txn, err)
+	return newTiKVTxn(txn, err)
 }
 
 // BeginWithExactStaleness begins transaction with given staleness
 func (s *mockStorage) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
 	txn, err := s.KVStore.BeginWithExactStaleness(txnScope, prevSec)
-	return NewTiKVTxn(txn, err)
+	return newTiKVTxn(txn, err)
 }
 
-func NewTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
+func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
