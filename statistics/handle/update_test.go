@@ -357,7 +357,7 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(string(s.do.StatsHandle().CurrentPruneMode())))
 	testKit.MustExec("use test")
-	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+	testkit.WithPruneMode(testKit, variable.Static, func() {
 		err := s.do.StatsHandle().RefreshVars()
 		c.Assert(err, IsNil)
 		testKit.MustExec("drop table if exists t")
@@ -410,7 +410,7 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t (a varchar(20))")
 
@@ -510,7 +510,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
@@ -750,7 +750,7 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec("create table t (a bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (30))")
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
@@ -971,7 +971,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec(`create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))
 			    partition by range (a) (
 			    partition p0 values less than (3),
@@ -1104,7 +1104,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t with 0 topn")
@@ -1164,7 +1164,7 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (6))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t")
@@ -2066,4 +2066,66 @@ func (s *testStatsSuite) TestFeedbackCounter(c *C) {
 	err = metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(newNum)
 	c.Assert(err, IsNil)
 	c.Assert(subtraction(newNum, oldNum), Equals, 20)
+}
+
+func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testkit.WithPruneMode(testKit, variable.DynamicOnly, func() {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t")
+		testKit.MustExec(`create table t (a int, b varchar(10), index idx_ab(a, b))
+					partition by range (a) (
+					partition p0 values less than (10),
+					partition p1 values less than (20),
+					partition p2 values less than (30))`)
+
+		do := s.do
+		is := do.InfoSchema()
+		h := do.StatsHandle()
+		c.Assert(h.RefreshVars(), IsNil)
+		c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+
+		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		testKit.MustExec("analyze table t")
+
+		handle.AutoAnalyzeMinCnt = 0
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.1")
+		defer func() {
+			handle.AutoAnalyzeMinCnt = 1000
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+		}()
+
+		c.Assert(h.Update(is), IsNil)
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo := tbl.Meta()
+		pi := tableInfo.GetPartitionInfo()
+		globalStats := h.GetTableStats(tableInfo)
+		partitionStats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(globalStats.Count, Equals, int64(6))
+		c.Assert(globalStats.ModifyCount, Equals, int64(0))
+		c.Assert(partitionStats.Count, Equals, int64(2))
+		c.Assert(partitionStats.ModifyCount, Equals, int64(0))
+
+		testKit.MustExec("insert into t values (3, 'g')")
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		globalStats = h.GetTableStats(tableInfo)
+		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(globalStats.Count, Equals, int64(6))
+		c.Assert(globalStats.ModifyCount, Equals, int64(0))
+		c.Assert(partitionStats.Count, Equals, int64(3))
+		c.Assert(partitionStats.ModifyCount, Equals, int64(1))
+
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		globalStats = h.GetTableStats(tableInfo)
+		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(globalStats.Count, Equals, int64(7))
+		c.Assert(globalStats.ModifyCount, Equals, int64(0))
+		c.Assert(partitionStats.Count, Equals, int64(3))
+		c.Assert(partitionStats.ModifyCount, Equals, int64(0))
+	})
 }
