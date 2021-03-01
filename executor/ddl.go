@@ -201,6 +201,9 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 
 func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().AlterSchema(e.ctx, s)
+	if err == nil {
+		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	}
 	return err
 }
 

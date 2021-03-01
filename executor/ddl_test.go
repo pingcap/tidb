@@ -391,6 +391,15 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
 	tk.MustExec("drop database drop_test;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustExec("create database if not exists drop_test DEFAULT CHARACTER SET utf8 DEFAULT COLLATE utf8_general_ci;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.MustExec("use drop_test;")
+	tk.MustExec("create table r1 (i int);")
+	tk.MustExec("create table r2 (i int);")
+	tk.MustExec("create table r3 (i int);")
+	tk.MustExec("create table r4 (i int);")
+	tk.MustExec("drop database if exists drop_test;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(4))
 
 	_, err = tk.Exec("drop database mysql")
 	c.Assert(err, NotNil)
@@ -466,6 +475,19 @@ func (s *testSuite6) TestCreateDropIndex(c *C) {
 	tk.MustExec("drop index idx_a on drop_test")
 	tk.MustExec("drop table drop_test")
 }
+
+func (s *testSuite6) TestAlterDatabase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists alter_db_test DEFAULT CHARACTER SET utf8 DEFAULT COLLATE utf8_general_ci;")
+	tk.MustExec("use alter_db_test;")
+	tk.MustExec("create table r1 (i int);")
+	tk.MustExec("create table r2 (i int);")
+	tk.MustExec("create table r3 (i int);")
+	tk.MustExec("ALTER DATABASE alter_db_test CHARACTER SET utf8 COLLATE utf8_unicode_ci;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.MustExec("drop database alter_db_test;")
+}
+
 
 func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
