@@ -58,7 +58,7 @@ type SplitIndexRegionExec struct {
 	splitRegionResult
 }
 
-//nolint:structcheck
+// nolint:structcheck
 type splitRegionResult struct {
 	splitRegions     int
 	finishScatterNum int

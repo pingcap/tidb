@@ -46,7 +46,7 @@ import (
 )
 
 // InsertValues is the data to insert.
-//nolint:structcheck
+// nolint:structcheck
 type InsertValues struct {
 	baseExecutor
 
