@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	storepkg "github.com/pingcap/tidb/store"
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
@@ -69,7 +69,7 @@ var (
 
 // Init initializes information.
 func Init() {
-	driver := storepkg.TiKVDriver{}
+	driver := driver.TiKVDriver{}
 	var err error
 	store, err = driver.Open(fmt.Sprintf("tikv://%s?cluster=1", *pdAddr))
 	terror.MustNil(err)

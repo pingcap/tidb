@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store"
+	tidbdriver "github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -96,11 +97,11 @@ type TestDDLSuite struct {
 }
 
 func (s *TestDDLSuite) SetUpSuite(c *C) {
-	logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	c.Assert(err, IsNil)
 
 	s.quit = make(chan struct{})
 
-	var err error
 	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
 	c.Assert(err, IsNil)
 
@@ -303,7 +304,11 @@ func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
 		}
 		log.Warnf("ping addr %v failed, retry count %d err %v", addr, i, err)
 
-		db.Close()
+		err = db.Close()
+		if err != nil {
+			log.Warnf("close db failed, retry count %d err %v", i, err)
+			break
+		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
 	}
@@ -1060,5 +1065,5 @@ func addEnvPath(newPath string) {
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-	store.Register("tikv", store.TiKVDriver{})
+	store.Register("tikv", tidbdriver.TiKVDriver{})
 }
