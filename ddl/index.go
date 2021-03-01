@@ -1130,9 +1130,8 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 		} else if w.distinctCheckFlags[i] {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
-			rsData := tables.TryGetHandleRestoredDataWrapper(w.table, idxRecords[i].vals, nil)
 			needRsData := tables.NeedRestoredData(w.index.Meta().Columns, w.table.Meta().Columns)
-			val, err := tablecodec.GenIndexValuePortal(stmtCtx, w.table.Meta(), w.index.Meta(), needRsData, w.distinctCheckFlags[i], false, idxRecords[i].vals, idxRecords[i].handle, 0, rsData)
+			val, err := tablecodec.GenIndexValuePortal(stmtCtx, w.table.Meta(), w.index.Meta(), needRsData, w.distinctCheckFlags[i], false, idxRecords[i].vals, idxRecords[i].handle, 0, idxRecords[i].rsData)
 			if err != nil {
 				return errors.Trace(err)
 			}
