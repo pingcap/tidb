@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package session_test
 
 import (
 	. "github.com/pingcap/check"
@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-type testClusteredSuiteBase struct{ baseTestSuite }
+type testClusteredSuiteBase struct{ testSessionSuiteBase }
 type testClusteredSuite struct{ testClusteredSuiteBase }
 type testClusteredSerialSuite struct{ testClusteredSuiteBase }
 
@@ -49,6 +49,15 @@ func (s *testClusteredSuite) TestClusteredUnionScan(c *C) {
 	tk.MustExec("update t set c = 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
 	tk.MustExec("rollback")
+}
+
+func (s *testClusteredSuite) TestClusteredPrefixColumn(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(cb varchar(12), ci int, v int, primary key(cb(1)), key idx_1(cb))")
+	tk.MustExec("insert into t1 values('PvtYW2', 1, 1)")
+	tk.MustQuery("select cb from t1").Check(testkit.Rows("PvtYW2"))
+	tk.MustQuery("select * from t1").Check(testkit.Rows("PvtYW2 1 1"))
 }
 
 func (s *testClusteredSuite) TestClusteredUnionScanIndexLookup(c *C) {
