@@ -64,7 +64,7 @@ type tikvSnapshot struct {
 	isStaleness     bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	matchStoreLabels []*metapb.StoreLabel
-	resolvedLocks   *util.TSSet
+	resolvedLocks    *util.TSSet
 
 	// Cache the result of BatchGet.
 	// The invariance is that calling BatchGet multiple times using the same start ts,
