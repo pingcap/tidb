@@ -55,7 +55,7 @@ func brieTaskInfoToResult(info *brieTaskInfo) string {
 	arr = append(arr, info.finishTime.String())
 	arr = append(arr, fmt.Sprintf("%d", info.connID))
 	arr = append(arr, info.message)
-	return strings.Join(arr, ", ")
+	return strings.Join(arr, ", ") + "\n"
 }
 
 func fetchShowBRIEResult(c *C, e *ShowExec, brieColTypes []*types.FieldType) string {
