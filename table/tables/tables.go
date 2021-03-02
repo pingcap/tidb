@@ -453,7 +453,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		oldLen := size - 1
 		colSize[col.ID] = int64(newLen - oldLen)
 	}
-	sessVars.TxnCtx.UpdateDeltaForTable(t.tableID, t.physicalTableID, 0, 1, colSize, sessVars.UseDynamicPartitionPrune())
+	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSize)
 	return nil
 }
 
@@ -574,6 +574,21 @@ func TryGetCommonPkColumnIds(tbl *model.TableInfo) []int64 {
 		pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
 	}
 	return pkColIds
+}
+
+// PrimaryPrefixColumnIDs get prefix column ids in primary key.
+func PrimaryPrefixColumnIDs(tbl *model.TableInfo) (prefixCols []int64) {
+	for _, idx := range tbl.Indices {
+		if !idx.Primary {
+			continue
+		}
+		for _, col := range idx.Columns {
+			if col.Length > 0 && tbl.Columns[col.Offset].Flen > col.Length {
+				prefixCols = append(prefixCols, tbl.Columns[col.Offset].ID)
+			}
+		}
+	}
+	return
 }
 
 // TryGetCommonPkColumns get the primary key columns if the table has common handle.
@@ -807,7 +822,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		}
 		colSize[col.ID] = int64(size) - 1
 	}
-	sessVars.TxnCtx.UpdateDeltaForTable(t.tableID, t.physicalTableID, 1, 1, colSize, sessVars.UseDynamicPartitionPrune())
+	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
 	return recordID, nil
 }
 
@@ -1032,7 +1047,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		}
 		colSize[col.ID] = -int64(size - 1)
 	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.tableID, t.physicalTableID, -1, 1, colSize, ctx.GetSessionVars().UseDynamicPartitionPrune())
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.physicalTableID, -1, 1, colSize)
 	return err
 }
 

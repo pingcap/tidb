@@ -94,7 +94,7 @@ func (s *testLockSuite) putKV(c *C, key, value []byte) (uint64, uint64) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	return txn.StartTS(), txn.(*tikvTxn).commitTS
+	return txn.StartTS(), txn.commitTS
 }
 
 func (s *testLockSuite) prepareAlphabetLocks(c *C) {
@@ -212,7 +212,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set(kv.Key("key"), []byte("value"))
 	c.Assert(err, IsNil)
-	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
+	s.prewriteTxnWithTTL(c, txn, 1000)
 
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 	lr := newLockResolver(s.store)
@@ -253,7 +253,7 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set(kv.Key("key"), []byte("value"))
 	c.Assert(err, IsNil)
-	s.prewriteTxn(c, txn.(*tikvTxn))
+	s.prewriteTxn(c, txn)
 
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 	newTTL, err := sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 6666)
@@ -282,7 +282,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set(kv.Key("second"), []byte("xxx"))
 	c.Assert(err, IsNil)
-	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
+	s.prewriteTxnWithTTL(c, txn, 1000)
 
 	o := s.store.GetOracle()
 	currentTS, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
@@ -335,10 +335,10 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set(kv.Key("second"), []byte("xxx"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 0)
+	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	// Increase lock TTL to make CI more stable.
-	committer.lockTTL = txnLockTTL(txn.(*tikvTxn).startTime, 200*1024*1024)
+	committer.lockTTL = txnLockTTL(txn.startTime, 200*1024*1024)
 
 	// Only prewrite the secondary key to simulate a concurrent prewrite case:
 	// prewrite secondary regions success and prewrite the primary region is pending.
@@ -391,11 +391,11 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	c.Assert(status.action, Equals, kvrpcpb.Action_LockNotExistRollback)
 }
 
-func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
+func (s *testLockSuite) prewriteTxn(c *C, txn *KVTxn) {
 	s.prewriteTxnWithTTL(c, txn, 0)
 }
 
-func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *tikvTxn, ttl uint64) {
+func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *KVTxn, ttl uint64) {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	if ttl > 0 {
@@ -443,7 +443,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	err = txn.Set(kv.Key("key"), []byte("value"))
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond)
-	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 3100)
+	s.prewriteTxnWithTTL(c, txn, 3100)
 	l := s.mustGetLock(c, []byte("key"))
 	c.Assert(l.TTL >= defaultLockTTL, IsTrue)
 
@@ -458,7 +458,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 		err = txn.Set(kv.Key(k), []byte(v))
 		c.Assert(err, IsNil)
 	}
-	s.prewriteTxn(c, txn.(*tikvTxn))
+	s.prewriteTxn(c, txn)
 	l = s.mustGetLock(c, []byte("key"))
 	s.ttlEquals(c, l.TTL, uint64(ttlFactor*2)+uint64(time.Since(start)/time.Millisecond))
 
@@ -469,7 +469,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	time.Sleep(time.Millisecond * 50)
 	err = txn.Set(kv.Key("key"), []byte("value"))
 	c.Assert(err, IsNil)
-	s.prewriteTxn(c, txn.(*tikvTxn))
+	s.prewriteTxn(c, txn)
 	l = s.mustGetLock(c, []byte("key"))
 	s.ttlEquals(c, l.TTL, defaultLockTTL+uint64(time.Since(start)/time.Millisecond))
 }
@@ -482,7 +482,7 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set(kv.Key("k2"), []byte("v2"))
 	c.Assert(err, IsNil)
-	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 20000)
+	s.prewriteTxnWithTTL(c, txn, 20000)
 
 	// The second transaction is an async commit transaction
 	txn, err = s.store.Begin()
@@ -491,7 +491,7 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set(kv.Key("k4"), []byte("v4"))
 	c.Assert(err, IsNil)
-	tikvTxn := txn.(*tikvTxn)
+	tikvTxn := txn
 	committer, err := newTwoPhaseCommitterWithInit(tikvTxn, 0)
 	c.Assert(err, IsNil)
 	committer.setAsyncCommit(true)
@@ -555,7 +555,7 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 
 	mockValue := fmt.Sprintf(`return(%d)`, txn.StartTS())
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS", mockValue), IsNil)
-	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
+	s.prewriteTxnWithTTL(c, txn, 1000)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS"), IsNil)
 
 	lock := s.mustGetLock(c, []byte("key"))
@@ -609,7 +609,7 @@ func (s *testLockSuite) prepareTxnFallenBackFromAsyncCommit(c *C) {
 	err = txn.Set([]byte("fb2"), []byte("2"))
 	c.Assert(err, IsNil)
 
-	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 1)
+	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
 	c.Assert(err, IsNil)
 	c.Assert(committer.mutations.Len(), Equals, 2)
 	committer.lockTTL = 0
