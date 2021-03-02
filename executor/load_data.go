@@ -406,29 +406,11 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 
 func (e *LoadDataInfo) isInQuoter(bs []byte) bool {
 	inQuoter := false
-
-	type termType int
-	const (
-		none termType = iota
-		enclosed
-		escaped
-	)
-
-	cmpTerm := func(bs byte) (typ termType) {
-		if bs == e.FieldsInfo.Enclosed {
-			return enclosed
-		}
-		if bs == e.FieldsInfo.Escaped {
-			return escaped
-		}
-		return none
-	}
-
 	for i := 0; i < len(bs); i++ {
-		switch cmpTerm(bs[i]) {
-		case enclosed:
+		switch bs[i] {
+		case e.FieldsInfo.Enclosed:
 			inQuoter = !inQuoter
-		case escaped:
+		case e.FieldsInfo.Escaped:
 			i++
 		default:
 		}
