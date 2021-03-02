@@ -501,6 +501,7 @@ var partitionsCols = []columnInfo{
 	{name: "PARTITION_COMMENT", tp: mysql.TypeVarchar, size: 80},
 	{name: "NODEGROUP", tp: mysql.TypeVarchar, size: 12},
 	{name: "TABLESPACE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -723,6 +724,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "INFO", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "DIGEST", tp: mysql.TypeVarchar, size: 64, deflt: ""},
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 }
 
@@ -1457,7 +1459,7 @@ func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
 func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get PD servers info.
 	store := ctx.GetStore()
-	etcd, ok := store.(tikv.EtcdBackend)
+	etcd, ok := store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}

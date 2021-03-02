@@ -58,7 +58,7 @@ func (s *testStatsSuite) TestGCStats(c *C) {
 func (s *testStatsSuite) TestGCPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 		testKit.MustExec(`create table t (a bigint(64), b bigint(64), index idx(a, b))
@@ -100,8 +100,8 @@ func (s *testStatsSuite) TestGCExtendedStats(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
-	testKit.MustExec("create statistics s1(correlation) on t(a,b)")
-	testKit.MustExec("create statistics s2(correlation) on t(b,c)")
+	testKit.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	testKit.MustExec("alter table t add stats_extended s2 correlation(b,c)")
 	testKit.MustExec("analyze table t")
 
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(

@@ -68,22 +68,22 @@ func (s *testTimeSuite) TestLocal(c *C) {
 }
 
 func (s *testTimeSuite) TestInferOneStepLinkForPath(c *C) {
-	os.Remove("/tmp/testlink1")
-	os.Remove("/tmp/testlink2")
-	os.Remove("/tmp/testlink3")
+	os.Remove(filepath.Join(os.TempDir(), "testlink1"))
+	os.Remove(filepath.Join(os.TempDir(), "testlink2"))
+	os.Remove(filepath.Join(os.TempDir(), "testlink3"))
 	var link2, link3 string
 	var err error
 	var link1 *os.File
-	link1, err = os.Create("/tmp/testlink1")
+	link1, err = os.Create(filepath.Join(os.TempDir(), "testlink1"))
 	c.Assert(err, IsNil)
-	err = os.Symlink(link1.Name(), "/tmp/testlink2")
+	err = os.Symlink(link1.Name(), filepath.Join(os.TempDir(), "testlink2"))
 	c.Assert(err, IsNil)
-	err = os.Symlink("/tmp/testlink2", "/tmp/testlink3")
+	err = os.Symlink(filepath.Join(os.TempDir(), "testlink2"), filepath.Join(os.TempDir(), "testlink3"))
 	c.Assert(err, IsNil)
-	link2, err = inferOneStepLinkForPath("/tmp/testlink3")
+	link2, err = inferOneStepLinkForPath(filepath.Join(os.TempDir(), "testlink3"))
 	c.Assert(err, IsNil)
-	c.Assert(link2, Equals, "/tmp/testlink2")
-	link3, err = filepath.EvalSymlinks("/tmp/testlink3")
+	c.Assert(link2, Equals, filepath.Join(os.TempDir(), "testlink2"))
+	link3, err = filepath.EvalSymlinks(filepath.Join(os.TempDir(), "testlink3"))
 	c.Assert(err, IsNil)
 	c.Assert(strings.Index(link3, link1.Name()), Not(Equals), -1)
 }

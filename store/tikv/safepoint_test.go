@@ -26,7 +26,7 @@ import (
 
 type testSafePointSuite struct {
 	OneByOneSuite
-	store  *tikvStore
+	store  *KVStore
 	prefix string
 }
 
@@ -34,7 +34,7 @@ var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c).(*tikvStore)
+	s.store = NewTestStore(c)
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 }
 
@@ -44,10 +44,10 @@ func (s *testSafePointSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSafePointSuite) beginTxn(c *C) *tikvTxn {
+func (s *testSafePointSuite) beginTxn(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 func mymakeKeys(rowNum int, prefix string) []kv.Key {

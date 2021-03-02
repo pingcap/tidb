@@ -364,7 +364,7 @@ func (s *testIntegrationSuite7) TestCreateTableWithRangeColumnPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`
 create table log_message_1 (
     add_time datetime not null default '2000-01-01 00:00:00',
@@ -575,6 +575,7 @@ func (s *testIntegrationSuite1) TestDisableTablePartition(c *C) {
 	tk.MustExec("use test;")
 	for _, v := range []string{"'AUTO'", "'OFF'", "0", "'ON'"} {
 		tk.MustExec("set @@session.tidb_enable_table_partition = " + v)
+		tk.MustExec("set @@session.tidb_enable_list_partition = OFF")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),partition p1 values in (3,4));`)
@@ -604,7 +605,7 @@ func (s *testIntegrationSuite1) generatePartitionTableByNum(num int) string {
 func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -744,7 +745,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -942,7 +943,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartitionByList(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1057,7 +1058,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartitionByListColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -1124,7 +1125,7 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartitionByList(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1159,7 +1160,7 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartitionByListColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -1196,7 +1197,7 @@ func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByList(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1227,7 +1228,7 @@ func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByListColumns(c *
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -1635,6 +1636,15 @@ func (s *testIntegrationSuite7) TestAlterTableExchangePartition(c *C) {
 		id INT NOT NULL
 	);`)
 	tk.MustExec(`INSERT INTO e VALUES (1669),(337),(16),(2005)`)
+	// test disable exchange partition
+	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it"))
+	tk.MustQuery("select * from e").Check(testkit.Rows("16", "1669", "337", "2005"))
+	tk.MustQuery("select * from e2").Check(testkit.Rows())
+
+	// enable exchange partition
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
 	tk.MustQuery("select * from e2").Check(testkit.Rows("16"))
 	tk.MustQuery("select * from e").Check(testkit.Rows("1669", "337", "2005"))
@@ -2021,6 +2031,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
 	for i, t := range cases {
 		tk.MustExec(t.ptSQL)
 		tk.MustExec(t.ntSQL)
@@ -2034,6 +2045,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			tk.MustExec(t.exchangeSQL)
 		}
 	}
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
 }
 
 func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
@@ -2042,6 +2054,8 @@ func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
 	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustExec("drop table if exists pt1;")
 	tk.MustExec("create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;")
 	tk.MustExec("alter table pt1 add index idx((a+c));")
@@ -2843,7 +2857,7 @@ func testPartitionAddIndex(tk *testkit.TestKit, c *C, key string) {
 	idxName1 := "idx1"
 
 	f := func(end int, isPK bool) string {
-		dml := fmt.Sprintf("insert into partition_add_idx values")
+		dml := "insert into partition_add_idx values"
 		for i := 0; i < end; i++ {
 			dVal := 1988 + rand.Intn(30)
 			if isPK {
@@ -3173,6 +3187,8 @@ func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 			)`)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
+	tk2.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk2.MustExec("set @@tidb_enable_exchange_partition=0")
 
 	tk.MustExec("begin")
 	tk.MustExec("insert into schema_change values (1, '2019-12-25 13:27:42')")
@@ -3319,7 +3335,7 @@ func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
 func (s *testIntegrationSuite7) TestPartitionListWithTimeType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));")
 	tk.MustExec("insert into t_list1(a) values (20180203);")
 	tk.MustQuery(`select * from t_list1 partition (p0);`).Check(testkit.Rows("2018-02-03"))
@@ -3330,7 +3346,8 @@ func (s *testIntegrationSuite7) TestPartitionListWithNewCollation(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustGetErrCode(`create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));`, mysql.ErrMultipleDefConstInListPart)
 	tk.MustExec("create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));")
 	tk.MustExec("insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');")
