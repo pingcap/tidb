@@ -389,27 +389,27 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 	err = tk.ExecToErr("select * from t;")
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 
-	tk.MustExec("drop database if exists drop_test;")
-	tk.MustExec("create database drop_test;")
+	tk.MustExec("drop database if exists affected_rows_test;")
+	tk.MustExec("create database affected_rows_test;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
-	tk.MustExec("drop database drop_test;")
+	tk.MustExec("drop database affected_rows_test;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
-	tk.MustExec("create database drop_test;")
+	tk.MustExec("create database affected_rows_test;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
-	tk.MustExec("use drop_test;")
+	tk.MustExec("use affected_rows_test;")
 	tk.MustExec("create table r1 (i int);")
 	tk.MustExec("create table r2 (i int);")
 	tk.MustExec("create table r3 (i int);")
-	tk.MustExec("drop database drop_test;")
+	tk.MustExec("drop database affected_rows_test;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(3))
-	tk.MustExec("create database drop_test;")
+	tk.MustExec("create database if not exists affected_rows_test DEFAULT CHARACTER SET utf8 DEFAULT COLLATE utf8_general_ci;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
-	tk.MustExec("use drop_test;")
+	tk.MustExec("use affected_rows_test;")
 	tk.MustExec("create table r1 (i int);")
 	tk.MustExec("create table r2 (i int);")
 	tk.MustExec("create table r3 (i int);")
 	tk.MustExec("create table r4 (i int);")
-	tk.MustExec("drop database if exists drop_test;")
+	tk.MustExec("drop database if exists affected_rows_test;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(4))
 
 	_, err = tk.Exec("drop database mysql")
@@ -435,6 +435,15 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
 	))
 	tk.MustGetErrMsg("create database charset_test charset utf8 collate utf8mb4_unicode_ci;", "[ddl:1253]COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'utf8'")
+
+	tk.MustExec("create database if not exists database_exists_test;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows())
+	tk.MustExec("create database if not exists database_exists_test;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1008 Can't create database 'database_exists_test'; database exists"))
+	tk.MustExec("drop database if exists database_exists_test;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows())
+	tk.MustExec("drop database if exists database_exists_test;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1008 Can't drop database 'database_exists_test'; database doesn't exist"))
 }
 
 func (s *testSuite6) TestCreateDropTable(c *C) {
@@ -489,7 +498,7 @@ func (s *testSuite6) TestCreateDropIndex(c *C) {
 
 func (s *testSuite6) TestAlterDatabase(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists alter_db_test DEFAULT CHARACTER SET utf8 DEFAULT COLLATE utf8_general_ci;")
+	tk.MustExec("create database alter_db_test;")
 	tk.MustExec("use alter_db_test;")
 	tk.MustExec("create table r1 (i int);")
 	tk.MustExec("create table r2 (i int);")

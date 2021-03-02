@@ -190,6 +190,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
 	}
@@ -234,22 +235,24 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	}
 
 	var err error
+	sessionVars := e.ctx.GetSessionVars()
 	defer func() {
 		if err == nil {
 			tables := e.is.SchemaTables(dbName)
-			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(len(tables)))
+			sessionVars.StmtCtx.AddAffectedRows(uint64(len(tables)))
 		}
 	}()
 
 	err = domain.GetDomain(e.ctx).DDL().DropSchema(e.ctx, dbName)
 	if infoschema.ErrDatabaseNotExists.Equal(err) {
+		errDatabaseDropExists := infoschema.ErrDatabaseDropExists.GenWithStackByArgs(s.Name)
 		if s.IfExists {
+			sessionVars.StmtCtx.AppendNote(errDatabaseDropExists)
 			err = nil
 		} else {
-			err = infoschema.ErrDatabaseDropExists.GenWithStackByArgs(s.Name)
+			err = errDatabaseDropExists
 		}
 	}
-	sessionVars := e.ctx.GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
 		err = variable.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum(mysql.DefaultCharset))
