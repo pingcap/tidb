@@ -1147,15 +1147,12 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 
-	stmtNodes, err := s.ParseWithParams(ctx, sql, args...)
+	stmt, err := s.ParseWithParams(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
-	if len(stmtNodes) != 1 {
-		return nil, errors.New("Executing multiple statements internally is not supported")
-	}
 
-	rs, err := s.ExecuteStmt(ctx, stmtNodes[0])
+	rs, err := s.ExecuteStmt(ctx, stmt)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
