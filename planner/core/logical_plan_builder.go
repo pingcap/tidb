@@ -5496,7 +5496,7 @@ func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, in
 		collectTableName(x.Right, updatableName, info)
 	case *ast.TableSource:
 		name := x.AsName.L
-		canUpdate := true
+		var canUpdate bool
 		var s *ast.TableName
 		if s, canUpdate = x.Source.(*ast.TableName); canUpdate {
 			if name == "" {
