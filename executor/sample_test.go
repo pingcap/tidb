@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -35,7 +34,6 @@ type testTableSampleSuite struct {
 	cluster cluster.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
-	ctx     *mock.Context
 }
 
 func (s *testTableSampleSuite) SetUpSuite(c *C) {
