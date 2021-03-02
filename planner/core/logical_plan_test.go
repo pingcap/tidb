@@ -1755,6 +1755,7 @@ func (s *testPlanSuite) TestWindowLogicalPlanAmbiguous(c *C) {
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil)
 		p, _, err := BuildLogicalPlan(context.Background(), s.ctx, stmt, s.is)
+		c.Assert(err, IsNil)
 		if planString == "" {
 			planString = ToString(p)
 		} else {
