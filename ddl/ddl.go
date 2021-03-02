@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -79,8 +80,6 @@ const (
 )
 
 var (
-	// TableIndexCountLimit is limit of the number of indexes in a table.
-	TableIndexCountLimit = uint32(64)
 	// EnableSplitTableRegion is a flag to decide whether to split a new region for
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
@@ -153,8 +152,8 @@ type DDL interface {
 	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
 	Stop() error
-	// RegisterEventCh registers event channel for ddl.
-	RegisterEventCh(chan<- *util.Event)
+	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
+	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() util.SchemaSyncer
 	// OwnerManager gets the owner manager.
@@ -199,6 +198,7 @@ type ddlCtx struct {
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoHandle   *infoschema.Handle
+	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 
 	// hook may be modified.
@@ -218,9 +218,10 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
-// RegisterEventCh registers passed channel for ddl Event.
-func (d *ddl) RegisterEventCh(ch chan<- *util.Event) {
-	d.ddlEventCh = ch
+// RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
+func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
+	d.ddlCtx.statsHandle = h
+	d.ddlEventCh = h.DDLEventCh()
 }
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
@@ -412,7 +413,7 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 
 func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	var ret []int64
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
 				failpoint.Return(errors.New("gofail genGlobalIDs error"))
@@ -441,18 +442,6 @@ func (d *ddl) OwnerManager() owner.Manager {
 // GetID implements DDL.GetID interface.
 func (d *ddl) GetID() string {
 	return d.uuid
-}
-
-func checkJobMaxInterval(job *model.Job) time.Duration {
-	// The job of adding index takes more time to process.
-	// So it uses the longer time.
-	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-		return 3 * time.Second
-	}
-	if job.Type == model.ActionCreateTable || job.Type == model.ActionCreateSchema {
-		return 500 * time.Millisecond
-	}
-	return 1 * time.Second
 }
 
 var (

@@ -363,7 +363,8 @@ func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.S
 	opt := grpc.WithInsecure()
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
+		clusterSecurity := security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -527,7 +528,8 @@ func (e *clusterLogRetriever) startRetrieving(
 	opt := grpc.WithInsecure()
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
+		clusterSecurity := security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

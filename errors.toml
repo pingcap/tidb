@@ -491,6 +491,11 @@ error = '''
 Deadlock found when trying to get lock; try restarting transaction
 '''
 
+["executor:1242"]
+error = '''
+Subquery returns more than 1 row
+'''
+
 ["executor:1295"]
 error = '''
 This command is not supported in the prepared statement protocol yet
@@ -1564,6 +1569,11 @@ invalid week mode format: '%v'
 ["types:8129"]
 error = '''
 TiDB does not yet support JSON objects with the key length >= 65536
+'''
+
+["types:8131"]
+error = '''
+Build global-level stats failed due to missing partition-level stats
 '''
 
 ["variable:1193"]

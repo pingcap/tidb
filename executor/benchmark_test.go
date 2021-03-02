@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/core"
@@ -1526,10 +1528,8 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, 
 		innerJoinKeys = append(innerJoinKeys, innerCols[keyIdx])
 	}
 	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
-	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	for i := range outerJoinKeys {
 		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
-		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
 	defaultValues := make([]types.Datum, len(innerCols))
@@ -2014,5 +2014,60 @@ func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
 		if n != len(hugeLine) {
 			b.Fatalf("len %v, expected: %v", n, len(hugeLine))
 		}
+	}
+}
+
+func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
+	b.ReportAllocs()
+	type testCase struct {
+		rowNum    int
+		expectedB int
+	}
+	cases := []testCase{
+		{
+			rowNum:    0,
+			expectedB: 0,
+		},
+		{
+			rowNum:    100,
+			expectedB: 4,
+		},
+		{
+			rowNum:    10000,
+			expectedB: 11,
+		},
+		{
+			rowNum:    1000000,
+			expectedB: 18,
+		},
+		{
+			rowNum:    851968, // 6.5 * (1 << 17)
+			expectedB: 17,
+		},
+		{
+			rowNum:    851969, // 6.5 * (1 << 17) + 1
+			expectedB: 18,
+		},
+		{
+			rowNum:    425984, // 6.5 * (1 << 16)
+			expectedB: 16,
+		},
+		{
+			rowNum:    425985, // 6.5 * (1 << 16) + 1
+			expectedB: 17,
+		},
+	}
+
+	for _, c := range cases {
+		b.Run(fmt.Sprintf("MapRows %v", c.rowNum), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				aggMap := make(aggPartialResultMapper)
+				tempSlice := make([]aggfuncs.PartialResult, 10)
+				for num := 0; num < c.rowNum; num++ {
+					aggMap[strconv.Itoa(num)] = tempSlice
+				}
+			}
+		})
 	}
 }

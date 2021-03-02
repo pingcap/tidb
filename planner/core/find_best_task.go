@@ -90,10 +90,6 @@ func (c *PlanCounterTp) IsForce() bool {
 	return *c != -1
 }
 
-// wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
-// these tasks one by one.
-var wholeTaskTypes = [...]property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.RootTaskType}
-
 var invalidTask = &rootTask{cst: math.MaxFloat64}
 
 // GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
@@ -243,6 +239,10 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
+
+		if curTask.invalid() {
+			continue
+		}
 
 		// An optimal task could not satisfy the property, so it should be converted here.
 		if _, ok := curTask.(*rootTask); !ok && prop.TaskTp == property.RootTaskType {

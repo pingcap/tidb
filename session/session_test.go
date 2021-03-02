@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -44,10 +45,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/copr"
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -75,6 +78,8 @@ var _ = Suite(&testIsolationSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
+var _ = Suite(&testClusteredSuite{})
+var _ = SerialSuites(&testClusteredSerialSuite{})
 
 type testSessionSuiteBase struct {
 	cluster cluster.Cluster
@@ -121,7 +126,7 @@ func clearStorage(store kv.Storage) error {
 	return txn.Commit(context.Background())
 }
 
-func clearETCD(ebd tikv.EtcdBackend) error {
+func clearETCD(ebd kv.EtcdBackend) error {
 	endpoints, err := ebd.EtcdAddrs()
 	if err != nil {
 		return err
@@ -177,15 +182,15 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	if *withTiKV {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
-		var d tikv.Driver
+		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
+		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", s.pdAddr))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
-		err = clearETCD(store.(tikv.EtcdBackend))
+		err = clearETCD(store.(kv.EtcdBackend))
 		c.Assert(err, IsNil)
 		session.ResetStoreForWithTiKVTest(store)
 		s.store = store
@@ -2697,8 +2702,6 @@ func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
 
 func (s *testSessionSuite3) TestEnablePartition(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set tidb_enable_table_partition=nightly")
-	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition NIGHTLY"))
 	tk.MustExec("set tidb_enable_table_partition=off")
 	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition OFF"))
 
@@ -2706,6 +2709,15 @@ func (s *testSessionSuite3) TestEnablePartition(c *C) {
 
 	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition OFF"))
 	tk.MustQuery("show global variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition ON"))
+
+	tk.MustExec("set tidb_enable_list_partition=off")
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
+
+	tk.MustExec("set tidb_enable_list_partition=1")
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
+
+	tk.MustExec("set tidb_enable_list_partition=on")
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 
 	// Disable global variable cache, so load global session variable take effect immediate.
 	s.dom.GetGlobalVarsCache().Disable()
@@ -2721,9 +2733,9 @@ func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	tk1.MustExec("begin")
 	tk2.MustExec("update no_retry set id = id + 1")
 	tk1.MustExec("update no_retry set id = id + 1")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/ErrMockRetryableOnly", `return(true)`), IsNil)
+	c.Assert(tikv.MockRetryableErrorResp.Enable(`return(true)`), IsNil)
 	_, err := tk1.Se.Execute(context.Background(), "commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/ErrMockRetryableOnly"), IsNil)
+	tikv.MockRetryableErrorResp.Disable()
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))
@@ -3246,26 +3258,39 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	c.Assert(taskID1 != taskID2, IsTrue)
 }
 
-func (s *testSessionSuite2) TestSetTxnScope(c *C) {
+func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("")`)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
-
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
 	// assert set sys variable
-	tk.MustExec("set @@session.txn_scope = 'dc-1';")
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows("dc-1"))
-
-	// assert session scope
-	se, err := session.CreateSession4Test(s.store)
-	c.Check(err, IsNil)
-	tk.Se = se
+	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	// assert default value
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(oracle.LocalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
+	// assert set sys variable
+	tk.MustExec("set @@session.txn_scope = 'global';")
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
+
+	// assert set invalid txn_scope
+	err := tk.ExecToErr("set @@txn_scope='foo'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
 }
 
-func (s *testSessionSuite2) TestGlobalAndLocalTxn(c *C) {
+func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
 	if *withTiKV {
@@ -3280,16 +3305,14 @@ PARTITION BY RANGE (c) (
 	PARTITION p1 VALUES LESS THAN (200)
 );`)
 	// Config the Placement Rules
-	bundles := make(map[string]*placement.Bundle)
 	is := s.dom.InfoSchema()
-	is.MockBundles(bundles)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	setBundle := func(parName, dc string) {
 		pid, err := tables.FindPartitionByName(tb.Meta(), parName)
 		c.Assert(err, IsNil)
 		groupID := placement.GroupID(pid)
-		oldBundle := &placement.Bundle{
+		is.SetBundle(&placement.Bundle{
 			ID: groupID,
 			Rules: []*placement.Rule{
 				{
@@ -3302,11 +3325,15 @@ PARTITION BY RANGE (c) (
 							Op:     placement.In,
 							Values: []string{dc},
 						},
+						{
+							Key:    placement.EngineLabelKey,
+							Op:     placement.NotIn,
+							Values: []string{placement.EngineLabelTiFlash},
+						},
 					},
 				},
 			},
-		}
-		bundles[groupID] = placement.BuildPlacementCopyBundle(oldBundle, pid)
+		})
 	}
 	setBundle("p0", "dc-1")
 	setBundle("p1", "dc-2")
@@ -3353,10 +3380,12 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("dc-1")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	// set txn_scope to local
-	tk.MustExec("set @@session.txn_scope = 'dc-1';")
+	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows("dc-1"))
+	result.Check(testkit.Rows("local"))
 
 	// test local txn auto commit
 	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
@@ -3367,7 +3396,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
@@ -3381,7 +3410,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
@@ -3401,7 +3430,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (101)")       // write dc-2 with dc-1 scope
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
@@ -3762,13 +3791,13 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert")
 
 	enableOOM := func(tk *testkit.TestKit, name, sql string) {
 		c.Logf("enable OOM, testcase: %v", name)
 		// larger than 4 copResponse, smaller than 5 copResponse
-		quota := 5*tikv.MockResponseSizeForTest - 100
+		quota := 5*copr.MockResponseSizeForTest - 100
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
@@ -3783,7 +3812,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 
 	disableOOM := func(tk *testkit.TestKit, name, sql string) {
 		c.Logf("disable OOM, testcase: %v", name)
-		quota := 5*tikv.MockResponseSizeForTest - 100
+		quota := 5*copr.MockResponseSizeForTest - 100
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
@@ -3792,7 +3821,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
 	}
 
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockWaitMax", `return(true)`)
 	// assert oom action and switch
 	for _, testcase := range testcases {
 		se, err := session.CreateSession4Test(s.store)
@@ -3823,7 +3852,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		enableOOM(tk, testcase.name, testcase.sql)
 		se.Close()
 	}
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockWaitMax")
 
 	// assert oom fallback
 	for _, testcase := range testcases {
@@ -3867,6 +3896,8 @@ func (s *testSessionSerialSuite) TestIssue21943(c *C) {
 }
 
 func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	testcases := []struct {
 		name       string
 		sql        string
@@ -3947,12 +3978,54 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 			sql:        `DO SLEEP(1);`,
 			isValidate: true,
 		},
+		{
+			name:       "select for update",
+			sql:        "select * from t where id = 1 for update",
+			isValidate: false,
+		},
+		{
+			name:       "select lock in share mode",
+			sql:        "select * from t where id = 1 lock in share mode",
+			isValidate: true,
+		},
+		{
+			name:       "select for update union statement",
+			sql:        "select * from t for update union select * from t;",
+			isValidate: false,
+		},
+		{
+			name:       "replace statement",
+			sql:        "replace into t(id) values (1)",
+			isValidate: false,
+		},
+		{
+			name:       "load data statement",
+			sql:        "LOAD DATA LOCAL INFILE '/mn/asa.csv' INTO TABLE t FIELDS TERMINATED BY x'2c' ENCLOSED BY b'100010' LINES TERMINATED BY '\r\n' IGNORE 1 LINES (id);",
+			isValidate: false,
+		},
+		{
+			name:       "update multi tables",
+			sql:        "update t,t1 set t.id = 1,t1.id = 2 where t.1 = 2 and t1.id = 3;",
+			isValidate: false,
+		},
+		{
+			name:       "delete multi tables",
+			sql:        "delete t from t1 where t.id = t1.id",
+			isValidate: false,
+		},
+		{
+			name:       "insert select",
+			sql:        "insert into t select * from t1;",
+			isValidate: false,
+		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int);")
+	tk.MustExec("create table t1 (id int);")
 	tk.MustExec(`PREPARE stmt1 FROM 'insert into t(id) values (5);';`)
 	tk.MustExec(`PREPARE stmt2 FROM 'select * from t';`)
+	tk.MustExec(`set @@tidb_enable_noop_functions=1;`)
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
@@ -3965,6 +4038,62 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, `.*only support read-only statement during read-only staleness transactions.*`)
 		}
+	}
+}
+
+func (s *testSessionSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testcases := []struct {
+		name        string
+		sql         string
+		sameSession bool
+	}{
+		{
+			name:        "ddl",
+			sql:         "create table t (id int, b int,INDEX(b));",
+			sameSession: false,
+		},
+		{
+			name:        "set global session",
+			sql:         `SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';`,
+			sameSession: true,
+		},
+		{
+			name:        "analyze table",
+			sql:         "analyze table t",
+			sameSession: true,
+		},
+		{
+			name:        "session binding",
+			sql:         "CREATE SESSION BINDING FOR  SELECT * FROM t WHERE b = 123 USING SELECT * FROM t IGNORE INDEX (b) WHERE b = 123;",
+			sameSession: true,
+		},
+		{
+			name:        "global binding",
+			sql:         "CREATE GLOBAL BINDING FOR  SELECT * FROM t WHERE b = 123 USING SELECT * FROM t IGNORE INDEX (b) WHERE b = 123;",
+			sameSession: true,
+		},
+		{
+			name:        "grant statements",
+			sql:         "GRANT ALL ON test.* TO 'newuser';",
+			sameSession: false,
+		},
+		{
+			name:        "revoke statements",
+			sql:         "REVOKE ALL ON test.* FROM 'newuser';",
+			sameSession: false,
+		},
+	}
+	tk.MustExec("CREATE USER 'newuser' IDENTIFIED BY 'mypassword';")
+	for _, testcase := range testcases {
+		comment := Commentf(testcase.name)
+		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, true, comment)
+		tk.MustExec(testcase.sql)
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.sameSession, comment)
 	}
 }
 
@@ -4054,4 +4183,47 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	c.Assert(pi.Info, Equals, "select 1 from t where a = (select sleep(5));")
 	c.Assert(pi.Plan, IsNil)
 	wg.Wait()
+}
+
+func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	se := tk.Se
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+
+	// test compatibility with ExcuteInternal
+	origin := se.GetSessionVars().InRestrictedSQL
+	se.GetSessionVars().InRestrictedSQL = true
+	defer func() {
+		se.GetSessionVars().InRestrictedSQL = origin
+	}()
+	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
+	c.Assert(err, IsNil)
+
+	// test charset attack
+	stmt, err := exec.ParseWithParams(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	c.Assert(err, IsNil)
+
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(format.RestoreStringDoubleQuotes, &sb)
+	err = stmt.Restore(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
+
+	// test invalid sql
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT")
+	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
+
+	// test invalid arguments to escape
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT %?, %?", 3)
+	c.Assert(err, ErrorMatches, "missing arguments.*")
+
+	// test noescape
+	stmt, err = exec.ParseWithParams(context.TODO(), "SELECT 3")
+	c.Assert(err, IsNil)
+
+	sb.Reset()
+	ctx = format.NewRestoreCtx(0, &sb)
+	err = stmt.Restore(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(sb.String(), Equals, "SELECT 3")
 }

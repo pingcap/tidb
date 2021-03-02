@@ -85,14 +85,6 @@ type nullableKey struct {
 	key kv.Key
 }
 
-// toString is used in log to avoid nil dereference panic.
-func toString(handle kv.Handle) string {
-	if handle == nil {
-		return "<nil>"
-	}
-	return handle.String()
-}
-
 // newContext gets a context. It is only used for adding column in reorganization state.
 func newContext(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
@@ -319,8 +311,12 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	if !ok {
 		return statistics.PseudoRowCount
 	}
-	sql := fmt.Sprintf("select table_rows from information_schema.tables where tidb_table_id=%v;", tblInfo.ID)
-	rows, _, err := executor.ExecRestrictedSQL(sql)
+	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
+	stmt, err := executor.ParseWithParams(context.Background(), sql, tblInfo.ID)
+	if err != nil {
+		return statistics.PseudoRowCount
+	}
+	rows, _, err := executor.ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
@@ -710,7 +706,7 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
 		return nil
 	}
 
-	err := kv.RunInNewTxn(r.d.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
 	})

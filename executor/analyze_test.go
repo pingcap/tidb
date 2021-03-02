@@ -38,8 +38,8 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -52,7 +52,7 @@ var _ = Suite(&testFastAnalyze{})
 
 func (s *testSuite1) TestAnalyzePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+	testkit.WithPruneMode(tk, variable.Static, func() {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
@@ -129,7 +129,7 @@ func (s *testSuite1) TestClusterIndexAnalyze(c *C) {
 	tk.MustExec("drop database if exists test_cluster_index_analyze;")
 	tk.MustExec("create database test_cluster_index_analyze;")
 	tk.MustExec("use test_cluster_index_analyze;")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	for i := 0; i < 100; i++ {
@@ -345,8 +345,8 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		IdxsInfo:    indicesInfo,
 		Concurrency: 1,
 		TableID: core.AnalyzeTableID{
-			CollectIDs: []int64{tbl.(table.PhysicalTable).GetPhysicalID()},
-			PersistID:  tbl.(table.PhysicalTable).GetPhysicalID(),
+			PartitionID: -1,
+			TableID:     tbl.(table.PhysicalTable).GetPhysicalID(),
 		},
 		TblInfo: tblInfo,
 		Opts:    opts,
@@ -447,32 +447,52 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("analyze table t1")
 	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
 	tk.MustExec("analyze table t1")
-	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
-		"IndexReader_6 4.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 4.00 cop[tikv] table:t1, index:idx(a, b) range:[1,1], keep order:false"))
-	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 1").Check(testkit.Rows(
-		"IndexReader_6 2.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 1,1 1], keep order:false"))
-	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
-		"IndexReader_6 2.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 2,1 2], keep order:false"))
+	tk.MustQuery("explain format = 'brief' select a from t1 where a = 1").Check(testkit.Rows(
+		"IndexReader 4.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 4.00 cop[tikv] table:t1, index:idx(a, b) range:[1,1], keep order:false"))
+	tk.MustQuery("explain format = 'brief' select a, b from t1 where a = 1 and b = 1").Check(testkit.Rows(
+		"IndexReader 2.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 1,1 1], keep order:false"))
+	tk.MustQuery("explain format = 'brief' select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
+		"IndexReader 2.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 2,1 2], keep order:false"))
 
 	tk.MustExec("create table t2 (a bigint unsigned, primary key(a))")
 	tk.MustExec("insert into t2 values (0), (18446744073709551615)")
 	tk.MustExec("analyze table t2")
 	tk.MustQuery("show stats_buckets where table_name = 't2'").Check(testkit.Rows(
-		"test t2  a 0 0 1 1 0 0",
-		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615"))
+		"test t2  a 0 0 1 1 0 0 0",
+		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615 0"))
 
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec(`create table t3 (id int, v int, primary key(id), index k(v)) partition by hash (id) partitions 4`)
 	tk.MustExec(`insert into t3 values(1, 1), (2, 2), (5, 1), (9, 3), (13, 3), (17, 5), (3, 0)`)
 	tk.MustExec(`analyze table t3`)
-	tk.MustQuery(`explain select v from t3 partition(p1) where v = 3`).Check(testkit.Rows(
-		"IndexReader_8 2.00 root  index:IndexRangeScan_7",
-		"└─IndexRangeScan_7 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
+	tk.MustQuery(`explain format = 'brief' select v from t3 partition(p1) where v = 3`).Check(testkit.Rows(
+		"IndexReader 2.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
 	))
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.DynamicOnly) + `'`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Dynamic) + `'`)
+
+	// test fast analyze in dynamic mode
+	tk.MustExec("drop table if exists t4;")
+	tk.MustExec("create table t4(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
+	// Because the statistics of partition p1 are missing, the construction of global-level stats will fail.
+	tk.MustExec("analyze table t4 partition p1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8131 Build global-level stats failed due to missing partition-level stats"))
+	// Although the global-level stats build failed, we build partition-level stats for partition p1 success.
+	result := tk.MustQuery("show stats_meta where table_name = 't4'").Sort()
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(result.Rows()[0][5], Equals, "3")
+	// Now, we have the partition-level stats for partition p0. We need get the stats for partition p1. And build the global-level stats.
+	tk.MustExec("analyze table t4 partition p0;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	result = tk.MustQuery("show stats_meta where table_name = 't4'").Sort()
+	c.Assert(len(result.Rows()), Equals, 3)
+	c.Assert(result.Rows()[0][5], Equals, "5")
+	c.Assert(result.Rows()[1][5], Equals, "2")
+	c.Assert(result.Rows()[2][5], Equals, "3")
 }
 
 func (s *testSuite1) TestIssue15993(c *C) {
@@ -531,6 +551,7 @@ func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
+	c.Skip("unistore hasn't support streaming yet.")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().EnableStreaming = true
@@ -545,13 +566,13 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
 	tk.MustExec("insert into t values (1,1)")
 	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  idx 1 0 1 1 1 1"))
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  idx 1 0 1 1 1 1 0"))
 	tk.MustExec("insert into t values (2,2)")
 	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 2 1 2 2", "test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2"))
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
 	tk.MustExec("analyze incremental table t index")
 	// Result should not change.
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 2 1 2 2", "test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2"))
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
 
 	// Test analyze incremental with feedback.
 	tk.MustExec("insert into t values (3,3)")
@@ -574,7 +595,7 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
 	c.Assert(h.HandleUpdateStats(is), IsNil)
 	c.Assert(h.Update(is), IsNil)
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 3 0 2 2147483647", "test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2"))
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 3 0 2 2147483647 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
 	tblStats := h.GetTableStats(tblInfo)
 	val, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
 	c.Assert(err, IsNil)
@@ -583,8 +604,8 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	c.Assert(statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag), IsFalse)
 
 	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 2 1 2 2", "test t  a 0 2 3 1 3 3",
-		"test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2", "test t  idx 1 2 3 1 3 3"))
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  a 0 2 3 1 3 3 0",
+		"test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0", "test t  idx 1 2 3 1 3 3 0"))
 	tblStats = h.GetTableStats(tblInfo)
 	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(val), Equals, uint64(1))
 }
@@ -769,36 +790,36 @@ func (s *testSuite1) TestNormalAnalyzeOnCommonHandle(c *C) {
 	tk.MustExec("analyze table t1, t2, t3")
 
 	tk.MustQuery(`show stats_buckets where table_name in ("t1", "t2", "t3")`).Sort().Check(testkit.Rows(
-		"test t1  a 0 0 1 1 1 1",
-		"test t1  a 0 1 2 1 2 2",
-		"test t1  a 0 2 3 1 3 3",
-		"test t1  b 0 0 1 1 1 1",
-		"test t1  b 0 1 2 1 2 2",
-		"test t1  b 0 2 3 1 3 3",
-		"test t2  PRIMARY 1 0 1 1 111 111",
-		"test t2  PRIMARY 1 1 2 1 222 222",
-		"test t2  PRIMARY 1 2 3 1 333 333",
-		"test t2  a 0 0 1 1 111 111",
-		"test t2  a 0 1 2 1 222 222",
-		"test t2  a 0 2 3 1 333 333",
-		"test t2  b 0 0 1 1 1 1",
-		"test t2  b 0 1 2 1 2 2",
-		"test t2  b 0 2 3 1 3 3",
-		"test t3  PRIMARY 1 0 1 1 (1, 1) (1, 1)",
-		"test t3  PRIMARY 1 1 2 1 (2, 2) (2, 2)",
-		"test t3  PRIMARY 1 2 3 1 (3, 3) (3, 3)",
-		"test t3  a 0 0 1 1 1 1",
-		"test t3  a 0 1 2 1 2 2",
-		"test t3  a 0 2 3 1 3 3",
-		"test t3  b 0 0 1 1 1 1",
-		"test t3  b 0 1 2 1 2 2",
-		"test t3  b 0 2 3 1 3 3",
-		"test t3  c 0 0 1 1 1 1",
-		"test t3  c 0 1 2 1 2 2",
-		"test t3  c 0 2 3 1 3 3",
-		"test t3  c 1 0 1 1 1 1",
-		"test t3  c 1 1 2 1 2 2",
-		"test t3  c 1 2 3 1 3 3"))
+		"test t1  a 0 0 1 1 1 1 0",
+		"test t1  a 0 1 2 1 2 2 0",
+		"test t1  a 0 2 3 1 3 3 0",
+		"test t1  b 0 0 1 1 1 1 0",
+		"test t1  b 0 1 2 1 2 2 0",
+		"test t1  b 0 2 3 1 3 3 0",
+		"test t2  PRIMARY 1 0 1 1 111 111 0",
+		"test t2  PRIMARY 1 1 2 1 222 222 0",
+		"test t2  PRIMARY 1 2 3 1 333 333 0",
+		"test t2  a 0 0 1 1 111 111 0",
+		"test t2  a 0 1 2 1 222 222 0",
+		"test t2  a 0 2 3 1 333 333 0",
+		"test t2  b 0 0 1 1 1 1 0",
+		"test t2  b 0 1 2 1 2 2 0",
+		"test t2  b 0 2 3 1 3 3 0",
+		"test t3  PRIMARY 1 0 1 1 (1, 1) (1, 1) 0",
+		"test t3  PRIMARY 1 1 2 1 (2, 2) (2, 2) 0",
+		"test t3  PRIMARY 1 2 3 1 (3, 3) (3, 3) 0",
+		"test t3  a 0 0 1 1 1 1 0",
+		"test t3  a 0 1 2 1 2 2 0",
+		"test t3  a 0 2 3 1 3 3 0",
+		"test t3  b 0 0 1 1 1 1 0",
+		"test t3  b 0 1 2 1 2 2 0",
+		"test t3  b 0 2 3 1 3 3 0",
+		"test t3  c 0 0 1 1 1 1 0",
+		"test t3  c 0 1 2 1 2 2 0",
+		"test t3  c 0 2 3 1 3 3 0",
+		"test t3  c 1 0 1 1 1 1 0",
+		"test t3  c 1 1 2 1 2 2 0",
+		"test t3  c 1 2 3 1 3 3 0"))
 }
 
 func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
@@ -818,9 +839,9 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 	tk.MustQuery("select @@tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t with 0 topn;")
-	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 512.00 root  index:IndexRangeScan_5",
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader_6 512.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
-	tk.MustQuery("explain select * from t where a = 999").Check(testkit.Rows("IndexReader_6 0.00 root  index:IndexRangeScan_5",
+	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader_6 0.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
 
 	tk.MustExec("drop table t;")
@@ -832,7 +853,7 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 		tk.MustExec("insert into t values (?)", i)
 	}
 	tk.MustExec("analyze table t with 0 topn;")
-	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 }
 
@@ -846,15 +867,15 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 	tk.MustExec("insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
-		"test t  a 0 0 1 1 \x02\xd2 \x02\xd2",
-		"test t  a 0 1 2 1 \x0e\x0f \x0e\x0f",
-		"test t  a 0 2 3 1 \x0e3 \x0e3",
-		"test t  b 0 0 1 1 \x00A \x00A",
-		"test t  b 0 1 3 2 \x00C \x00C",
-		"test t  idxa 1 0 1 1 \x02\xd2 \x02\xd2",
-		"test t  idxa 1 1 2 1 \x0e\x0f \x0e\x0f",
-		"test t  idxa 1 2 3 1 \x0e3 \x0e3",
-		"test t  idxb 1 0 1 1 \x00A \x00A",
-		"test t  idxb 1 1 3 2 \x00C \x00C",
+		"test t  a 0 0 1 1 \x02\xd2 \x02\xd2 0",
+		"test t  a 0 1 2 1 \x0e\x0f \x0e\x0f 0",
+		"test t  a 0 2 3 1 \x0e3 \x0e3 0",
+		"test t  b 0 0 1 1 \x00A \x00A 0",
+		"test t  b 0 1 3 2 \x00C \x00C 0",
+		"test t  idxa 1 0 1 1 \x02\xd2 \x02\xd2 0",
+		"test t  idxa 1 1 2 1 \x0e\x0f \x0e\x0f 0",
+		"test t  idxa 1 2 3 1 \x0e3 \x0e3 0",
+		"test t  idxb 1 0 1 1 \x00A \x00A 0",
+		"test t  idxb 1 1 3 2 \x00C \x00C 0",
 	))
 }

@@ -189,7 +189,7 @@ type MetricsSummaryRetriever struct {
 	retrieved bool
 }
 
-func (e *MetricsSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}
@@ -229,7 +229,12 @@ func (e *MetricsSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Co
 				name, util.MetricSchemaName.L, condition)
 		}
 
-		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		exec := sctx.(sqlexec.RestrictedSQLExecutor)
+		stmt, err := exec.ParseWithParams(ctx, sql)
+		if err != nil {
+			return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
+		}
+		rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
 		if err != nil {
 			return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
 		}
@@ -306,7 +311,12 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value) from `%s`.`%s` %s",
 				util.MetricSchemaName.L, name, cond)
 		}
-		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		exec := sctx.(sqlexec.RestrictedSQLExecutor)
+		stmt, err := exec.ParseWithParams(ctx, sql)
+		if err != nil {
+			return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
+		}
+		rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
 		if err != nil {
 			return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
 		}

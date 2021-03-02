@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store"
-	"github.com/pingcap/tidb/store/tikv"
+	tidbdriver "github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -97,11 +97,11 @@ type TestDDLSuite struct {
 }
 
 func (s *TestDDLSuite) SetUpSuite(c *C) {
-	logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	c.Assert(err, IsNil)
 
 	s.quit = make(chan struct{})
 
-	var err error
 	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
 	c.Assert(err, IsNil)
 
@@ -304,7 +304,11 @@ func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
 		}
 		log.Warnf("ping addr %v failed, retry count %d err %v", addr, i, err)
 
-		db.Close()
+		err = db.Close()
+		if err != nil {
+			log.Warnf("close db failed, retry count %d err %v", i, err)
+			break
+		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
 	}
@@ -533,7 +537,7 @@ func (s *TestDDLSuite) Bootstrap(c *C) {
 	tk.MustExec("create table test_mixed (c1 int, c2 int, primary key(c1))")
 	tk.MustExec("create table test_inc (c1 int, c2 int, primary key(c1))")
 
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("drop table if exists test_insert_common, test_conflict_insert_common, " +
 		"test_update_common, test_conflict_update_common, test_delete_common, test_conflict_delete_common, " +
 		"test_mixed_common, test_inc_common")
@@ -545,7 +549,7 @@ func (s *TestDDLSuite) Bootstrap(c *C) {
 	tk.MustExec("create table test_conflict_delete_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_mixed_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_inc_common (c1 int, c2 int, primary key(c1, c2))")
-	tk.MustExec("set @@tidb_enable_clustered_index = 0")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 }
 
 func (s *TestDDLSuite) TestSimple(c *C) {
@@ -1061,5 +1065,5 @@ func addEnvPath(newPath string) {
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-	store.Register("tikv", tikv.Driver{})
+	store.Register("tikv", tidbdriver.TiKVDriver{})
 }

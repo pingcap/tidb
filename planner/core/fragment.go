@@ -83,9 +83,6 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		s := r.ChildPf.ExchangeSender
 		s.TargetTasks = tasks
 	}
-	for _, task := range tasks {
-		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", task.StartTs), zap.Int64("ID", task.ID), zap.String("address", task.Meta.GetAddress()), zap.String("plan", ToString(f.ExchangeSender)))
-	}
 	f.ExchangeSender.Tasks = tasks
 	return tasks, nil
 }
@@ -97,7 +94,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	var tableID int64 = -1
 	if ts != nil {
 		tableID = ts.Table.ID
-		kvRanges, err = distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tableID}, ts.Table.IsCommonHandle, ts.Ranges, nil)
+		splitedRanges, _ := distsql.SplitRangesBySign(ts.Ranges, false, false, ts.Table.IsCommonHandle)
+		kvRanges, err = distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tableID}, ts.Table.IsCommonHandle, splitedRanges, nil)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
