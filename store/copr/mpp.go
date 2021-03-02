@@ -128,6 +128,8 @@ type mppIterator struct {
 	wg sync.WaitGroup
 
 	closed uint32
+
+	vars *kv.Variables
 }
 
 func (m *mppIterator) run(ctx context.Context) {
@@ -231,6 +233,25 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	m.establishMPPConns(bo, req, taskMeta)
 }
 
+// TODO: retry once failed?
+func (m *mppIterator) cancelMppTask(bo *tikv.Backoffer, req *kv.MPPDispatchRequest, meta *mpp.TaskMeta) {
+	killReq := &mpp.CancelTaskRequest{
+		Meta: meta,
+	}
+
+	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
+	wrappedReq.StoreTp = kv.TiFlash
+
+	_, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
+
+	logutil.BgLogger().Info("cancel task ", zap.Uint64("query id ", meta.GetStartTs()), zap.String(" on addr ", meta.GetAddress()))
+
+	if err != nil {
+		m.sendError(err)
+		return
+	}
+}
+
 func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) {
 	connReq := &mpp.EstablishMPPConnectionRequest{
 		SenderMeta: taskMeta,
@@ -248,6 +269,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
 
 	if err != nil {
+		m.cancelMppTask(bo, req, taskMeta)
 		m.sendError(err)
 		return
 	}
@@ -260,13 +282,21 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 		return
 	}
 
-	// TODO: cancel the whole process when some error happens
 	for {
 		err := m.handleMPPStreamResponse(bo, resp, req)
 		if err != nil {
+			m.cancelMppTask(bo, req, taskMeta)
 			m.sendError(err)
 			return
 		}
+
+		if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
+			m.cancelMppTask(bo, req, taskMeta)
+			err = tikv.ErrQueryInterrupted
+			m.sendError(err)
+			return
+		}
+
 		resp, err = stream.Recv()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
@@ -280,9 +310,19 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 				}
 			}
+<<<<<<< HEAD
 			m.sendToRespCh(&mppResponse{
 				err: tikv.ErrTiFlashServerTimeout,
 			})
+=======
+			// TODO
+			if resp != nil && resp.Error != nil {
+				m.sendToRespCh(&mppResponse{
+					err: errors.New(resp.Error.Msg),
+				})
+			}
+			m.cancelMppTask(bo, req, taskMeta)
+>>>>>>> run ok
 			return
 		}
 	}
@@ -336,7 +376,11 @@ func (m *mppIterator) nextImpl(ctx context.Context) (resp *mppResponse, ok bool,
 		case resp, ok = <-m.respChan:
 			return
 		case <-ticker.C:
-			//TODO: kill query
+			if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
+				err = tikv.ErrQueryInterrupted
+				exit = true
+				return
+			}
 		case <-m.finishCh:
 			exit = true
 			return
@@ -371,7 +415,7 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the reponses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, vars *kv.Variables, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
 	iter := &mppIterator{
 		store:     c.store,
 		tasks:     dispatchReqs,
@@ -379,10 +423,10 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, dispatchReqs []*kv.MPP
 		rpcCancel: tikv.NewRPCanceller(),
 		respChan:  make(chan *mppResponse, 4096),
 		startTs:   dispatchReqs[0].StartTs,
+		vars:      vars,
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, iter.rpcCancel)
 
-	// TODO: Process the case of query cancellation.
 	go iter.run(ctx)
 	return iter
 }
