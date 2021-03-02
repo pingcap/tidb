@@ -70,13 +70,10 @@ func (h *Handle) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64) {
 		return []int64{tblInfo.ID}
 	}
 	ids = make([]int64, 0, len(pi.Definitions)+1)
-	pruneMode := h.CurrentPruneMode()
-	if pruneMode == variable.Static {
-		for _, def := range pi.Definitions {
-			ids = append(ids, def.ID)
-		}
+	for _, def := range pi.Definitions {
+		ids = append(ids, def.ID)
 	}
-	if pruneMode == variable.Dynamic {
+	if h.CurrentPruneMode() == variable.Dynamic {
 		ids = append(ids, tblInfo.ID)
 	}
 	return ids

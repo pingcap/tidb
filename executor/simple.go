@@ -1353,8 +1353,11 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 
 func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 	h := domain.GetDomain(e.ctx).StatsHandle()
-	err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID)
+	ids, _, err := core.GetPhysicalIDsAndPartitionNames(s.Table.TableInfo, s.PartitionNames)
 	if err != nil {
+		return err
+	}
+	if err := h.DeleteTableStatsFromKV(ids); err != nil {
 		return err
 	}
 	return h.Update(infoschema.GetInfoSchema(e.ctx))
