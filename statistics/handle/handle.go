@@ -389,53 +389,64 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 			}
 		}
 
-		// Merge topN. We need to merge TopN before merging the histogram.
-		// Because after merging TopN, some numbers will be left.
-		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
-		var popedTopN []statistics.TopNMeta
-		n := uint32(0)
-		for _, topN := range allTopN[i] {
-			if topN == nil {
-				continue
-			}
-			n = mathutil.MaxUint32(n, uint32(len(topN.TopN)))
-		}
-		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], n)
-
-		// Merge histogram
 		numBuckets := int64(0)
 		for _, hg := range allHg[i] {
 			if int64(hg.Len()) > numBuckets {
 				numBuckets = int64(hg.Len())
 			}
 		}
-		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, allHg[i], popedTopN, numBuckets)
-		if err != nil {
-			return
+
+		// Merge topN. We need to merge TopN before merging the histogram.
+		// Because after merging TopN, some numbers will be left.
+		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
+		var popedTopN []statistics.TopNMeta
+		n, sum := uint32(0), uint32(0)
+		for _, topN := range allTopN[i] {
+			if topN == nil {
+				continue
+			}
+			n = mathutil.MaxUint32(n, uint32(len(topN.TopN)))
+			sum += uint32(len(topN.TopN))
+		}
+		if numBuckets == 0 {
+			n = sum
+		}
+		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], n)
+
+		// Merge histogram
+		if numBuckets != 0 {
+			globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, allHg[i], popedTopN, numBuckets)
+			if err != nil {
+				return
+			}
+		} else {
+			globalStats.Hg[i] = allHg[i][0].Copy()
 		}
 
 		// Update NDV of global-level stats
-		if isIndex == 0 {
-			// For the column stats, we should merge the FMSketch first. And use the FMSketch to calculate the new NDV.
-			// merge FMSketch
-			globalStats.Fms[i] = allFms[i][0].Copy()
-			for j := uint64(1); j < partitionNum; j++ {
-				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
-			}
+		if len(globalStats.Hg[i].Buckets) != 0 {
+			if isIndex == 0 {
+				// For the column stats, we should merge the FMSketch first. And use the FMSketch to calculate the new NDV.
+				// merge FMSketch
+				globalStats.Fms[i] = allFms[i][0].Copy()
+				for j := uint64(1); j < partitionNum; j++ {
+					globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+				}
 
-			// update the NDV
-			globalStatsNDV := globalStats.Fms[i].NDV()
-			if globalStatsNDV > globalStats.Count {
-				globalStatsNDV = globalStats.Count
+				// update the NDV
+				globalStatsNDV := globalStats.Fms[i].NDV()
+				if globalStatsNDV > globalStats.Count {
+					globalStatsNDV = globalStats.Count
+				}
+				globalStats.Hg[i].NDV = globalStatsNDV
+			} else {
+				// For the index stats, we get the final NDV by accumulating the NDV of each bucket in the index histogram.
+				globalStatsNDV := int64(0)
+				for _, bucket := range globalStats.Hg[i].Buckets {
+					globalStatsNDV += bucket.NDV
+				}
+				globalStats.Hg[i].NDV = globalStatsNDV
 			}
-			globalStats.Hg[i].NDV = globalStatsNDV
-		} else {
-			// For the index stats, we get the final NDV by accumulating the NDV of each bucket in the index histogram.
-			globalStatsNDV := int64(0)
-			for _, bucket := range globalStats.Hg[i].Buckets {
-				globalStatsNDV += bucket.NDV
-			}
-			globalStats.Hg[i].NDV = globalStatsNDV
 		}
 	}
 	return
