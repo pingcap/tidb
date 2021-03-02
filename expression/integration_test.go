@@ -7556,6 +7556,20 @@ func (s *testIntegrationSerialSuite) TestIssue18638(c *C) {
 	tk.MustQuery("select * from t t1 left join t t2 on t1.a = t2.b collate utf8mb4_general_ci;").Check(testkit.Rows("a A a A"))
 }
 
+func (s *testIntegrationSerialSuite) TestCollationText(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a TINYTEXT collate UTF8MB4_GENERAL_CI, UNIQUE KEY `a`(`a`(10)));")
+	tk.MustExec("insert into t (a) values ('A');")
+	tk.MustQuery("select * from t t1 inner join t t2 on t1.a = t2.a where t1.a = 'A';").Check(testkit.Rows("A A"))
+	tk.MustExec("update table t update a = 'B';")
+	tk.MustExec("admin check table t;")
+}
+
 func (s *testIntegrationSuite) TestIssue18850(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
