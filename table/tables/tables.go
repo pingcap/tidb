@@ -60,7 +60,6 @@ type TableCommon struct {
 	HiddenColumns                   []*table.Column
 	WritableColumns                 []*table.Column
 	FullHiddenColsAndVisibleColumns []*table.Column
-	writableIndices                 []table.Index
 	indices                         []table.Index
 	meta                            *model.TableInfo
 	allocs                          autoid.Allocators
@@ -160,7 +159,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.HiddenColumns = t.HiddenCols()
 	t.WritableColumns = t.WritableCols()
 	t.FullHiddenColsAndVisibleColumns = t.FullHiddenColsAndVisibleCols()
-	t.writableIndices = t.WritableIndices()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
 	if tblInfo.IsSequence() {
@@ -180,7 +178,6 @@ func initTableIndices(t *TableCommon) error {
 		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
 	}
-	t.writableIndices = t.WritableIndices()
 	return nil
 }
 
@@ -194,25 +191,12 @@ func (t *TableCommon) Indices() []table.Index {
 	return t.indices
 }
 
-// WritableIndices implements table.Table WritableIndices interface.
-func (t *TableCommon) WritableIndices() []table.Index {
-	if len(t.writableIndices) > 0 {
-		return t.writableIndices
-	}
-	writable := make([]table.Index, 0, len(t.indices))
-	for _, index := range t.indices {
-		s := index.Meta().State
-		if s != model.StateDeleteOnly && s != model.StateDeleteReorganization {
-			writable = append(writable, index)
-		}
-	}
-	return writable
-}
-
 // GetWritableIndexByName gets the index meta from the table by the index name.
 func GetWritableIndexByName(idxName string, t table.Table) table.Index {
-	indices := t.WritableIndices()
-	for _, idx := range indices {
+	for _, idx := range t.Indices() {
+		if !IsIndexWritable(idx) {
+			continue
+		}
 		if idxName == idx.Meta().Name.L {
 			return idx
 		}
@@ -220,8 +204,8 @@ func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 	return nil
 }
 
-// DeletableIndices implements table.Table DeletableIndices interface.
-func (t *TableCommon) DeletableIndices() []table.Index {
+// deletableIndices implements table.Table deletableIndices interface.
+func (t *TableCommon) deletableIndices() []table.Index {
 	// All indices are deletable because we don't need to check StateNone.
 	return t.indices
 }
@@ -318,19 +302,9 @@ func (t *TableCommon) RecordPrefix() kv.Key {
 	return t.recordPrefix
 }
 
-// IndexPrefix implements table.Table interface.
-func (t *TableCommon) IndexPrefix() kv.Key {
-	return t.indexPrefix
-}
-
 // RecordKey implements table.Table interface.
 func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
-}
-
-// FirstKey implements table.Table interface.
-func (t *TableCommon) FirstKey() kv.Key {
-	return t.RecordKey(kv.IntHandle(math.MinInt64))
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -458,7 +432,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 }
 
 func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
-	for _, idx := range t.DeletableIndices() {
+	for _, idx := range t.deletableIndices() {
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
@@ -476,7 +450,10 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 			break
 		}
 	}
-	for _, idx := range t.WritableIndices() {
+	for _, idx := range t.Indices() {
+		if !IsIndexWritable(idx) {
+			continue
+		}
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
@@ -849,7 +826,10 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
-	for _, v := range t.WritableIndices() {
+	for _, v := range t.Indices() {
+		if !IsIndexWritable(v) {
+			continue
+		}
 		if t.meta.IsCommonHandle && v.Meta().Primary {
 			continue
 		}
@@ -878,10 +858,10 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 	return nil, nil
 }
 
-// RowWithCols implements table.Table RowWithCols interface.
-func (t *TableCommon) RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
+// RowWithCols is used to get the corresponding column datum values with the given handle.
+func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
 	// Get raw row data from kv.
-	key := t.RecordKey(h)
+	key := tablecodec.EncodeRecordKey(t.RecordPrefix(), h)
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return nil, err
@@ -992,11 +972,6 @@ func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 	}
 
 	return idxColumnVal, true, nil
-}
-
-// Row implements table.Table Row interface.
-func (t *TableCommon) Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error) {
-	return t.RowWithCols(ctx, h, t.Cols())
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
@@ -1138,7 +1113,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 	if err != nil {
 		return err
 	}
-	for _, v := range t.DeletableIndices() {
+	for _, v := range t.deletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
@@ -1185,8 +1160,8 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	return nil
 }
 
-// IterRecords implements table.Table IterRecords interface.
-func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
+// IterRecords iterates records in the table and calls fn.
+func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
 	txn, err := ctx.Txn(true)
@@ -1194,6 +1169,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		return err
 	}
 
+	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
 	it, err := txn.Iter(startKey, prefix.PrefixNext())
 	if err != nil {
 		return err
@@ -1223,10 +1199,10 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		if err != nil {
 			return err
 		}
-		pkIds, decodeLoc := TryGetCommonPkColumnIds(t.meta), ctx.GetSessionVars().Location()
+		pkIds, decodeLoc := TryGetCommonPkColumnIds(t.Meta()), ctx.GetSessionVars().Location()
 		data := make([]types.Datum, len(cols))
 		for _, col := range cols {
-			if col.IsPKHandleColumn(t.meta) {
+			if col.IsPKHandleColumn(t.Meta()) {
 				if mysql.HasUnsignedFlag(col.Flag) {
 					data[col.Offset].SetUint64(uint64(handle.IntValue()))
 				} else {
@@ -1254,7 +1230,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 			return err
 		}
 
-		rk := t.RecordKey(handle)
+		rk := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return err
@@ -1388,28 +1364,6 @@ func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetS
 	return t.Allocators(ctx).Get(tp).Rebase(t.tableID, newBase, isSetStep)
 }
 
-// Seek implements table.Table Seek interface.
-func (t *TableCommon) Seek(ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return nil, false, err
-	}
-	seekKey := tablecodec.EncodeRowKeyWithHandle(t.physicalTableID, h)
-	iter, err := txn.Iter(seekKey, t.RecordPrefix().PrefixNext())
-	if err != nil {
-		return nil, false, err
-	}
-	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
-		// No more records in the table, skip to the end.
-		return nil, false, nil
-	}
-	handle, err := tablecodec.DecodeRowKey(iter.Key())
-	if err != nil {
-		return nil, false, err
-	}
-	return handle, true, nil
-}
-
 // Type implements table.Table Type interface.
 func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
@@ -1484,20 +1438,23 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 // CheckHandleExists check whether recordID key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
 func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, data []types.Datum) error {
+	physicalTableID := t.Meta().ID
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
 		pid, err := pt.locatePartition(sctx, info, data)
 		if err != nil {
 			return err
 		}
-		t = pt.GetPartition(pid)
+		partition := pt.GetPartition(pid)
+		physicalTableID = partition.GetPhysicalID()
 	}
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
 	// Check key exists.
-	recordKey := t.RecordKey(recordID)
+	prefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+	recordKey := tablecodec.EncodeRecordKey(prefix, recordID)
 	_, err = txn.Get(ctx, recordKey)
 	if err == nil {
 		handleStr := getDuplicateErrorHandleString(t, recordID, data)
