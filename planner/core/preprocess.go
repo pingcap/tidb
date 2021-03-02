@@ -562,6 +562,11 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
+	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	if stmt.IsTemporary && !enableNoopFuncs {
+		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")
+		return
+	}
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
@@ -669,6 +674,11 @@ func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 	p.checkDropTableNames(stmt.Tables)
+	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	if stmt.IsTemporary && !enableNoopFuncs {
+		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
+		return
+	}
 }
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
