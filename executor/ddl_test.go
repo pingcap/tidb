@@ -439,7 +439,7 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 	tk.MustExec("create database if not exists database_exists_test;")
 	tk.MustQuery("show warnings;").Check(testkit.Rows())
 	tk.MustExec("create database if not exists database_exists_test;")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1008 Can't create database 'database_exists_test'; database exists"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1007 Can't create database 'database_exists_test'; database exists"))
 	tk.MustExec("drop database if exists database_exists_test;")
 	tk.MustQuery("show warnings;").Check(testkit.Rows())
 	tk.MustExec("drop database if exists database_exists_test;")
