@@ -10032,6 +10032,10 @@ ShowTargetFilterable:
 			Tp: ast.ShowPlugins,
 		}
 	}
+|	"STATS_EXTENDED"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowStatsExtended}
+	}
 |	"STATS_META"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsMeta}

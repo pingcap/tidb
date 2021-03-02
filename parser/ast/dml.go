@@ -2285,6 +2285,7 @@ const (
 	ShowCreateDatabase
 	ShowConfig
 	ShowEvents
+	ShowStatsExtended
 	ShowStatsMeta
 	ShowStatsHistograms
 	ShowStatsTopN
@@ -2439,6 +2440,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 	case ShowProcessList:
 		restoreOptFull()
 		ctx.WriteKeyWord("PROCESSLIST")
+	case ShowStatsExtended:
+		ctx.WriteKeyWord("STATS_EXTENDED")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
 	case ShowStatsMeta:
 		ctx.WriteKeyWord("STATS_META")
 		if err := restoreShowLikeOrWhereOpt(); err != nil {
