@@ -113,6 +113,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 				memDelta += int64(len(keyString)) + getValMemDelta(realVal)
 				if len(p.entries)+1 > (1<<p.bInMap)*loadFactorNum/loadFactorDen {
 					memDelta += (1 << p.bInMap) * DefMapStringInterfaceBucketSize
+					p.bInMap++
 				}
 			}
 			p.entries[keyString] = realVal
@@ -160,6 +161,7 @@ func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst Par
 		memDelta += int64(len(k)) + getValMemDelta(v)
 		if len(p2.entries)+1 > (1<<p2.bInMap)*loadFactorNum/loadFactorDen {
 			memDelta += (1 << p2.bInMap) * DefMapStringInterfaceBucketSize
+			p2.bInMap++
 		}
 	}
 	return 0, nil
