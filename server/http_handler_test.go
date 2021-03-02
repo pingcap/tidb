@@ -622,7 +622,6 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 
 	resp, err = ts.fetchStatus("/mvcc/key/tidb/pt(p0)/42?decode=true")
 	c.Assert(err, IsNil)
-	defer resp.Body.Close()
 	decoder = json.NewDecoder(resp.Body)
 	var data4 map[string]interface{}
 	err = decoder.Decode(&data4)
@@ -631,6 +630,25 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	c.Assert(data4["info"], NotNil)
 	c.Assert(data4["data"], NotNil)
 	c.Assert(data4["decode_error"], IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
+
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/t/42")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/t?a=1.1")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/t?a=1.1&b=111&decode=1")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	var data5 map[string]interface{}
+	err = decoder.Decode(&data5)
+	c.Assert(err, IsNil)
+	c.Assert(data4["key"], NotNil)
+	c.Assert(data4["info"], NotNil)
+	c.Assert(data4["data"], NotNil)
+	c.Assert(data4["decode_error"], IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
