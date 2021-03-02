@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -1487,7 +1487,7 @@ func (s *testIntegrationSuite6) TestAddColumnTooMany(c *C) {
 func (s *testIntegrationSuite8) TestCreateTooManyIndexes(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	count := int(atomic.LoadUint32(&ddl.TableIndexCountLimit) - 1)
+	count := config.GetGlobalConfig().IndexLimit - 1
 	sql := "create table t_index_too_many ("
 	for i := 0; i < 100; i++ {
 		if i != 0 {

@@ -210,8 +210,7 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *baseExecutor) updateDeltaForTableID(id int64) {
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	udpp := e.ctx.GetSessionVars().UseDynamicPartitionPrune()
-	txnCtx.UpdateDeltaForTable(id, id, 0, 0, map[int64]int64{}, udpp)
+	txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
 }
 
 func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
@@ -1642,6 +1641,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
+		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == ast.ExplainFormatBrief)
 		s = explainStmt.Stmt
 	}
 	if _, ok := s.(*ast.ExplainForStmt); ok {
