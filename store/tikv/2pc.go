@@ -62,7 +62,7 @@ var (
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
 	store               *KVStore
-	txn                 *tikvTxn
+	txn                 *KVTxn
 	startTS             uint64
 	mutations           *memBufferMutations
 	lockTTL             uint64
@@ -294,7 +294,7 @@ func (c *PlainMutations) AppendMutation(mutation PlainMutation) {
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
-func newTwoPhaseCommitter(txn *tikvTxn, sessionID uint64) (*twoPhaseCommitter, error) {
+func newTwoPhaseCommitter(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, error) {
 	return &twoPhaseCommitter{
 		store:         txn.store,
 		txn:           txn,
@@ -433,6 +433,9 @@ func (c *twoPhaseCommitter) extractKeyExistsErrFromHandle(key kv.Key, value []by
 		str, err := d.ToString()
 		if err != nil {
 			return c.genKeyExistsError(name, key.String(), err)
+		}
+		if col.Length > 0 && len([]rune(str)) > col.Length {
+			str = string([]rune(str)[:col.Length])
 		}
 		valueStr = append(valueStr, str)
 	}
@@ -1761,14 +1764,14 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	return err
 }
 
-func getTxnPriority(txn *tikvTxn) pb.CommandPri {
+func getTxnPriority(txn *KVTxn) pb.CommandPri {
 	if pri := txn.us.GetOption(kv.Priority); pri != nil {
 		return PriorityToPB(pri.(int))
 	}
 	return pb.CommandPri_Normal
 }
 
-func getTxnSyncLog(txn *tikvTxn) bool {
+func getTxnSyncLog(txn *KVTxn) bool {
 	if syncOption := txn.us.GetOption(kv.SyncLog); syncOption != nil {
 		return syncOption.(bool)
 	}
