@@ -214,3 +214,80 @@ func (s *testIntegrationSuite) TestExpBackoffEstimation(c *C) {
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
 }
+
+func (s *testIntegrationSuite) TestGlobalStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@tidb_analyze_version = 2;")
+	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30)
+	);`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("insert into t values (1), (5), (null), (11), (15), (21), (25);")
+	tk.MustExec("analyze table t;")
+	// TICASE-4806
+	// On the table with global-stats, we use explain to query a multi-partition query.
+	// And we should get the result that global-stats is used instead of pseudo-stats.
+	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
+		"IndexReader 4.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 4.00 cop[tikv] table:t, index:a(a) range:(5,+inf], keep order:false"))
+	// TICASE-4807
+	// On the table with global-stats, we use explain to query a single-partition query.
+	// And we should get the result that global-stats is used instead of pseudo-stats.
+	tk.MustQuery("explain format = 'brief' select * from t partition(p1) where a > 15;").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:p1 index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(15,+inf], keep order:false"))
+
+	// TICASE-4816
+	// Even if we have global-stats, we will not use it when the switch is set to `static`.
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
+		"PartitionUnion 4.00 root  ",
+		"├─IndexReader 0.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 0.00 cop[tikv] table:t, partition:p0, index:a(a) range:(5,+inf], keep order:false",
+		"├─IndexReader 2.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) range:(5,+inf], keep order:false",
+		"└─IndexReader 2.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p2, index:a(a) range:(5,+inf], keep order:false"))
+
+	// TICASE-4817
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a int, b int, key(a)) PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("insert into t values(1,1),(3,3),(4,4),(2,2),(5,5);")
+	// When we set the mode to `static`, using analyze will not report an error and will not generate global-stats.
+	// In addition, when using explain to view the plan of the related query, it was found that `Union` was used.
+	tk.MustExec("analyze table t;")
+	result := tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[0][5], Equals, "2")
+	c.Assert(result.Rows()[1][5], Equals, "3")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"PartitionUnion 2.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p0, index:a(a) range:(3,+inf], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
+
+	// When we turned on the switch, we found that pseudo-stats will be used in the plan instead of `Union`.
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"IndexReader 3333.33 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 3333.33 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false, stats:pseudo"))
+
+	// Execute analyze again without error and can generate global-stats.
+	// And when executing related queries, neither Union nor pseudo-stats are used.
+	tk.MustExec("analyze table t;")
+	result = tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 3)
+	c.Assert(result.Rows()[0][5], Equals, "5")
+	c.Assert(result.Rows()[1][5], Equals, "2")
+	c.Assert(result.Rows()[2][5], Equals, "3")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false"))
+}
