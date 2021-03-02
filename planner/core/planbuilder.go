@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -1598,7 +1599,8 @@ func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo)
 	return handleCols
 }
 
-func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]int64, []string, error) {
+// GetPhysicalIDsAndPartitionNames returns physical IDs and names of these partitions.
+func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]int64, []string, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		if len(partitionNames) != 0 {
@@ -1628,6 +1630,11 @@ func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 			}
 		}
 		if !found {
+			if name.L == handle.TiDBGlobalStats {
+				ids = append(ids, tblInfo.ID)
+				names = append(names, handle.TiDBGlobalStats)
+				continue
+			}
 			return nil, nil, fmt.Errorf("can not found the specified partition name %s in the table definition", name.O)
 		}
 	}
@@ -1636,11 +1643,6 @@ func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
-	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
-	if len(as.PartitionNames) > 0 && pruneMode == variable.Dynamic {
-		logutil.BgLogger().Info("analyze partition didn't affect in dynamic-prune-mode", zap.String("partitions", as.PartitionNames[0].L))
-		return p, nil
-	}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
 			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
@@ -1649,10 +1651,11 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			return nil, errors.Errorf("analyze sequence %s is not supported now.", tbl.Name.O)
 		}
 		idxInfo, colInfo := getColsInfo(tbl)
-		physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
+		physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
 		if err != nil {
 			return nil, err
 		}
+		var commonHandleInfo *model.IndexInfo
 		// If we want to analyze this table with analyze version 2 but the existing stats is version 1 and stats feedback is enabled,
 		// we will switch back to analyze version 1.
 		if statistics.FeedbackProbability.Load() > 0 && version == 2 {
@@ -1665,6 +1668,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 		}
 		for _, idx := range idxInfo {
+			if idx.Primary && tbl.TableInfo.IsCommonHandle {
+				commonHandleInfo = idx
+				continue
+			}
 			for i, id := range physicalIDs {
 				if id == tbl.TableInfo.ID {
 					id = -1
@@ -1699,10 +1706,11 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					StatsVersion:  version,
 				}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
-					HandleCols:  handleCols,
-					ColsInfo:    colInfo,
-					analyzeInfo: info,
-					TblInfo:     tbl.TableInfo,
+					HandleCols:       handleCols,
+					CommonHandleInfo: commonHandleInfo,
+					ColsInfo:         colInfo,
+					analyzeInfo:      info,
+					TblInfo:          tbl.TableInfo,
 				})
 			}
 		}
@@ -1713,12 +1721,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
-	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
-	if len(as.PartitionNames) > 0 && pruneMode == variable.Dynamic {
-		logutil.BgLogger().Info("analyze partition didn't affect in dynamic-prune-mode", zap.String("table", tblInfo.Name.L), zap.String("partitions", as.PartitionNames[0].L))
-		return p, nil
-	}
-	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
+	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
@@ -1778,12 +1781,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
-	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
-	if len(as.PartitionNames) > 0 && pruneMode == variable.Dynamic {
-		logutil.BgLogger().Info("analyze partition didn't affect in dynamic-prune-mode", zap.String("table", tblInfo.Name.L), zap.String("partitions", as.PartitionNames[0].L))
-		return p, nil
-	}
-	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
+	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
