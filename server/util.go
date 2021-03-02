@@ -364,12 +364,12 @@ const (
 
 	The rounding/formatting is split into the following cases:
 	1. Scientific notation (1.23.e4): Used for big numbers except when value comes from a custom width column or from the select part of the query
-	1. mysql.TypeDouble: return string with as much precision as needed (precision = -1)
-	2. mysql.TypeFloat: return a rounded value that corresponds to mysql's (precision = 5)
-	3. mysql.TypeDouble(m,n):
-		3.1 If the columnLength < defaultMySQLPrec64, return string with as much precision as needed (precision = n)
-		3.2 else: return rounded string to precision defaultMySQLPrec64, and padded with 0's.
-	4. mysql.TypeFloat(m,n): return a rounded value rounded with (precision = 5) and formatted with (precision = n)
+	2. mysql.TypeDouble: return string with as much precision as needed (precision = -1)
+	3. mysql.TypeFloat: return a rounded value that corresponds to mysql's (precision = 5)
+	4. mysql.TypeDouble(m,n):
+		4.1 If the columnLength < defaultMySQLPrec64, return string with as much precision as needed (precision = n)
+		4.2 else: return rounded string to precision defaultMySQLPrec64, and padded with 0's.
+	5. mysql.TypeFloat(m,n): return a rounded value rounded with (precision = 5) and formatted with (precision = n)
 
 	Note: 	Custom float/double column width is deprecated in mysql 8.0.14.
 			However for compatibility, we still try to make the output the same as mysql for these types.
