@@ -47,6 +47,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// TiDBGlobalStats represents the global-stats for a partitioned table.
+	TiDBGlobalStats = "global"
+)
+
 // statsCache caches the tables in memory for Handle.
 type statsCache struct {
 	tables map[int64]*statistics.Table
