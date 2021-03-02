@@ -15,6 +15,7 @@ package tables_test
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"testing"
 	"time"
@@ -76,6 +77,36 @@ func (ts *testSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
+func firstKey(t table.Table) kv.Key {
+	return tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
+}
+
+func indexPrefix(t table.PhysicalTable) kv.Key {
+	return tablecodec.GenTableIndexPrefix(t.GetPhysicalID())
+}
+
+func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, false, err
+	}
+	recordPrefix := t.RecordPrefix()
+	seekKey := tablecodec.EncodeRowKeyWithHandle(t.GetPhysicalID(), h)
+	iter, err := txn.Iter(seekKey, recordPrefix.PrefixNext())
+	if err != nil {
+		return nil, false, err
+	}
+	if !iter.Valid() || !iter.Key().HasPrefix(recordPrefix) {
+		// No more records in the table, skip to the end.
+		return nil, false, nil
+	}
+	handle, err := tablecodec.DecodeRowKey(iter.Key())
+	if err != nil {
+		return nil, false, err
+	}
+	return handle, true, nil
+}
+
 type mockPumpClient struct{}
 
 func (m mockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
@@ -96,8 +127,8 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(tb.Meta().Name.L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
-	c.Assert(string(tb.FirstKey()), Not(Equals), "")
-	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
+	c.Assert(string(firstKey(tb)), Not(Equals), "")
+	c.Assert(string(indexPrefix(tb.(table.PhysicalTable))), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
@@ -113,7 +144,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(rid.IntValue(), Greater, int64(0))
-	row, err := tb.Row(ctx, rid)
+	row, err := tables.RowWithCols(tb, ctx, rid, tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].GetInt64(), Equals, int64(1))
@@ -125,24 +156,24 @@ func (ts *testSuite) TestBasic(c *C) {
 
 	c.Assert(tb.UpdateRecord(context.Background(), ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}), IsNil)
 
-	err = tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tb, ctx, tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
 	})
 	c.Assert(err, IsNil)
 
 	indexCnt := func() int {
-		cnt, err1 := countEntriesWithPrefix(ctx, tb.IndexPrefix())
+		cnt, err1 := countEntriesWithPrefix(ctx, indexPrefix(tb.(table.PhysicalTable)))
 		c.Assert(err1, IsNil)
 		return cnt
 	}
 
 	// RowWithCols test
-	vals, err := tb.RowWithCols(ctx, kv.IntHandle(1), tb.Cols())
+	vals, err := tables.RowWithCols(tb, ctx, kv.IntHandle(1), tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
 	c.Assert(vals[0].GetInt64(), Equals, int64(1))
 	cols := []*table.Column{tb.Cols()[1]}
-	vals, err = tb.RowWithCols(ctx, kv.IntHandle(1), cols)
+	vals, err = tables.RowWithCols(tb, ctx, kv.IntHandle(1), cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
 	c.Assert(vals[0].GetBytes(), DeepEquals, []byte("cba"))
@@ -155,7 +186,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(indexCnt(), Greater, 0)
-	handle, found, err := tb.Seek(ctx, kv.IntHandle(0))
+	handle, found, err := seek(tb.(table.PhysicalTable), ctx, kv.IntHandle(0))
 	c.Assert(handle.IntValue(), Equals, int64(1))
 	c.Assert(found, Equals, true)
 	c.Assert(err, IsNil)
@@ -245,8 +276,8 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(tb.Meta().Name.L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
-	c.Assert(string(tb.FirstKey()), Not(Equals), "")
-	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
+	c.Assert(string(firstKey(tb)), Not(Equals), "")
+	c.Assert(string(indexPrefix(tb.(table.PhysicalTable))), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
@@ -322,7 +353,8 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
-	row, err := tb.Row(ts.se, rid)
+	pt := tb.(table.PhysicalTable)
+	row, err := tables.RowWithCols(pt, ts.se, rid, tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
@@ -343,7 +375,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	c.Assert(err, IsNil)
 	totalCount := 0
-	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tb, ts.se, tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 		totalCount++
 		c.Assert(rec[0].IsNull(), IsFalse)
 		return true, nil
@@ -611,14 +643,14 @@ func (ts *testSuite) TestAddRecordWithCtx(c *C) {
 	for _, r := range records {
 		rid, err := tb.AddRecord(ts.se, r)
 		c.Assert(err, IsNil)
-		row, err := tb.Row(ts.se, rid)
+		row, err := tables.RowWithCols(tb.(table.PhysicalTable), ts.se, rid, tb.Cols())
 		c.Assert(err, IsNil)
 		c.Assert(len(row), Equals, len(r))
 		c.Assert(row[0].Kind(), Equals, types.KindUint64)
 	}
 
 	i := 0
-	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tb, ts.se, tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
