@@ -4686,38 +4686,39 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	// Collect visitInfo.
 	if delete.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
-		tbInfoList := make(map[string]*ast.TableSource)
-		isAsName := make(map[string]bool)
-		collectTableName(delete.TableRefs.TableRefs, &isAsName, &tbInfoList)
+		updatableList := make(map[string]bool)
+		tbInfoList := make(map[string]*ast.TableName)
+		collectTableName(delete.TableRefs.TableRefs, &updatableList, &tbInfoList)
 		for _, tn := range delete.Tables.Tables {
-			tb, foundMatch := tbInfoList[tn.Name.L]
-			if !foundMatch {
-				// check sql like: `delete b from (select * from t) as a, t`
-				return nil, ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
-			}
-			if _, ok := tb.Source.(*ast.TableName); !ok {
-				// check sql like: `delete a from (select * from t) as a, t`
-				return nil, ErrNonUpdatableTable.GenWithStackByArgs(tn.Name.O, "DELETE")
-			}
+			var canUpdate, foundMatch = false, false
+			name := tn.Name.L
 			if tn.Schema.L == "" {
+				canUpdate, foundMatch = updatableList[name]
 				tn.Schema = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
-			tbName := tb.Source.(*ast.TableName)
-			if !isAsName[tn.Name.L] {
-				if tn.Schema.L != tbName.Schema.L {
-					// check sql like: `delete t from db1.t`
-					return nil, ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
-				}
+
+			if !foundMatch {
+				name = tn.Schema.L + "." + tn.Name.L
+				canUpdate, foundMatch = updatableList[name]
 			}
-			tn.DBInfo = tbName.DBInfo
-			tn.TableInfo = tbName.TableInfo
+			// check sql like: `delete b from (select * from t) as a, t`
+			if !foundMatch {
+				return nil, ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
+			}
+			// check sql like: `delete a from (select * from t) as a, t`
+			if !canUpdate {
+				return nil, ErrNonUpdatableTable.GenWithStackByArgs(tn.Name.O, "DELETE")
+			}
+			tb := tbInfoList[name]
+			tn.DBInfo = tb.DBInfo
+			tn.TableInfo = tb.TableInfo
 			if tn.TableInfo.IsView() {
 				return nil, errors.Errorf("delete view %s is not supported now.", tn.Name.O)
 			}
 			if tn.TableInfo.IsSequence() {
 				return nil, errors.Errorf("delete sequence %s is not supported now.", tn.Name.O)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tbName.DBInfo.Name.L, tbName.Name.L, "", nil)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tb.DBInfo.Name.L, tb.Name.L, "", nil)
 		}
 	} else {
 		// Delete from a, b, c, d.
@@ -5488,23 +5489,22 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 	return input
 }
 
-func collectTableName(node ast.ResultSetNode, isAsName *map[string]bool, tbInfo *map[string]*ast.TableSource) {
+func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, info *map[string]*ast.TableName) {
 	switch x := node.(type) {
 	case *ast.Join:
-		collectTableName(x.Left, isAsName, tbInfo)
-		collectTableName(x.Right, isAsName, tbInfo)
+		collectTableName(x.Left, updatableName, info)
+		collectTableName(x.Right, updatableName, info)
 	case *ast.TableSource:
 		name := x.AsName.L
-		asName := true
-		if s, ok := x.Source.(*ast.TableName); ok {
+		var canUpdate bool
+		var s *ast.TableName
+		if s, canUpdate = x.Source.(*ast.TableName); canUpdate {
 			if name == "" {
-				asName = false
-				name = s.Name.L
+				name = s.Schema.L + "." + s.Name.L
 			}
 			(*info)[name] = s
 		}
-		(*tbInfo)[name] = x
-		(*isAsName)[name] = asName
+		(*updatableName)[name] = canUpdate
 	}
 }
 
