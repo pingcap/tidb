@@ -4810,7 +4810,7 @@ func (p *Delete) cleanTblID2HandleMap(
 // matchingDeletingTable checks whether this column is from the table which is in the deleting list.
 func (p *Delete) matchingDeletingTable(names []*ast.TableName, name *types.FieldName) bool {
 	for _, n := range names {
-		if (name.DBName.L == "" || name.DBName.L == n.Schema.L) && name.TblName.L == n.Name.L {
+		if (name.DBName.L == "" || name.DBName.L == n.DBInfo.Name.L) && name.TblName.L == n.Name.L {
 			return true
 		}
 	}
