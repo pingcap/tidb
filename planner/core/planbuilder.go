@@ -1655,6 +1655,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if err != nil {
 			return nil, err
 		}
+		var commonHandleInfo *model.IndexInfo
 		// If we want to analyze this table with analyze version 2 but the existing stats is version 1 and stats feedback is enabled,
 		// we will switch back to analyze version 1.
 		if statistics.FeedbackProbability.Load() > 0 && version == 2 {
@@ -1667,6 +1668,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 		}
 		for _, idx := range idxInfo {
+			if idx.Primary && tbl.TableInfo.IsCommonHandle {
+				commonHandleInfo = idx
+				continue
+			}
 			for i, id := range physicalIDs {
 				if id == tbl.TableInfo.ID {
 					id = -1
@@ -1701,10 +1706,11 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					StatsVersion:  version,
 				}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
-					HandleCols:  handleCols,
-					ColsInfo:    colInfo,
-					analyzeInfo: info,
-					TblInfo:     tbl.TableInfo,
+					HandleCols:       handleCols,
+					CommonHandleInfo: commonHandleInfo,
+					ColsInfo:         colInfo,
+					analyzeInfo:      info,
+					TblInfo:          tbl.TableInfo,
 				})
 			}
 		}
