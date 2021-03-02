@@ -96,12 +96,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		}
 	}
 	// Mark records in mysql.stats_extended as `deleted`.
-<<<<<<< HEAD
-	sql = fmt.Sprintf("select stats_name, db, column_ids from mysql.stats_extended where table_id = %d and status in (%d, %d)", physicalID, StatsStatusAnalyzed, StatsStatusInited)
-	rows, _, err = h.restrictedExec.ExecRestrictedSQL(sql)
-=======
-	rows, _, err = h.execRestrictedSQL(ctx, "select name, column_ids from mysql.stats_extended where table_id = %? and status in (%?, %?)", physicalID, StatsStatusAnalyzed, StatsStatusInited)
->>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
+	rows, _, err = h.execRestrictedSQL(ctx, "select stats_name, db, column_ids from mysql.stats_extended where table_id = %? and status in (%?, %?)", physicalID, StatsStatusAnalyzed, StatsStatusInited)
 	if err != nil {
 		return errors.Trace(err)
 	}

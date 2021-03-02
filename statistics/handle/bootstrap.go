@@ -259,16 +259,8 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, cache *statsCache, iter *chu
 }
 
 func (h *Handle) initStatsBuckets(cache *statsCache) error {
-<<<<<<< HEAD
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	if len(rc) > 0 {
-		defer terror.Call(rc[0].Close)
-	}
-=======
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
->>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	if err != nil {
 		return errors.Trace(err)
 	}
