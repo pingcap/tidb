@@ -1166,9 +1166,12 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 		switch item.Tp {
 		case ast.StatsTypeCardinality, ast.StatsTypeCorrelation:
 			// If isLoad is true, it's INSERT; otherwise, it's UPDATE.
-			exec.ExecuteInternal(ctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, %?, null, %?, %?)", key.StatsName, key.DB, item.Tp, tableID, strColIDs, item.ScalarVals, version, StatsStatusAnalyzed)
+			_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, %?, null, %?, %?)", key.StatsName, key.DB, item.Tp, tableID, strColIDs, item.ScalarVals, version, StatsStatusAnalyzed)
 		case ast.StatsTypeDependency:
-			exec.ExecuteInternal(ctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, null, %?, %?, %?)", key.StatsName, key.DB, item.Tp, tableID, strColIDs, item.StringVals, version, StatsStatusAnalyzed)
+			_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, null, %?, %?, %?)", key.StatsName, key.DB, item.Tp, tableID, strColIDs, item.StringVals, version, StatsStatusAnalyzed)
+		}
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 	if !isLoad {
