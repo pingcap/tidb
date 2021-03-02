@@ -528,6 +528,8 @@ const (
 
 	// TiDBEnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
 	TiDBEnableTiFlashFallbackTiKV = "tidb_enable_tiflash_fallback_tikv"
+
+	TiDBTestingIntPKAsHandle = "tidb_int_pk_as_handle"
 )
 
 // TiDB vars that have only global scope
@@ -705,6 +707,8 @@ var FeatureSwitchVariables = []string{
 	TiDBEnableAsyncCommit,
 	TiDBEnable1PC,
 	TiDBGuaranteeLinearizability,
+	TiDBEnableClusteredIndex,
+	TiDBTestingIntPKAsHandle,
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.

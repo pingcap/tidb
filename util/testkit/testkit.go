@@ -114,19 +114,22 @@ func (res *Result) Sort() *Result {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(c *check.C, store kv.Storage) *TestKit {
-	return &TestKit{
+	tk := &TestKit{
 		c:     c,
 		store: store,
 	}
+	return tk
 }
 
 // NewTestKitWithSession returns a new *TestKit with a session.
 func NewTestKitWithSession(c *check.C, store kv.Storage, se session.Session) *TestKit {
-	return &TestKit{
+	tk := &TestKit{
 		c:     c,
 		store: store,
 		Se:    se,
 	}
+	tk.Se.GetSessionVars().Testing.IntAsPkHandle = true
+	return tk
 }
 
 // NewTestKitWithInit returns a new *TestKit and creates a session.

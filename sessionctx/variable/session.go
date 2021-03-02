@@ -815,6 +815,10 @@ type SessionVars struct {
 	// TiDBEnableExchangePartition indicates whether to enable exchange partition
 	TiDBEnableExchangePartition bool
 
+	Testing struct {
+		IntAsPkHandle bool
+	}
+
 	// EnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
 	EnableTiFlashFallbackTiKV bool
 }
@@ -1751,6 +1755,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.TiDBEnableExchangePartition = TiDBOptOn(val)
 	case TiDBEnableTiFlashFallbackTiKV:
 		s.EnableTiFlashFallbackTiKV = TiDBOptOn(val)
+	case TiDBTestingIntPKAsHandle:
+		s.Testing.IntAsPkHandle = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
