@@ -1373,7 +1373,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// int constant [cmp] year type
-	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear {
+	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear && !(arg0.Value.IsNull()) {
 		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
 		if failed == nil {
 			arg0.Value.SetInt64(adjusted)
@@ -1381,7 +1381,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// year type [cmp] int constant
-	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear {
+	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear && !(arg1.Value.IsNull()) {
 		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
 		if failed == nil {
 			arg1.Value.SetInt64(adjusted)
@@ -2588,19 +2588,19 @@ type CompareFunc = func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsR
 // CompareInt compares two integers.
 func CompareInt(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := lhsArg.EvalInt(sctx, lhsRow)
-	if err != nil {
+	if isNull0 || err != nil {
 		return 0, true, err
 	}
 
 	arg1, isNull1, err := rhsArg.EvalInt(sctx, rhsRow)
-	if err != nil {
+	if isNull1 || err != nil {
 		return 0, true, err
 	}
 
-	// compare null values.
-	if isNull0 || isNull1 {
-		return compareNull(isNull0, isNull1), true, nil
-	}
+	// // compare null values.
+	// if isNull0 || isNull1 {
+	// 	return compareNull(isNull0, isNull1), true, nil
+	// }
 
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(lhsArg.GetType().Flag), mysql.HasUnsignedFlag(rhsArg.GetType().Flag)
 	var res int
