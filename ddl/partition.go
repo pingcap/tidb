@@ -582,23 +582,6 @@ func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) er
 	return nil
 }
 
-func stringSliceEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	if len(a) == 0 {
-		return true
-	}
-	// Accelerate the compare by eliminate index bound check.
-	b = b[:len(a)]
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // checkPartitionFuncValid checks partition function validly.
 func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	if expr == nil {
@@ -807,16 +790,6 @@ func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (int
 		}
 	}
 	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
-}
-
-// validRangePartitionType checks the type supported by the range partitioning key.
-func validRangePartitionType(col *model.ColumnInfo) bool {
-	switch col.FieldType.EvalType() {
-	case types.ETInt:
-		return true
-	default:
-		return false
-	}
 }
 
 // checkDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
@@ -1467,9 +1440,7 @@ func buildCheckSQLForListColumnsPartition(pi *model.PartitionInfo, index int, sc
 func getInValues(pi *model.PartitionInfo, index int) []string {
 	inValues := make([]string, 0, len(pi.Definitions[index].InValues))
 	for _, inValue := range pi.Definitions[index].InValues {
-		for _, one := range inValue {
-			inValues = append(inValues, one)
-		}
+		inValues = append(inValues, inValue...)
 	}
 	return inValues
 }
@@ -1484,13 +1455,6 @@ func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 func checkNoHashPartitions(ctx sessionctx.Context, partitionNum uint64) error {
 	if partitionNum == 0 {
 		return ast.ErrNoParts.GenWithStackByArgs("partitions")
-	}
-	return nil
-}
-
-func checkNoRangePartitions(partitionNum int) error {
-	if partitionNum == 0 {
-		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("RANGE")
 	}
 	return nil
 }
@@ -1762,7 +1726,6 @@ type partitionExprChecker struct {
 	processors []partitionExprProcessor
 	ctx        sessionctx.Context
 	tbInfo     *model.TableInfo
-	expr       ast.ExprNode
 	err        error
 
 	columns []*model.ColumnInfo

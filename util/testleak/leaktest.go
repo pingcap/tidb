@@ -61,7 +61,7 @@ func interestingGoroutines() (gs []string) {
 		"go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop",
 		"go.etcd.io/etcd/v3/pkg/logutil.(*MergeLogger).outputLoop",
 		"oracles.(*pdOracle).updateTS",
-		"tikv.(*tikvStore).runSafePointChecker",
+		"tikv.(*KVStore).runSafePointChecker",
 		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
 		"github.com/pingcap/badger",
 		"github.com/ngaut/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop",
