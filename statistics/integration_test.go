@@ -290,4 +290,26 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
 		"IndexReader 2.00 root partition:all index:IndexRangeScan",
 		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int, c int)  PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("create index idx_ab on t(a, b);")
+	tk.MustExec("insert into t values (1, 1, 1), (5, 5, 5), (11, 11, 11), (15, 15, 15), (21, 21, 21), (25, 25, 25);")
+	tk.MustExec("analyze table t;")
+	// TICASE-4813: test the indexScan
+	tk.MustQuery("explain format = 'brief' select b from t where a > 5 and b > 10;").Check(testkit.Rows(
+		"Projection 2.67 root  test.t.b",
+		"└─IndexReader 2.67 root partition:all index:Selection",
+		"  └─Selection 2.67 cop[tikv]  gt(test.t.b, 10)",
+		"    └─IndexRangeScan 4.00 cop[tikv] table:t, index:idx_ab(a, b) range:(5,+inf], keep order:false"))
+	// TICASE-4814: test the indexLookUp
+	tk.MustQuery("explain format = 'brief' select * from t use index(idx_ab) where a > 1;").Check(testkit.Rows(
+		"IndexLookUp 5.00 root partition:all ",
+		"├─IndexRangeScan(Build) 5.00 cop[tikv] table:t, index:idx_ab(a, b) range:(1,+inf], keep order:false",
+		"└─TableRowIDScan(Probe) 5.00 cop[tikv] table:t keep order:false"))
+	// TICASE-4815: test the tableScan
+	tk.MustQuery("explain format = 'brief' select * from t;").Check(testkit.Rows(
+		"TableReader 6.00 root partition:all data:TableFullScan",
+		"└─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
 }
