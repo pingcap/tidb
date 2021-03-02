@@ -694,8 +694,9 @@ func (s *testStatsSuite) TestShowGlobalStats(c *C) {
 	c.Assert(len(tk.MustQuery("show stats_healthy").Rows()), Equals, 2)
 	c.Assert(len(tk.MustQuery("show stats_healthy where partition_name='global'").Rows()), Equals, 0)
 
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("analyze table t with 1 buckets")
+	tk.MustExec("analyze table t with 0 topn, 1 buckets")
 	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 3)
 	c.Assert(len(tk.MustQuery("show stats_meta where partition_name='global'").Rows()), Equals, 1)
 	c.Assert(len(tk.MustQuery("show stats_buckets").Rows()), Equals, 6)
@@ -711,6 +712,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1;")
+	testKit.MustExec("set @@tidb_analyze_version = 2")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	testKit.MustExec("create table t(a int, b int, c int) PARTITION BY HASH(a) PARTITIONS 3;")
 	testKit.MustExec("create table t1(a int);")
