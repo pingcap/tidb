@@ -2044,6 +2044,28 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	}
 	if task.TblInfo != nil {
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
+		if task.TblInfo.IsCommonHandle {
+			e.analyzePB.ColReq.PrimaryPrefixColumnIds = tables.PrimaryPrefixColumnIDs(task.TblInfo)
+		}
+	}
+	if task.CommonHandleInfo != nil {
+		topNSize := new(int32)
+		*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+		statsVersion := new(int32)
+		*statsVersion = int32(task.StatsVersion)
+		e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
+			BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
+			NumColumns: int32(len(task.CommonHandleInfo.Columns)),
+			TopNSize:   topNSize,
+			Version:    statsVersion,
+		}
+		depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
+		width := int32(opts[ast.AnalyzeOptCMSketchWidth])
+		e.analyzePB.IdxReq.CmsketchDepth = &depth
+		e.analyzePB.IdxReq.CmsketchWidth = &width
+		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
+		e.analyzePB.Tp = tipb.AnalyzeType_TypeMixed
+		e.commonHandle = task.CommonHandleInfo
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
@@ -3322,12 +3344,6 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 		}
 	}
 	return handles, validLookUpContents
-}
-
-type kvRangeBuilderFromFunc func(pid int64) ([]kv.KeyRange, error)
-
-func (h kvRangeBuilderFromFunc) buildKeyRange(pid int64) ([]kv.KeyRange, error) {
-	return h(pid)
 }
 
 type kvRangeBuilderFromRangeAndPartition struct {

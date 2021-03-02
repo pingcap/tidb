@@ -125,9 +125,10 @@ func (ts *testSuite) TestBasic(c *C) {
 
 	c.Assert(tb.UpdateRecord(context.Background(), ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}), IsNil)
 
-	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
 	})
+	c.Assert(err, IsNil)
 
 	indexCnt := func() int {
 		cnt, err1 := countEntriesWithPrefix(ctx, tb.IndexPrefix())
@@ -312,8 +313,9 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 }
 
 func (ts *testSuite) TestUnsignedPK(c *C) {
-	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
-	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
+	_, err := ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	c.Assert(err, IsNil)
@@ -331,8 +333,9 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 }
 
 func (ts *testSuite) TestIterRecords(c *C) {
-	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
-	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tIter (a int primary key, b int)")
+	_, err := ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "CREATE TABLE test.tIter (a int primary key, b int)")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	c.Assert(err, IsNil)
@@ -365,10 +368,12 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 
 	// For test coverage
 	tbInfo.Columns[0].GeneratedExprString = "a"
-	tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(nil, tbInfo)
+	c.Assert(err, IsNil)
 
 	tbInfo.Columns[0].GeneratedExprString = "test"
-	tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(nil, tbInfo)
+	c.Assert(err, NotNil)
 	tbInfo.Columns[0].State = model.StateNone
 	tb, err = tables.TableFromMeta(nil, tbInfo)
 	c.Assert(tb, IsNil)
@@ -584,12 +589,16 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 }
 
 func (ts *testSuite) TestAddRecordWithCtx(c *C) {
-	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
-	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tRecord (a bigint unsigned primary key, b varchar(255))")
+	_, err := ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "CREATE TABLE test.tRecord (a bigint unsigned primary key, b varchar(255))")
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tRecord"))
 	c.Assert(err, IsNil)
-	defer ts.se.Execute(context.Background(), "DROP TABLE test.tRecord")
+	defer func() {
+		_, err := ts.se.Execute(context.Background(), "DROP TABLE test.tRecord")
+		c.Assert(err, IsNil)
+	}()
 
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	_, err = ts.se.Txn(true)
@@ -662,13 +671,15 @@ func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
 	ch := make(chan int, 2)
 	go func() {
 		tk2.MustExec("use test")
-		tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
+		_, err = tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
+		c.Assert(err, IsNil)
 		ch <- 2
 	}()
 	// Sleep 100ms for tk2 to execute, if it's not blocked, 2 should have been sent to the channel.
 	time.Sleep(100 * time.Millisecond)
 	ch <- 1
-	tk1.Exec("commit")
+	_, err = tk1.Exec("commit")
+	c.Assert(err, IsNil)
 	// The data in channel is 1 means tk2 is blocked, that's the expected behavior.
 	c.Assert(<-ch, Equals, 1)
 }
