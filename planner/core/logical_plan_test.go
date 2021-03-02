@@ -1745,3 +1745,20 @@ func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
 		}
 	}
 }
+
+func (s *testPlanSuite) TestWindowLogicalPlanAmbiguous(c *C) {
+	sql := "select a, max(a) over(), sum(a) over() from t"
+	var planString string
+	// The ambiguous logical plan which contains window function can usually be found in 100 iterations.
+	iterations := 100
+	for i := 0; i < iterations; i++ {
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil)
+		p, _, err := BuildLogicalPlan(context.Background(), s.ctx, stmt, s.is)
+		if planString == "" {
+			planString = ToString(p)
+		} else {
+			c.Assert(planString, Equals, ToString(p))
+		}
+	}
+}
