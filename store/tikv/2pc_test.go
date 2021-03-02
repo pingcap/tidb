@@ -845,7 +845,6 @@ func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
 	txn1.store.txnLatches = nil
 	err := txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, kv.SetPresumeKeyNotExists)
 	c.Assert(err, IsNil)
-	c.Assert(err, IsNil)
 	err = txn1.Delete(k1)
 	c.Assert(err, IsNil)
 	err = txn1.LockKeys(context.Background(), &kv.LockCtx{}, k2, k3) // select * from t where x in (k2, k3) for update
