@@ -4723,7 +4723,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	} else {
 		// Delete from a, b, c, d.
 		var tableList []*ast.TableName
-		tableList = extractTableList(delete.TableRefs.TableRefs, tableList, true)
+		tableList = extractTableList(delete.TableRefs.TableRefs, tableList, false)
 		for _, v := range tableList {
 			if v.TableInfo.IsView() {
 				return nil, errors.Errorf("delete view %s is not supported now.", v.Name.O)
@@ -5500,7 +5500,7 @@ func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, in
 		var s *ast.TableName
 		if s, canUpdate = x.Source.(*ast.TableName); canUpdate {
 			if name == "" {
-				name = s.Schema.L+"."+s.Name.L
+				name = s.Schema.L + "." + s.Name.L
 			}
 			(*info)[name] = s
 		}
