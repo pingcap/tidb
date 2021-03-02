@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/store/tikv/util/codec"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -51,7 +51,7 @@ func NewTestStore(c *C) *KVStore {
 		c.Assert(err, IsNil)
 		spKV, err := NewEtcdSafePointKV(addrs, tlsConfig)
 		c.Assert(err, IsNil)
-		store, err := NewKVStore("test-store", &CodecPDClient{Client: pdClient}, spKV, NewRPCClient(securityConfig), false, nil)
+		store, err := NewKVStore("test-store", &CodecPDClient{Client: pdClient}, spKV, NewRPCClient(securityConfig))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
@@ -118,10 +118,10 @@ func (s *testTiclientSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testTiclientSuite) beginTxn(c *C) *tikvTxn {
+func (s *testTiclientSuite) beginTxn(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 func (s *testTiclientSuite) TestSingleKey(c *C) {

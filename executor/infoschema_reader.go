@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
@@ -165,10 +165,16 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 }
 
 func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select table_id, count from mysql.stats_meta")
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), "select table_id, count from mysql.stats_meta")
 	if err != nil {
 		return nil, err
 	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return nil, err
+	}
+
 	rowCountMap := make(map[int64]uint64, len(rows))
 	for _, row := range rows {
 		tableID := row.GetInt64(0)
@@ -184,10 +190,16 @@ type tableHistID struct {
 }
 
 func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
 		return nil, err
 	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return nil, err
+	}
+
 	colLengthMap := make(map[tableHistID]uint64, len(rows))
 	for _, row := range rows {
 		tableID := row.GetInt64(0)
@@ -455,7 +467,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				}
 
 				var rowCount, dataLength, indexLength uint64
-				if table.GetPartitionInfo() == nil || ctx.GetSessionVars().UseDynamicPartitionPrune() {
+				if table.GetPartitionInfo() == nil {
 					rowCount = tableRowsMap[table.ID]
 					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
 				} else {
@@ -474,10 +486,8 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
 				}
-				if table.PKIsHandle {
-					pkType = "INT CLUSTERED"
-				} else if table.IsCommonHandle {
-					pkType = "COMMON CLUSTERED"
+				if table.PKIsHandle || table.IsCommonHandle {
+					pkType = "CLUSTERED"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				record := types.MakeDatums(
@@ -913,7 +923,7 @@ func (e *memtableRetriever) setDataFromViews(ctx sessionctx.Context, schemas []*
 }
 
 func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err error) {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
 	}
@@ -1274,7 +1284,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 }
 
 func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) error {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
@@ -1331,7 +1341,7 @@ func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo,
 }
 
 func (e *memtableRetriever) setDataForTikVRegionPeers(ctx sessionctx.Context) error {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
@@ -1394,7 +1404,7 @@ const (
 )
 
 func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) error {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
@@ -1583,7 +1593,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	}
 
 	// Cache the helper and return an error if PD unavailable.
-	tikvStore, ok := sctx.GetStore().(tikv.Storage)
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.Errorf("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
@@ -1971,7 +1981,7 @@ type tiflashInstanceInfo struct {
 
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
 	store := sctx.GetStore()
-	if etcd, ok := store.(tikv.EtcdBackend); ok {
+	if etcd, ok := store.(kv.EtcdBackend); ok {
 		var addrs []string
 		var err error
 		if addrs, err = etcd.EtcdAddrs(); err != nil {

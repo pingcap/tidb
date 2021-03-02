@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1562,7 +1561,7 @@ func (s *testColumnTypeChangeSuite) TestRowFormat(c *C) {
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
 
-	h := helper.NewHelper(s.store.(tikv.Storage))
+	h := helper.NewHelper(s.store.(helper.Storage))
 	data, err := h.GetMvccByEncodedKey(encodedKey)
 	c.Assert(err, IsNil)
 	// The new format will start with CodecVer = 128 (0x80).
@@ -1683,4 +1682,40 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "3 3", "3 3"))
 	tk.MustExec("drop table if exists t")
+}
+
+// Close issue #22820
+func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	prepare := func() {
+		tk.MustExec("drop table if exists users")
+		tk.MustExec("drop table if exists orders")
+		tk.MustExec("CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);")
+		tk.MustExec("CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, doc JSON, FOREIGN KEY fk_user_id (user_id) REFERENCES users(id));")
+	}
+
+	prepare()
+	// For column with FK, alter action can be performed for changing null/not null, default value, comment and so on, but column type.
+	tk.MustExec("alter table orders modify user_id int null;")
+	tbl := testGetTableByName(c, tk.Se, "test", "orders")
+	c.Assert(parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag), Equals, false)
+
+	prepare()
+	tk.MustExec("alter table orders change user_id user_id2 int null")
+	tbl = testGetTableByName(c, tk.Se, "test", "orders")
+	c.Assert(tbl.Meta().Columns[1].Name.L, Equals, "user_id2")
+	c.Assert(parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag), Equals, false)
+
+	prepare()
+	tk.MustExec("alter table orders modify user_id int default -1 comment \"haha\"")
+	tbl = testGetTableByName(c, tk.Se, "test", "orders")
+	c.Assert(tbl.Meta().Columns[1].Comment, Equals, "haha")
+	c.Assert(tbl.Meta().Columns[1].DefaultValue.(string), Equals, "-1")
+
+	prepare()
+	tk.MustGetErrCode("alter table orders modify user_id bigint", mysql.ErrFKIncompatibleColumns)
+
+	tk.MustExec("drop table if exists orders, users")
 }

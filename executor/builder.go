@@ -790,6 +790,8 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		Table:        tbl,
 		Columns:      v.Columns,
 		GenExprs:     v.GenCols.Exprs,
+		isLoadData:   true,
+		txnInUse:     sync.Mutex{},
 	}
 	loadDataInfo := &LoadDataInfo{
 		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),
@@ -1943,7 +1945,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	topNSize := new(int32)
 	*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
 	statsVersion := new(int32)
-	*statsVersion = int32(b.ctx.GetSessionVars().AnalyzeVersion)
+	*statsVersion = int32(task.StatsVersion)
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
 		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
@@ -1988,9 +1990,14 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 		}
 		oldHist = idx.TruncateHistogram(bktID)
 	}
+	var oldTopN *statistics.TopN
+	if analyzeTask.idxExec.analyzePB.IdxReq.GetVersion() == statistics.Version2 {
+		oldTopN = idx.TopN.Copy()
+		oldTopN.RemoveVal(oldHist.Bounds.GetRow(len(oldHist.Buckets)*2 - 1).GetBytes(0))
+	}
 	oldHist = oldHist.RemoveUpperBound()
 	analyzeTask.taskType = idxIncrementalTask
-	analyzeTask.idxIncrementalExec = &analyzeIndexIncrementalExec{AnalyzeIndexExec: *analyzeTask.idxExec, oldHist: oldHist, oldCMS: idx.CMSketch}
+	analyzeTask.idxIncrementalExec = &analyzeIndexIncrementalExec{AnalyzeIndexExec: *analyzeTask.idxExec, oldHist: oldHist, oldCMS: idx.CMSketch, oldTopN: oldTopN}
 	analyzeTask.job = &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze incremental index " + task.IndexInfo.Name.O}
 	return analyzeTask
 }
@@ -2023,7 +2030,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			TimeZoneOffset: offset,
 		},
 		opts:       opts,
-		analyzeVer: b.ctx.GetSessionVars().AnalyzeVersion,
+		analyzeVer: task.StatsVersion,
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
@@ -2037,6 +2044,28 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	}
 	if task.TblInfo != nil {
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
+		if task.TblInfo.IsCommonHandle {
+			e.analyzePB.ColReq.PrimaryPrefixColumnIds = tables.PrimaryPrefixColumnIDs(task.TblInfo)
+		}
+	}
+	if task.CommonHandleInfo != nil {
+		topNSize := new(int32)
+		*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+		statsVersion := new(int32)
+		*statsVersion = int32(task.StatsVersion)
+		e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
+			BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
+			NumColumns: int32(len(task.CommonHandleInfo.Columns)),
+			TopNSize:   topNSize,
+			Version:    statsVersion,
+		}
+		depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
+		width := int32(opts[ast.AnalyzeOptCMSketchWidth])
+		e.analyzePB.IdxReq.CmsketchDepth = &depth
+		e.analyzePB.IdxReq.CmsketchWidth = &width
+		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
+		e.analyzePB.Tp = tipb.AnalyzeType_TypeMixed
+		e.commonHandle = task.CommonHandleInfo
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
@@ -3007,7 +3036,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	partialReqs := make([]*tipb.DAGRequest, 0, partialPlanCount)
 	partialStreamings := make([]bool, 0, partialPlanCount)
 	indexes := make([]*model.IndexInfo, 0, partialPlanCount)
-	keepOrders := make([]bool, 0, partialPlanCount)
 	descs := make([]bool, 0, partialPlanCount)
 	feedbacks := make([]*statistics.QueryFeedback, 0, partialPlanCount)
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
@@ -3022,13 +3050,11 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
 			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
-			keepOrders = append(keepOrders, is.KeepOrder)
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 		} else {
 			ts := v.PartialPlans[i][0].(*plannercore.PhysicalTableScan)
 			tempReq, tempStreaming, _, err = buildTableReq(b, len(ts.Columns), v.PartialPlans[i])
-			keepOrders = append(keepOrders, ts.KeepOrder)
 			descs = append(descs, ts.Desc)
 			indexes = append(indexes, nil)
 		}
@@ -3318,12 +3344,6 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 		}
 	}
 	return handles, validLookUpContents
-}
-
-type kvRangeBuilderFromFunc func(pid int64) ([]kv.KeyRange, error)
-
-func (h kvRangeBuilderFromFunc) buildKeyRange(pid int64) ([]kv.KeyRange, error) {
-	return h(pid)
 }
 
 type kvRangeBuilderFromRangeAndPartition struct {

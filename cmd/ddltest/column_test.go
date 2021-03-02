@@ -26,6 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
@@ -42,7 +43,7 @@ func (s *TestDDLSuite) checkAddColumn(c *C, rowID int64, defaultVal interface{},
 	newInsertCount := int64(0)
 	oldUpdateCount := int64(0)
 	newUpdateCount := int64(0)
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		col1Val := data[0].GetValue()
 		col2Val := data[1].GetValue()
 		col3Val := data[2].GetValue()
@@ -93,7 +94,7 @@ func (s *TestDDLSuite) checkDropColumn(c *C, rowID int64, alterColumn *table.Col
 	}
 	insertCount := int64(0)
 	updateCount := int64(0)
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) {
 			// Check inserted row.
 			insertCount++
@@ -211,15 +212,15 @@ func (s *TestDDLSuite) TestCommitWhenSchemaChanged(c *C) {
 	s1, err := session.CreateSession(s.store)
 	c.Assert(err, IsNil)
 	ctx := goctx.Background()
-	_, err = s1.ExecuteInternal(ctx, "use test_ddl")
+	_, err = s1.Execute(ctx, "use test_ddl")
 	c.Assert(err, IsNil)
-	s1.ExecuteInternal(ctx, "begin")
-	s1.ExecuteInternal(ctx, "insert into test_commit values (3, 3)")
+	s1.Execute(ctx, "begin")
+	s1.Execute(ctx, "insert into test_commit values (3, 3)")
 
 	s.mustExec(c, "alter table test_commit drop column b")
 
 	// When this transaction commit, it will find schema already changed.
-	s1.ExecuteInternal(ctx, "insert into test_commit values (4, 4)")
-	_, err = s1.ExecuteInternal(ctx, "commit")
+	s1.Execute(ctx, "insert into test_commit values (4, 4)")
+	_, err = s1.Execute(ctx, "commit")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }

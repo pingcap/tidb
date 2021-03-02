@@ -628,7 +628,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionPrimaryKey:
 				// Check PriKeyFlag first to avoid extra duplicate constraints.
 				if col.Flag&mysql.PriKeyFlag == 0 {
-					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
+					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys,
+						Option: &ast.IndexOption{PrimaryKeyTp: v.PrimaryKeyTp}}
 					constraints = append(constraints, constraint)
 					col.Flag |= mysql.PriKeyFlag
 					// Add NotNullFlag early so that processColumnFlags() can see it.
@@ -1424,23 +1425,40 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			if !config.GetGlobalConfig().AlterPrimaryKey {
-				singleIntPK := isSingleIntPK(constr, lastCol)
-				clusteredIdx := ctx.GetSessionVars().EnableClusteredIndex
-				if singleIntPK || clusteredIdx {
-					// Primary key cannot be invisible.
-					if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
-						return nil, ErrPKIndexCantBeInvisible
+			pkTp := model.PrimaryKeyTypeDefault
+			if constr.Option != nil {
+				pkTp = constr.Option.PrimaryKeyTp
+			}
+			noBinlog := ctx.GetSessionVars().BinlogClient == nil
+			switch pkTp {
+			case model.PrimaryKeyTypeNonClustered:
+				break
+			case model.PrimaryKeyTypeClustered:
+				if isSingleIntPK(constr, lastCol) {
+					tbInfo.PKIsHandle = true
+				} else {
+					tbInfo.IsCommonHandle = noBinlog
+					if !noBinlog {
+						errMsg := "cannot build clustered index table because the binlog is ON"
+						ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf(errMsg))
 					}
 				}
-				if singleIntPK {
-					tbInfo.PKIsHandle = true
-					// Avoid creating index for PK handle column.
-					continue
+			case model.PrimaryKeyTypeDefault:
+				alterPKConf := config.GetGlobalConfig().AlterPrimaryKey
+				if isSingleIntPK(constr, lastCol) {
+					tbInfo.PKIsHandle = !alterPKConf
+				} else {
+					tbInfo.IsCommonHandle = !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex && noBinlog
 				}
-				if clusteredIdx {
-					tbInfo.IsCommonHandle = true
+			}
+			if tbInfo.PKIsHandle || tbInfo.IsCommonHandle {
+				// Primary key cannot be invisible.
+				if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
+					return nil, ErrPKIndexCantBeInvisible
 				}
+			}
+			if tbInfo.PKIsHandle {
+				continue
 			}
 		}
 
@@ -3158,6 +3176,10 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 }
 
 func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if !ctx.GetSessionVars().TiDBEnableExchangePartition {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errExchangePartitionDisabled)
+		return nil
+	}
 	ptSchema, pt, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -3467,7 +3489,7 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
 	}
 	if mysql.HasUnsignedFlag(origin.Flag) != mysql.HasUnsignedFlag(to.Flag) {
-		return true, fmt.Sprintf("can't change unsigned integer to signed or vice versa")
+		return true, "can't change unsigned integer to signed or vice versa"
 	}
 	return false, ""
 }
@@ -3687,10 +3709,6 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 		}
 	}
-	// Check the column with foreign key.
-	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
-		return nil, errFKIncompatibleColumns.GenWithStackByArgs(originalColName, fkInfo.Name)
-	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
 	// which will be done by `processColumnOptions` later.
@@ -3746,6 +3764,15 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 
 	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	// Check the column with foreign key, waiting for the default flen and decimal.
+	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
+		// For now we strongly ban the all column type change for column with foreign key.
+		// Actually MySQL support change column with foreign key from varchar(m) -> varchar(m+t) and t > 0.
+		if newCol.Tp != col.Tp || newCol.Flen != col.Flen || newCol.Decimal != col.Decimal {
+			return nil, errFKIncompatibleColumns.GenWithStackByArgs(originalColName, fkInfo.Name)
+		}
 	}
 
 	// Adjust the flen for blob types after the default flen is set.
@@ -4541,11 +4568,8 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 		return errors.Trace(err)
 	}
-	oldTblInfo := tb.Meta()
-	if oldTblInfo.PreSplitRegions > 0 {
-		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
-			d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
-		}
+	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
+		d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
 	}
 
 	if !config.TableLockEnabled() {
