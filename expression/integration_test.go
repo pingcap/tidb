@@ -7566,7 +7566,7 @@ func (s *testIntegrationSerialSuite) TestCollationText(c *C) {
 	tk.MustExec("create table t(a TINYTEXT collate UTF8MB4_GENERAL_CI, UNIQUE KEY `a`(`a`(10)));")
 	tk.MustExec("insert into t (a) values ('A');")
 	tk.MustQuery("select * from t t1 inner join t t2 on t1.a = t2.a where t1.a = 'A';").Check(testkit.Rows("A A"))
-	tk.MustExec("update table t update a = 'B';")
+	tk.MustExec("update t set a = 'B';")
 	tk.MustExec("admin check table t;")
 }
 
