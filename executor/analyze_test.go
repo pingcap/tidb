@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
