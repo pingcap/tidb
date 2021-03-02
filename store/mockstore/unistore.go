@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
+	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -86,6 +87,36 @@ func (s *mockStorage) Name() string {
 
 func (s *mockStorage) Describe() string {
 	return ""
+}
+
+// Begin a global transaction.
+func (s *mockStorage) Begin() (kv.Transaction, error) {
+	txn, err := s.KVStore.Begin()
+	return newTiKVTxn(txn, err)
+}
+
+func (s *mockStorage) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithTxnScope(txnScope)
+	return newTiKVTxn(txn, err)
+}
+
+// BeginWithStartTS begins a transaction with startTS.
+func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithStartTS(txnScope, startTS)
+	return newTiKVTxn(txn, err)
+}
+
+// BeginWithExactStaleness begins transaction with given staleness
+func (s *mockStorage) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithExactStaleness(txnScope, prevSec)
+	return newTiKVTxn(txn, err)
+}
+
+func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
+	if err != nil {
+		return nil, err
+	}
+	return driver.NewTiKVTxn(txn), nil
 }
 
 func (s *mockStorage) Close() error {
