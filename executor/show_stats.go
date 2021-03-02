@@ -198,11 +198,7 @@ func (e *ShowExec) fetchShowStatsTopN() error {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				partitionName := ""
-				if pi != nil {
-					partitionName = "global"
-				}
-				if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl)); err != nil {
+				if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl)); err != nil {
 					return err
 				}
 				if pi != nil {
