@@ -4694,11 +4694,14 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			name := tn.Name.L
 			if tn.Schema.L == "" {
 				canUpdate, foundMatch = updatableList[name]
-				tn.Schema = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
 
 			if !foundMatch {
-				name = tn.Schema.L + "." + tn.Name.L
+				if tn.Schema.L == "" {
+					name = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB).L + "." + tn.Name.L
+				} else {
+					name = tn.Schema.L + "." + tn.Name.L
+				}
 				canUpdate, foundMatch = updatableList[name]
 			}
 			// check sql like: `delete b from (select * from t) as a, t`
