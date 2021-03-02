@@ -67,16 +67,17 @@ func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
 }
 
 func (txn *wrapTxn) CacheTableInfo(id int64, info *model.TableInfo) {
-	if cache, ok := txn.Transaction.(kv.TransactionEx); ok {
-		cache.CacheTableInfo(id, info)
+	if txn.Transaction == nil {
+		return
 	}
+	txn.Transaction.CacheTableInfo(id, info)
 }
 
 func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
-	if cache, ok := txn.Transaction.(kv.TransactionEx); ok {
-		return cache.GetTableInfo(id)
+	if txn.Transaction == nil {
+		return nil
 	}
-	return nil
+	return txn.Transaction.GetTableInfo(id)
 }
 
 // Execute implements sqlexec.SQLExecutor Execute interface.

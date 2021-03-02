@@ -182,8 +182,7 @@ func (c *index) GenIndexValue(sc *stmtctx.StatementContext, indexedValues []type
 //
 func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	if c.Meta().Unique {
-		//TODO:fix it once br is ready
-		txn.(kv.TransactionEx).CacheTableInfo(c.phyTblID, c.tblInfo)
+		txn.CacheTableInfo(c.phyTblID, c.tblInfo)
 	}
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {

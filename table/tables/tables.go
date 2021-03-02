@@ -607,12 +607,10 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	kvTxn, err := sctx.Txn(true)
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return nil, err
 	}
-	// TODO:fix it once br is ready
-	txn := kvTxn.(kv.TransactionEx)
 
 	var opt table.AddRecordOpt
 	for _, fn := range opts {

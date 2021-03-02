@@ -293,11 +293,6 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
-}
-
-//TransactionEx: TODO: can not put these functions into Transaction because br
-type TransactionEx interface {
-	Transaction
 	// CacheIndexName caches the index name.
 	// PresumeKeyNotExists will use this to help decode error message.
 	CacheTableInfo(id int64, info *model.TableInfo)
