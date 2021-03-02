@@ -2588,19 +2588,19 @@ type CompareFunc = func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsR
 // CompareInt compares two integers.
 func CompareInt(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := lhsArg.EvalInt(sctx, lhsRow)
-	if err != nil {
+	if isNull0 || err != nil {
 		return 0, true, err
 	}
 
 	arg1, isNull1, err := rhsArg.EvalInt(sctx, rhsRow)
-	if err != nil {
+	if isNull1 || err != nil {
 		return 0, true, err
 	}
 
-	// compare null values.
-	if isNull0 || isNull1 {
-		return compareNull(isNull0, isNull1), true, nil
-	}
+	// // compare null values.
+	// if isNull0 || isNull1 {
+	// 	return compareNull(isNull0, isNull1), true, nil
+	// }
 
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(lhsArg.GetType().Flag), mysql.HasUnsignedFlag(rhsArg.GetType().Flag)
 	var res int
