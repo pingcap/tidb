@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -203,7 +204,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	_, err = snapshot.Get(context.Background(), []byte("k2"))
 	c.Assert(err, ErrorMatches, ".*key not exist")
 
-	initialCommitTS := committer.commitTS
+	initialCommitTS := atomic.LoadUint64(&committer.commitTS)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeCommit"), IsNil)
 
 	<-ch
