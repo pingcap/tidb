@@ -1097,3 +1097,17 @@ func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustQuery(querySQL).Check(testkit.Rows("0"))
 }
+
+func (s *testStatsSuite) TestExtendedStatsPartitionTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int) partition by range(a) (partition p0 values less than (5), partition p1 values less than (10))")
+	tk.MustExec("create table t2(a int, b int, c int) partition by hash(a) partitions 4")
+	err := tk.ExecToErr("alter table t1 add stats_extended s1 correlation(b,c)")
+	c.Assert(err.Error(), Equals, "Extended statistics on partitioned tables are not supported now")
+	err = tk.ExecToErr("alter table t2 add stats_extended s1 correlation(b,c)")
+	c.Assert(err.Error(), Equals, "Extended statistics on partitioned tables are not supported now")
+}
