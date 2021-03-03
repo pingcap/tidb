@@ -81,7 +81,8 @@ func (s *Server) listenStatusHTTPServer() error {
 	}
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
-	tlsConfig, err := s.cfg.Security.ToTLSConfig()
+	clusterSecurity := s.cfg.Security.ClusterSecurity()
+	tlsConfig, err := clusterSecurity.ToTLSConfig()
 	if err != nil {
 		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
 		return errors.Trace(err)
@@ -152,6 +153,7 @@ func (s *Server) startHTTPServer() {
 	}
 
 	// HTTP path for get MVCC info
+	router.Handle("/mvcc/key/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByClusteredKey})
 	router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
 	router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
 	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})

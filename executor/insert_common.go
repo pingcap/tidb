@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -39,10 +40,13 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // InsertValues is the data to insert.
+// nolint:structcheck
 type InsertValues struct {
 	baseExecutor
 
@@ -83,6 +87,12 @@ type InsertValues struct {
 	rowLen int
 
 	stats *InsertRuntimeStat
+
+	// LoadData use two goroutines. One for generate batch data,
+	// The other one for commit task, which will invalid txn.
+	// We use mutex to protect routine from using invalid txn.
+	isLoadData bool
+	txnInUse   sync.Mutex
 }
 
 type defaultVal struct {
@@ -296,7 +306,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else if types.ErrTruncatedWrongVal.Equal(err) && (colTp == mysql.TypeDuration || colTp == mysql.TypeDatetime || colTp == mysql.TypeDate || colTp == mysql.TypeTimestamp) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			// do nothing
+			logutil.BgLogger().Debug("time truncated error", zap.Error(err1))
 		}
 		err = dbterror.ClassTable.NewStdErr(
 			errno.ErrTruncatedWrongValue,
@@ -305,7 +315,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			// do nothing
+			logutil.BgLogger().Debug("truncated/wrong value error", zap.Error(err1))
 		}
 		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	}
@@ -877,10 +887,6 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		_, err := e.ctx.Txn(true)
-		if err != nil {
-			return types.Datum{}, errors.Trace(err)
-		}
 		recordID, err = e.allocAutoRandomID(ctx, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
@@ -913,6 +919,14 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
 	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
 		return 0, autoid.ErrAutoRandReadFailed
+	}
+	if e.isLoadData {
+		e.txnInUse.Lock()
+		defer e.txnInUse.Unlock()
+	}
+	_, err = e.ctx.Txn(true)
+	if err != nil {
+		return 0, err
 	}
 	shard := e.ctx.GetSessionVars().TxnCtx.GetShard(tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit, 1)
 	autoRandomID |= shard
