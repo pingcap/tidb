@@ -55,12 +55,10 @@ func (ts *ConnTestSuite) SetUpSuite(c *C) {
 		mockstore.WithClusterInspector(func(c cluster.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
-			tiflashIdx := 0
 			store := c.AllocID()
 			peer := c.AllocID()
 			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
 			mockCluster.AddPeer(region1, store, peer)
-			tiflashIdx++
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
