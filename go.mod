@@ -31,7 +31,7 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20210201072520-a1a5525d7218
+	github.com/ngaut/unistore v0.0.0-20210219030914-d0fb1ee6f3d2
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
