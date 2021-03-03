@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package copr
 
 import (
 	"time"
@@ -23,7 +23,6 @@ import (
 )
 
 type testCoprocessorCacheSuite struct {
-	OneByOneSuite
 }
 
 var _ = Suite(&testCoprocessorCacheSuite{})
