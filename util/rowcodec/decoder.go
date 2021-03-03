@@ -133,10 +133,15 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 			return d, err
 		}
 		d.SetFloat64(fVal)
+<<<<<<< HEAD
 	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString:
 		d.SetString(string(colData), col.Collate)
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes(colData)
+=======
+	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		d.SetString(string(colData), col.Ft.Collate)
+>>>>>>> 6f250b625... *: fix a bug that collation is not handle for text type (#23045)
 	case mysql.TypeNewDecimal:
 		_, dec, precision, frac, err := codec.DecodeDecimal(colData)
 		if err != nil {

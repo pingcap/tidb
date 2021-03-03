@@ -54,7 +54,11 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
 	datums := statistics.RowToDatums(req.GetRow(0), r.Fields())
+<<<<<<< HEAD
 	match(c, datums, `%`, "root", []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y")
+=======
+	match(c, datums, `%`, "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+>>>>>>> 6f250b625... *: fix a bug that collation is not handle for text type (#23045)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
@@ -159,7 +163,11 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	c.Assert(req.NumRows() == 0, IsFalse)
 	row := req.GetRow(0)
 	datums := statistics.RowToDatums(row, r.Fields())
+<<<<<<< HEAD
 	match(c, datums, `%`, "root", []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y")
+=======
+	match(c, datums, `%`, "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+>>>>>>> 6f250b625... *: fix a bug that collation is not handle for text type (#23045)
 	c.Assert(r.Close(), IsNil)
 
 	mustExecSQL(c, se, "USE test;")
