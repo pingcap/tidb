@@ -11,11 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package aggfuncs
+package set
 
-import (
-	"github.com/pingcap/tidb/util/set"
-)
+import "unsafe"
 
 const (
 	// DefStringSetBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(struct{}))+2*ptrSize
@@ -28,17 +26,21 @@ const (
 	// Represent as loadFactorNum/loadFactDen, to allow integer math.
 	loadFactorNum = 13
 	loadFactorDen = 2
+	// DefFloat64Size is the size of float64
+	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
+	// DefInt64Size is the size of int64
+	DefInt64Size = int64(unsafe.Sizeof(int64(0)))
 )
 
 // StringSetWithMemoryUsage is a string set with memory usage.
 type StringSetWithMemoryUsage struct {
-	set.StringSet
+	StringSet
 	bInMap int64
 }
 
 // NewStringSetWithMemoryUsage builds a string set.
 func NewStringSetWithMemoryUsage(ss ...string) (setWithMemoryUsage StringSetWithMemoryUsage, memDelta int64) {
-	set := make(set.StringSet, len(ss))
+	set := make(StringSet, len(ss))
 	setWithMemoryUsage = StringSetWithMemoryUsage{
 		StringSet: set,
 		bInMap:    0,
@@ -62,13 +64,13 @@ func (s *StringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
 
 // Float64SetWithMemoryUsage is a float64 set with memory usage.
 type Float64SetWithMemoryUsage struct {
-	set.Float64Set
+	Float64Set
 	bInMap int64
 }
 
 // NewFloat64SetWithMemoryUsage builds a float64 set.
 func NewFloat64SetWithMemoryUsage(ss ...float64) (setWithMemoryUsage Float64SetWithMemoryUsage, memDelta int64) {
-	set := make(set.Float64Set, len(ss))
+	set := make(Float64Set, len(ss))
 	setWithMemoryUsage = Float64SetWithMemoryUsage{
 		Float64Set: set,
 		bInMap:     0,
@@ -92,13 +94,13 @@ func (s *Float64SetWithMemoryUsage) Insert(val float64) (memDelta int64) {
 
 // Int64SetWithMemoryUsage is a int set with memory usage.
 type Int64SetWithMemoryUsage struct {
-	set.Int64Set
+	Int64Set
 	bInMap int64
 }
 
 // NewInt64SetWithMemoryUsage builds a int64 set.
 func NewInt64SetWithMemoryUsage(ss ...int64) (setWithMemoryUsage Int64SetWithMemoryUsage, memDelta int64) {
-	set := make(set.Int64Set, len(ss))
+	set := make(Int64Set, len(ss))
 	setWithMemoryUsage = Int64SetWithMemoryUsage{
 		Int64Set: set,
 		bInMap:   0,

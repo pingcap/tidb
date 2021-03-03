@@ -1,4 +1,4 @@
-package aggfuncs
+package set
 
 import (
 	"fmt"
