@@ -98,7 +98,7 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
 	tk.Se.GetSessionVars().EnableClusteredIndex = false
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table t1 (id int, a int, b int                 ) partition by list (    a    ) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t2 (a int, id int, b int) partition by list (a*3 + b - 2*a - b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t3 (b int, id int, a int) partition by list columns (a) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
@@ -146,9 +146,9 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		result := tk.MustQuery(tt)
 		result.Check(testkit.Rows(output[i].Result...))
 		// If the query doesn't specified the partition, compare the result with normal table
@@ -162,10 +162,11 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 
 func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table t1 (id int, a int, b int) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
 	tk.MustExec("create table t2 (id int, a int, b int) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
 	tk.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
@@ -176,7 +177,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	tk1.MustExec("drop database if exists test_partition_1;")
 	tk1.MustExec("create database test_partition_1")
 	tk1.MustExec("use test_partition_1")
-	tk1.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk1.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk1.MustExec("create table t1 (id int, a int, b int, unique key (a,b,id)) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
 	tk1.MustExec("create table t2 (id int, a int, b int, unique key (a,b,id)) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
 	tk1.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
@@ -206,10 +207,10 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	valid := false
 	for i, tt := range input {
 		// Test for table without index.
-		plan := tk.MustQuery("explain " + tt.SQL)
+		plan := tk.MustQuery("explain format = 'brief' " + tt.SQL)
 		planTree := s.testData.ConvertRowsToStrings(plan.Rows())
 		// Test for table with index.
-		indexPlan := tk1.MustQuery("explain " + tt.SQL)
+		indexPlan := tk1.MustQuery("explain format = 'brief' " + tt.SQL)
 		indexPlanTree := s.testData.ConvertRowsToStrings(indexPlan.Rows())
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt.SQL
@@ -375,7 +376,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 		tk.MustExec("drop database if exists test_partition;")
 		tk.MustExec("create database test_partition")
 		tk.MustExec("use test_partition")
-		tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+		tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 		tk.MustExec(createSQL.String())
 
 		tk1 := testkit.NewTestKit(c, s.store)
@@ -446,4 +447,16 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 			tk.MustQuery(query.String()).Check(tk1.MustQuery(query.String()).Rows())
 		}
 	}
+}
+
+func (s *testPartitionPruneSuit) Test22396(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS test;")
+	tk.MustExec("CREATE TABLE test(a INT, b INT, PRIMARY KEY(a, b)) PARTITION BY RANGE (a + b) (PARTITION p0 VALUES LESS THAN (20),PARTITION p1 VALUES LESS THAN MAXVALUE);")
+	tk.MustExec("INSERT INTO test(a, b) VALUES(1, 11),(2, 22),(3, 33),(10, 44),(9, 55);")
+	tk.MustQuery("SELECT * FROM test WHERE a = 1;")
+	tk.MustQuery("SELECT * FROM test WHERE b = 1;")
+	tk.MustQuery("SELECT * FROM test WHERE a = 1 AND b = 1;")
+	tk.MustQuery("SELECT * FROM test WHERE a + b = 2;")
 }

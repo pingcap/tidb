@@ -148,6 +148,11 @@ type bucket4Test struct {
 	ndv    int64
 }
 
+type topN4Test struct {
+	data  int64
+	count int64
+}
+
 func genHist4Test(buckets []*bucket4Test, totColSize int64) *Histogram {
 	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), len(buckets), totColSize)
 	for _, bucket := range buckets {
@@ -159,106 +164,239 @@ func genHist4Test(buckets []*bucket4Test, totColSize int64) *Histogram {
 }
 
 func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
-	hists := make([]*Histogram, 0, 2)
-	// Col(1) = [1, 4,|| 6, 9, 9,|| 12, 12, 12,|| 13, 14, 15]
-	h1Buckets := []*bucket4Test{
+	type testCase struct {
+		partitionHists  [][]*bucket4Test
+		totColSize      []int64
+		popedTopN       []topN4Test
+		expHist         []*bucket4Test
+		expBucketNumber int64
+	}
+	tests := []testCase{
 		{
-			lower:  1,
-			upper:  4,
-			count:  2,
-			repeat: 1,
-			ndv:    2,
+			partitionHists: [][]*bucket4Test{
+				{
+					// Col(1) = [1, 4,|| 6, 9, 9,|| 12, 12, 12,|| 13, 14, 15]
+					{
+						lower:  1,
+						upper:  4,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  9,
+						count:  5,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  12,
+						upper:  12,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  15,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(2) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  5,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+			},
+			totColSize: []int64{11, 11},
+			popedTopN:  []topN4Test{},
+			expHist: []*bucket4Test{
+				{
+					lower:  1,
+					upper:  7,
+					count:  7,
+					repeat: 2,
+					ndv:    4,
+				},
+				{
+					lower:  7,
+					upper:  11,
+					count:  13,
+					repeat: 3,
+					ndv:    3,
+				},
+				{
+					lower:  11,
+					upper:  17,
+					count:  22,
+					repeat: 1,
+					ndv:    5,
+				},
+			},
+			expBucketNumber: 3,
 		},
 		{
-			lower:  6,
-			upper:  9,
-			count:  5,
-			repeat: 2,
-			ndv:    2,
-		},
-		{
-			lower:  12,
-			upper:  12,
-			count:  8,
-			repeat: 3,
-			ndv:    1,
-		},
-		{
-			lower:  13,
-			upper:  15,
-			count:  11,
-			repeat: 1,
-			ndv:    3,
+			partitionHists: [][]*bucket4Test{
+				{
+					// Col(1) = [1, 4,|| 6, 9, 9,|| 12, 12, 12,|| 13, 14, 15]
+					{
+						lower:  1,
+						upper:  4,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  9,
+						count:  5,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  12,
+						upper:  12,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  15,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(2) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  5,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+			},
+			totColSize: []int64{11, 11},
+			popedTopN: []topN4Test{
+				{
+					data:  18,
+					count: 5,
+				},
+				{
+					data:  4,
+					count: 6,
+				},
+			},
+			expHist: []*bucket4Test{
+				{
+					lower:  1,
+					upper:  5,
+					count:  10,
+					repeat: 1,
+					ndv:    3,
+				},
+				{
+					lower:  5,
+					upper:  12,
+					count:  22,
+					repeat: 3,
+					ndv:    5,
+				},
+				{
+					lower:  12,
+					upper:  18,
+					count:  33,
+					repeat: 5,
+					ndv:    5,
+				},
+			},
+			expBucketNumber: 3,
 		},
 	}
-	hists = append(hists, genHist4Test(h1Buckets, 11))
-	// Col(2) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
-	h2Buckets := []*bucket4Test{
-		{
-			lower:  2,
-			upper:  5,
-			count:  2,
-			repeat: 1,
-			ndv:    2,
-		},
-		{
-			lower:  6,
-			upper:  7,
-			count:  5,
-			repeat: 2,
-			ndv:    2,
-		},
-		{
-			lower:  11,
-			upper:  11,
-			count:  8,
-			repeat: 3,
-			ndv:    1,
-		},
-		{
-			lower:  13,
-			upper:  17,
-			count:  11,
-			repeat: 1,
-			ndv:    3,
-		},
+
+	for _, t := range tests {
+		var expTotColSize int64
+		hists := make([]*Histogram, 0, len(t.partitionHists))
+		for i := range t.partitionHists {
+			hists = append(hists, genHist4Test(t.partitionHists[i], t.totColSize[i]))
+			expTotColSize += t.totColSize[i]
+		}
+		ctx := mock.NewContext()
+		sc := ctx.GetSessionVars().StmtCtx
+		poped := make([]TopNMeta, 0, len(t.popedTopN))
+		for _, top := range t.popedTopN {
+			b, err := codec.EncodeKey(sc, nil, types.NewIntDatum(top.data))
+			c.Assert(err, IsNil)
+			tmp := TopNMeta{
+				Encoded: b,
+				Count:   uint64(top.count),
+			}
+			poped = append(poped, tmp)
+		}
+		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, t.expBucketNumber)
+		c.Assert(err, IsNil)
+		for i, b := range t.expHist {
+			c.Assert(b.lower, Equals, globalHist.GetLower(i).GetInt64())
+			c.Assert(b.upper, Equals, globalHist.GetUpper(i).GetInt64())
+			c.Assert(b.count, Equals, globalHist.Buckets[i].Count)
+			c.Assert(b.repeat, Equals, globalHist.Buckets[i].Repeat)
+			c.Assert(b.ndv, Equals, globalHist.Buckets[i].NDV)
+		}
+		c.Assert(globalHist.TotColSize, Equals, expTotColSize)
 	}
-	hists = append(hists, genHist4Test(h2Buckets, 11))
-	ctx := mock.NewContext()
-	sc := ctx.GetSessionVars().StmtCtx
-	globalHist, err := MergePartitionHist2GlobalHist(sc, hists, 3)
-	c.Assert(err, IsNil)
-	expHist := []*bucket4Test{
-		{
-			lower:  1,
-			upper:  7,
-			count:  7,
-			repeat: 2,
-			ndv:    4,
-		},
-		{
-			lower:  7,
-			upper:  11,
-			count:  13,
-			repeat: 3,
-			ndv:    3,
-		},
-		{
-			lower:  11,
-			upper:  17,
-			count:  22,
-			repeat: 1,
-			ndv:    5,
-		},
-	}
-	for i, b := range expHist {
-		c.Assert(b.lower, Equals, globalHist.GetLower(i).GetInt64())
-		c.Assert(b.upper, Equals, globalHist.GetUpper(i).GetInt64())
-		c.Assert(b.count, Equals, globalHist.Buckets[i].Count)
-		c.Assert(b.repeat, Equals, globalHist.Buckets[i].Repeat)
-		c.Assert(b.ndv, Equals, globalHist.Buckets[i].NDV)
-	}
-	c.Assert(globalHist.TotColSize, Equals, int64(22))
 }
 
 func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging {
