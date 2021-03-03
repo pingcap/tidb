@@ -15,7 +15,6 @@ package aggfuncs_test
 
 import (
 	"encoding/binary"
-	"github.com/pingcap/tidb/util/set"
 	"testing"
 
 	"github.com/dgryski/go-farm"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/set"
 )
 
 func genApproxDistinctMergePartialResult(begin, end uint64) string {
