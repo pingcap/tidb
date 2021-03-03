@@ -40,8 +40,7 @@ const (
 )
 
 const (
-	taskInit int32 = iota
-	taskRunning
+	taskRunning int32 = iota + 1
 	taskFailed
 	taskFinished
 )

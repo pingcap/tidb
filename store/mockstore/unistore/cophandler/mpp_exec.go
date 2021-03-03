@@ -321,8 +321,6 @@ type joinExec struct {
 
 	buildSideIdx int64
 
-	built bool
-
 	buildChild mppExec
 	probeChild mppExec
 

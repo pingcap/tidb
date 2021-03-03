@@ -1180,7 +1180,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		if v.Value != nil {
 			tp := er.ctxStack[stkLen-1].GetType()
 			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
-				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
+				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
 				er.ctxStack[stkLen-1])
 			er.ctxNameStk[stkLen-1] = types.EmptyName
 			// Store the field type of the variable into SessionVars.UserVarTypes.
@@ -1198,7 +1198,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			tp.Flen = mysql.MaxFieldVarCharLength
 		}
-		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
+		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
 		if err != nil {
 			er.err = err
 			return
@@ -1231,8 +1231,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = err
 		return
 	}
-	nativeVal, nativeType := sysVar.GetNativeValType(val)
-	e := expression.DatumToConstant(nativeVal, nativeType)
+	nativeVal, nativeType, nativeFlag := sysVar.GetNativeValType(val)
+	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
 	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStackAppend(e, types.EmptyName)
