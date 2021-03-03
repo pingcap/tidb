@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
@@ -118,8 +119,6 @@ var _ = Suite(&testSuiteAgg{baseTestSuite: &baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
-var _ = Suite(&testClusteredSuite{})
-var _ = SerialSuites(&testClusteredSerialSuite{})
 var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
@@ -166,7 +165,7 @@ type baseTestSuite struct {
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
-	ctx *mock.Context
+	ctx *mock.Context // nolint:structcheck
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
@@ -7002,7 +7001,7 @@ func (s *testSerialSuite) TestCoprocessorOOMTicase(c *C) {
 		for _, testcase := range testcases {
 			c.Log(testcase.name)
 			// larger than one copResponse, smaller than 2 copResponse
-			quota := 2*tikv.MockResponseSizeForTest - 100
+			quota := 2*copr.MockResponseSizeForTest - 100
 			se, err := session.CreateSession4Test(s.store)
 			c.Check(err, IsNil)
 			tk.Se = se
@@ -7020,17 +7019,17 @@ func (s *testSerialSuite) TestCoprocessorOOMTicase(c *C) {
 	}
 
 	// ticase-4169, trigger oom action twice after workers consuming all the data
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4169", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/ticase-4169", `return(true)`)
 	f()
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4169")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/ticase-4169")
 	// ticase-4170, trigger oom action twice after iterator receiving all the data.
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4170", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/ticase-4170", `return(true)`)
 	f()
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4170")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/ticase-4170")
 	// ticase-4171, trigger oom before reading or consuming any data
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4171", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/ticase-4171", `return(true)`)
 	f()
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4171")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/ticase-4171")
 }
 
 func (s *testSuite) TestIssue20237(c *C) {
@@ -7479,9 +7478,6 @@ func (s *testSuite) TestIssue15563(c *C) {
 }
 
 func (s *testSerialSuite) TestStalenessTransaction(c *C) {
-	defer func() {
-		config.GetGlobalConfig().Labels["zone"] = ""
-	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	testcases := []struct {
@@ -7543,9 +7539,8 @@ func (s *testSerialSuite) TestStalenessTransaction(c *C) {
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		config.GetGlobalConfig().Labels = map[string]string{
-			"zone": testcase.zone,
-		}
+		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope",
+			fmt.Sprintf(`return("%v")`, testcase.zone))
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)
@@ -7564,6 +7559,7 @@ func (s *testSerialSuite) TestStalenessTransaction(c *C) {
 		}
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
 		tk.MustExec("commit")
+		failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	}
 }
 
