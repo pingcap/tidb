@@ -2065,6 +2065,7 @@ func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
 
 		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")
 		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		testKit.MustExec("set @@tidb_analyze_version = 2")
 		testKit.MustExec("analyze table t")
 
 		handle.AutoAnalyzeMinCnt = 0
