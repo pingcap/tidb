@@ -108,9 +108,8 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 type exchSenderExec struct {
 	baseMPPExec
 
-	exchangeSender *tipb.ExchangeSender
-	tunnels        []*ExchangerTunnel
-	outputOffsets  []uint32
+	tunnels       []*ExchangerTunnel
+	outputOffsets []uint32
 }
 
 func (e *exchSenderExec) open() error {
@@ -290,8 +289,6 @@ type joinExec struct {
 	probeKey *expression.Column
 
 	buildSideIdx int64
-
-	built bool
 
 	buildChild mppExec
 	probeChild mppExec
