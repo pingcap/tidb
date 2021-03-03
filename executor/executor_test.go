@@ -85,7 +85,10 @@ func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	autoid.SetStep(5000)
 
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -2396,12 +2399,14 @@ func (s *testSerialSuite) TestSplitRegionTimeout(c *C) {
 	tk.MustExec(`set @@tidb_wait_split_region_timeout=1`)
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
-	tikv.MockSplitRegionTimeout.Disable()
+	err := tikv.MockSplitRegionTimeout.Disable()
+	c.Assert(err, IsNil)
 
 	// Test scatter regions timeout.
 	c.Assert(tikv.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
-	tikv.MockScatterRegionTimeout.Disable()
+	err = tikv.MockScatterRegionTimeout.Disable()
+	c.Assert(err, IsNil)
 
 	// Test pre-split with timeout.
 	tk.MustExec("drop table if exists t")
@@ -2411,7 +2416,8 @@ func (s *testSerialSuite) TestSplitRegionTimeout(c *C) {
 	start := time.Now()
 	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5;")
 	c.Assert(time.Since(start).Seconds(), Less, 10.0)
-	tikv.MockScatterRegionTimeout.Disable()
+	err = tikv.MockScatterRegionTimeout.Disable()
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuiteP2) TestRow(c *C) {
@@ -2666,12 +2672,13 @@ func (s *testSuite2) TestLowResolutionTSORead(c *C) {
 
 	// enable low resolution tso
 	c.Assert(tk.Se.GetSessionVars().LowResolutionTSO, IsFalse)
-	tk.Exec("set @@tidb_low_resolution_tso = 'on'")
+	_, err := tk.Exec("set @@tidb_low_resolution_tso = 'on'")
+	c.Assert(err, IsNil)
 	c.Assert(tk.Se.GetSessionVars().LowResolutionTSO, IsTrue)
 
 	time.Sleep(3 * time.Second)
 	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("1"))
-	_, err := tk.Exec("update low_resolution_tso set a = 2")
+	_, err = tk.Exec("update low_resolution_tso set a = 2")
 	c.Assert(err, NotNil)
 	tk.MustExec("set @@tidb_low_resolution_tso = 'off'")
 	tk.MustExec("update low_resolution_tso set a = 2")
@@ -3238,7 +3245,8 @@ func (s *testSuite2) TestAddIndexPriority(c *C) {
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 	}()
 
 	tk := testkit.NewTestKit(c, store)
@@ -3324,10 +3332,12 @@ func (s *testSuite) TestTimezonePushDown(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(dagReq.GetTimeZoneName(), Equals, systemTZ.String())
 	})
-	tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	_, err := tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	c.Assert(err, IsNil)
 
 	tk.MustExec(`set time_zone="System"`)
-	tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	_, err = tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	c.Assert(err, IsNil)
 
 	c.Assert(count, Equals, 2) // Make sure the hook function is called.
 }
@@ -5357,7 +5367,8 @@ func (s *testRecoverTable) TearDownSuite(c *C) {
 func (s *testRecoverTable) TestRecoverTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange")
+		err := failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange")
+		c.Assert(err, IsNil)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_recover")
@@ -6637,7 +6648,8 @@ func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
 		config.StoreGlobalConfig(originCfg)
-		os.Remove(newCfg.Log.SlowQueryFile)
+		err = os.Remove(newCfg.Log.SlowQueryFile)
+		c.Assert(err, IsNil)
 	}()
 	err = logutil.InitLogger(newCfg.Log.ToLogConfig())
 	c.Assert(err, IsNil)
@@ -6687,14 +6699,15 @@ func (s *testSlowQuery) TestSlowQuery(c *C) {
 
 	f, err := ioutil.TempFile("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
-	f.WriteString(`
+	_, err = f.WriteString(`
 # Time: 2020-10-13T20:08:13.970563+08:00
 select * from t;
 # Time: 2020-10-16T20:08:13.970563+08:00
 select * from t;
 `)
-	f.Close()
-
+	c.Assert(err, IsNil)
+	err = f.Close()
+	c.Assert(err, IsNil)
 	executor.ParseSlowLogBatchSize = 1
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -6703,7 +6716,8 @@ select * from t;
 	defer func() {
 		executor.ParseSlowLogBatchSize = 64
 		config.StoreGlobalConfig(originCfg)
-		os.Remove(newCfg.Log.SlowQueryFile)
+		err = os.Remove(newCfg.Log.SlowQueryFile)
+		c.Assert(err, IsNil)
 	}()
 	err = logutil.InitLogger(newCfg.Log.ToLogConfig())
 	c.Assert(err, IsNil)
@@ -7036,17 +7050,23 @@ func (s *testSerialSuite) TestCoprocessorOOMTicase(c *C) {
 	}
 
 	// ticase-4169, trigger oom action twice after workers consuming all the data
-	failpoint.Enable("github.com/pingcap/tidb/store/copr/ticase-4169", `return(true)`)
+	err := failpoint.Enable("github.com/pingcap/tidb/store/copr/ticase-4169", `return(true)`)
+	c.Assert(err, IsNil)
 	f()
-	failpoint.Disable("github.com/pingcap/tidb/store/copr/ticase-4169")
+	err = failpoint.Disable("github.com/pingcap/tidb/store/copr/ticase-4169")
+	c.Assert(err, IsNil)
 	// ticase-4170, trigger oom action twice after iterator receiving all the data.
-	failpoint.Enable("github.com/pingcap/tidb/store/copr/ticase-4170", `return(true)`)
+	err = failpoint.Enable("github.com/pingcap/tidb/store/copr/ticase-4170", `return(true)`)
+	c.Assert(err, IsNil)
 	f()
-	failpoint.Disable("github.com/pingcap/tidb/store/copr/ticase-4170")
+	err = failpoint.Disable("github.com/pingcap/tidb/store/copr/ticase-4170")
+	c.Assert(err, IsNil)
 	// ticase-4171, trigger oom before reading or consuming any data
-	failpoint.Enable("github.com/pingcap/tidb/store/copr/ticase-4171", `return(true)`)
+	err = failpoint.Enable("github.com/pingcap/tidb/store/copr/ticase-4171", `return(true)`)
+	c.Assert(err, IsNil)
 	f()
-	failpoint.Disable("github.com/pingcap/tidb/store/copr/ticase-4171")
+	err = failpoint.Disable("github.com/pingcap/tidb/store/copr/ticase-4171")
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TestIssue20237(c *C) {
@@ -7320,8 +7340,12 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 }
 
 func (s *testSerialSuite) TestIssue21441(c *C) {
-	failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
-	defer failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
+	err := failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
+		c.Assert(err, IsNil)
+	}()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7496,7 +7520,11 @@ func (s *testSuite) TestIssue15563(c *C) {
 
 func (s *testSerialSuite) TestStalenessTransaction(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+		c.Assert(err, IsNil)
+	}()
+
 	testcases := []struct {
 		name             string
 		preSQL           string
@@ -7582,7 +7610,11 @@ func (s *testSerialSuite) TestStalenessTransaction(c *C) {
 
 func (s *testSuite) TestStalenessAndHistoryRead(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+		c.Assert(err, IsNil)
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
@@ -7657,10 +7689,18 @@ func (s *testSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 		check := func() {
 			if testcase.expectErr != nil {
 				c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(true)"), IsNil)
-				defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+				defer func() {
+					err := failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+					c.Assert(err, IsNil)
+				}()
+
 			} else {
 				c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
-				defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+				defer func() {
+					err := failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+					c.Assert(err, IsNil)
+				}()
+
 			}
 			_, err := tk.Exec(testcase.sql)
 			if testcase.expectErr != nil {
