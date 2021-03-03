@@ -156,13 +156,7 @@ func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 	if sctx, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		var buf strings.Builder
 		sqlexec.MustFormatSQL(&buf, loadGlobalVars)
-		for i, name := range varNames {
-			if i > 0 {
-				sqlexec.MustFormatSQL(&buf, ", ")
-			}
-			sqlexec.MustFormatSQL(&buf, "%?", name)
-		}
-		sqlexec.MustFormatSQL(&buf, ")")
+		sqlexec.MustFormatSQL(&buf, "%? )", varNames)
 		rows, _, err := sctx.ExecRestrictedSQL(ctx, buf.String())
 		if err != nil {
 			return errors.Trace(err)
