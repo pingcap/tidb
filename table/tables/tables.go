@@ -882,6 +882,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
+	prefixCols := make(map[int64]struct{})
 	for i, col := range cols {
 		if col == nil {
 			continue
@@ -896,24 +897,32 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		}
 		if col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType) {
 			pkIdx := FindPrimaryIndex(meta)
-			var idxOfIdx int
+			var (
+				idxOfIdx     int
+				notPrefixCol bool
+			)
 			for i, idxCol := range pkIdx.Columns {
 				if meta.Columns[idxCol.Offset].ID == col.ID {
 					idxOfIdx = i
+					notPrefixCol = idxCol.Length == types.UnspecifiedLength
 					break
 				}
 			}
-			dtBytes := h.EncodedCol(idxOfIdx)
-			_, dt, err := codec.DecodeOne(dtBytes)
-			if err != nil {
-				return nil, nil, err
+			if notPrefixCol {
+				dtBytes := h.EncodedCol(idxOfIdx)
+				_, dt, err := codec.DecodeOne(dtBytes)
+				if err != nil {
+					return nil, nil, err
+				}
+				dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
+				if err != nil {
+					return nil, nil, err
+				}
+				v[i] = dt
+				continue
+			} else {
+				prefixCols[col.ID] = struct{}{}
 			}
-			dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
-			if err != nil {
-				return nil, nil, err
-			}
-			v[i] = dt
-			continue
 		}
 		colTps[col.ID] = &col.FieldType
 	}
@@ -927,7 +936,9 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			continue
 		}
 		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType)) {
-			continue
+			if _, isPrefix := prefixCols[col.ID]; !isPrefix {
+				continue
+			}
 		}
 		ri, ok := rowMap[col.ID]
 		if ok {
