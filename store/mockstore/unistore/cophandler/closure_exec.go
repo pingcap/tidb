@@ -532,12 +532,9 @@ type closureProcessor interface {
 }
 
 type scanCtx struct {
-	count            int
-	limit            int
-	chk              *chunk.Chunk
-	desc             bool
-	decoder          *rowcodec.ChunkDecoder
-	primaryColumnIds []int64
+	chk     *chunk.Chunk
+	desc    bool
+	decoder *rowcodec.ChunkDecoder
 
 	newCollationRd  *rowcodec.BytesDecoder
 	newCollationIds map[int64]int

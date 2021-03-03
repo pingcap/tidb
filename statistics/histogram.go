@@ -1788,7 +1788,7 @@ func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
 }
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64) (*Histogram, error) {
+func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
 	var totCount, totNull, bucketNumber, totColSize int64
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
@@ -1826,9 +1826,15 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 
 	for _, meta := range popedTopN {
 		totCount += int64(meta.Count)
-		_, d, err := codec.DecodeOne(meta.Encoded)
-		if err != nil {
-			return nil, err
+		var d types.Datum
+		if isIndex {
+			d.SetBytes(meta.Encoded)
+		} else {
+			var err error
+			_, d, err = codec.DecodeOne(meta.Encoded)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if minValue == nil {
 			minValue = d.Clone()
@@ -1900,8 +1906,8 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 
 	// Calc the bucket lower.
-	if minValue == nil {
-		return nil, errors.Errorf("merge partition-level hist failed")
+	if minValue == nil { // both hists and popedTopN are empty, returns an empty hist in this case
+		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
 	}
 	globalBuckets[0].lower = minValue.Clone()
 	for i := 1; i < len(globalBuckets); i++ {

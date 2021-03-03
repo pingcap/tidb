@@ -962,11 +962,10 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 		if !coveredByPlainIndex && !coveredByClusteredIndex {
 			return false
 		}
-
 		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
 			col.GetType().EvalType() == types.ETString &&
 			!mysql.HasBinaryFlag(col.GetType().Flag)
-		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx {
+		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.table.Meta().CommonHandleVersion == 0 {
 			return false
 		}
 	}
@@ -1369,10 +1368,11 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 // `1 + row_count(a < 1 or a is null)`
 func (ds *DataSource) crossEstimateIndexRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	filtersLen := len(path.TableFilters) + len(path.IndexFilters)
-	if ds.statisticTable.Pseudo || filtersLen == 0 {
+	sessVars := ds.ctx.GetSessionVars()
+	if ds.statisticTable.Pseudo || filtersLen == 0 || !sessVars.EnableExtendedStats {
 		return 0, false, 0
 	}
-	col, corr := getMostCorrCol4Index(path, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
+	col, corr := getMostCorrCol4Index(path, ds.statisticTable, sessVars.CorrelationThreshold)
 	filters := make([]expression.Expression, 0, filtersLen)
 	filters = append(filters, path.TableFilters...)
 	filters = append(filters, path.IndexFilters...)
