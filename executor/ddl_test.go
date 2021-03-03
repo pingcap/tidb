@@ -458,8 +458,9 @@ func (s *testSuite6) TestCreateDropTable(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
 	tk.MustExec("insert into drop_test values(1),(2),(3),(4);")
-	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(4))
 	tk.MustExec("drop table if exists drop_test")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	tk.MustExec("create table drop_test (a int)")
 	tk.MustExec("drop table drop_test")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
@@ -507,7 +508,7 @@ func (s *testSuite6) TestCreateDropIndex(c *C) {
 	tk.MustExec("create index idx_a on drop_test (a);")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	tk.MustExec("insert into drop_test values(4),(5);")
-	c.Assert(tk.Se.AffectedRows(), Equals, uint64(3))
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
 	tk.MustExec("drop index idx_a on drop_test;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	tk.MustExec("drop table drop_test;")
@@ -673,9 +674,9 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error())
 
 	//change type
-	tk.MustExec("create table modify_column (c1 int);")
+	tk.MustExec("create table modify_column (c1 tinyint);")
 	tk.MustExec("insert modify_column values (1),(2),(3),(4),(5);")
-	tk.MustExec("alter table modify_column modify column c1 tinyint;")
+	tk.MustExec("alter table modify_column modify column c1 int;")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(5))
 	tk.MustExec("drop table modify_column;")
 
