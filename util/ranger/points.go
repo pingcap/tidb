@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -164,7 +163,6 @@ func NullRange() []*Range {
 type builder struct {
 	err error
 	sc  *stmtctx.StatementContext
-	ctx *sessionctx.Context
 }
 
 func (r *builder) build(expr expression.Expression) []*point {

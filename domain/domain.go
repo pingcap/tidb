@@ -149,7 +149,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		return 0, nil, fullLoad, err
 	}
 
-	bundles, err := infosync.GetAllRuleBundles(nil)
+	bundles, err := infosync.GetAllRuleBundles(context.TODO())
 	if err != nil {
 		return 0, nil, fullLoad, err
 	}

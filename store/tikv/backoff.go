@@ -216,11 +216,9 @@ func (t BackoffType) TError() error {
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	GetAllMembersBackoff           = 5000
-	copBuildTaskMaxBackoff         = 5000
 	tsoMaxBackoff                  = 15000
 	scannerNextMaxBackoff          = 20000
 	batchGetMaxBackoff             = 20000
-	copNextMaxBackoff              = 20000
 	getMaxBackoff                  = 20000
 	cleanupMaxBackoff              = 20000
 	GcOneRegionMaxBackoff          = 20000
