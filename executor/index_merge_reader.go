@@ -23,12 +23,14 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -97,11 +99,9 @@ type IndexMergeReaderExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 
-	corColInIdxSide bool
 	partialPlans    [][]plannercore.PhysicalPlan
 	corColInTblSide bool
 	tblPlans        []plannercore.PhysicalPlan
-	corColInAccess  bool
 	idxCols         [][]*expression.Column
 	colLens         [][]int
 
@@ -196,7 +196,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		collExec := true
 		e.dagPBs[workID].CollectExecutionSummaries = &collExec
 	}
-
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(keyRange).
 		SetDAGRequest(e.dagPBs[workID]).
@@ -206,6 +205,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		SetStreaming(e.partialStreamings[workID]).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		return err
@@ -490,9 +490,10 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 		if resultTask == nil {
 			return nil
 		}
-		for resultTask.cursor < len(resultTask.rows) {
-			req.AppendRow(resultTask.rows[resultTask.cursor])
-			resultTask.cursor++
+		if resultTask.cursor < len(resultTask.rows) {
+			numToAppend := mathutil.Min(len(resultTask.rows)-resultTask.cursor, e.maxChunkSize-req.NumRows())
+			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+numToAppend])
+			resultTask.cursor += numToAppend
 			if req.NumRows() >= e.maxChunkSize {
 				return nil
 			}

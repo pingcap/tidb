@@ -139,6 +139,10 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
 }
 
+func (c *index) GenIndexValue(sc *stmtctx.StatementContext, indexedValues []types.Datum, distinct bool, untouched bool, h kv.Handle) (val []byte, err error) {
+	return tablecodec.GenIndexValueNew(sc, c.tblInfo, c.idxInfo, c.containNonBinaryString, distinct, untouched, indexedValues, h, c.phyTblID)
+}
+
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
@@ -377,4 +381,13 @@ func FindChangingCol(cols []*table.Column, idxInfo *model.IndexInfo) *table.Colu
 		}
 	}
 	return nil
+}
+
+// IsIndexWritable check whether the index is writable.
+func IsIndexWritable(idx table.Index) bool {
+	s := idx.Meta().State
+	if s != model.StateDeleteOnly && s != model.StateDeleteReorganization {
+		return true
+	}
+	return false
 }

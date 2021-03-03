@@ -52,8 +52,6 @@ const (
 	TypeLimit = "Limit"
 	// TypeHashJoin is the type of hash join.
 	TypeHashJoin = "HashJoin"
-	// TypeBroadcastJoin is the type of broad cast join.
-	TypeBroadcastJoin = "BroadcastJoin"
 	// TypeExchangeSender is the type of mpp exchanger sender.
 	TypeExchangeSender = "ExchangeSender"
 	// TypeExchangeReceiver is the type of mpp exchanger receiver.
@@ -110,6 +108,18 @@ const (
 	TypeDataSource = "DataSource"
 	// TypeLoadData is the type of LoadData.
 	TypeLoadData = "LoadData"
+	// TypeTableSample is the type of TableSample.
+	TypeTableSample = "TableSample"
+	// TypeTableFullScan is the type of TableFullScan.
+	TypeTableFullScan = "TableFullScan"
+	// TypeTableRangeScan is the type of TableRangeScan.
+	TypeTableRangeScan = "TableRangeScan"
+	// TypeTableRowIDScan is the type of TableRowIDScan.
+	TypeTableRowIDScan = "TableRowIDScan"
+	// TypeIndexFullScan is the type of IndexFullScan.
+	TypeIndexFullScan = "IndexFullScan"
+	// TypeIndexRangeScan is the type of IndexRangeScan.
+	TypeIndexRangeScan = "IndexRangeScan"
 )
 
 // plan id.
@@ -156,6 +166,12 @@ const (
 	typeClusterMemTableReader int = 39
 	typeDataSourceID          int = 40
 	typeLoadDataID            int = 41
+	typeTableSampleID         int = 42
+	typeTableFullScan         int = 43
+	typeTableRangeScan        int = 44
+	typeTableRowIDScan        int = 45
+	typeIndexFullScan         int = 46
+	typeIndexRangeScan        int = 47
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -243,6 +259,18 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeDataSourceID
 	case TypeLoadData:
 		return typeLoadDataID
+	case TypeTableSample:
+		return typeTableSampleID
+	case TypeTableFullScan:
+		return typeTableFullScan
+	case TypeTableRangeScan:
+		return typeTableRangeScan
+	case TypeTableRowIDScan:
+		return typeTableRowIDScan
+	case TypeIndexFullScan:
+		return typeIndexFullScan
+	case TypeIndexRangeScan:
+		return typeIndexRangeScan
 	}
 	// Should never reach here.
 	return 0
@@ -331,6 +359,16 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeClusterMemTableReader
 	case typeLoadDataID:
 		return TypeLoadData
+	case typeTableFullScan:
+		return TypeTableFullScan
+	case typeTableRangeScan:
+		return TypeTableRangeScan
+	case typeTableRowIDScan:
+		return TypeTableRowIDScan
+	case typeIndexFullScan:
+		return TypeIndexFullScan
+	case typeIndexRangeScan:
+		return TypeIndexRangeScan
 	}
 
 	// Should never reach here.

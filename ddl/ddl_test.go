@@ -67,7 +67,10 @@ func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	autoid.SetStep(5000)
 	ReorgWaitTimeout = 30 * time.Millisecond
 	batchInsertDeleteRangeSize = 2
@@ -82,7 +85,7 @@ func TestT(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,4 +263,31 @@ func buildRebaseAutoIDJobJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, new
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newBaseID},
 	}
+}
+
+func (s *testDDLSuite) TestGetIntervalFromPolicy(c *C) {
+	policy := []time.Duration{
+		1 * time.Second,
+		2 * time.Second,
+	}
+	var (
+		val     time.Duration
+		changed bool
+	)
+
+	val, changed = getIntervalFromPolicy(policy, 0)
+	c.Assert(val, Equals, 1*time.Second)
+	c.Assert(changed, Equals, true)
+
+	val, changed = getIntervalFromPolicy(policy, 1)
+	c.Assert(val, Equals, 2*time.Second)
+	c.Assert(changed, Equals, true)
+
+	val, changed = getIntervalFromPolicy(policy, 2)
+	c.Assert(val, Equals, 2*time.Second)
+	c.Assert(changed, Equals, false)
+
+	val, changed = getIntervalFromPolicy(policy, 3)
+	c.Assert(val, Equals, 2*time.Second)
+	c.Assert(changed, Equals, false)
 }

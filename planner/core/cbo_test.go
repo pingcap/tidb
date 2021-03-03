@@ -100,7 +100,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 		c.Assert(strings.Contains(execInfo, "time"), Equals, true)
 		c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
 		if strings.Contains(row[0].(string), "Reader") || strings.Contains(row[0].(string), "IndexLookUp") {
-			c.Assert(strings.Contains(execInfo, "copr_cache_hit_ratio"), Equals, true)
+			c.Assert(strings.Contains(execInfo, "cop_task"), Equals, true)
 		}
 	}
 }
@@ -125,14 +125,14 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"HashJoin_8 7.49 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-		"├─TableReader_15(Build) 5.99 root  data:Selection_14",
-		"│ └─Selection_14 5.99 cop[tikv]  not(isnull(test.t2.a))",
-		"│   └─TableFullScan_13 6.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"└─TableReader_12(Probe) 5.99 root  data:Selection_11",
-		"  └─Selection_11 5.99 cop[tikv]  not(isnull(test.t1.a))",
-		"    └─TableFullScan_10 6.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	testKit.MustQuery("explain format = 'brief' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
+		"HashJoin 7.49 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+		"├─TableReader(Build) 5.99 root  data:Selection",
+		"│ └─Selection 5.99 cop[tikv]  not(isnull(test.t2.a))",
+		"│   └─TableFullScan 6.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"└─TableReader(Probe) 5.99 root  data:Selection",
+		"  └─Selection 5.99 cop[tikv]  not(isnull(test.t1.a))",
+		"    └─TableFullScan 6.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
 	testKit.MustQuery("explain format = 'hint' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"))
@@ -183,12 +183,12 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 
-	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
-		`TableDual_6 0.00 root  rows:0`,
+	testKit.MustQuery(`explain format = 'brief' select * from t where 1 = 0`).Check(testkit.Rows(
+		`TableDual 0.00 root  rows:0`,
 	))
 
-	testKit.MustQuery(`explain select * from t where 1 = 1 limit 0`).Check(testkit.Rows(
-		`TableDual_5 0.00 root  rows:0`,
+	testKit.MustQuery(`explain format = 'brief' select * from t where 1 = 1 limit 0`).Check(testkit.Rows(
+		`TableDual 0.00 root  rows:0`,
 	))
 }
 
@@ -217,11 +217,11 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	}
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
-		"HashAgg_9 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
-		"└─TableReader_10 2.00 root  data:HashAgg_5",
-		"  └─HashAgg_5 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
-		"    └─TableFullScan_8 8.00 cop[tikv] table:t keep order:false",
+	testKit.MustQuery("explain format = 'brief' select count(*) from t group by a").Check(testkit.Rows(
+		"HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
+		"└─TableReader 2.00 root  data:HashAgg",
+		"  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
+		"    └─TableFullScan 8.00 cop[tikv] table:t keep order:false",
 	))
 }
 
@@ -355,6 +355,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("create table t3 (a int, b int)")
 	testKit.MustExec("create index a on t3 (a)")
 
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	testKit.MustExec("create table t4 (a int, b int) partition by range (a) (partition p1 values less than (2), partition p2 values less than (3))")
 	testKit.MustExec("create index a on t4 (a)")
 	testKit.MustExec("create index b on t4 (b)")
@@ -419,16 +420,16 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	statistics.RatioOfPseudoEstimate.Store(10.0)
-	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableReader_7 29.77 root  data:Selection_6",
-		"└─Selection_6 29.77 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-		"  └─TableFullScan_5 80.00 cop[tikv] table:t keep order:false",
+	testKit.MustQuery("explain format = 'brief' select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
+		"TableReader 29.77 root  data:Selection",
+		"└─Selection 29.77 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+		"  └─TableFullScan 80.00 cop[tikv] table:t keep order:false",
 	))
 	statistics.RatioOfPseudoEstimate.Store(0.7)
-	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableReader_7 8.84 root  data:Selection_6",
-		"└─Selection_6 8.84 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-		"  └─TableFullScan_5 80.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	testKit.MustQuery("explain format = 'brief' select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
+		"TableReader 8.84 root  data:Selection",
+		"└─Selection 8.84 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+		"  └─TableFullScan 80.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 }
 
@@ -496,7 +497,7 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
 	h := dom.StatsHandle()
-	h.Clear4Test()
+	h.Clear()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	for i := 2; i < 4; i++ {
 		s.testData.OnRecord(func() {
@@ -552,16 +553,16 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	tk.MustExec("analyze table t with 2 buckets")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
-	dom.StatsHandle().Clear4Test()
+	dom.StatsHandle().Clear()
 	dom.StatsHandle().Update(dom.InfoSchema())
 	// Using the histogram (a, b) to estimate `a = 5` will get 1.22, while using the CM Sketch to estimate
 	// the `a = 5 and c = 5` will get 10, it is not consistent.
-	tk.MustQuery("explain select * from t use index(ab) where a = 5 and c = 5").
+	tk.MustQuery("explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5").
 		Check(testkit.Rows(
-			"IndexLookUp_8 10.00 root  ",
-			"├─IndexRangeScan_5(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",
-			"└─Selection_7(Probe) 10.00 cop[tikv]  eq(test.t.c, 5)",
-			"  └─TableRowIDScan_6 12.50 cop[tikv] table:t keep order:false",
+			"IndexLookUp 10.00 root  ",
+			"├─IndexRangeScan(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",
+			"└─Selection(Probe) 10.00 cop[tikv]  eq(test.t.c, 5)",
+			"  └─TableRowIDScan 12.50 cop[tikv] table:t keep order:false",
 		))
 }
 
@@ -772,7 +773,7 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 		)
 	`)
 	// Test when both tables are empty, EXPLAIN ANALYZE for IndexLookUp would not panic.
-	tk.MustExec("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
+	tk.MustQuery("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
 }
 
 func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
@@ -910,7 +911,7 @@ func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
 	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
-	testKit.MustExec("set @@tidb_enable_clustered_index=0")
+	testKit.Se.GetSessionVars().EnableClusteredIndex = false
 	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
 	err = s.loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom)
 	c.Assert(err, IsNil)
@@ -942,6 +943,7 @@ func (s *testAnalyzeSuite) TestLimitIndexEstimation(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key idx_a(a), key idx_b(b))")
+	tk.MustExec("set session tidb_enable_extended_stats = on")
 	// Values in column a are from 1 to 1000000, values in column b are from 1000000 to 1,
 	// these 2 columns are strictly correlated in reverse order.
 	err = s.loadTableStats("analyzeSuiteTestLimitIndexEstimationT.json", dom)

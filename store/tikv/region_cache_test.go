@@ -53,7 +53,7 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.store2 = storeIDs[1]
 	s.peer1 = peerIDs[0]
 	s.peer2 = peerIDs[1]
-	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
@@ -119,6 +119,34 @@ func (s *testRegionCacheSuite) getAddr(c *C, key []byte, replicaRead kv.ReplicaR
 		return ""
 	}
 	return ctx.Addr
+}
+
+func (s *testRegionCacheSuite) TestStoreLabels(c *C) {
+	testcases := []struct {
+		storeID uint64
+	}{
+		{
+			storeID: s.store1,
+		},
+		{
+			storeID: s.store2,
+		},
+	}
+	for _, testcase := range testcases {
+		c.Log(testcase.storeID)
+		store := s.cache.getStoreByStoreID(testcase.storeID)
+		_, err := store.initResolve(s.bo, s.cache)
+		c.Assert(err, IsNil)
+		labels := []*metapb.StoreLabel{
+			{
+				Key:   "id",
+				Value: fmt.Sprintf("%v", testcase.storeID),
+			},
+		}
+		stores := s.cache.getStoresByLabels(labels)
+		c.Assert(len(stores), Equals, 1)
+		c.Assert(stores[0].labels, DeepEquals, labels)
+	}
 }
 
 func (s *testRegionCacheSuite) TestSimple(c *C) {
@@ -595,6 +623,96 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
 }
 
+func (s *testRegionCacheSuite) TestLabelSelectorTiKVPeer(c *C) {
+	dc1Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-1",
+		},
+	}
+	dc2Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-2",
+		},
+	}
+	dc3Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-3",
+		},
+	}
+	s.cluster.UpdateStoreLabels(s.store1, dc1Label)
+	s.cluster.UpdateStoreLabels(s.store2, dc2Label)
+
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(store3))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.UpdateStoreLabels(store3, dc1Label)
+	// Region have 3 peer, leader located in dc-1, followers located in dc-1, dc-2
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	seed := rand.Uint32()
+
+	testcases := []struct {
+		name               string
+		t                  kv.ReplicaReadType
+		labels             []*metapb.StoreLabel
+		expectStoreIDRange map[uint64]struct{}
+	}{
+		{
+			name:   "any Peer,located in dc-1",
+			t:      kv.ReplicaReadMixed,
+			labels: dc1Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+				store3:   {},
+			},
+		},
+		{
+			name:   "any Peer,located in dc-2",
+			t:      kv.ReplicaReadMixed,
+			labels: dc2Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store2: {},
+			},
+		},
+		{
+			name:   "only follower,located in dc-1",
+			t:      kv.ReplicaReadFollower,
+			labels: dc1Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				store3: {},
+			},
+		},
+		{
+			name:   "only leader, shouldn't consider labels",
+			t:      kv.ReplicaReadLeader,
+			labels: dc2Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+			},
+		},
+		{
+			name:   "no label matching, fallback to leader",
+			t:      kv.ReplicaReadMixed,
+			labels: dc3Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+			},
+		},
+	}
+
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, testcase.t, seed, WithMatchLabels(testcase.labels))
+		c.Assert(err, IsNil)
+		_, exist := testcase.expectStoreIDRange[ctx.Store.storeID]
+		c.Assert(exist, Equals, true)
+	}
+}
+
 func (s *testRegionCacheSuite) TestSplit(c *C) {
 	seed := rand.Uint32()
 	r := s.getRegion(c, []byte("x"))
@@ -663,7 +781,7 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 
 func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 	// Create a separated region cache to do this test.
-	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(s.cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
@@ -830,6 +948,33 @@ func (s *testRegionCacheSuite) TestReplaceNewAddrAndOldOfflineImmediately(c *C) 
 	getVal, err := client.Get(testKey)
 	c.Assert(err, IsNil)
 	c.Assert(getVal, BytesEquals, testValue)
+}
+
+func (s *testRegionCacheSuite) TestReplaceStore(c *C) {
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+
+	client := &RawKVClient{
+		clusterID:   0,
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+	}
+	defer client.Close()
+	testKey := []byte("test_key")
+	testValue := []byte("test_value")
+	err := client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
+
+	s.cluster.MarkTombstone(s.store1)
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(s.store1))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.RemovePeer(s.region1, s.peer1)
+	s.cluster.ChangeLeader(s.region1, peer3)
+
+	err = client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
 }
 
 func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
@@ -1219,7 +1364,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 				AccessIdx:  accessIdx,
 				Peer:       peer,
 				Store:      store,
-				AccessMode: TiKvOnly,
+				AccessMode: TiKVOnly,
 			}
 			r := cache.getCachedRegionWithRLock(rpcCtx.Region)
 			if r != nil {

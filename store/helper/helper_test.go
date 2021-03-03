@@ -27,13 +27,13 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/pdapi"
 	"go.uber.org/zap"
 )
 
 type HelperTestSuite struct {
-	store tikv.Storage
+	store helper.Storage
 }
 
 var _ = Suite(new(HelperTestSuite))
@@ -44,7 +44,7 @@ func TestT(t *testing.T) {
 }
 
 type mockStore struct {
-	tikv.Storage
+	helper.Storage
 	pdAddrs []string
 }
 
@@ -60,12 +60,25 @@ func (s *mockStore) TLSConfig() *tls.Config {
 	panic("not implemented")
 }
 
+func (s *mockStore) Name() string {
+	return "mock store"
+}
+
+func (s *mockStore) Describe() string {
+	return ""
+}
+
 func (s *HelperTestSuite) SetUpSuite(c *C) {
 	url := s.mockPDHTTPServer(c)
 	time.Sleep(100 * time.Millisecond)
-	mockTikvStore, err := mockstore.NewMockStore()
+	mockTikvStore, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
+		}),
+	)
+
 	s.store = &mockStore{
-		mockTikvStore.(tikv.Storage),
+		mockTikvStore.(helper.Storage),
 		[]string{url[len("http://"):]},
 	}
 	c.Assert(err, IsNil)
@@ -78,18 +91,25 @@ func (s *HelperTestSuite) TestHotRegion(c *C) {
 	}
 	regionMetric, err := h.FetchHotRegion(pdapi.HotRead)
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
-	expected := make(map[uint64]helper.RegionMetric)
-	expected[1] = helper.RegionMetric{
-		FlowBytes:    100,
-		MaxHotDegree: 1,
-		Count:        0,
+	expected := map[uint64]helper.RegionMetric{
+		2: {
+			FlowBytes:    100,
+			MaxHotDegree: 1,
+			Count:        0,
+		},
+		4: {
+			FlowBytes:    200,
+			MaxHotDegree: 2,
+			Count:        0,
+		},
 	}
 	c.Assert(regionMetric, DeepEquals, expected)
 	dbInfo := &model.DBInfo{
 		Name: model.NewCIStr("test"),
 	}
 	c.Assert(err, IsNil)
-	_, err = h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	res, err := h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	c.Assert(res[0].RegionMetric, Not(Equals), res[1].RegionMetric)
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
 }
 
@@ -141,8 +161,13 @@ func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http
 		RegionsStat: []helper.RegionStat{
 			{
 				FlowBytes: 100,
-				RegionID:  1,
+				RegionID:  2,
 				HotDegree: 1,
+			},
+			{
+				FlowBytes: 200,
+				RegionID:  4,
+				HotDegree: 2,
 			},
 		},
 	}

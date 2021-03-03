@@ -219,6 +219,8 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) err
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
 	}
+	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
+	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
@@ -315,6 +317,13 @@ func (p *LogicalJoin) mergeSchema() {
 		p.schema.Append(joinCol)
 	} else {
 		p.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
+		switch p.JoinType {
+		case LeftOuterJoin:
+			resetNotNullFlag(p.schema, p.children[1].Schema().Len(), p.schema.Len())
+		case RightOuterJoin:
+			resetNotNullFlag(p.schema, 0, p.children[0].Schema().Len())
+		default:
+		}
 	}
 }
 

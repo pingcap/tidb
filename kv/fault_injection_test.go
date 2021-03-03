@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 type testFaultInjectionSuite struct{}
@@ -34,7 +35,7 @@ func (s testFaultInjectionSuite) TestFaultInjectionBasic(c *C) {
 	storage := NewInjectedStore(newMockStorage(), &cfg)
 	txn, err := storage.Begin()
 	c.Assert(err, IsNil)
-	_, err = storage.BeginWithStartTS(0)
+	_, err = storage.BeginWithStartTS(oracle.GlobalTxnScope, 0)
 	c.Assert(err, IsNil)
 	ver := Version{Ver: 1}
 	snap := storage.GetSnapshot(ver)

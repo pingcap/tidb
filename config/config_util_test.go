@@ -23,6 +23,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 )
 
 func (s *testConfigSuite) TestCloneConf(c *C) {
@@ -56,7 +57,6 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 	newConf.Performance.PseudoEstimateRatio = 123
 	newConf.OOMAction = "panic"
 	newConf.MemQuotaQuery = 123
-	newConf.MemQuotaStatistics = 123
 	newConf.TiKVClient.StoreLimit = 123
 
 	// rejected
@@ -67,7 +67,7 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 
 	as, rs := MergeConfigItems(oldConf, newConf)
 	c.Assert(len(as), Equals, 10)
-	c.Assert(len(rs), Equals, 4)
+	c.Assert(len(rs), Equals, 3)
 	for _, a := range as {
 		_, ok := dynamicConfigItems[a]
 		c.Assert(ok, IsTrue)
@@ -168,4 +168,22 @@ engines = ["tikv", "tiflash", "tidb"]
 	c.Assert(toJSONStr(flatMap["log.level"]), Equals, `"info"`)
 	c.Assert(toJSONStr(flatMap["log.format"]), Equals, `"text"`)
 	c.Assert(toJSONStr(flatMap["isolation-read.engines"]), Equals, `["tikv","tiflash","tidb"]`)
+}
+
+func (s *testConfigSuite) TestTxnScopeValue(c *C) {
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
+	isGlobal, v := GetTxnScopeFromConfig()
+	c.Assert(isGlobal, IsFalse)
+	c.Assert(v, Equals, "bj")
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("")`)
+	isGlobal, v = GetTxnScopeFromConfig()
+	c.Assert(isGlobal, IsTrue)
+	c.Assert(v, Equals, "global")
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("global")`)
+	isGlobal, v = GetTxnScopeFromConfig()
+	c.Assert(isGlobal, IsFalse)
+	c.Assert(v, Equals, "global")
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 }

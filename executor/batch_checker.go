@@ -15,8 +15,12 @@ package executor
 
 import (
 	"context"
+	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -39,7 +43,8 @@ type toBeCheckedRow struct {
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
-	t table.Table
+	t       table.Table
+	ignored bool
 }
 
 // encodeNewRow encodes a new row to value.
@@ -64,7 +69,10 @@ func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]b
 // which need to be checked whether they are duplicate keys.
 func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
 	nUnique := 0
-	for _, v := range t.WritableIndices() {
+	for _, v := range t.Indices() {
+		if !tables.IsIndexWritable(v) {
+			continue
+		}
 		if v.Meta().Unique {
 			nUnique++
 		}
@@ -99,6 +107,11 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	if p, ok := t.(table.PartitionedTable); ok {
 		t, err = p.GetPartitionByRow(ctx, row)
 		if err != nil {
+			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				result = append(result, toBeCheckedRow{ignored: true})
+				return result, nil
+			}
 			return nil, err
 		}
 	}
@@ -122,10 +135,24 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	var handleKey *keyValueWithDupInfo
 	if handle != nil {
 		fn := func() string {
-			return kv.GetDuplicateErrorHandleString(handle)
+			var str string
+			var err error
+			if t.Meta().IsCommonHandle {
+				data := make([]types.Datum, len(handleCols))
+				for i, col := range handleCols {
+					data[i] = row[col.Offset]
+				}
+				str, err = formatDataForDupError(data)
+			} else {
+				str, err = row[handleCols[0].Offset].ToString()
+			}
+			if err != nil {
+				return kv.GetDuplicateErrorHandleString(handle)
+			}
+			return str
 		}
 		handleKey = &keyValueWithDupInfo{
-			newKey: t.RecordKey(handle),
+			newKey: tablecodec.EncodeRecordKey(t.RecordPrefix(), handle),
 			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), "PRIMARY"),
 		}
 	}
@@ -133,7 +160,10 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	// addChangingColTimes is used to fetch values while processing "modify/change column" operation.
 	addChangingColTimes := 0
 	// append unique keys and errors
-	for _, v := range t.WritableIndices() {
+	for _, v := range t.Indices() {
+		if !tables.IsIndexWritable(v) {
+			continue
+		}
 		if !v.Meta().Unique {
 			continue
 		}
@@ -161,7 +191,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if !distinct {
 			continue
 		}
-		colValStr, err1 := types.DatumsToString(colVals, false)
+		colValStr, err1 := formatDataForDupError(colVals)
 		if err1 != nil {
 			return nil, err1
 		}
@@ -183,11 +213,23 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	return result, nil
 }
 
+func formatDataForDupError(data []types.Datum) (string, error) {
+	strs := make([]string, 0, len(data))
+	for _, datum := range data {
+		str, err := datum.ToString()
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		strs = append(strs, str)
+	}
+	return strings.Join(strs, "-"), nil
+}
+
 // getOldRow gets the table record row from storage for batch check.
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
 func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
 	genExprs []expression.Expression) ([]types.Datum, error) {
-	oldValue, err := txn.Get(ctx, t.RecordKey(handle))
+	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
 	if err != nil {
 		return nil, err
 	}

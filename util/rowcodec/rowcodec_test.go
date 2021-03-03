@@ -589,7 +589,7 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 			}
 		}
 
-		//decode to chunk.
+		// decode to chunk.
 		chk := chunk.New(fts, 1, 1)
 		cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, ddf, sc.TimeZone)
 		err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
@@ -664,13 +664,11 @@ func (s *testSuite) TestVarintCompatibility(c *C) {
 		// transform test data into input.
 		colIDs := make([]int64, 0, len(testData))
 		dts := make([]types.Datum, 0, len(testData))
-		fts := make([]*types.FieldType, 0, len(testData))
 		cols := make([]rowcodec.ColInfo, 0, len(testData))
 		for i := range testData {
 			t := testData[i]
 			colIDs = append(colIDs, t.id)
 			dts = append(dts, t.dt)
-			fts = append(fts, t.ft)
 			cols = append(cols, rowcodec.ColInfo{
 				ID:         t.id,
 				IsPKHandle: t.handle,

@@ -48,9 +48,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	kvstore "github.com/pingcap/tidb/store"
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/gcworker"
+	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -60,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/signal"
-	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -247,9 +247,8 @@ func setHeapProfileTracker() {
 }
 
 func registerStores() {
-	err := kvstore.Register("tikv", tikv.Driver{})
+	err := kvstore.Register("tikv", driver.TiKVDriver{})
 	terror.MustNil(err)
-	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = kvstore.Register("mocktikv", mockstore.MockTiKVDriver{})
 	terror.MustNil(err)
 	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})
@@ -417,6 +416,11 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Host = *host
 	}
 	if actualFlags[nmAdvertiseAddress] {
+		var err error
+		if len(strings.Split(*advertiseAddress, " ")) > 1 {
+			err = errors.Errorf("Only support one advertise-address")
+		}
+		terror.MustNil(err)
 		cfg.AdvertiseAddress = *advertiseAddress
 	}
 	if len(cfg.AdvertiseAddress) == 0 && cfg.Host == "0.0.0.0" {
@@ -558,7 +562,6 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
-	variable.SetSysVar(variable.TIDBMemQuotaStatistics, strconv.FormatInt(cfg.MemQuotaStatistics, 10))
 	variable.SetSysVar("lower_case_table_names", strconv.Itoa(cfg.LowerCaseTableNames))
 	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(config.GetGlobalConfig().Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))

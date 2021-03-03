@@ -50,14 +50,14 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -81,7 +81,6 @@ type seqTestSuite struct {
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
-	ctx *mock.Context
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
@@ -148,9 +147,9 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	}
 
 	// Goroutine should not leak when error happen.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/copr/handleTaskOnceError", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/copr/handleTaskOnceError"), IsNil)
 	}()
 	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
 	c.Assert(err, IsNil)
@@ -177,6 +176,9 @@ func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 }
 
 func (s *seqTestSuite) TestShow(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -195,7 +197,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	row := result.Rows()[0]
 	// For issue https://github.com/pingcap/tidb/issues/1061
 	expectedRow := []interface{}{
-		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
+		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -215,7 +217,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -398,7 +400,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`id`)\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=4",
 	))
 	// for issue https://github.com/pingcap/tidb/issues/4678
@@ -409,7 +411,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`id`)\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
 	))
 	tk.MustExec(`drop table show_auto_increment`)
@@ -418,7 +420,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`id`)\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("insert into show_auto_increment values(10)")
@@ -427,7 +429,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`id`)\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
 	))
 
@@ -591,7 +593,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"t CREATE TABLE `t` (\n"+
 			"  `y` year(4) NOT NULL,\n"+
 			"  `x` int(11) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`y`)\n"+
+			"  PRIMARY KEY (`y`) /*T![clustered_index] NONCLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test show create table with zerofill flag
@@ -601,7 +603,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) NOT NULL,\n"+
 			"  `val` tinyint(10) unsigned zerofill DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`id`)\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test show columns with different types of default value
@@ -677,7 +679,7 @@ func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
 // TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
 // leak. For testing distsql with multiple regions, we need to manually split a mock TiKV.
 func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
-	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
+	if _, ok := s.store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
 		return
 	}

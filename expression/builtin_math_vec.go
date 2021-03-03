@@ -1070,7 +1070,8 @@ func (b *builtinSignSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 }
 
 func (b *builtinConvSig) vectorized() bool {
-	return true
+	// TODO: change the vecEval match hybrid type fixing. Then open the vectorized evaluation.
+	return false
 }
 
 func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
