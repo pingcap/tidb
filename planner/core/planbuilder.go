@@ -1224,51 +1224,6 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	return ret, nil
 }
 
-// getGenExprs gets generated expressions map.
-func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, exprCols *expression.Schema, names types.NameSlice) (
-	map[model.TableColumnID]expression.Expression, error) {
-	tblInfo := tbl.Meta()
-	genExprsMap := make(map[model.TableColumnID]expression.Expression)
-	exprs := make([]expression.Expression, 0, len(tbl.Cols()))
-	genExprIdxs := make([]model.TableColumnID, len(tbl.Cols()))
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	mockTablePlan.SetSchema(exprCols)
-	mockTablePlan.names = names
-	for i, colExpr := range mockTablePlan.Schema().Columns {
-		col := tbl.Cols()[i]
-		var expr expression.Expression
-		expr = colExpr
-		if col.IsGenerated() && !col.GeneratedStored {
-			var err error
-			expr, _, err = b.rewrite(ctx, col.GeneratedExpr, mockTablePlan, nil, true)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			found := false
-			for _, column := range idx.Columns {
-				if strings.EqualFold(col.Name.L, column.Name.L) {
-					found = true
-					break
-				}
-			}
-			if found {
-				genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ColumnInfo.ID}
-				genExprsMap[genColumnID] = expr
-				genExprIdxs[i] = genColumnID
-			}
-		}
-		exprs = append(exprs, expr)
-	}
-	// Re-iterate expressions to handle those virtual generated columns that refers to the other generated columns.
-	for i, expr := range exprs {
-		exprs[i] = expression.ColumnSubstitute(expr, mockTablePlan.Schema(), exprs)
-		if _, ok := genExprsMap[genExprIdxs[i]]; ok {
-			genExprsMap[genExprIdxs[i]] = exprs[i]
-		}
-	}
-	return genExprsMap, nil
-}
-
 // FindColumnInfoByID finds ColumnInfo in cols by ID.
 func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInfo {
 	for _, info := range colInfos {
@@ -1643,7 +1598,8 @@ func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo)
 	return handleCols
 }
 
-func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]int64, []string, error) {
+// GetPhysicalIDsAndPartitionNames returns physical IDs and names of these partitions.
+func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]int64, []string, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		if len(partitionNames) != 0 {
@@ -1681,11 +1637,6 @@ func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
-	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
-	if len(as.PartitionNames) > 0 && pruneMode == variable.DynamicOnly {
-		logutil.BgLogger().Info("analyze partition didn't affect in dynamic-prune-mode", zap.String("partitions", as.PartitionNames[0].L))
-		return p, nil
-	}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
 			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
@@ -1694,10 +1645,11 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			return nil, errors.Errorf("analyze sequence %s is not supported now.", tbl.Name.O)
 		}
 		idxInfo, colInfo := getColsInfo(tbl)
-		physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
+		physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
 		if err != nil {
 			return nil, err
 		}
+		var commonHandleInfo *model.IndexInfo
 		// If we want to analyze this table with analyze version 2 but the existing stats is version 1 and stats feedback is enabled,
 		// we will switch back to analyze version 1.
 		if statistics.FeedbackProbability.Load() > 0 && version == 2 {
@@ -1710,6 +1662,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 		}
 		for _, idx := range idxInfo {
+			if idx.Primary && tbl.TableInfo.IsCommonHandle {
+				commonHandleInfo = idx
+				continue
+			}
 			for i, id := range physicalIDs {
 				if id == tbl.TableInfo.ID {
 					id = -1
@@ -1744,10 +1700,11 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					StatsVersion:  version,
 				}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
-					HandleCols:  handleCols,
-					ColsInfo:    colInfo,
-					analyzeInfo: info,
-					TblInfo:     tbl.TableInfo,
+					HandleCols:       handleCols,
+					CommonHandleInfo: commonHandleInfo,
+					ColsInfo:         colInfo,
+					analyzeInfo:      info,
+					TblInfo:          tbl.TableInfo,
 				})
 			}
 		}
@@ -1758,12 +1715,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
-	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
-	if len(as.PartitionNames) > 0 && pruneMode == variable.DynamicOnly {
-		logutil.BgLogger().Info("analyze partition didn't affect in dynamic-prune-mode", zap.String("table", tblInfo.Name.L), zap.String("partitions", as.PartitionNames[0].L))
-		return p, nil
-	}
-	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
+	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
@@ -1823,12 +1775,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
-	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
-	if len(as.PartitionNames) > 0 && pruneMode == variable.DynamicOnly {
-		logutil.BgLogger().Info("analyze partition didn't affect in dynamic-prune-mode", zap.String("table", tblInfo.Name.L), zap.String("partitions", as.PartitionNames[0].L))
-		return p, nil
-	}
-	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
+	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}

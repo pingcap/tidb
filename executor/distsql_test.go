@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -37,14 +37,17 @@ import (
 func checkGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)
 	profile := pprof.Lookup("goroutine")
-	profile.WriteTo(buf, 1)
+	err := profile.WriteTo(buf, 1)
+	if err != nil {
+		panic(err)
+	}
 	str := buf.String()
 	return strings.Contains(str, keyword)
 }
 
 func (s *testSuite3) TestCopClientSend(c *C) {
 	c.Skip("not stable")
-	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
+	if _, ok := s.store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
 		return
 	}

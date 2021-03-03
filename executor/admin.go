@@ -459,7 +459,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			continue
 		}
 
-		recordKey := e.table.RecordKey(row.handle)
+		recordKey := tablecodec.EncodeRecordKey(e.table.RecordPrefix(), row.handle)
 		err := txn.LockKeys(ctx, new(kv.LockCtx), recordKey)
 		if err != nil {
 			return result, err
@@ -555,7 +555,7 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 
 func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
 	e.idxValues.Range(func(h kv.Handle, _ interface{}) bool {
-		e.batchKeys = append(e.batchKeys, e.table.RecordKey(h))
+		e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
 		return true
 	})
 	values, err := txn.BatchGet(context.Background(), e.batchKeys)
