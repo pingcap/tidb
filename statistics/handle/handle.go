@@ -441,6 +441,10 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 				globalStatsNDV += bucket.NDV
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
+
+			// hg.NDV still includes TopN although TopN is not included by hg.Buckets
+			// TODO: remove the line below after fixing the meaning of hg.NDV
+			globalStats.Hg[i].NDV += int64(len(globalStats.TopN[i].TopN))
 		}
 	}
 	return
