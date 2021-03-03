@@ -713,7 +713,7 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 }
 
 func (ts *ConnTestSuite) TestFallbackToTiKVWhenTiFlashIsDown(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/errorMockTiFlashServerTimeout", "return(true)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/copr/errorMockTiFlashServerTimeout", "return(true)"), IsNil)
 	cc := &clientConn{
 		alloc: arena.NewAllocator(1024),
 		pkt: &packetIO{
@@ -755,5 +755,5 @@ func (ts *ConnTestSuite) TestFallbackToTiKVWhenTiFlashIsDown(c *C) {
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/errorMockTiFlashServerTimeout"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/copr/errorMockTiFlashServerTimeout"), IsNil)
 }
