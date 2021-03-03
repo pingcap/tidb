@@ -1457,3 +1457,12 @@ func (s *testIntegrationSuite) TestIssue24281(c *C) {
 		"GROUP BY s.member_login " +
 		"UNION select 1 as v1, 2 as v2")
 }
+
+func (s *testIntegrationSuite) TestIssue22071(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values(1),(2),(5)")
+	tk.MustQuery("select n in (1,2) from (select a in (1,2) as n from t) g;").Sort().Check(testkit.Rows("0", "1", "1"))
+	tk.MustQuery("select n in (1,n) from (select a in (1,2) as n from t) g;").Check(testkit.Rows("1", "1", "1"))
+}
