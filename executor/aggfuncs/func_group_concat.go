@@ -179,8 +179,9 @@ type groupConcatDistinct struct {
 func (e *groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
-	p.valSet, memDelta = set.NewStringSetWithMemoryUsage()
-	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + memDelta
+	setSize := int64(0)
+	p.valSet, setSize = set.NewStringSetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + setSize
 }
 
 func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {

@@ -263,10 +263,11 @@ type sum4DistinctFloat64 struct {
 }
 
 func (e *sum4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	setSize := int64(0)
 	p := new(partialResult4SumDistinctFloat64)
 	p.isNull = true
-	p.valSet, memDelta = set.NewFloat64SetWithMemoryUsage()
-	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size + memDelta
+	p.valSet, setSize = set.NewFloat64SetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size + setSize
 }
 
 func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
@@ -313,8 +314,9 @@ type sum4DistinctDecimal struct {
 func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
-	p.valSet, memDelta = set.NewStringSetWithMemoryUsage()
-	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize + memDelta
+	setSize := int64(0)
+	p.valSet, setSize = set.NewStringSetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize + setSize
 }
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {

@@ -134,8 +134,9 @@ func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelt
 	p.count = 0
 	p.sum = 0
 	p.variance = 0
-	p.valSet, memDelta = set.NewFloat64SetWithMemoryUsage()
-	return PartialResult(p), DefPartialResult4VarPopDistinctFloat64Size + memDelta
+	setSize := int64(0)
+	p.valSet, setSize = set.NewFloat64SetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4VarPopDistinctFloat64Size + setSize
 }
 
 func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
