@@ -411,11 +411,6 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		// Because after merging TopN, some numbers will be left.
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
-		for _, topN := range allTopN[i] {
-			if topN == nil {
-				continue
-			}
-		}
 		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], uint32(opts[ast.AnalyzeOptNumTopN]))
 
 		// Merge histogram
