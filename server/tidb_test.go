@@ -126,7 +126,7 @@ func (ts *tidbTestSuite) TestUint64(c *C) {
 }
 
 func (ts *tidbTestSuite) TestYear(c *C) {
-	ts.runTestCompareYearWithNull(c)
+	ts.runTestIndexScanWithYearCol(c)
 }
 
 func (ts *tidbTestSuite) TestSpecialType(c *C) {

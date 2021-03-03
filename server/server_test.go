@@ -1595,26 +1595,32 @@ func (cli *testServerClient) runTestIssue3682(c *C) {
 	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)")
 }
 
-func (cli *testServerClient) runTestCompareYearWithNull(c *C) {
+func (cli *testServerClient) runTestIndexScanWithYearCol(c *C) {
 	cli.runTests(c, nil, func(dbt *DBTest) {
-		// test year column compare with NULL
-		dbt.mustExec("drop table if exists tyear;")
-		dbt.mustExec("create table tyear(c1 year(4));")
-		dbt.mustExec("insert into tyear values(2001);")
+		dbt.mustExec("use test;")
+		dbt.mustExec("drop table if exists t;")
+		dbt.mustExec("create table t (c1 year(4), c2 int, key(c1));")
+		dbt.mustExec("insert into t values(2001, 1);")
 
-		// expect empty result set
-		rows := dbt.mustQuery("select * from tyear where c1 != NULL;")
+		// test inner join
+		rows := dbt.mustQuery("select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c2 != NULL;")
 		cli.checkRows(c, rows, "")
-		dbt.mustQuery("select * from tyear where c1 = NULL;")
+		rows = dbt.mustQuery("select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c2 != NULL;")
 		cli.checkRows(c, rows, "")
-		dbt.mustQuery("select * from tyear where c1 is NULL;")
-		cli.checkRows(c, rows, "")
+		rows = dbt.mustQuery("select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c2 != NULL;")
+		cli.checkRows(c, rows, "0")
 
-		// expect got result
-		rows = dbt.mustQuery("select * from tyear where c1 is not NULL;")
-		cli.checkRows(c, rows, "2001")
-		rows = dbt.mustQuery("select * from tyear where c1 = 2001;")
-		cli.checkRows(c, rows, "2001")
+		// test left join
+		rows = dbt.mustQuery("select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c2 != NULL;")
+		cli.checkRows(c, rows, "")
+		rows = dbt.mustQuery("select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c2 != NULL;")
+		cli.checkRows(c, rows, "")
+		rows = dbt.mustQuery("select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c2 != NULL;")
+		cli.checkRows(c, rows, "0")
+
+		// test is not. expect output
+		rows = dbt.mustQuery("select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c2 is not NULL;")
+		cli.checkRows(c, rows, "2001 1 2001 1")
 	})
 }
 
