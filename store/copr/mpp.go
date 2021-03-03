@@ -201,7 +201,9 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
 		if sender.GetRPCError() != nil {
-			m.sendError(sender.GetRPCError())
+			logutil.BgLogger().Error("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()))
+			// we return timeout to trigger tikv's fallback
+			m.sendError(tikv.ErrTiFlashServerTimeout)
 			return
 		}
 	} else {
@@ -209,7 +211,9 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	}
 
 	if err != nil {
-		m.sendError(err)
+		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()))
+		// we return timeout to trigger tikv's fallback
+		m.sendError(tikv.ErrTiFlashServerTimeout)
 		return
 	}
 

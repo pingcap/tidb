@@ -242,6 +242,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdMPPConn:
 		resp.Resp, err = c.handleEstablishMPPConnection(ctx, req.EstablishMPPConn(), timeout, storeID)
 	case tikvrpc.CmdMPPTask:
+		failpoint.Inject("mppDispatchTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
 		resp.Resp, err = c.handleDispatchMPPTask(ctx, req.DispatchMPPTask(), storeID)
 	case tikvrpc.CmdMvccGetByKey:
 		resp.Resp, err = c.usSvr.MvccGetByKey(ctx, req.MvccGetByKey())
@@ -455,6 +460,11 @@ func (mock *mockBatchCopClient) Recv() (*coprocessor.BatchResponse, error) {
 		}
 		return ret, err
 	}
+	failpoint.Inject("batchCopRecvTimeout", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, context.Canceled)
+		}
+	})
 	return nil, io.EOF
 }
 
@@ -470,6 +480,11 @@ func (mock *mockMPPConnectionClient) Recv() (*mpp.MPPDataPacket, error) {
 		mock.idx++
 		return ret, nil
 	}
+	failpoint.Inject("mppRecvTimeout", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, context.Canceled)
+		}
+	})
 	return nil, io.EOF
 }
 
