@@ -871,12 +871,10 @@ func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Ro
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	startTime := time.Now()
 	rs, err := se.ExecuteInternal(ctx, sql)
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
 	if err != nil || rs == nil {
 		return nil, nil, err
 	}
+	defer terror.Call(rs.Close)
 	rows, err := drainRecordSet(ctx, se, rs)
 	if err != nil {
 		return nil, nil, err

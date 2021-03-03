@@ -663,12 +663,10 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	sctx.GetSessionVars().UsePlanBaselines = false
 	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = oriVals
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
 	if err != nil {
 		return "", err
 	}
+	defer terror.Call(rs.Close)
 	chk := rs.NewChunk()
 	err = rs.Next(context.TODO(), chk)
 	if err != nil {
@@ -875,9 +873,7 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 	}()
 	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
-		if rs != nil {
-			terror.Call(rs.Close)
-		}
+		terror.Call(rs.Close)
 		resultChan <- err
 		return
 	}
