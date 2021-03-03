@@ -82,9 +82,6 @@ const (
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
 var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusAddrIsNotSet)
 
-// errPlacementRulesDisabled is exported for internal usage, indicating PD rejected the request due to disabled placement feature.
-var errPlacementRulesDisabled = errors.New("placement rules feature is disabled")
-
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	etcdCli         *clientv3.Client

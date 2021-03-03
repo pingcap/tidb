@@ -23,6 +23,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 )
 
 func (s *testConfigSuite) TestCloneConf(c *C) {
@@ -170,16 +171,19 @@ engines = ["tikv", "tiflash", "tidb"]
 }
 
 func (s *testConfigSuite) TestTxnScopeValue(c *C) {
-	GetGlobalConfig().Labels["zone"] = "bj"
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
 	isGlobal, v := GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsFalse)
 	c.Assert(v, Equals, "bj")
-	GetGlobalConfig().Labels["zone"] = ""
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("")`)
 	isGlobal, v = GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsTrue)
 	c.Assert(v, Equals, "global")
-	GetGlobalConfig().Labels["zone"] = "global"
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("global")`)
 	isGlobal, v = GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsFalse)
 	c.Assert(v, Equals, "global")
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 }

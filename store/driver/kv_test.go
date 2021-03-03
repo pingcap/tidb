@@ -7,7 +7,6 @@ import (
 
 type testTiKVDriverSuite struct {
 	OneByOneSuite
-	store *tikvStore
 }
 
 var _ = Suite(&testTiKVDriverSuite{})
