@@ -45,9 +45,8 @@ type UnionScanExec struct {
 	// belowHandleCols is the handle's position of the below scan plan.
 	belowHandleCols plannercore.HandleCols
 
-	addedRows           [][]types.Datum
-	cursor4AddRows      int
-	sortErr             error
+	addedRows      [][]types.Datum
+	cursor4AddRows int
 	snapshotRows        [][]types.Datum
 	cursor4SnapshotRows int
 	snapshotChunkBuffer *chunk.Chunk

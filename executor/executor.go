@@ -427,7 +427,6 @@ type ShowDDLJobsExec struct {
 
 	jobNumber int
 	is        infoschema.InfoSchema
-	done      bool
 }
 
 // DDLJobRetriever retrieve the DDLJobs.

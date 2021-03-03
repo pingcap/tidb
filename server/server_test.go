@@ -170,13 +170,6 @@ type DBTest struct {
 	db *sql.DB
 }
 
-func (dbt *DBTest) fail(method, query string, err error) {
-	if len(query) > 300 {
-		query = "[query too large to print]"
-	}
-	dbt.Fatalf("Error on %s %s: %s", method, query, err.Error())
-}
-
 func (dbt *DBTest) mustPrepare(query string) *sql.Stmt {
 	stmt, err := dbt.db.Prepare(query)
 	dbt.Assert(err, IsNil, Commentf("Prepare %s", query))

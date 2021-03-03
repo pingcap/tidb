@@ -33,14 +33,6 @@ func SetOracleHookCurrentTime(oc oracle.Oracle, t time.Time) {
 	}
 }
 
-// ClearOracleHook exports localOracle's clear hook method
-func ClearOracleHook(oc oracle.Oracle) {
-	switch o := oc.(type) {
-	case *localOracle:
-		o.hook = nil
-	}
-}
-
 // NewEmptyPDOracle exports pdOracle struct to test
 func NewEmptyPDOracle() oracle.Oracle {
 	return &pdOracle{}

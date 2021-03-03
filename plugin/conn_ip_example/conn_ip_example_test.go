@@ -14,44 +14,10 @@
 package main_test
 
 import (
-	"context"
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/plugin"
 )
-
-func LoadRunShutdownPluginExample() {
-	ctx := context.Background()
-	var pluginVarNames []string
-	cfg := plugin.Config{
-		Plugins:        []string{"conn_ip_example-1"},
-		PluginDir:      "/home/robi/Code/go/src/github.com/pingcap/tidb/plugin/conn_ip_example",
-		PluginVarNames: &pluginVarNames,
-	}
-
-	err := plugin.Load(ctx, cfg)
-	if err != nil {
-		panic(err)
-	}
-
-	// load and start TiDB domain.
-
-	err = plugin.Init(ctx, cfg)
-	if err != nil {
-		panic(err)
-	}
-
-	err = plugin.ForeachPlugin(plugin.Audit, func(auditPlugin *plugin.Plugin) error {
-		plugin.DeclareAuditManifest(auditPlugin.Manifest).OnGeneralEvent(context.Background(), nil, plugin.Log, "QUERY")
-		return nil
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	plugin.Shutdown(context.Background())
-}
 
 func TestT(t *testing.T) {
 	TestingT(t)

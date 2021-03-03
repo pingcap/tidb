@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -45,24 +44,6 @@ type toBeCheckedRow struct {
 	// t is the table or partition this row belongs to.
 	t       table.Table
 	ignored bool
-}
-
-// encodeNewRow encodes a new row to value.
-func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]byte, error) {
-	colIDs := make([]int64, 0, len(row))
-	skimmedRow := make([]types.Datum, 0, len(row))
-	for _, col := range t.Cols() {
-		if !tables.CanSkip(t.Meta(), col, &row[col.Offset]) {
-			colIDs = append(colIDs, col.ID)
-			skimmedRow = append(skimmedRow, row[col.Offset])
-		}
-	}
-	sctx, rd := ctx.GetSessionVars().StmtCtx, &ctx.GetSessionVars().RowEncoder
-	newRowValue, err := tablecodec.EncodeRow(sctx, skimmedRow, colIDs, nil, nil, rd)
-	if err != nil {
-		return nil, err
-	}
-	return newRowValue, nil
 }
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,

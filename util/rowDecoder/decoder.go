@@ -42,7 +42,6 @@ type RowDecoder struct {
 	mutRow        chunk.MutRow
 	colMap        map[int64]Column
 	colTypes      map[int64]*types.FieldType
-	haveGenColumn bool
 	defaultVals   []types.Datum
 	cols          []*table.Column
 	pkCols        []int64

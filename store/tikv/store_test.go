@@ -106,12 +106,6 @@ type mockPDClient struct {
 	stop   bool
 }
 
-func (c *mockPDClient) enable() {
-	c.Lock()
-	defer c.Unlock()
-	c.stop = false
-}
-
 func (c *mockPDClient) disable() {
 	c.Lock()
 	defer c.Unlock()

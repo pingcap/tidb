@@ -481,11 +481,6 @@ type handleColHelper struct {
 	stackTail         int
 }
 
-func (hch *handleColHelper) appendColToLastMap(tblID int64, handleCols HandleCols) {
-	tailMap := hch.id2HandleMapStack[hch.stackTail-1]
-	tailMap[tblID] = append(tailMap[tblID], handleCols)
-}
-
 func (hch *handleColHelper) popMap() map[int64][]HandleCols {
 	ret := hch.id2HandleMapStack[hch.stackTail-1]
 	hch.stackTail--
