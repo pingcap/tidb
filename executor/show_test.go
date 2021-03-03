@@ -113,7 +113,7 @@ func (s *testSuite5) TestShowWarnings(c *C) {
 	// Test Warning level 'Error'
 	testSQL = `create table show_warnings (a int)`
 	_, _ = tk.Exec(testSQL)
-	// to fix: Table 'test.show_warnings' already exists
+	// FIXME: Table 'test.show_warnings' already exists
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_warnings' already exists"))
 	tk.MustQuery("select @@error_count").Check(testutil.RowsWithSep("|", "1"))
@@ -136,7 +136,7 @@ func (s *testSuite5) TestShowErrors(c *C) {
 	testSQL := `create table if not exists show_errors (a int)`
 	tk.MustExec(testSQL)
 	testSQL = `create table show_errors (a int)`
-	// to fix: 'test.show_errors' already exists
+	// FIXME: 'test.show_errors' already exists
 	_, _ = tk.Exec(testSQL)
 
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))

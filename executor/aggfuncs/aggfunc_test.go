@@ -494,7 +494,7 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		// to fix: cannot assert error since there are cases of error, e.g. JSON documents may not contain NULL member
+		// FIXME: cannot assert error since there are cases of error, e.g. JSON documents may not contain NULL member
 		_, _ = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
 	}
 	p.messUpChunk(srcChk)
@@ -741,7 +741,7 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		// to fix: cannot assert error since there are cases of error, e.g. rows were cut by GROUPCONCAT
+		// FIXME: cannot assert error since there are cases of error, e.g. rows were cut by GROUPCONCAT
 		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
 	p.messUpChunk(srcChk)
@@ -777,14 +777,14 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		// to fix: cannot check error
+		// FIXME: cannot check error
 		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
 	p.messUpChunk(srcChk)
 	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		// to fix: cannot check error
+		// FIXME: cannot check error
 		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
 	p.messUpChunk(srcChk)

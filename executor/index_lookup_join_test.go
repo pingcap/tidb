@@ -34,9 +34,8 @@ func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 	c.Assert(err, IsNil)
 	req := rs.NewChunk()
 	for i := 0; i < 5; i++ {
+		// FIXME: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
 		_ = rs.Next(context.Background(), req)
-		// to fix: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
-		// c.Assert(err, NotNil)
 	}
 	err = rs.Close()
 	c.Assert(err, IsNil)
@@ -45,9 +44,8 @@ func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 	c.Assert(err, IsNil)
 	req = rs.NewChunk()
 	for i := 0; i < 5; i++ {
-		_ = rs.Next(context.Background(), req)
 		// to fix: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
-		// c.Assert(err, IsNil)
+		_ = rs.Next(context.Background(), req)
 	}
 	err = rs.Close()
 	c.Assert(err, IsNil)
@@ -56,9 +54,8 @@ func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 	c.Assert(err, IsNil)
 	req = rs.NewChunk()
 	for i := 0; i < 5; i++ {
-		_ = rs.Next(context.Background(), req)
 		// to fix: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
-		// c.Assert(err, IsNil)
+		_ = rs.Next(context.Background(), req)
 	}
 	err = rs.Close()
 	c.Assert(err, IsNil)
