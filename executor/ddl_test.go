@@ -677,7 +677,7 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("create table modify_column (c1 tinyint);")
 	tk.MustExec("insert modify_column values (1),(2),(3),(4),(5);")
 	tk.MustExec("alter table modify_column modify column c1 int;")
-	c.Assert(tk.Se.AffectedRows(), Equals, uint64(5))
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0)) //won’t reorg the data
 	tk.MustExec("drop table modify_column;")
 
 	//not changing type
