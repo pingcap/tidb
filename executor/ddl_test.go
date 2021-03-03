@@ -1166,6 +1166,9 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
+
+	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = 129")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
