@@ -102,6 +102,7 @@ type Session interface {
 	// Execute is deprecated, use ExecuteStmt() instead.
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a sql statement.
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
+	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) ([]sqlexec.RecordSet, error)
@@ -665,12 +666,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if err != nil {
 				return err
 			}
-			pessTxnConf := config.GetGlobalConfig().PessimisticTxn
-			if pessTxnConf.Enable {
-				if s.sessionVars.TxnMode == ast.Pessimistic {
-					s.sessionVars.TxnCtx.IsPessimistic = true
-				}
-			}
+			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		} else {
 			s.PrepareTxnCtx(ctx)
 		}
@@ -864,7 +860,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	startTime := time.Now()
-	recordSets, err := se.Execute(ctx, sql)
+	recordSets, err := se.ExecuteInternal(ctx, sql)
 	defer func() {
 		for _, rs := range recordSets {
 			closeErr := rs.Close()
@@ -1141,12 +1137,12 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 
-	stmtNode, err := s.ParseWithParams(ctx, sql, args...)
+	stmt, err := s.ParseWithParams(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
 
-	rs, err := s.ExecuteStmt(ctx, stmtNode)
+	rs, err := s.ExecuteStmt(ctx, stmt)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
@@ -1228,8 +1224,10 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 }
 
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
+// Note that it will not do escaping if no variable arguments are passed.
 func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
-	sql, err := sqlexec.EscapeSQL(sql, args...)
+	var err error
+	sql, err = sqlexec.EscapeSQL(sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1276,78 +1274,6 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 	return stmts[0], nil
-}
-
-// ExecRestrictedStmt implements RestrictedSQLExecutor interface.
-func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
-	[]chunk.Row, []*ast.ResultField, error) {
-	var execOption sqlexec.ExecOption
-	for _, opt := range opts {
-		opt(&execOption)
-	}
-	// Use special session to execute the sql.
-	tmp, err := s.sysSessionPool().Get()
-	if err != nil {
-		return nil, nil, err
-	}
-	defer s.sysSessionPool().Put(tmp)
-	se := tmp.(*session)
-
-	startTime := time.Now()
-	// The special session will share the `InspectionTableCache` with current session
-	// if the current session in inspection mode.
-	if cache := s.sessionVars.InspectionTableCache; cache != nil {
-		se.sessionVars.InspectionTableCache = cache
-		defer func() { se.sessionVars.InspectionTableCache = nil }()
-	}
-	defer func() {
-		if !execOption.IgnoreWarning {
-			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
-				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
-				s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
-			}
-		}
-	}()
-
-	if execOption.SnapshotTS != 0 {
-		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(execOption.SnapshotTS)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
-			return nil, nil, err
-		}
-		defer func() {
-			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
-			}
-			se.sessionVars.SnapshotInfoschema = nil
-		}()
-	}
-
-	// for analyze stmt we need let worker session follow user session that executing stmt.
-	metrics.SessionRestrictedSQLCounter.Inc()
-
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-	rs, err := se.ExecuteStmt(ctx, stmtNode)
-	if err != nil {
-		se.sessionVars.StmtCtx.AppendError(err)
-	}
-	if rs == nil {
-		return nil, nil, err
-	}
-	defer func() {
-		if closeErr := rs.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	var rows []chunk.Row
-	rows, err = drainRecordSet(ctx, se, rs)
-	if err != nil {
-		return nil, nil, err
-	}
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
-	return rows, rs.Fields(), err
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
