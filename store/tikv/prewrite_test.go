@@ -37,7 +37,7 @@ func (s *testPrewriteSuite) SetUpTest(c *C) {
 func (s *testPrewriteSuite) TestSetMinCommitTSInAsyncCommit(c *C) {
 	t, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn := t.(*tikvTxn)
+	txn := t
 	err = txn.Set([]byte("k"), []byte("v"))
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitterWithInit(txn, 1)

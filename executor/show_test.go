@@ -830,8 +830,8 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
 
 	// Test show list partition table
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
     	partition p1 values in (1,2,10,11,19,20),
@@ -952,7 +952,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	))
 }
 
-// Override testAutoRandomSuite to test auto id cache.
+// TestAutoIdCache overrides testAutoRandomSuite to test auto id cache.
 func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1232,4 +1232,15 @@ func (s *testSuite5) TestIssue19507(c *C) {
 			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
 			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
 			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+}
+
+// TestShowPerformanceSchema tests for Issue 19231
+func (s *testSuite5) TestShowPerformanceSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Ideally we should create a new performance_schema table here with indices that we run the tests on.
+	// However, its not possible to create a new performance_schema table since its a special in memory table.
+	// Instead the test below uses the default index on the table.
+	tk.MustQuery("SHOW INDEX FROM performance_schema.events_statements_summary_by_digest").Check(
+		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES NULL",
+			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES NULL"))
 }

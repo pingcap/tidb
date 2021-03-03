@@ -108,8 +108,10 @@ func (s *testConfigSuite) TestLogConfig(c *C) {
 		c.Assert(conf.Log.EnableTimestamp, Equals, expectedEnableTimestamp)
 		c.Assert(conf.Log.DisableTimestamp, Equals, expectedDisableTimestamp)
 		c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }))
-		f.Truncate(0)
-		f.Seek(0, 0)
+		err := f.Truncate(0)
+		c.Assert(err, IsNil)
+		_, err = f.Seek(0, 0)
+		c.Assert(err, IsNil)
 	}
 
 	testLoad(`
@@ -174,8 +176,10 @@ unrecognized-option-test = true
 	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*invalid configuration option(?:.|\n)*")
 	c.Assert(conf.MaxServerConnections, Equals, uint32(0))
 
-	f.Truncate(0)
-	f.Seek(0, 0)
+	err = f.Truncate(0)
+	c.Assert(err, IsNil)
+	_, err = f.Seek(0, 0)
+	c.Assert(err, IsNil)
 
 	_, err = f.WriteString(`
 token-limit = 0
@@ -286,8 +290,10 @@ log-rotate = true`)
 
 	// Test telemetry config default value and whether it will be overwritten.
 	conf = NewConfig()
-	f.Truncate(0)
-	f.Seek(0, 0)
+	err = f.Truncate(0)
+	c.Assert(err, IsNil)
+	_, err = f.Seek(0, 0)
+	c.Assert(err, IsNil)
 	c.Assert(f.Sync(), IsNil)
 	c.Assert(conf.Load(configFile), IsNil)
 	c.Assert(conf.EnableTelemetry, Equals, true)

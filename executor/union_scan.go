@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -219,7 +220,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			if err != nil {
 				return nil, err
 			}
-			checkKey := us.table.RecordKey(snapshotHandle)
+			checkKey := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
 			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.
