@@ -991,6 +991,7 @@ const (
 	ErrInvalidTableSample                  = 8128
 	ErrJSONObjectKeyTooLong                = 8129
 	ErrMultiStatementDisabled              = 8130
+	ErrBuildGlobalLevelStatsFailed         = 8131
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
