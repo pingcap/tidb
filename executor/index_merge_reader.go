@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -100,10 +99,7 @@ type IndexMergeReaderExecutor struct {
 	*checkIndexValue
 
 	partialPlans    [][]plannercore.PhysicalPlan
-	corColInTblSide bool
 	tblPlans        []plannercore.PhysicalPlan
-	idxCols         [][]*expression.Column
-	colLens         [][]int
 
 	handleCols plannercore.HandleCols
 	stats      *IndexMergeRuntimeStat

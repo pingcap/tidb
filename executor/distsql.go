@@ -362,6 +362,7 @@ const (
 	getHandleFromTable
 )
 
+// nolint:structcheck
 type checkIndexValue struct {
 	idxColTps  []*types.FieldType
 	idxTblCols []*table.Column

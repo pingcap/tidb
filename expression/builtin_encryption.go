@@ -77,6 +77,7 @@ var (
 // aesModeAttr indicates that the key length and iv attribute for specific block_encryption_mode.
 // keySize is the key length in bits and mode is the encryption mode.
 // ivRequired indicates that initialization vector is required or not.
+// nolint:structcheck
 type aesModeAttr struct {
 	modeName   string
 	keySize    int
