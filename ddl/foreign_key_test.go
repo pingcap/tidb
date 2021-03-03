@@ -117,7 +117,10 @@ func (s *testForeignKeySuite) TestForeignKey(c *C) {
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 	s.d = d
 	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
 	ctx := testNewContext(d)
