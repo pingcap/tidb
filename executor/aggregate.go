@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
@@ -536,7 +537,7 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(mapper) > (1<<w.BInMap)*set.LoadFactorNum/set.LoadFactorDen {
+		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
 			w.BInMap++
 		}
@@ -910,7 +911,7 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 		e.partialResultMap[groupKey] = partialResults
 		allMemDelta += int64(len(groupKey))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(e.partialResultMap) > (1<<e.bInMap)*set.LoadFactorNum/set.LoadFactorDen {
+		if len(e.partialResultMap) > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			e.memTracker.Consume(defBucketMemoryUsage * (1 << e.bInMap))
 			e.bInMap++
 		}

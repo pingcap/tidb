@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -112,7 +112,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
 			if _, ok := p.entries[keyString]; !ok {
 				memDelta += int64(len(keyString)) + getValMemDelta(realVal)
-				if len(p.entries)+1 > (1<<p.bInMap)*set.LoadFactorNum/set.LoadFactorDen {
+				if len(p.entries)+1 > (1<<p.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 					memDelta += (1 << p.bInMap) * DefMapStringInterfaceBucketSize
 					p.bInMap++
 				}
@@ -160,7 +160,7 @@ func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst Par
 	for k, v := range p1.entries {
 		p2.entries[k] = v
 		memDelta += int64(len(k)) + getValMemDelta(v)
-		if len(p2.entries)+1 > (1<<p2.bInMap)*set.LoadFactorNum/set.LoadFactorDen {
+		if len(p2.entries)+1 > (1<<p2.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			memDelta += (1 << p2.bInMap) * DefMapStringInterfaceBucketSize
 			p2.bInMap++
 		}
