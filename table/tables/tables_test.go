@@ -136,10 +136,6 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoID, Greater, int64(0))
 
-	handle, err := tables.AllocHandle(context.Background(), nil, tb)
-	c.Assert(err, IsNil)
-	c.Assert(handle.IntValue(), Greater, int64(0))
-
 	ctx := ts.se
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)

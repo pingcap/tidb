@@ -145,10 +145,6 @@ func (all Allocators) Get(allocType AllocatorType) Allocator {
 			return a
 		}
 	}
-	// fallback to row id allocator.
-	if allocType == AutoIncrementType {
-		return all.Get(RowIDAllocType)
-	}
 	return nil
 }
 
