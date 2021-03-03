@@ -2044,3 +2044,66 @@ func (s *testStatsSuite) TestFeedbackCounter(c *C) {
 	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(newNum)
 	c.Assert(subtraction(newNum, oldNum), Equals, 20)
 }
+
+func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testkit.WithPruneMode(testKit, variable.DynamicOnly, func() {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t")
+		testKit.MustExec(`create table t (a int, b varchar(10), index idx_ab(a, b))
+					partition by range (a) (
+					partition p0 values less than (10),
+					partition p1 values less than (20),
+					partition p2 values less than (30))`)
+
+		do := s.do
+		is := do.InfoSchema()
+		h := do.StatsHandle()
+		c.Assert(h.RefreshVars(), IsNil)
+		c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+
+		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		testKit.MustExec("set @@tidb_analyze_version = 2")
+		testKit.MustExec("analyze table t")
+
+		handle.AutoAnalyzeMinCnt = 0
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.1")
+		defer func() {
+			handle.AutoAnalyzeMinCnt = 1000
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+		}()
+
+		c.Assert(h.Update(is), IsNil)
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo := tbl.Meta()
+		pi := tableInfo.GetPartitionInfo()
+		globalStats := h.GetTableStats(tableInfo)
+		partitionStats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(globalStats.Count, Equals, int64(6))
+		c.Assert(globalStats.ModifyCount, Equals, int64(0))
+		c.Assert(partitionStats.Count, Equals, int64(2))
+		c.Assert(partitionStats.ModifyCount, Equals, int64(0))
+
+		testKit.MustExec("insert into t values (3, 'g')")
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		globalStats = h.GetTableStats(tableInfo)
+		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(globalStats.Count, Equals, int64(6))
+		c.Assert(globalStats.ModifyCount, Equals, int64(0))
+		c.Assert(partitionStats.Count, Equals, int64(3))
+		c.Assert(partitionStats.ModifyCount, Equals, int64(1))
+
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		globalStats = h.GetTableStats(tableInfo)
+		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(globalStats.Count, Equals, int64(7))
+		c.Assert(globalStats.ModifyCount, Equals, int64(0))
+		c.Assert(partitionStats.Count, Equals, int64(3))
+		c.Assert(partitionStats.ModifyCount, Equals, int64(0))
+	})
+}
