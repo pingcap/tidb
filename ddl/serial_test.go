@@ -402,7 +402,6 @@ func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
 	// Test MaxTableRowID with prefixed primary key.
 	tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	is = s.dom.InfoSchema()
 	d = s.dom.DDL()
 	testCtx = newTestMaxTableRowIDContext(c, d, tbl)
 	checkGetMaxTableRowID(testCtx, s.store, true, nil)
