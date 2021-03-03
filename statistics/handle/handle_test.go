@@ -1444,6 +1444,38 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 	c.Assert(foundS1 && foundS2, IsTrue)
 }
 
+func (s *testStatsSuite) TestSyncStatsExtendedRemoval(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustExec("analyze table t")
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
+	item := statsTbl.ExtendedStats.Stats["s1"]
+	c.Assert(item, NotNil)
+	result := tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 1)
+
+	tk.MustExec("alter table t drop stats_extended s1")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
+	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 0)
+}
+
 func (s *testStatsSuite) TestStaticPartitionPruneMode(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
