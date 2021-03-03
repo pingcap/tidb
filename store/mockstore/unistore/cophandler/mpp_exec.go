@@ -108,11 +108,10 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 type exchSenderExec struct {
 	baseMPPExec
 
-	exchangeSender *tipb.ExchangeSender
-	tunnels        []*ExchangerTunnel
-	outputOffsets  []uint32
-	exchangeTp     tipb.ExchangeType
-	hashKeyOffset  int
+	tunnels       []*ExchangerTunnel
+	outputOffsets []uint32
+	exchangeTp    tipb.ExchangeType
+	hashKeyOffset int
 }
 
 func (e *exchSenderExec) open() error {
