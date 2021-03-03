@@ -630,7 +630,15 @@ partition by range (a) (
 	tk.MustExec("drop stats t partition p0")
 	checkPartitionStats("global", "p1")
 
-	tk.MustExec("drop stats t partition global")
+	err := tk.ExecToErr("drop stats t partition abcde")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "can not found the specified partition name abcde in the table definition")
+
+	err = tk.ExecToErr("drop stats t partition global")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "can not found the specified partition name global in the table definition")
+
+	tk.MustExec("drop stats t global")
 	checkPartitionStats("p1")
 
 	tk.MustExec("analyze table t")
