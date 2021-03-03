@@ -97,6 +97,16 @@ func (s *testClusteredSuite) TestClusteredPrefixColumn(c *C) {
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
+
+	tk.MustExec("drop table if exists test1")
+	tk.MustExec("create table test1(c1 varchar(100) not null default 'xyza', c2 int, primary key(c1(3)) clustered)")
+	tk.MustExec("replace into test1(c2) values(1)")
+	tk.MustExec("replace into test1(c2) values(1)")
+
+	tk.MustExec("drop table if exists test3")
+	tk.MustExec("create table test3(c1 varchar(100), c2 int, primary key(c1(1)) clustered)")
+	tk.MustExec("insert into test3 values('ab', 1) on duplicate key update c2 = 100")
+	tk.MustExec("insert into test3 values('ab', 1) on duplicate key update c2 = 100")
 }
 
 func (s *testClusteredSuite) TestClusteredUnionScanIndexLookup(c *C) {
