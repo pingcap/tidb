@@ -222,7 +222,7 @@ func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(logicalTableID, physicalTableID int64, delta int64, count int64, colSize map[int64]int64, saveAsLogicalTblID bool) {
+func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
 	if tc.TableDeltaMap == nil {
@@ -235,9 +235,6 @@ func (tc *TransactionContext) UpdateDeltaForTable(logicalTableID, physicalTableI
 	item.Delta += delta
 	item.Count += count
 	item.TableID = physicalTableID
-	if saveAsLogicalTblID {
-		item.TableID = logicalTableID
-	}
 	for key, val := range colSize {
 		item.ColSize[key] += val
 	}
@@ -506,7 +503,6 @@ type SessionVars struct {
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
 
-	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -579,6 +575,9 @@ type SessionVars struct {
 
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
+
+	// EnableListTablePartition enables list table partition feature.
+	EnableListTablePartition bool
 
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
@@ -790,7 +789,7 @@ type SessionVars struct {
 	PartitionPruneMode atomic2.String
 
 	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
-	TxnScope string
+	TxnScope oracle.TxnScope
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
@@ -825,12 +824,15 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
 		return oracle.GlobalTxnScope
 	}
-	return s.TxnScope
+	if s.TxnScope.GetVarValue() == oracle.LocalTxnScope {
+		return s.TxnScope.GetTxnScope()
+	}
+	return oracle.GlobalTxnScope
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
-	return PartitionPruneMode(s.PartitionPruneMode.Load()) == DynamicOnly
+	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
 // BuildParserConfig generate parser.ParserConfig for initial parser
@@ -845,21 +847,40 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 type PartitionPruneMode string
 
 const (
-	// StaticOnly indicates only prune at plan phase.
+	// Static indicates only prune at plan phase.
+	Static PartitionPruneMode = "static"
+	// Dynamic indicates only prune at execute phase.
+	Dynamic PartitionPruneMode = "dynamic"
+
+	// Don't use out-of-date mode.
+
+	// StaticOnly is out-of-date.
 	StaticOnly PartitionPruneMode = "static-only"
-	// DynamicOnly indicates only prune at execute phase.
+	// DynamicOnly is out-of-date.
 	DynamicOnly PartitionPruneMode = "dynamic-only"
-	// StaticButPrepareDynamic indicates prune at plan phase but collect stats need for dynamic prune.
+	// StaticButPrepareDynamic is out-of-date.
 	StaticButPrepareDynamic PartitionPruneMode = "static-collect-dynamic"
 )
 
 // Valid indicate PruneMode is validated.
 func (p PartitionPruneMode) Valid() bool {
 	switch p {
-	case StaticOnly, StaticButPrepareDynamic, DynamicOnly:
+	case Static, Dynamic, StaticOnly, DynamicOnly:
 		return true
 	default:
 		return false
+	}
+}
+
+// Update updates out-of-date PruneMode.
+func (p PartitionPruneMode) Update() PartitionPruneMode {
+	switch p {
+	case StaticOnly, StaticButPrepareDynamic:
+		return Static
+	case DynamicOnly:
+		return Dynamic
+	default:
+		return p
 	}
 }
 
@@ -969,7 +990,7 @@ func NewSessionVars() *SessionVars {
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    config.GetTxnScopeFromConfig(),
+		TxnScope:                    oracle.GetTxnScope(),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 		Enable1PC:                   DefTiDBEnable1PC,
@@ -1520,6 +1541,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
 		s.EnableTablePartition = val
+	case TiDBEnableListTablePartition:
+		s.EnableListTablePartition = TiDBOptOn(val)
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
@@ -1698,7 +1721,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:
-		s.TxnScope = val
+		switch val {
+		case oracle.GlobalTxnScope:
+			s.TxnScope = oracle.NewGlobalTxnScope()
+		case oracle.LocalTxnScope:
+			s.TxnScope = oracle.GetTxnScope()
+		default:
+			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
+		}
 	case TiDBMemoryUsageAlarmRatio:
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
 	case TiDBEnableRateLimitAction:

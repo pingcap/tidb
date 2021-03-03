@@ -156,7 +156,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
 	txn.SetOption(kv.GuaranteeLinearizability, false)
 	// Prewrite an async-commit lock and do not commit it.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", `return`), IsNil)
-	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 1)
+	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
 	c.Assert(err, IsNil)
 	// Sets its minCommitTS to one second later, so the lock will be ignored by point get.
 	committer.minCommitTS = committer.startTS + (1000 << 18)

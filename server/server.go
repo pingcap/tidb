@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
@@ -68,7 +69,6 @@ import (
 )
 
 var (
-	baseConnID  uint32
 	serverPID   int
 	osUser      string
 	osVersion   string
@@ -301,7 +301,12 @@ func setSSLVariable(ca, key, cert string) {
 }
 
 func setTxnScope() {
-	variable.SetSysVar("txn_scope", config.GetTxnScopeFromConfig())
+	variable.SetSysVar("txn_scope", func() string {
+		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
+			return oracle.GlobalTxnScope
+		}
+		return oracle.LocalTxnScope
+	}())
 }
 
 // Export config-related metrics
@@ -693,10 +698,3 @@ func setSystemTimeZoneVariable() {
 		variable.SetSysVar("system_time_zone", tz)
 	})
 }
-
-// Server error codes.
-const (
-	codeUnknownFieldType = 1
-	codeInvalidSequence  = 3
-	codeInvalidType      = 4
-)

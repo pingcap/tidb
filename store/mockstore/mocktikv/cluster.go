@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/tablecodec"
 	pd "github.com/tikv/pd/client"
-	"go.uber.org/atomic"
 )
 
 // Cluster simulates a TiKV cluster. It focuses on management and the change of
@@ -667,9 +666,8 @@ func (r *Region) incVersion() {
 
 // Store is the Store's meta data.
 type Store struct {
-	meta       *metapb.Store
-	cancel     bool // return context.Cancelled error when cancel is true.
-	tokenCount atomic.Int64
+	meta   *metapb.Store
+	cancel bool // return context.Cancelled error when cancel is true.
 }
 
 func newStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) *Store {
