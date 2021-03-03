@@ -81,6 +81,7 @@ var (
 		}, []string{LblType, LblResult})
 
 	// Metrics for ddl_worker.go.
+	WorkerNotifyDDLJob      = "notify_job"
 	WorkerAddDDLJob         = "add_job"
 	WorkerRunDDLJob         = "run_job"
 	WorkerFinishDDLJob      = "finish_job"
