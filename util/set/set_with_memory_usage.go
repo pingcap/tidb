@@ -26,6 +26,7 @@ const (
 	// Represent as loadFactorNum/loadFactDen, to allow integer math.
 	loadFactorNum = 13
 	loadFactorDen = 2
+
 	// DefFloat64Size is the size of float64
 	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
 	// DefInt64Size is the size of int64
