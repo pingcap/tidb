@@ -119,15 +119,19 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	if p.buffer != nil {
 		memDelta += int64(-p.buffer.Cap())
 	}
+
+	defer func() {
+		memDelta += int64(p.valsBuf.Cap())
+		if p.buffer != nil {
+			memDelta += int64(p.buffer.Cap())
+		}
+	}()
+
 	for _, row := range rowsInGroup {
 		p.valsBuf.Reset()
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				memDelta += int64(p.valsBuf.Cap())
-				if p.buffer != nil {
-					memDelta += int64(p.buffer.Cap())
-				}
 				return memDelta, err
 			}
 			if isNull {
@@ -146,9 +150,7 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		}
 		p.buffer.WriteString(p.valsBuf.String())
 	}
-	memDelta += int64(p.valsBuf.Cap())
 	if p.buffer != nil {
-		memDelta += int64(p.buffer.Cap())
 		return memDelta, e.truncatePartialResultIfNeed(sctx, p.buffer)
 	}
 	return memDelta, nil
@@ -209,16 +211,18 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	if p.buffer != nil {
 		memDelta += int64(-p.buffer.Cap())
 	}
+	defer func() {
+		memDelta += int64(p.valsBuf.Cap()) + (int64(cap(p.encodeBytesBuffer)))
+		if p.buffer != nil {
+			memDelta += int64(p.buffer.Cap())
+		}
+	}()
 	for _, row := range rowsInGroup {
 		p.valsBuf.Reset()
 		p.encodeBytesBuffer = p.encodeBytesBuffer[:0]
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				memDelta += int64(p.valsBuf.Cap()) + int64(cap(p.encodeBytesBuffer))
-				if p.buffer != nil {
-					memDelta += int64(p.buffer.Cap())
-				}
 				return memDelta, err
 			}
 			if isNull {
@@ -246,9 +250,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		// write values
 		p.buffer.WriteString(p.valsBuf.String())
 	}
-	memDelta += int64(p.valsBuf.Cap()) + int64(cap(p.encodeBytesBuffer))
 	if p.buffer != nil {
-		memDelta += int64(p.buffer.Cap())
 		return memDelta, e.truncatePartialResultIfNeed(sctx, p.buffer)
 	}
 	return memDelta, nil
@@ -521,13 +523,13 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 	p.topN.sctx = sctx
 	v, isNull := "", false
 	memDelta -= int64(cap(p.encodeBytesBuffer))
+	defer func() { memDelta += int64(cap(p.encodeBytesBuffer)) }()
 	for _, row := range rowsInGroup {
 		buffer := new(bytes.Buffer)
 		p.encodeBytesBuffer = p.encodeBytesBuffer[:0]
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				memDelta += int64(cap(p.encodeBytesBuffer))
 				return memDelta, err
 			}
 			if isNull {
@@ -551,7 +553,6 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		for _, byItem := range e.byItems {
 			d, err := byItem.Expr.Eval(row)
 			if err != nil {
-				memDelta += int64(cap(p.encodeBytesBuffer))
 				return memDelta, err
 			}
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
@@ -560,7 +561,6 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		memDelta += sortRowMemSize
 		memDelta += int64(len(joinedVal))
 		if p.topN.err != nil {
-			memDelta += int64(cap(p.encodeBytesBuffer))
 			return memDelta, p.topN.err
 		}
 		if truncated {
@@ -569,7 +569,6 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			}
 		}
 	}
-	memDelta += int64(cap(p.encodeBytesBuffer))
 	return memDelta, nil
 }
 
