@@ -3922,7 +3922,8 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	_, err := tk.Exec("insert into d select group_concat(a) from t")
 	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, errors.ErrCode(mysql.ErrCutValueGroupConcat))
 
-	tk.Exec("set sql_mode=''")
+	_, err = tk.Exec("set sql_mode=''")
+	c.Assert(err, IsNil)
 	tk.MustExec("insert into d select group_concat(a) from t")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
 	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
