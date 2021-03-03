@@ -35,7 +35,7 @@ const (
 	completeDeleteRangeSQL    = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
 	updateDeleteRangeSQL      = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL       = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
-	loadGlobalVars            = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
+	loadGlobalVars            = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (%?)`
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -155,8 +155,7 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 	if sctx, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		var buf strings.Builder
-		sqlexec.MustFormatSQL(&buf, loadGlobalVars)
-		sqlexec.MustFormatSQL(&buf, "%? )", varNames)
+		sqlexec.MustFormatSQL(&buf, loadGlobalVars, varNames)
 		rows, _, err := sctx.ExecRestrictedSQL(ctx, buf.String())
 		if err != nil {
 			return errors.Trace(err)
