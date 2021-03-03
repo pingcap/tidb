@@ -761,18 +761,30 @@ type Delete struct {
 
 // AnalyzeTableID is hybrid table id used to analyze table.
 type AnalyzeTableID struct {
-	PersistID  int64
-	CollectIDs []int64
+	TableID int64
+	// PartitionID is used for the construction of partition table statistics. It indicate the ID of the partition.
+	// If the table is not the partition table, the PartitionID will be equal to -1.
+	PartitionID int64
 }
 
-// StoreAsCollectID indicates whether collect table id is same as persist table id.
-// for new partition implementation is TRUE but FALSE for old partition implementation
-func (h *AnalyzeTableID) StoreAsCollectID() bool {
-	return h.PersistID == h.CollectIDs[0]
+// GetStatisticsID is used to obtain the table ID to build statistics.
+// If the 'PartitionID == -1', we use the TableID to build the statistics for non-partition tables.
+// Otherwise, we use the PartitionID to build the statistics of the partitions in the partition tables.
+func (h *AnalyzeTableID) GetStatisticsID() int64 {
+	statisticsID := h.TableID
+	if h.PartitionID != -1 {
+		statisticsID = h.PartitionID
+	}
+	return statisticsID
+}
+
+// IsPartitionTable indicates whether the table is partition table.
+func (h *AnalyzeTableID) IsPartitionTable() bool {
+	return h.PartitionID != -1
 }
 
 func (h *AnalyzeTableID) String() string {
-	return fmt.Sprintf("%d => %v", h.CollectIDs, h.PersistID)
+	return fmt.Sprintf("%d => %v", h.PartitionID, h.TableID)
 }
 
 // Equals indicates whether two table id is equal.
@@ -783,28 +795,7 @@ func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
 	if h == nil || t == nil {
 		return false
 	}
-	if h.PersistID != t.PersistID {
-		return false
-	}
-	if len(h.CollectIDs) != len(t.CollectIDs) {
-		return false
-	}
-	if len(h.CollectIDs) == 1 {
-		return h.CollectIDs[0] == t.CollectIDs[0]
-	}
-	for _, hp := range h.CollectIDs {
-		var matchOne bool
-		for _, tp := range t.CollectIDs {
-			if tp == hp {
-				matchOne = true
-				break
-			}
-		}
-		if !matchOne {
-			return false
-		}
-	}
-	return true
+	return h.TableID == t.TableID && h.PartitionID == t.PartitionID
 }
 
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.
@@ -814,13 +805,15 @@ type analyzeInfo struct {
 	PartitionName string
 	TableID       AnalyzeTableID
 	Incremental   bool
+	StatsVersion  int
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	HandleCols HandleCols
-	ColsInfo   []*model.ColumnInfo
-	TblInfo    *model.TableInfo
+	HandleCols       HandleCols
+	CommonHandleInfo *model.IndexInfo
+	ColsInfo         []*model.ColumnInfo
+	TblInfo          *model.TableInfo
 	analyzeInfo
 }
 
@@ -947,7 +940,7 @@ func (e *Explain) prepareSchema() error {
 	format := strings.ToLower(e.Format)
 
 	switch {
-	case format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil):
+	case (format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == ast.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == ast.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
@@ -978,7 +971,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
-	case ast.ExplainFormatROW:
+	case ast.ExplainFormatROW, ast.ExplainFormatBrief:
 		if e.Rows == nil || e.Analyze {
 			e.explainedPlans = map[int]bool{}
 			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
@@ -1071,10 +1064,16 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
 	case *PhysicalIndexLookUpReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "(Build)", childIndent, false)
+		if err != nil {
+			return
+		}
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *PhysicalIndexMergeReader:
 		for _, pchild := range x.partialPlans {
 			err = e.explainPlanInRowFormat(pchild, "cop[tikv]", "(Build)", childIndent, false)
+			if err != nil {
+				return
+			}
 		}
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *Insert:
