@@ -49,7 +49,10 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	autoid.SetStep(5000)
 	TestingT(t)
 }
@@ -375,9 +378,11 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		}
 
 		pb := &dto.Metric{}
-		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		c.Assert(err, IsNil)
 		c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
-		metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		c.Assert(err, IsNil)
 		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.memoryUsage)
 
 		sql, hash := normalizeWithDefaultDB(c, testSQL.querySQL, "test")
@@ -432,9 +437,11 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		bindData = s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 		c.Check(bindData, IsNil)
 
-		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		c.Assert(err, IsNil)
 		c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
-		metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		c.Assert(err, IsNil)
 		// From newly created global bind handle.
 		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.memoryUsage)
 
@@ -482,9 +489,11 @@ func (s *testSuite) TestSessionBinding(c *C) {
 		}
 
 		pb := &dto.Metric{}
-		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		c.Assert(err, IsNil)
 		c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
-		metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		c.Assert(err, IsNil)
 		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.memoryUsage)
 
 		handle := tk.Se.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
@@ -530,9 +539,11 @@ func (s *testSuite) TestSessionBinding(c *C) {
 		c.Check(bindData.OriginalSQL, Equals, testSQL.originSQL)
 		c.Check(len(bindData.Bindings), Equals, 0)
 
-		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		c.Assert(err, IsNil)
 		c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
-		metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		c.Assert(err, IsNil)
 		c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
 	}
 }
@@ -554,7 +565,8 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 	metrics.BindUsageCounter.Reset()
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 	pb := &dto.Metric{}
-	metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Write(pb)
+	err := metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Write(pb)
+	c.Assert(err, IsNil)
 	c.Assert(pb.GetCounter().GetValue(), Equals, float64(1))
 
 	// Test 'tidb_use_plan_baselines'
