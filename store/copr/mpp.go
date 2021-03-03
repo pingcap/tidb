@@ -244,8 +244,11 @@ func (m *mppIterator) cancelMppTask(bo *tikv.Backoffer, meta *mpp.TaskMeta) {
 
 	// send cancel cmd to all TiFlash stores
 	for _, addr := range m.store.GetRegionCache().GetTiFlashStoreAddrs() {
-		_, _ = m.store.GetTiKVClient().SendRequest(bo.GetCtx(), addr, wrappedReq, tikv.ReadTimeoutUltraLong)
+		_, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), addr, wrappedReq, tikv.ReadTimeoutUltraLong)
 		logutil.BgLogger().Debug("cancel task ", zap.Uint64("query id ", meta.GetStartTs()), zap.String(" on addr ", addr))
+		if err != nil {
+			logutil.BgLogger().Error("cancel task error: ", zap.Error(err))
+		}
 	}
 }
 
