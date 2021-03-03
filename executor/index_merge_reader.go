@@ -98,8 +98,8 @@ type IndexMergeReaderExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 
-	partialPlans    [][]plannercore.PhysicalPlan
-	tblPlans        []plannercore.PhysicalPlan
+	partialPlans [][]plannercore.PhysicalPlan
+	tblPlans     []plannercore.PhysicalPlan
 
 	handleCols plannercore.HandleCols
 	stats      *IndexMergeRuntimeStat
