@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"math/rand"
 	"strings"
 	"sync/atomic"
@@ -2748,7 +2747,10 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 				return
 			}
 			t := testGetTableByName(c, ctx, "test_db", "t1")
-			for _, index := range t.WritableIndices() {
+			for _, index := range t.Indices() {
+				if !tables.IsIndexWritable(index) {
+					continue
+				}
 				if index.Meta().Name.L == idxName {
 					c3IdxInfo = index.Meta()
 				}
@@ -2855,7 +2857,7 @@ func testPartitionAddIndex(tk *testkit.TestKit, c *C, key string) {
 	idxName1 := "idx1"
 
 	f := func(end int, isPK bool) string {
-		dml := fmt.Sprintf("insert into partition_add_idx values")
+		dml := "insert into partition_add_idx values"
 		for i := 0; i < end; i++ {
 			dVal := 1988 + rand.Intn(30)
 			if isPK {
@@ -2958,9 +2960,8 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.(table.PartitionedTable).GetPartition(pid)
-		startKey := partition.RecordKey(kv.IntHandle(math.MinInt64))
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
-		err := partition.IterRecords(ctx, startKey, partition.Cols(),
+		err := tables.IterRecords(partition, ctx, partition.Cols(),
 			func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 				num++
 				return true, nil

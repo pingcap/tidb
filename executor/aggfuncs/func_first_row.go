@@ -46,6 +46,7 @@ const (
 	DefPartialResult4FirstRowSetSize = int64(unsafe.Sizeof(partialResult4FirstRowSet{}))
 )
 
+// nolint:structcheck
 type basePartialResult4FirstRow struct {
 	// isNull indicates whether the first row is null.
 	isNull bool
