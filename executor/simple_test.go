@@ -611,6 +611,7 @@ partition by range (a) (
 	partition p0 values less than (10),
 	partition p1 values less than (20)
 )`)
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into t values (1), (5), (11), (15)")
 	c.Assert(s.domain.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
