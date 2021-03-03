@@ -810,9 +810,10 @@ type analyzeInfo struct {
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	HandleCols HandleCols
-	ColsInfo   []*model.ColumnInfo
-	TblInfo    *model.TableInfo
+	HandleCols       HandleCols
+	CommonHandleInfo *model.IndexInfo
+	ColsInfo         []*model.ColumnInfo
+	TblInfo          *model.TableInfo
 	analyzeInfo
 }
 
