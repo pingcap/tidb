@@ -176,6 +176,7 @@ type DropStatsStmt struct {
 
 	Table          *TableName
 	PartitionNames []model.CIStr
+	IsGlobalStats  bool
 }
 
 // Restore implements Node interface.
@@ -183,6 +184,11 @@ func (n *DropStatsStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP STATS ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while add table")
+	}
+
+	if n.IsGlobalStats {
+		ctx.WriteKeyWord(" GLOBAL")
+		return nil
 	}
 
 	if len(n.PartitionNames) != 0 {

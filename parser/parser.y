@@ -4246,6 +4246,13 @@ DropStatsStmt:
 			PartitionNames: $5.([]model.CIStr),
 		}
 	}
+|	"DROP" "STATS" TableName "GLOBAL"
+	{
+		$$ = &ast.DropStatsStmt{
+			Table:         $3.(*ast.TableName),
+			IsGlobalStats: true,
+		}
+	}
 
 RestrictOrCascadeOpt:
 	{}
