@@ -604,11 +604,11 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 				}
 				prs := intermDataBuffer[i]
 				for j, af := range w.aggFuncs {
-					if delta, err := af.MergePartialResult(sctx, prs[j], finalPartialResults[i][j]); err != nil {
+					memDelta, err := af.MergePartialResult(sctx, prs[j], finalPartialResults[i][j])
+					if err != nil {
 						return err
-					} else {
-						allMemDelta += delta
 					}
+					allMemDelta += memDelta
 				}
 			}
 			w.memTracker.Consume(allMemDelta)
