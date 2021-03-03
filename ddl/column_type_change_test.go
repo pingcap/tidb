@@ -39,9 +39,8 @@ import (
 var _ = SerialSuites(&testColumnTypeChangeSuite{})
 
 type testColumnTypeChangeSuite struct {
-	store  kv.Storage
-	dbInfo *model.DBInfo
-	dom    *domain.Domain
+	store kv.Storage
+	dom   *domain.Domain
 }
 
 func (s *testColumnTypeChangeSuite) SetUpSuite(c *C) {

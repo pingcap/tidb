@@ -657,13 +657,6 @@ type FrameItem struct {
 	IndexValues []string `json:"index_values,omitempty"`
 }
 
-// RegionFrameRange contains a frame range info which the region covered.
-type RegionFrameRange struct {
-	first  *FrameItem        // start frame of the region
-	last   *FrameItem        // end frame of the region
-	region *tikv.KeyLocation // the region
-}
-
 func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
