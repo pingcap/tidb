@@ -810,9 +810,10 @@ type analyzeInfo struct {
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	HandleCols HandleCols
-	ColsInfo   []*model.ColumnInfo
-	TblInfo    *model.TableInfo
+	HandleCols       HandleCols
+	CommonHandleInfo *model.IndexInfo
+	ColsInfo         []*model.ColumnInfo
+	TblInfo          *model.TableInfo
 	analyzeInfo
 }
 
@@ -939,7 +940,7 @@ func (e *Explain) prepareSchema() error {
 	format := strings.ToLower(e.Format)
 
 	switch {
-	case format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil):
+	case (format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == ast.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == ast.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
@@ -970,7 +971,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
-	case ast.ExplainFormatROW:
+	case ast.ExplainFormatROW, ast.ExplainFormatBrief:
 		if e.Rows == nil || e.Analyze {
 			e.explainedPlans = map[int]bool{}
 			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
@@ -1063,10 +1064,16 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
 	case *PhysicalIndexLookUpReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "(Build)", childIndent, false)
+		if err != nil {
+			return
+		}
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *PhysicalIndexMergeReader:
 		for _, pchild := range x.partialPlans {
 			err = e.explainPlanInRowFormat(pchild, "cop[tikv]", "(Build)", childIndent, false)
+			if err != nil {
+				return
+			}
 		}
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *Insert:

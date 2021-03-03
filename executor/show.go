@@ -50,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -1553,7 +1553,7 @@ func (e *ShowExec) appendRow(row []interface{}) {
 
 func (e *ShowExec) fetchShowTableRegions() error {
 	store := e.ctx.GetStore()
-	tikvStore, ok := store.(tikv.Storage)
+	tikvStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil
 	}
@@ -1607,7 +1607,7 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	return nil
 }
 
-func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {
@@ -1620,7 +1620,7 @@ func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore tikv.Storage
 	return regions, nil
 }
 
-func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {

@@ -26,11 +26,8 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
 	. "github.com/pingcap/tidb/util/testutil"
 )
@@ -556,12 +553,4 @@ OUTER:
 		break
 	}
 	c.Assert(match, IsTrue)
-}
-
-func mustNewCommonHandle(c *C, values ...interface{}) *kv.CommonHandle {
-	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
-	c.Assert(err, IsNil)
-	ch, err := kv.NewCommonHandle(encoded)
-	c.Assert(err, IsNil)
-	return ch
 }

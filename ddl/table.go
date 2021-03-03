@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -508,7 +509,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 			job.CtxVars = []interface{}{oldIDs, newIDs}
 		}
 
-		err = infosync.PutRuleBundles(nil, bundles)
+		err = infosync.PutRuleBundles(context.TODO(), bundles)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
