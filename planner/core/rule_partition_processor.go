@@ -903,8 +903,8 @@ var monotoneIncFuncs = map[string]monotoneMode{
 	ast.ToDays:        monotoneModeNonStrict,
 	ast.UnixTimestamp: monotoneModeStrict,
 	// Only when the function form is fn(column, const)
-	ast.Plus:          monotoneModeStrict,
-	ast.Minus:         monotoneModeStrict,
+	ast.Plus:  monotoneModeStrict,
+	ast.Minus: monotoneModeStrict,
 }
 
 func getMonotoneMode(fnName string) monotoneMode {
