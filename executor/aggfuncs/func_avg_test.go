@@ -14,6 +14,7 @@
 package aggfuncs_test
 
 import (
+	"github.com/pingcap/tidb/util/set"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -47,11 +48,11 @@ func (s *testSuite) TestMemAvg(c *C) {
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4AvgDecimalSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
-			aggfuncs.DefPartialResult4AvgDistinctDecimalSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4AvgDistinctDecimalSize + set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4AvgFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 5,
-			aggfuncs.DefPartialResult4AvgDistinctFloat64Size, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4AvgDistinctFloat64Size + set.DefFloat64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 	}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)
