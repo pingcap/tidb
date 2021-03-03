@@ -297,7 +297,7 @@ func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.Est
 	if err != nil {
 		return nil, err
 	}
-	var mockClient = mockMPPConnectionClient{mppResponses: mockServer.mppResponses, idx: 0}
+	var mockClient = mockMPPConnectionClient{mppResponses: mockServer.mppResponses, idx: 0, targetTask: r.ReceiverMeta}
 	streamResp := &tikvrpc.MPPStreamResponse{Tikv_EstablishMPPConnectionClient: &mockClient}
 	_, cancel := context.WithCancel(ctx)
 	streamResp.Lease.Cancel = cancel
@@ -472,6 +472,8 @@ type mockMPPConnectionClient struct {
 	mockClientStream
 	mppResponses []*mpp.MPPDataPacket
 	idx          int
+
+	targetTask *mpp.TaskMeta
 }
 
 func (mock *mockMPPConnectionClient) Recv() (*mpp.MPPDataPacket, error) {
@@ -481,7 +483,7 @@ func (mock *mockMPPConnectionClient) Recv() (*mpp.MPPDataPacket, error) {
 		return ret, nil
 	}
 	failpoint.Inject("mppRecvTimeout", func(val failpoint.Value) {
-		if val.(bool) {
+		if int64(val.(int)) == mock.targetTask.TaskId {
 			failpoint.Return(nil, context.Canceled)
 		}
 	})

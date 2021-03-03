@@ -281,7 +281,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 				}
 			}
 			m.sendToRespCh(&mppResponse{
-				err: errors.New(resp.Error.Msg),
+				err: tikv.ErrTiFlashServerTimeout,
 			})
 			return
 		}

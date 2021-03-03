@@ -56,11 +56,11 @@ func (ts *ConnTestSuite) SetUpSuite(c *C) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
 			tiflashIdx := 0
-				store := c.AllocID()
-				peer := c.AllocID()
-				mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
-				mockCluster.AddPeer(region1, store, peer)
-				tiflashIdx++
+			store := c.AllocID()
+			peer := c.AllocID()
+			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+			mockCluster.AddPeer(region1, store, peer)
+			tiflashIdx++
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
@@ -763,7 +763,7 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 	// test batch cop send req error
 	testFallbackWork(c, tk, cc, "select sum(a) from t")
-	ctx:=context.Background()
+	ctx := context.Background()
 	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 
@@ -779,10 +779,10 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"), IsNil)
 
-	//c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout", "return(true)"), IsNil)
-	//tk.MustExec("set @@session.tidb_allow_mpp=1")
-	//testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
-	//c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout", "return(-1)"), IsNil)
+	tk.MustExec("set @@session.tidb_allow_mpp=1")
+	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout"), IsNil)
 }
 
 func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
