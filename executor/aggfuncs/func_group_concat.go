@@ -168,7 +168,7 @@ func (e *groupConcat) GetTruncated() *int32 {
 
 type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
-	valSet            set.StringSet
+	valSet            set.StringSetWithMemoryUsage
 	encodeBytesBuffer []byte
 }
 
@@ -179,13 +179,14 @@ type groupConcatDistinct struct {
 func (e *groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
-	p.valSet = set.NewStringSet()
-	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize
+	p.valSet, memDelta = set.NewStringSetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + memDelta
 }
 
 func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
-	p.buffer, p.valSet = nil, set.NewStringSet()
+	p.buffer = nil
+	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
 
 func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -212,8 +213,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if p.valSet.Exist(joinedVal) {
 			continue
 		}
-		p.valSet.Insert(joinedVal)
-		memDelta += int64(len(joinedVal))
+		memDelta += p.valSet.Insert(joinedVal)
 		var oldMem int
 		// write separator
 		if p.buffer == nil {
@@ -455,7 +455,7 @@ func (e *groupConcatOrder) GetTruncated() *int32 {
 
 type partialResult4GroupConcatOrderDistinct struct {
 	topN              *topNRows
-	valSet            set.StringSet
+	valSet            set.StringSetWithMemoryUsage
 	encodeBytesBuffer []byte
 }
 
@@ -478,6 +478,7 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 	for i, byItem := range e.byItems {
 		desc[i] = byItem.Desc
 	}
+	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	p := &partialResult4GroupConcatOrderDistinct{
 		topN: &topNRows{
 			desc:      desc,
@@ -485,15 +486,15 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 			limitSize: e.maxLen,
 			sepSize:   uint64(len(e.sep)),
 		},
-		valSet: set.NewStringSet(),
+		valSet: valSet,
 	}
-	return PartialResult(p), DefPartialResult4GroupConcatOrderDistinctSize
+	return PartialResult(p), DefPartialResult4GroupConcatOrderDistinctSize + setSize
 }
 
 func (e *groupConcatDistinctOrder) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatOrderDistinct)(pr)
 	p.topN.reset()
-	p.valSet = set.NewStringSet()
+	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
 
 func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -521,7 +522,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		if p.valSet.Exist(joinedVal) {
 			continue
 		}
-		p.valSet.Insert(joinedVal)
+		memDelta += p.valSet.Insert(joinedVal)
 		sortRow := sortRow{
 			buffer:  buffer,
 			byItems: make([]*types.Datum, 0, len(e.byItems)),
@@ -535,7 +536,6 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		}
 		truncated, sortRowMemSize := p.topN.tryToAdd(sortRow)
 		memDelta += sortRowMemSize
-		memDelta += int64(len(joinedVal))
 		if p.topN.err != nil {
 			return memDelta, p.topN.err
 		}

@@ -105,7 +105,7 @@ type HashAggFinalWorker struct {
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
 	partialResultMap    aggPartialResultMapper
-	groupSet            set.StringSet
+	groupSet            set.StringSetWithMemoryUsage
 	inputCh             chan *HashAggIntermData
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
@@ -168,7 +168,7 @@ type HashAggExec struct {
 	FinalAggFuncs    []aggfuncs.AggFunc
 	partialResultMap aggPartialResultMapper
 	bInMap           int64 // indicate there are 2^bInMap buckets in partialResultMap
-	groupSet         set.StringSet
+	groupSet         set.StringSetWithMemoryUsage
 	groupKeys        []string
 	cursor4GroupKey  int
 	GroupByItems     []expression.Expression
@@ -230,7 +230,7 @@ func (e *HashAggExec) Close() error {
 	if e.isUnparallelExec {
 		e.memTracker.Consume(-e.childResult.MemoryUsage())
 		e.childResult = nil
-		e.groupSet = nil
+		e.groupSet, _ = set.NewStringSetWithMemoryUsage()
 		e.partialResultMap = nil
 		return e.baseExecutor.Close()
 	}
@@ -282,10 +282,11 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 }
 
 func (e *HashAggExec) initForUnparallelExec() {
-	e.groupSet = set.NewStringSet()
+	var setSize int64
+	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.bInMap = 0
-	e.memTracker.Consume(defBucketMemoryUsage * (1 << e.bInMap))
+	e.memTracker.Consume(defBucketMemoryUsage*(1<<e.bInMap) + setSize)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
@@ -344,10 +345,11 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 
 	// Init final workers.
 	for i := 0; i < finalConcurrency; i++ {
+		groupSet, setSize := set.NewStringSetWithMemoryUsage()
 		w := HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.ctx, e.finishCh, e.FinalAggFuncs, e.maxChunkSize, e.memTracker),
 			partialResultMap:    make(aggPartialResultMapper),
-			groupSet:            set.NewStringSet(),
+			groupSet:            groupSet,
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
 			finalResultHolderCh: make(chan *chunk.Chunk, 1),
@@ -356,7 +358,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupKeys:           make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
-		e.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
+		e.memTracker.Consume(defBucketMemoryUsage*(1<<w.BInMap) + setSize)
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, w.stats)
@@ -449,6 +451,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 	partialResults := w.getPartialResult(sc, w.groupKey, w.partialResultsMap)
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
+	allMemDelta := int64(0)
 	for i := 0; i < numRows; i++ {
 		for j, af := range w.aggFuncs {
 			rows[0] = chk.GetRow(i)
@@ -456,9 +459,10 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 			if err != nil {
 				return err
 			}
-			w.memTracker.Consume(memDelta)
+			allMemDelta += memDelta
 		}
 	}
+	w.memTracker.Consume(allMemDelta)
 	return nil
 }
 
@@ -593,17 +597,21 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			}
 			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
 			finalPartialResults := w.getPartialResult(sc, w.groupKeys, w.partialResultMap)
+			allMemDelta := int64(0)
 			for i, groupKey := range groupKeys {
 				if !w.groupSet.Exist(groupKey) {
-					w.groupSet.Insert(groupKey)
+					allMemDelta += w.groupSet.Insert(groupKey)
 				}
 				prs := intermDataBuffer[i]
 				for j, af := range w.aggFuncs {
-					if _, err = af.MergePartialResult(sctx, prs[j], finalPartialResults[i][j]); err != nil {
+					if delta, err := af.MergePartialResult(sctx, prs[j], finalPartialResults[i][j]); err != nil {
 						return err
+					} else {
+						allMemDelta += delta
 					}
 				}
 			}
+			w.memTracker.Consume(allMemDelta)
 		}
 		if w.stats != nil {
 			w.stats.ExecTime += int64(time.Since(execStart))
@@ -624,12 +632,12 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 	execStart := time.Now()
 	memSize := getGroupKeyMemUsage(w.groupKeys)
 	w.groupKeys = w.groupKeys[:0]
-	for groupKey := range w.groupSet {
+	for groupKey := range w.groupSet.StringSet {
 		w.groupKeys = append(w.groupKeys, []byte(groupKey))
 	}
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
 	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
-	for i := 0; i < len(w.groupSet); i++ {
+	for i := 0; i < len(w.groupSet.StringSet); i++ {
 		for j, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i][j], result); err != nil {
 				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
@@ -823,12 +831,12 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 		if err != nil {
 			return err
 		}
-		if (len(e.groupSet) == 0) && len(e.GroupByItems) == 0 {
+		if (len(e.groupSet.StringSet) == 0) && len(e.GroupByItems) == 0 {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]
 			// "select count(c) from t group by c1;" should return empty result set.
-			e.groupSet.Insert("")
+			e.memTracker.Consume(e.groupSet.Insert(""))
 			e.groupKeys = append(e.groupKeys, "")
 		}
 		e.prepared = true
@@ -885,7 +893,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
-				e.groupSet.Insert(groupKey)
+				allMemDelta += e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
 			}
 			partialResults := e.getPartialResults(groupKey)
