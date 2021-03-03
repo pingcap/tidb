@@ -14,10 +14,20 @@
 package kv
 
 import (
-	"context"
-
 	"github.com/pingcap/parser/model"
 )
+
+// FlagsOp TODO:duplicated for BR describes KeyFlags modify operation.
+type FlagsOp uint16
+
+// Option is used for customizing kv store's behaviors during a transaction.
+type Option int
+
+// Options is an interface of a set of options. Each option is associated with a value.
+type Options interface {
+	// Get gets an option value.
+	Get(opt Option) (v interface{}, ok bool)
+}
 
 // UnionStore is a store that wraps a snapshot for read and a MemBuffer for buffered write.
 // Also, it provides some transaction related utilities.
@@ -55,121 +65,3 @@ const (
 	Exist
 	NotExist
 )
-
-// Option is used for customizing kv store's behaviors during a transaction.
-type Option int
-
-// Options is an interface of a set of options. Each option is associated with a value.
-type Options interface {
-	// Get gets an option value.
-	Get(opt Option) (v interface{}, ok bool)
-}
-
-// unionStore is an in-memory Store which contains a buffer for write and a
-// snapshot for read.
-type unionStore struct {
-	memBuffer    *memdb
-	snapshot     Snapshot
-	idxNameCache map[int64]*model.TableInfo
-	opts         options
-}
-
-// NewUnionStore builds a new unionStore.
-func NewUnionStore(snapshot Snapshot) UnionStore {
-	return &unionStore{
-		snapshot:     snapshot,
-		memBuffer:    newMemDB(),
-		idxNameCache: make(map[int64]*model.TableInfo),
-		opts:         make(map[Option]interface{}),
-	}
-}
-
-// GetMemBuffer return the MemBuffer binding to this unionStore.
-func (us *unionStore) GetMemBuffer() MemBuffer {
-	return us.memBuffer
-}
-
-// Get implements the Retriever interface.
-func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
-	v, err := us.memBuffer.Get(ctx, k)
-	if IsErrNotFound(err) {
-		v, err = us.snapshot.Get(ctx, k)
-	}
-	if err != nil {
-		return v, err
-	}
-	if len(v) == 0 {
-		return nil, ErrNotExist
-	}
-	return v, nil
-}
-
-// Iter implements the Retriever interface.
-func (us *unionStore) Iter(k Key, upperBound Key) (Iterator, error) {
-	bufferIt, err := us.memBuffer.Iter(k, upperBound)
-	if err != nil {
-		return nil, err
-	}
-	retrieverIt, err := us.snapshot.Iter(k, upperBound)
-	if err != nil {
-		return nil, err
-	}
-	return NewUnionIter(bufferIt, retrieverIt, false)
-}
-
-// IterReverse implements the Retriever interface.
-func (us *unionStore) IterReverse(k Key) (Iterator, error) {
-	bufferIt, err := us.memBuffer.IterReverse(k)
-	if err != nil {
-		return nil, err
-	}
-	retrieverIt, err := us.snapshot.IterReverse(k)
-	if err != nil {
-		return nil, err
-	}
-	return NewUnionIter(bufferIt, retrieverIt, true)
-}
-
-// HasPresumeKeyNotExists gets the key exist error info for the lazy check.
-func (us *unionStore) HasPresumeKeyNotExists(k Key) bool {
-	flags, err := us.memBuffer.GetFlags(k)
-	if err != nil {
-		return false
-	}
-	return flags.HasPresumeKeyNotExists()
-}
-
-// DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
-func (us *unionStore) UnmarkPresumeKeyNotExists(k Key) {
-	us.memBuffer.UpdateFlags(k, DelPresumeKeyNotExists)
-}
-
-func (us *unionStore) GetTableInfo(id int64) *model.TableInfo {
-	return us.idxNameCache[id]
-}
-
-func (us *unionStore) CacheTableInfo(id int64, info *model.TableInfo) {
-	us.idxNameCache[id] = info
-}
-
-// SetOption implements the unionStore SetOption interface.
-func (us *unionStore) SetOption(opt Option, val interface{}) {
-	us.opts[opt] = val
-}
-
-// DelOption implements the unionStore DelOption interface.
-func (us *unionStore) DelOption(opt Option) {
-	delete(us.opts, opt)
-}
-
-// GetOption implements the unionStore GetOption interface.
-func (us *unionStore) GetOption(opt Option) interface{} {
-	return us.opts[opt]
-}
-
-type options map[Option]interface{}
-
-func (opts options) Get(opt Option) (interface{}, bool) {
-	v, ok := opts[opt]
-	return v, ok
-}

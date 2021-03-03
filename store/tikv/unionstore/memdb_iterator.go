@@ -11,20 +11,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package unionstore
 
-import "bytes"
+import (
+	"bytes"
+
+	"github.com/pingcap/tidb/kv"
+)
 
 type memdbIterator struct {
 	db           *memdb
 	curr         memdbNodeAddr
-	start        Key
-	end          Key
+	start        kv.Key
+	end          kv.Key
 	reverse      bool
 	includeFlags bool
 }
 
-func (db *memdb) Iter(k Key, upperBound Key) (Iterator, error) {
+func (db *memdb) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	i := &memdbIterator{
 		db:    db,
 		start: k,
@@ -34,7 +38,7 @@ func (db *memdb) Iter(k Key, upperBound Key) (Iterator, error) {
 	return i, nil
 }
 
-func (db *memdb) IterReverse(k Key) (Iterator, error) {
+func (db *memdb) IterReverse(k kv.Key) (kv.Iterator, error) {
 	i := &memdbIterator{
 		db:      db,
 		end:     k,
@@ -44,7 +48,7 @@ func (db *memdb) IterReverse(k Key) (Iterator, error) {
 	return i, nil
 }
 
-func (db *memdb) IterWithFlags(k Key, upperBound Key) MemBufferIterator {
+func (db *memdb) IterWithFlags(k kv.Key, upperBound kv.Key) kv.MemBufferIterator {
 	i := &memdbIterator{
 		db:           db,
 		start:        k,
@@ -55,7 +59,7 @@ func (db *memdb) IterWithFlags(k Key, upperBound Key) MemBufferIterator {
 	return i
 }
 
-func (db *memdb) IterReverseWithFlags(k Key) MemBufferIterator {
+func (db *memdb) IterReverseWithFlags(k kv.Key) kv.MemBufferIterator {
 	i := &memdbIterator{
 		db:           db,
 		end:          k,
@@ -108,7 +112,7 @@ func (i *memdbIterator) HasValue() bool {
 	return !i.isFlagsOnly()
 }
 
-func (i *memdbIterator) Key() Key {
+func (i *memdbIterator) Key() kv.Key {
 	return i.curr.getKey()
 }
 
@@ -165,7 +169,7 @@ func (i *memdbIterator) seekToLast() {
 	i.curr = y
 }
 
-func (i *memdbIterator) seek(key Key) {
+func (i *memdbIterator) seek(key kv.Key) {
 	y := memdbNodeAddr{nil, nullAddr}
 	x := i.db.getNode(i.db.root)
 

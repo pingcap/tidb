@@ -13,7 +13,7 @@
 
 // +build !race
 
-package kv
+package unionstore
 
 import (
 	"encoding/binary"

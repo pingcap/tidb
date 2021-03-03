@@ -179,9 +179,6 @@ type RetrieverMutator interface {
 type MemBufferIterator interface {
 	Iterator
 	HasValue() bool
-	Flags() KeyFlags
-	UpdateFlags(...FlagsOp)
-	Handle() MemKeyHandle
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
@@ -196,22 +193,10 @@ type MemBuffer interface {
 	// RUnlock unlocks the MemBuffer.
 	RUnlock()
 
-	// GetFlags returns the latest flags associated with key.
-	GetFlags(Key) (KeyFlags, error)
 	// IterWithFlags returns a MemBufferIterator.
 	IterWithFlags(k Key, upperBound Key) MemBufferIterator
 	// IterReverseWithFlags returns a reversed MemBufferIterator.
 	IterReverseWithFlags(k Key) MemBufferIterator
-	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
-	SetWithFlags(Key, []byte, ...FlagsOp) error
-	// UpdateFlags update the flags associated with key.
-	UpdateFlags(Key, ...FlagsOp)
-	// DeleteWithFlags delete key with the given KeyFlags
-	DeleteWithFlags(Key, ...FlagsOp) error
-
-	GetKeyByHandle(MemKeyHandle) []byte
-	GetValueByHandle(MemKeyHandle) ([]byte, bool)
-
 	// Reset reset the MemBuffer to initial states.
 	Reset()
 	// DiscardValues releases the memory used by all values.
@@ -227,9 +212,6 @@ type MemBuffer interface {
 	// Cleanup cleanup the resources referenced by the StagingHandle.
 	// If the changes are not published by `Release`, they will be discarded.
 	Cleanup(StagingHandle)
-	// InspectStage used to inspect the value updates in the given stage.
-	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
-
 	// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
 	SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error)
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
@@ -243,6 +225,8 @@ type MemBuffer interface {
 	Len() int
 	// Dirty returns whether the root staging buffer is updated.
 	Dirty() bool
+	SetPresumeKeyNotExists(Key, []byte) error 
+	DeleteWithFlagSetNeedLocked(Key) error
 }
 
 // Transaction defines the interface for operations inside a Transaction.

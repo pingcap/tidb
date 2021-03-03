@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -112,14 +113,14 @@ type twoPhaseCommitter struct {
 }
 
 type memBufferMutations struct {
-	storage kv.MemBuffer
-	handles []kv.MemKeyHandle
+	storage unionstore.MemBuffer
+	handles []unionstore.MemKeyHandle
 }
 
 func newMemBufferMutations(sizeHint int, storage kv.MemBuffer) *memBufferMutations {
 	return &memBufferMutations{
-		handles: make([]kv.MemKeyHandle, 0, sizeHint),
-		storage: storage,
+		handles: make([]unionstore.MemKeyHandle, 0, sizeHint),
+		storage: storage.(unionstore.MemBuffer),
 	}
 }
 
@@ -159,7 +160,7 @@ func (m *memBufferMutations) Slice(from, to int) CommitterMutations {
 	}
 }
 
-func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, handle kv.MemKeyHandle) {
+func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, handle unionstore.MemKeyHandle) {
 	aux := uint16(op) << 1
 	if isPessimisticLock {
 		aux |= 1
@@ -453,13 +454,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	var size, putCnt, delCnt, lockCnt, checkCnt int
 
 	txn := c.txn
-	memBuf := txn.GetMemBuffer()
+	memBuf := txn.GetMemBuffer().(unionstore.MemBuffer)
 	sizeHint := txn.us.GetMemBuffer().Len()
 	c.mutations = newMemBufferMutations(sizeHint, memBuf)
 	c.isPessimistic = txn.IsPessimistic()
 
 	var err error
-	for it := memBuf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
+	for it := memBuf.IterWithFlags(nil, nil).(unionstore.MemBufferIterator); it.Valid(); err = it.Next() {
 		_ = err
 		key := it.Key()
 		flags := it.Flags()
@@ -494,7 +495,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 					// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
 					op = pb.Op_CheckNotExists
 					checkCnt++
-					memBuf.UpdateFlags(key, kv.SetPrewriteOnly)
+					memBuf.UpdateFlags(key, unionstore.SetPrewriteOnly)
 				} else {
 					// normal delete keys in optimistic txn can be delete without not exists checking
 					// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
@@ -1478,7 +1479,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 				logutil.Logger(ctx).Warn("amend mutations has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
 				return false, err
 			}
-			handle := c.txn.GetMemBuffer().IterWithFlags(key, nil).Handle()
+			handle := c.txn.GetMemBuffer().(unionstore.MemBuffer).IterWithFlags(key, nil).(unionstore.MemBufferIterator).Handle()
 			c.mutations.Push(op, addMutations.IsPessimisticLock(i), handle)
 		}
 	}

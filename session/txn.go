@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -269,8 +270,8 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 		return nil, nil
 	}
 	keys := make([]kv.Key, 0, st.countHint())
-	buf := st.Transaction.GetMemBuffer()
-	buf.InspectStage(st.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
+	buf := st.Transaction.GetMemBuffer().(unionstore.MemBuffer)
+	buf.InspectStage(st.stagingHandle, func(k kv.Key, flags unionstore.KeyFlags, v []byte) {
 		if !keyNeedToLock(k, v, flags) {
 			return
 		}
@@ -279,7 +280,7 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	return keys, nil
 }
 
-func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
+func keyNeedToLock(k, v []byte, flags unionstore.KeyFlags) bool {
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.

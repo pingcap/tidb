@@ -245,7 +245,7 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 	}
 	if err != nil || len(value) == 0 {
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
-			err = us.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+			err = us.GetMemBuffer().SetPresumeKeyNotExists(key, idxVal)
 		} else {
 			err = us.GetMemBuffer().Set(key, idxVal)
 		}
@@ -266,7 +266,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, us kv.UnionStore, indexedVa
 		return err
 	}
 	if distinct {
-		err = us.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+		err = us.GetMemBuffer().DeleteWithFlagSetNeedLocked(key)
 	} else {
 		err = us.GetMemBuffer().Delete(key)
 	}

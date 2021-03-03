@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package unionstore
 
 import (
 	"bytes"
@@ -20,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"unsafe"
+
+	"github.com/pingcap/tidb/kv"
 )
 
 const (
@@ -182,20 +184,20 @@ func newMemDB() *memdb {
 	db.allocator.init()
 	db.root = nullAddr
 	db.stages = make([]memdbCheckpoint, 0, 2)
-	db.entrySizeLimit = atomic.LoadUint64(&TxnEntrySizeLimit)
-	db.bufferSizeLimit = atomic.LoadUint64(&TxnTotalSizeLimit)
+	db.entrySizeLimit = atomic.LoadUint64(&kv.TxnEntrySizeLimit)
+	db.bufferSizeLimit = atomic.LoadUint64(&kv.TxnTotalSizeLimit)
 	return db
 }
 
-func (db *memdb) Staging() StagingHandle {
+func (db *memdb) Staging() kv.StagingHandle {
 	db.Lock()
 	defer db.Unlock()
 
 	db.stages = append(db.stages, db.vlog.checkpoint())
-	return StagingHandle(len(db.stages))
+	return kv.StagingHandle(len(db.stages))
 }
 
-func (db *memdb) Release(h StagingHandle) {
+func (db *memdb) Release(h kv.StagingHandle) {
 	if int(h) != len(db.stages) {
 		// This should never happens in production environment.
 		// Use panic to make debug easier.
@@ -213,7 +215,7 @@ func (db *memdb) Release(h StagingHandle) {
 	db.stages = db.stages[:int(h)-1]
 }
 
-func (db *memdb) Cleanup(h StagingHandle) {
+func (db *memdb) Cleanup(h kv.StagingHandle) {
 	if int(h) > len(db.stages) {
 		return
 	}
@@ -252,14 +254,14 @@ func (db *memdb) DiscardValues() {
 	db.vlog.reset()
 }
 
-func (db *memdb) InspectStage(handle StagingHandle, f func(Key, KeyFlags, []byte)) {
+func (db *memdb) InspectStage(handle kv.StagingHandle, f func(kv.Key, KeyFlags, []byte)) {
 	idx := int(handle) - 1
 	tail := db.vlog.checkpoint()
 	head := db.stages[idx]
 	db.vlog.inspectKVInLog(db, &head, &tail, f)
 }
 
-func (db *memdb) Get(_ context.Context, key Key) ([]byte, error) {
+func (db *memdb) Get(_ context.Context, key kv.Key) ([]byte, error) {
 	if db.vlogInvalid {
 		// panic for easier debugging.
 		panic("vlog is resetted")
@@ -267,23 +269,23 @@ func (db *memdb) Get(_ context.Context, key Key) ([]byte, error) {
 
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return nil, ErrNotExist
+		return nil, kv.ErrNotExist
 	}
 	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
-		return nil, ErrNotExist
+		return nil, kv.ErrNotExist
 	}
 	return db.vlog.getValue(x.vptr), nil
 }
 
-func (db *memdb) SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error) {
+func (db *memdb) SelectValueHistory(key kv.Key, predicate func(value []byte) bool) ([]byte, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return nil, ErrNotExist
+		return nil, kv.ErrNotExist
 	}
 	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
-		return nil, ErrNotExist
+		return nil, kv.ErrNotExist
 	}
 	result := db.vlog.selectValueHistory(x.vptr, func(addr memdbArenaAddr) bool {
 		return predicate(db.vlog.getValue(addr))
@@ -294,38 +296,45 @@ func (db *memdb) SelectValueHistory(key Key, predicate func(value []byte) bool) 
 	return db.vlog.getValue(result), nil
 }
 
-func (db *memdb) GetFlags(key Key) (KeyFlags, error) {
+func (db *memdb) GetFlags(key kv.Key) (KeyFlags, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return 0, ErrNotExist
+		return 0, kv.ErrNotExist
 	}
 	return x.getKeyFlags(), nil
 }
 
-func (db *memdb) UpdateFlags(key Key, ops ...FlagsOp) {
+func (db *memdb) UpdateFlags(key kv.Key, ops ...FlagsOp) {
 	err := db.set(key, nil, ops...)
 	_ = err // set without value will never fail
 }
 
-func (db *memdb) Set(key Key, value []byte) error {
+func (db *memdb) Set(key kv.Key, value []byte) error {
 	if len(value) == 0 {
-		return ErrCannotSetNilValue
+		return kv.ErrCannotSetNilValue
 	}
 	return db.set(key, value)
 }
 
-func (db *memdb) SetWithFlags(key Key, value []byte, ops ...FlagsOp) error {
+func (db *memdb) SetPresumeKeyNotExists(key kv.Key, value []byte) error {
+	return db.SetWithFlags(key, value, SetPresumeKeyNotExists)
+}
+
+func (db *memdb) SetWithFlags(key kv.Key, value []byte, ops ...FlagsOp) error {
 	if len(value) == 0 {
-		return ErrCannotSetNilValue
+		return kv.ErrCannotSetNilValue
 	}
 	return db.set(key, value, ops...)
 }
 
-func (db *memdb) Delete(key Key) error {
+func (db *memdb) DeleteWithFlagSetNeedLocked(key kv.Key) error {
+	return db.DeleteWithFlags(key, SetNeedLocked)
+}
+func (db *memdb) Delete(key kv.Key) error {
 	return db.set(key, tombstone)
 }
 
-func (db *memdb) DeleteWithFlags(key Key, ops ...FlagsOp) error {
+func (db *memdb) DeleteWithFlags(key kv.Key, ops ...FlagsOp) error {
 	return db.set(key, tombstone, ops...)
 }
 
@@ -357,7 +366,7 @@ func (db *memdb) Dirty() bool {
 	return db.dirty
 }
 
-func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
+func (db *memdb) set(key kv.Key, value []byte, ops ...FlagsOp) error {
 	if db.vlogInvalid {
 		// panic for easier debugging.
 		panic("vlog is resetted")
@@ -365,7 +374,7 @@ func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
 
 	if value != nil {
 		if size := uint64(len(key) + len(value)); size > db.entrySizeLimit {
-			return ErrEntryTooLarge.GenWithStackByArgs(db.entrySizeLimit, size)
+			return kv.ErrEntryTooLarge.GenWithStackByArgs(db.entrySizeLimit, size)
 		}
 	}
 
@@ -391,7 +400,7 @@ func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
 
 	db.setValue(x, value)
 	if uint64(db.Size()) > db.bufferSizeLimit {
-		return ErrTxnTooLarge.GenWithStackByArgs(db.Size())
+		return kv.ErrTxnTooLarge.GenWithStackByArgs(db.Size())
 	}
 	return nil
 }
@@ -421,7 +430,7 @@ func (db *memdb) setValue(x memdbNodeAddr, value []byte) {
 
 // traverse search for and if not found and insert is true, will add a new node in.
 // Returns a pointer to the new node, or the node found.
-func (db *memdb) traverse(key Key, insert bool) memdbNodeAddr {
+func (db *memdb) traverse(key kv.Key, insert bool) memdbNodeAddr {
 	x := db.getRoot()
 	y := memdbNodeAddr{nil, nullAddr}
 	found := false
@@ -819,7 +828,7 @@ func (db *memdb) getRoot() memdbNodeAddr {
 	return db.getNode(db.root)
 }
 
-func (db *memdb) allocNode(key Key) memdbNodeAddr {
+func (db *memdb) allocNode(key kv.Key) memdbNodeAddr {
 	db.size += len(key)
 	db.count++
 	x, xn := db.allocator.allocNode(key)
@@ -872,7 +881,7 @@ func (n *memdbNode) setBlack() {
 	n.flags &= ^nodeColorBit
 }
 
-func (n *memdbNode) getKey() Key {
+func (n *memdbNode) getKey() kv.Key {
 	var ret []byte
 	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&ret))
 	hdr.Data = uintptr(unsafe.Pointer(&n.flags)) + 1

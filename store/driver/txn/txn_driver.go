@@ -26,3 +26,7 @@ type tikvTxn struct {
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	return &tikvTxn{txn}
 }
+
+func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
+	return txn.KVTxn.GetMemBuffer().(kv.MemBuffer)
+}

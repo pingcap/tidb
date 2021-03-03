@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
@@ -83,7 +84,7 @@ func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, repl
 	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
 	newTiKVTxn := &KVTxn{
 		snapshot:  snapshot,
-		us:        kv.NewUnionStore(snapshot),
+		us:        unionstore.NewUnionStore(snapshot),
 		store:     store,
 		startTS:   startTS,
 		startTime: time.Now(),
@@ -348,7 +349,7 @@ func (txn *KVTxn) collectLockedKeys() [][]byte {
 	keys := make([][]byte, 0, txn.lockedCnt)
 	buf := txn.GetMemBuffer()
 	var err error
-	for it := buf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
+	for it := buf.IterWithFlags(nil, nil).(unionstore.MemBufferIterator); it.Valid(); err = it.Next() {
 		_ = err
 		if it.Flags().HasLocked() {
 			keys = append(keys, it.Key())
@@ -399,7 +400,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput .
 			}
 		}
 	}()
-	memBuf := txn.us.GetMemBuffer()
+	memBuf := txn.us.GetMemBuffer().(unionstore.MemBuffer)
 	for _, key := range keysInput {
 		// The value of lockedMap is only used by pessimistic transactions.
 		var valueExist, locked, checkKeyExists bool
@@ -498,16 +499,16 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput .
 		}
 	}
 	for _, key := range keys {
-		valExists := kv.SetKeyLockedValueExists
+		valExists := unionstore.SetKeyLockedValueExists
 		// PointGet and BatchPointGet will return value in pessimistic lock response, the value may not exist.
 		// For other lock modes, the locked key values always exist.
 		if lockCtx.ReturnValues {
 			val, _ := lockCtx.Values[string(key)]
 			if len(val.Value) == 0 {
-				valExists = kv.SetKeyLockedValueNotExists
+				valExists = unionstore.SetKeyLockedValueNotExists
 			}
 		}
-		memBuf.UpdateFlags(key, kv.SetKeyLocked, kv.DelNeedCheckExists, valExists)
+		memBuf.UpdateFlags(key, unionstore.SetKeyLocked, unionstore.DelNeedCheckExists, valExists)
 	}
 	txn.lockedCnt += len(keys)
 	return nil
@@ -610,8 +611,8 @@ func (txn *KVTxn) GetUnionStore() kv.UnionStore {
 }
 
 // GetMemBuffer return the MemBuffer binding to this transaction.
-func (txn *KVTxn) GetMemBuffer() kv.MemBuffer {
-	return txn.us.GetMemBuffer()
+func (txn *KVTxn) GetMemBuffer() unionstore.MemBuffer {
+	return txn.us.GetMemBuffer().(unionstore.MemBuffer)
 }
 
 // GetSnapshot returns the Snapshot binding to this transaction.
