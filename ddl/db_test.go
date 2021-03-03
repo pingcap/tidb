@@ -1259,8 +1259,7 @@ LOOP:
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := testGetTableByName(c, ctx, "test_db", "test_add_index")
 	handles := kv.NewHandleMap()
-	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
-	err := t.IterRecords(ctx, startKey, t.Cols(),
+	err := tables.IterRecords(t, ctx, t.Cols(),
 		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles.Set(h, struct{}{})
 			return true, nil
@@ -2128,7 +2127,7 @@ LOOP:
 			txn.Rollback()
 		}
 	}()
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+	err = tables.IterRecords(t, ctx, t.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0
@@ -3328,7 +3327,7 @@ func (s *testDBSuite1) TestRenameMultiTables(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
-	sql := fmt.Sprintf("rename table t1 to t3, t2 to t4")
+	sql := "rename table t1 to t3, t2 to t4"
 	_, err := tk.Exec(sql)
 	c.Assert(err, IsNil)
 
@@ -4354,7 +4353,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	ctx := context.Background()
 	err = tk.Se.NewTxn(ctx)
 	c.Assert(err, IsNil)
-	oldRow, err := writeOnlyTable.RowWithCols(tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
+	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
 	c.Assert(err, IsNil)
 	c.Assert(len(oldRow), Equals, 3)
 	err = writeOnlyTable.RemoveRecord(tk.Se, kv.IntHandle(1), oldRow)

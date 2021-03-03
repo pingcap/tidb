@@ -404,7 +404,7 @@ func (e *GrantExec) grantLevelPriv(priv *ast.PrivElem, user *ast.UserSpec, inter
 
 // grantGlobalLevel manipulates mysql.user table.
 func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	if priv.Priv == 0 {
+	if priv.Priv == 0 || priv.Priv == mysql.UsagePriv {
 		return nil
 	}
 
@@ -422,6 +422,9 @@ func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 
 // grantDBLevel manipulates mysql.db table.
 func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
+	if priv.Priv == mysql.UsagePriv {
+		return nil
+	}
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
@@ -441,6 +444,9 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 
 // grantTableLevel manipulates mysql.tables_priv table.
 func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
+	if priv.Priv == mysql.UsagePriv {
+		return nil
+	}
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
