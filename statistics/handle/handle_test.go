@@ -1069,6 +1069,27 @@ func (s *testStatsSuite) TestMergeIdxHist(c *C) {
 	c.Assert(len(rows.Rows()), Equals, 2)
 }
 
+func (s *testStatsSuite) TestAnalyzeWithDynamicPartitionPruneMode(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, key(a)) partition by range(a) 
+					(partition p0 values less than (10),
+					partition p1 values less than (22))`)
+	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
+	tk.MustExec("set @@tidb_partition_prune_mode = '"+ string(variable.Dynamic) +"'")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec(`analyze table t`)
+	rows := tk.MustQuery("show stats_histograms where partition_name = 'global'").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+//	createAt := make([]string, 2)
+//	tk.MustExec("insert into t values (2), (2), (2)")
+//	tk.MustExec("analyze table t partition p0")
+//	rows = tk.MustQuery("show stats_histograms where partition_name = 'global'").Rows()
+//	c.Assert(len(rows), Equals, 1)
+//	c.Assert(rows[5], Greater, createAt)
+}
+
 var _ = SerialSuites(&statsSerialSuite{})
 
 type statsSerialSuite struct {
