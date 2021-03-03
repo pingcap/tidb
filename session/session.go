@@ -113,7 +113,7 @@ type Session interface {
 	// Attention: it does not prevent you from doing parse("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
 	// One argument should be a standalone entity. It should not "concat" with other placeholders and characters.
 	// This function only saves you from processing potentially unsafe parameters.
-	ParseWithParams(ctx context.Context, sql string, args ...interface{}) ([]ast.StmtNode, error)
+	ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
@@ -1127,15 +1127,12 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 
-	stmtNodes, err := s.ParseWithParams(ctx, sql, args...)
+	stmt, err := s.ParseWithParams(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
-	if len(stmtNodes) != 1 {
-		return nil, errors.New("Executing multiple statements internally is not supported")
-	}
 
-	rs, err = s.ExecuteStmt(ctx, stmtNodes[0])
+	rs, err = s.ExecuteStmt(ctx, stmt)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
@@ -1213,8 +1210,10 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 }
 
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
-func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) ([]ast.StmtNode, error) {
-	sql, err := EscapeSQL(sql, args...)
+// Note that it will not do escaping if no variable arguments are passed.
+func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+	var err error
+	sql, err = sqlexec.EscapeSQL(sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1234,6 +1233,9 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 		parseStartTime = time.Now()
 		stmts, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+	}
+	if len(stmts) != 1 {
+		err = errors.New("run multiple statements internally is not supported")
 	}
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1257,7 +1259,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
-	return stmts, nil
+	return stmts[0], nil
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
