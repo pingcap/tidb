@@ -1262,8 +1262,7 @@ LOOP:
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := testGetTableByName(c, ctx, "test_db", "test_add_index")
 	handles := kv.NewHandleMap()
-	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
-	err := t.IterRecords(ctx, startKey, t.Cols(),
+	err := tables.IterRecords(t, ctx, t.Cols(),
 		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles.Set(h, struct{}{})
 			return true, nil
@@ -2145,7 +2144,7 @@ LOOP:
 			c.Assert(err, IsNil)
 		}
 	}()
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+	err = tables.IterRecords(t, ctx, t.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0
@@ -4378,7 +4377,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	ctx := context.Background()
 	err = tk.Se.NewTxn(ctx)
 	c.Assert(err, IsNil)
-	oldRow, err := writeOnlyTable.RowWithCols(tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
+	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
 	c.Assert(err, IsNil)
 	c.Assert(len(oldRow), Equals, 3)
 	err = writeOnlyTable.RemoveRecord(tk.Se, kv.IntHandle(1), oldRow)

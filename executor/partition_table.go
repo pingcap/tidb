@@ -41,6 +41,7 @@ type nextPartition interface {
 	nextPartition(context.Context, table.PhysicalTable) (Executor, error)
 }
 
+// nolint:structcheck
 type innerPartitionInfo struct {
 	isFullPartition bool
 	nextRange       map[int64][]*ranger.Range

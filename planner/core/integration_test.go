@@ -806,7 +806,7 @@ func (s *testIntegrationSerialSuite) TestIsolationReadDoNotFilterSystemDB(c *C) 
 func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	{
-		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
@@ -1147,7 +1147,7 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 	tk.MustExec("create table t(a int(11), b int) partition by range (a) (partition p0 values less than (3), partition p1 values less than maxvalue);")
 	tk.MustExec("insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (4, 2)")
 	tk.MustExec("set session tidb_opt_agg_push_down=1")
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort 16000.00 root  test.t.b:desc",
 		"└─HashAgg 16000.00 root  group by:test.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.b",
 		"  └─PartitionUnion 16000.00 root  ",
@@ -1522,7 +1522,7 @@ func (s *testIntegrationSuite) TestOptimizeHintOnPartitionTable(c *C) {
 		}
 	}
 
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 
 	var input []string
 	var output []struct {
@@ -2132,6 +2132,59 @@ func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
 		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
 	tk.MustGetErrMsg("update tt as s1, tt as s2 set s1.z = default, s2.z = 456",
 		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+}
+
+func (s *testIntegrationSuite) TestExtendedStatsSwitch(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null, b int not null, key(a), key(b))")
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3),(4,4),(5,5),(6,6)")
+
+	tk.MustExec("set session tidb_enable_extended_stats = off")
+	tk.MustGetErrMsg("alter table t add stats_extended s1 correlation(a,b)",
+		"Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	tk.MustGetErrMsg("alter table t drop stats_extended s1",
+		"Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	tk.MustGetErrMsg("admin reload stats_extended",
+		"Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustQuery("select stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
+		"<nil> 0",
+	))
+	tk.MustExec("set session tidb_enable_extended_stats = off")
+	// Analyze should not collect extended stats.
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
+		"<nil> 0",
+	))
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	// Analyze would collect extended stats.
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
+		"1.000000 1",
+	))
+	// Estimated index scan count is 4 using extended stats.
+	tk.MustQuery("explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1").Check(testkit.Rows(
+		"Limit 1.00 root  offset:0, count:1",
+		"└─Projection 1.00 root  test.t.a, test.t.b",
+		"  └─IndexLookUp 1.00 root  ",
+		"    ├─IndexFullScan(Build) 4.00 cop[tikv] table:t, index:b(b) keep order:true",
+		"    └─Selection(Probe) 1.00 cop[tikv]  gt(test.t.a, 3)",
+		"      └─TableRowIDScan 4.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustExec("set session tidb_enable_extended_stats = off")
+	// Estimated index scan count is 2 using independent assumption.
+	tk.MustQuery("explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1").Check(testkit.Rows(
+		"Limit 1.00 root  offset:0, count:1",
+		"└─Projection 1.00 root  test.t.a, test.t.b",
+		"  └─IndexLookUp 1.00 root  ",
+		"    ├─IndexFullScan(Build) 2.00 cop[tikv] table:t, index:b(b) keep order:true",
+		"    └─Selection(Probe) 1.00 cop[tikv]  gt(test.t.a, 3)",
+		"      └─TableRowIDScan 2.00 cop[tikv] table:t keep order:false",
+	))
 }
 
 func (s *testIntegrationSuite) TestOrderByNotInSelectDistinct(c *C) {
