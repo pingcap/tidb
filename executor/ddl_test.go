@@ -54,6 +54,7 @@ func (s *testSuite6) TestTruncateTable(c *C) {
 	result := tk.MustQuery("select * from truncate_test")
 	result.Check(testkit.Rows("1", "2", "3"))
 	tk.MustExec("truncate table truncate_test")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	result = tk.MustQuery("select * from truncate_test")
 	result.Check(nil)
 }
@@ -95,12 +96,14 @@ func (s *testSuite6) TestCreateTable(c *C) {
 
 	// Test create an exist table
 	tk.MustExec("CREATE TABLE create_test (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 
 	_, err = tk.Exec("CREATE TABLE create_test (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
 	c.Assert(err, NotNil)
 
 	// Test "if not exist"
 	tk.MustExec("CREATE TABLE if not exists test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 
 	// Testcase for https://github.com/pingcap/tidb/issues/312
 	tk.MustExec(`create table issue312_1 (c float(24));`)
@@ -201,6 +204,7 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
 	// test create a exist view
 	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	defer tk.MustExec("DROP VIEW IF EXISTS view_t")
 	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
 	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.view_t' already exists")
@@ -225,6 +229,7 @@ func (s *testSuite6) TestCreateView(c *C) {
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 	// drop multiple views in a statement
 	tk.MustExec("drop view v1,v2,v3,v4,v5,v6")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	// view with variable
 	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
@@ -295,7 +300,9 @@ func (s *testSuite6) TestViewRecursion(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists t(a int)")
 	tk.MustExec("create definer='root'@'localhost' view recursive_view1 as select * from t")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	tk.MustExec("create definer='root'@'localhost' view recursive_view2 as select * from recursive_view1")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	tk.MustExec("drop table t")
 	tk.MustExec("rename table recursive_view2 to t")
 	_, err := tk.Exec("select * from recursive_view1")
@@ -450,9 +457,12 @@ func (s *testSuite6) TestCreateDropTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
+	tk.MustExec("insert into drop_test values(1),(2),(3),(4);")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	tk.MustExec("drop table if exists drop_test")
 	tk.MustExec("create table drop_test (a int)")
 	tk.MustExec("drop table drop_test")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 
 	_, err := tk.Exec("drop table mysql.gc_delete_range")
 	c.Assert(err, NotNil)
@@ -468,6 +478,7 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 
 	_, err = tk.Exec("drop view if exists drop_test")
 	c.Assert(err, IsNil)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 
 	_, err = tk.Exec("drop view mysql.gc_delete_range")
 	c.Assert(err.Error(), Equals, "Drop tidb system table 'mysql.gc_delete_range' is forbidden")
@@ -490,10 +501,16 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 func (s *testSuite6) TestCreateDropIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table if not exists drop_test (a int)")
-	tk.MustExec("create index idx_a on drop_test (a)")
-	tk.MustExec("drop index idx_a on drop_test")
-	tk.MustExec("drop table drop_test")
+	tk.MustExec("create table if not exists drop_test (a int);")
+	tk.MustExec("insert into drop_test values(1),(2),(3);")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(3))
+	tk.MustExec("create index idx_a on drop_test (a);")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustExec("insert into drop_test values(4),(5);")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(3))
+	tk.MustExec("drop index idx_a on drop_test;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustExec("drop table drop_test;")
 }
 
 func (s *testSuite6) TestAlterDatabase(c *C) {
@@ -514,6 +531,7 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	tk.MustExec("create table if not exists alter_test (c1 int)")
 	tk.MustExec("insert into alter_test values(1)")
 	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	time.Sleep(1 * time.Millisecond)
 	now := time.Now().Add(-1 * time.Millisecond).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
@@ -543,7 +561,9 @@ func (s *testSuite6) TestAlterTableAddColumns(c *C) {
 	tk.MustExec("create table if not exists alter_test (c1 int)")
 	tk.MustExec("insert into alter_test values(1)")
 	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp, add column c8 varchar(50) default 'CURRENT_TIMESTAMP'")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	tk.MustExec("alter table alter_test add column (c7 timestamp default current_timestamp, c3 varchar(50) default 'CURRENT_TIMESTAMP')")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
 	req := r.NewChunk()
@@ -569,6 +589,7 @@ func (s *testSuite6) TestAddNotNullColumnNoDefault(c *C) {
 	tk.MustExec("create table nn (c1 int)")
 	tk.MustExec("insert nn values (1), (2)")
 	tk.MustExec("alter table nn add column c2 int not null")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 
 	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("nn"))
 	c.Assert(err, IsNil)
@@ -650,6 +671,20 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	_, err = tk.Exec("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error())
+
+	//change type
+	tk.MustExec("create table modify_column (c1 int);")
+	tk.MustExec("insert modify_column values (1),(2),(3),(4),(5);")
+	tk.MustExec("alter table modify_column modify column c1 tinyint;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(5))
+	tk.MustExec("drop table modify_column;")
+
+	//not changing type
+	tk.MustExec("create table modify_column (c1 int);")
+	tk.MustExec("insert modify_column values (1),(2),(3),(4),(5);")
+	tk.MustExec("alter table modify_column modify column c1 int not null default 7;")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustExec("drop table modify_column;")
 
 }
 
