@@ -17,6 +17,7 @@ import "unsafe"
 
 const (
 	// DefStringSetBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(struct{}))+2*ptrSize
+	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
 	DefStringSetBucketMemoryUsage = 8*(1+16+0) + 16
 	// DefFloat64SetBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(float64) + unsafe.Sizeof(struct{}))+2*ptrSize
 	DefFloat64SetBucketMemoryUsage = 8*(1+8+0) + 16
