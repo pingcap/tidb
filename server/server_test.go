@@ -1595,6 +1595,29 @@ func (cli *testServerClient) runTestIssue3682(c *C) {
 	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)")
 }
 
+func (cli *testServerClient) runTestCompareYearWithNull(c *C) {
+	cli.runTests(c, nil, func(dbt *DBTest) {
+		// test year column compare with NULL
+		dbt.mustExec("drop table if exists tyear;")
+		dbt.mustExec("create table tyear(c1 year(4));")
+		dbt.mustExec("insert into tyear values(2001);")
+
+		// expect empty result set
+		rows := dbt.mustQuery("select * from tyear where c1 != NULL;")
+		cli.checkRows(c, rows, "")
+		dbt.mustQuery("select * from tyear where c1 = NULL;")
+		cli.checkRows(c, rows, "")
+		dbt.mustQuery("select * from tyear where c1 is NULL;")
+		cli.checkRows(c, rows, "")
+
+		// expect got result
+		rows = dbt.mustQuery("select * from tyear where c1 is not NULL;")
+		cli.checkRows(c, rows, "2001")
+		rows = dbt.mustQuery("select * from tyear where c1 = 2001;")
+		cli.checkRows(c, rows, "2001")
+	})
+}
+
 func (cli *testServerClient) runTestDBNameEscape(c *C) {
 	cli.runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec("CREATE DATABASE `aa-a`;")
