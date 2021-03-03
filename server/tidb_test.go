@@ -125,6 +125,10 @@ func (ts *tidbTestSuite) TestUint64(c *C) {
 	ts.runTestPrepareResultFieldType(c)
 }
 
+func (ts *tidbTestSuite) TestYear(c *C) {
+	ts.runTestIndexScanWithYearCol(c)
+}
+
 func (ts *tidbTestSuite) TestSpecialType(c *C) {
 	c.Parallel()
 	ts.runTestSpecialType(c)
