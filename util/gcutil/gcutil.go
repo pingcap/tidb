@@ -26,7 +26,7 @@ import (
 
 const (
 	insertVariableValueSQL = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
-                              ON DUPLICATE KEYUPDATE variable_value = %?, comment = %?`
+                              ON DUPLICATE KEY UPDATE variable_value = %?, comment = %?`
 	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
 )
 
