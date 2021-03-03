@@ -44,7 +44,7 @@ import (
 )
 
 // Both partition and partitionedTable implement the table.Table interface.
-var _ table.Table = &partition{}
+var _ table.PhysicalTable = &partition{}
 var _ table.Table = &partitionedTable{}
 
 // partitionedTable implements the table.PartitionedTable interface.
