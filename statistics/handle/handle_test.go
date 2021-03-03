@@ -1029,6 +1029,26 @@ func (s *testStatsSuite) TestStaticPartitionPruneMode(c *C) {
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 }
 
+func (s *testStatsSuite) TestMergeIdxHist(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
+	defer tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
+	tk.MustExec("use test")
+	tk.MustExec(`
+		create table t (a int)
+		partition by range (a) (
+			partition p0 values less than (10),
+			partition p1 values less than (20))`)
+	tk.MustExec("set @@tidb_analyze_version=2")
+	defer tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
+
+	tk.MustExec("analyze table t with 2 topn, 2 buckets")
+	rows := tk.MustQuery("show stats_buckets where partition_name like 'global'")
+	c.Assert(len(rows.Rows()), Equals, 2)
+}
+
 var _ = SerialSuites(&statsSerialSuite{})
 
 type statsSerialSuite struct {
