@@ -664,7 +664,7 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 	})
 	n = mathutil.MinUint32(uint32(numTop), n)
 	// lastTopCnt is the smallest value in the new TopN structure
-	lastTopCnt := sorted[numTop-1]
+	lastTopCnt := sorted[n-1]
 
 	var finalTopN TopN
 	finalTopN.TopN = make([]TopNMeta, 0, n)
