@@ -137,17 +137,7 @@ func (i isUpdate) ApplyOn(opt *AddRecordOpt) {
 	opt.IsUpdate = true
 }
 
-// Table is used to retrieve and modify rows in table.
-type Table interface {
-	// IterRecords iterates records in the table and calls fn.
-	IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
-
-	// RowWithCols returns a row that contains the given cols.
-	RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*Column) ([]types.Datum, error)
-
-	// Row returns a row for all columns.
-	Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error)
-
+type columnAPI interface {
 	// Cols returns the columns of the table which is used in select, including hidden columns.
 	Cols() []*Column
 
@@ -163,27 +153,18 @@ type Table interface {
 
 	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
 	FullHiddenColsAndVisibleCols() []*Column
+}
+
+// Table is used to retrieve and modify rows in table.
+type Table interface {
+	columnAPI
 
 	// Indices returns the indices of the table.
+	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
-
-	// WritableIndices returns write-only and public indices of the table.
-	WritableIndices() []Index
-
-	// DeletableIndices returns delete-only, write-only and public indices of the table.
-	DeletableIndices() []Index
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
-
-	// IndexPrefix returns the index key prefix.
-	IndexPrefix() kv.Key
-
-	// FirstKey returns the first key.
-	FirstKey() kv.Key
-
-	// RecordKey returns the key in KV storage for the row.
-	RecordKey(h kv.Handle) kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
 	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
@@ -204,9 +185,6 @@ type Table interface {
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
-
-	// Seek returns the handle greater or equal to h.
-	Seek(ctx sessionctx.Context, h kv.Handle) (handle kv.Handle, found bool, err error)
 
 	// Type returns the type of table
 	Type() Type

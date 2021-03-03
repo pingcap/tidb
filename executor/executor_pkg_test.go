@@ -518,6 +518,7 @@ func (s *pkgTestSuite) TestAggPartialResultMapperB(c *C) {
 }
 
 // A header for a Go map.
+// nolint:structcheck
 type hmap struct {
 	// Note: the format of the hmap is also encoded in cmd/compile/internal/gc/reflect.go.
 	// Make sure this stays in sync with the compiler's definition.

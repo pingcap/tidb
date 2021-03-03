@@ -25,7 +25,7 @@ import (
 )
 
 type maxMinHeap struct {
-	data []interface{}
+	data    []interface{}
 	varSet  map[interface{}]int64
 	isMax   bool
 	cmpFunc func(i, j interface{}) int

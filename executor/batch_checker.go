@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/tablecodec"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -50,7 +51,10 @@ type toBeCheckedRow struct {
 // which need to be checked whether they are duplicate keys.
 func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
 	nUnique := 0
-	for _, v := range t.WritableIndices() {
+	for _, v := range t.Indices() {
+		if !tables.IsIndexWritable(v) {
+			continue
+		}
 		if v.Meta().Unique {
 			nUnique++
 		}
@@ -130,7 +134,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			return str
 		}
 		handleKey = &keyValueWithDupInfo{
-			newKey: t.RecordKey(handle),
+			newKey: tablecodec.EncodeRecordKey(t.RecordPrefix(), handle),
 			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), "PRIMARY"),
 		}
 	}
@@ -138,7 +142,10 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	// addChangingColTimes is used to fetch values while processing "modify/change column" operation.
 	addChangingColTimes := 0
 	// append unique keys and errors
-	for _, v := range t.WritableIndices() {
+	for _, v := range t.Indices() {
+		if !tables.IsIndexWritable(v) {
+			continue
+		}
 		if !v.Meta().Unique {
 			continue
 		}
@@ -204,7 +211,7 @@ func formatDataForDupError(data []types.Datum) (string, error) {
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
 func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
 	genExprs []expression.Expression) ([]types.Datum, error) {
-	oldValue, err := txn.Get(ctx, t.RecordKey(handle))
+	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
 	if err != nil {
 		return nil, err
 	}
