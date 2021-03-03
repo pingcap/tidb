@@ -234,7 +234,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 }
 
 // TODO: retry once failed?
-func (m *mppIterator) cancelMppTask(bo *tikv.Backoffer, req *kv.MPPDispatchRequest, meta *mpp.TaskMeta) {
+func (m *mppIterator) cancelMppTask(bo *tikv.Backoffer, meta *mpp.TaskMeta) {
 	killReq := &mpp.CancelTaskRequest{
 		Meta: meta,
 	}
@@ -242,13 +242,10 @@ func (m *mppIterator) cancelMppTask(bo *tikv.Backoffer, req *kv.MPPDispatchReque
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
 	wrappedReq.StoreTp = kv.TiFlash
 
-	_, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
-
-	logutil.BgLogger().Info("cancel task ", zap.Uint64("query id ", meta.GetStartTs()), zap.String(" on addr ", meta.GetAddress()))
-
-	if err != nil {
-		m.sendError(err)
-		return
+	// send cancel cmd to all TiFlash stores
+	for _, addr := range m.store.GetRegionCache().GetTiFlashStoreAddrs() {
+		m.store.GetTiKVClient().SendRequest(bo.GetCtx(), addr, wrappedReq, tikv.ReadTimeoutUltraLong)
+		logutil.BgLogger().Debug("cancel task ", zap.Uint64("query id ", meta.GetStartTs()), zap.String(" on addr ", addr))
 	}
 }
 
@@ -269,7 +266,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
 
 	if err != nil {
-		m.cancelMppTask(bo, req, taskMeta)
+		m.cancelMppTask(bo, taskMeta)
 		m.sendError(err)
 		return
 	}
@@ -285,13 +282,13 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	for {
 		err := m.handleMPPStreamResponse(bo, resp, req)
 		if err != nil {
-			m.cancelMppTask(bo, req, taskMeta)
+			m.cancelMppTask(bo, taskMeta)
 			m.sendError(err)
 			return
 		}
 
 		if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
-			m.cancelMppTask(bo, req, taskMeta)
+			m.cancelMppTask(bo, taskMeta)
 			err = tikv.ErrQueryInterrupted
 			m.sendError(err)
 			return
@@ -321,8 +318,12 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 					err: errors.New(resp.Error.Msg),
 				})
 			}
+<<<<<<< HEAD
 			m.cancelMppTask(bo, req, taskMeta)
 >>>>>>> run ok
+=======
+			m.cancelMppTask(bo, taskMeta)
+>>>>>>> send cancle cmd to all tiflash stores
 			return
 		}
 	}
