@@ -39,12 +39,6 @@ const (
 	MPPErrEstablishConnMultiTimes
 )
 
-const (
-	taskRunning int32 = iota + 1
-	taskFailed
-	taskFinished
-)
-
 type mppExecBuilder struct {
 	sc       *stmtctx.StatementContext
 	dbReader *dbreader.DBReader
