@@ -78,14 +78,6 @@ type Histogram struct {
 	Correlation float64
 }
 
-func (h *Histogram) DEBUG() string {
-	res := fmt.Sprintf("len(%v)", len(h.Buckets))
-	for i, b := range h.Buckets {
-		res += fmt.Sprintf(", (%v: %v, %v, %v)", i, b.Count, b.Repeat, b.NDV)
-	}
-	return res
-}
-
 // Bucket store the bucket count and repeat.
 type Bucket struct {
 	Count  int64
@@ -1928,13 +1920,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			bucket.NDV = 0 // bucket.NDV is not maintained for column histograms
 		}
 		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
-	}
-
-	if !isIndex {
-		for i, hist := range hists {
-			fmt.Println(">>>>>>>>> ", i, hist.DEBUG())
-		}
-		fmt.Println(">>>>>>> global ", globalHist.DEBUG())
 	}
 
 	return globalHist, nil
