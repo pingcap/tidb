@@ -2422,7 +2422,10 @@ func (s *testBypassSuite) TestLatch(c *C) {
 		mockstore.WithTxnLocalLatches(64),
 	)
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	dom, err1 := session.BootstrapSession(store)
 	c.Assert(err1, IsNil)
@@ -2686,7 +2689,7 @@ func (s *testSuite7) TestReplaceLog(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1))
+	_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1), nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)

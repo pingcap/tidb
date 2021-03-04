@@ -585,7 +585,10 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	// Run in a separate suite because this test need to set SkipGrantTable config.
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -609,10 +612,12 @@ func (s *testSuite3) TestDropPartitionStats(c *C) {
 )
 partition by range (a) (
 	partition p0 values less than (10),
-	partition p1 values less than (20)
+	partition p1 values less than (20),
+	partition global values less than (30)
 )`)
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("insert into t values (1), (5), (11), (15)")
+	tk.MustExec("insert into t values (1), (5), (11), (15), (21), (25)")
 	c.Assert(s.domain.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 
 	checkPartitionStats := func(names ...string) {
@@ -624,18 +629,25 @@ partition by range (a) (
 	}
 
 	tk.MustExec("analyze table t")
-	checkPartitionStats("global", "p0", "p1")
+	checkPartitionStats("global", "p0", "p1", "global")
 
 	tk.MustExec("drop stats t partition p0")
-	checkPartitionStats("global", "p1")
+	checkPartitionStats("global", "p1", "global")
+
+	err := tk.ExecToErr("drop stats t partition abcde")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "can not found the specified partition name abcde in the table definition")
 
 	tk.MustExec("drop stats t partition global")
+	checkPartitionStats("global", "p1")
+
+	tk.MustExec("drop stats t global")
 	checkPartitionStats("p1")
 
 	tk.MustExec("analyze table t")
-	checkPartitionStats("global", "p0", "p1")
+	checkPartitionStats("global", "p0", "p1", "global")
 
-	tk.MustExec("drop stats t partition p0, p1")
+	tk.MustExec("drop stats t partition p0, p1, global")
 	checkPartitionStats("global")
 }
 
