@@ -1073,7 +1073,7 @@ func (s *testStatsSuite) TestAnalyzeWithDynamicPartitionPruneMode(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_partition_prune_mode = '"+ string(variable.Dynamic) +"'")
+	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec(`create table t (a int, key(a)) partition by range(a) 
 					(partition p0 values less than (10),
