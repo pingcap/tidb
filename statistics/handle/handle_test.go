@@ -846,8 +846,8 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 	tk.MustExec("analyze table tint with 2 topn, 2 buckets")
 
 	tk.MustQuery("select table_id, modify_count, count from mysql.stats_meta order by table_id asc").Check(testkit.Rows(
-		"51 0 20", // global: g.count = p0.count + p1.count
-		"52 0 9",  // p0
+		"51 0 20",  // global: g.count = p0.count + p1.count
+		"52 0 9",   // p0
 		"53 0 11")) // p1
 
 	tk.MustQuery("show stats_topn where table_name='tint' and is_index=0").Check(testkit.Rows(
@@ -877,7 +877,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("select table_id, distinct_count, null_count, tot_col_size from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("51 12 1 19", // global, g = p0 + p1
-			"52 5 1 8", // p0
+			"52 5 1 8",   // p0
 			"53 7 0 11")) // p1
 
 	tk.MustQuery("show stats_buckets where is_index=1").Check(testkit.Rows(
@@ -891,7 +891,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("select table_id, distinct_count, null_count from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
 		testkit.Rows("51 12 1", // global, g = p0 + p1
-			"52 5 1", // p0
+			"52 5 1",  // p0
 			"53 7 0")) // p1
 }
 
