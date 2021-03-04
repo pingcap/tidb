@@ -745,8 +745,8 @@ func (ts *ConnTestSuite) TestFallbackToTiKVWhenTiFlashIsDown(c *C) {
 	tk.MustQuery("explain select sum(a) from t").Check(testkit.Rows(
 		"StreamAgg_20 1.00 root  funcs:sum(Column#6)->Column#4",
 		"└─TableReader_21 1.00 root  data:StreamAgg_8",
-		"  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(test.t.a)->Column#6",
-		"    └─TableFullScan_19 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"))
+		"  └─StreamAgg_8 1.00 batchCop[tiflash]  funcs:sum(test.t.a)->Column#6",
+		"    └─TableFullScan_19 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
 
 	ctx := context.Background()
 	c.Assert(cc.handleQuery(ctx, "select sum(a) from t"), IsNil)
