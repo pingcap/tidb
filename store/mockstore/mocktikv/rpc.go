@@ -846,6 +846,23 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			resp.Resp = &kvrpcpb.ScanResponse{RegionError: err}
 			return resp, nil
 		}
+		failpoint.Inject("rpcScanResult", func(val failpoint.Value) {
+			switch val.(string) {
+			case "keyError":
+				failpoint.Return(&tikvrpc.Response{
+					Resp: &kvrpcpb.ScanResponse{Error: &kvrpcpb.KeyError{
+						Locked: &kvrpcpb.LockInfo{
+							PrimaryLock: r.StartKey,
+							LockVersion: r.Version - 1,
+							Key:         r.StartKey,
+							LockTtl:     50,
+							TxnSize:     1,
+							LockType:    kvrpcpb.Op_Put,
+						},
+					}},
+				}, nil)
+			}
+		})
 		resp.Resp = handler.handleKvScan(r)
 
 	case tikvrpc.CmdPrewrite:
@@ -854,6 +871,10 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			case "notLeader":
 				failpoint.Return(&tikvrpc.Response{
 					Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+				}, nil)
+			case "writeConflict":
+				failpoint.Return(&tikvrpc.Response{
+					Resp: &kvrpcpb.PrewriteResponse{Errors: []*kvrpcpb.KeyError{{Conflict: &kvrpcpb.WriteConflict{}}}},
 				}, nil)
 			}
 		})
@@ -864,6 +885,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.Resp = handler.handleKvPrewrite(r)
+
+		failpoint.Inject("rpcPrewriteTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, undeterminedErr)
+			}
+		})
+
 	case tikvrpc.CmdPessimisticLock:
 		r := req.PessimisticLock()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
@@ -932,6 +960,23 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			resp.Resp = &kvrpcpb.BatchGetResponse{RegionError: err}
 			return resp, nil
 		}
+		failpoint.Inject("rpcBatchGetResult", func(val failpoint.Value) {
+			switch val.(string) {
+			case "keyError":
+				failpoint.Return(&tikvrpc.Response{
+					Resp: &kvrpcpb.BatchGetResponse{Error: &kvrpcpb.KeyError{
+						Locked: &kvrpcpb.LockInfo{
+							PrimaryLock: r.Keys[0],
+							LockVersion: r.Version - 1,
+							Key:         r.Keys[0],
+							LockTtl:     50,
+							TxnSize:     1,
+							LockType:    kvrpcpb.Op_Put,
+						},
+					}},
+				}, nil)
+			}
+		})
 		resp.Resp = handler.handleKvBatchGet(r)
 	case tikvrpc.CmdBatchRollback:
 		r := req.BatchRollback()

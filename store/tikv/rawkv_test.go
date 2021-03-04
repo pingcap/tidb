@@ -19,7 +19,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 )
 
@@ -33,9 +33,9 @@ type testRawKVSuite struct {
 var _ = Suite(&testRawKVSuite{})
 
 func (s *testRawKVSuite) SetUpTest(c *C) {
-	client, pdClient, cluster, err := unistore.New("")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
 	c.Assert(err, IsNil)
-	unistore.BootstrapWithSingleStore(cluster)
+	mocktikv.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
 	s.client = &RawKVClient{
 		clusterID:   0,

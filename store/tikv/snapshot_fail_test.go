@@ -19,7 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
 type testSnapshotFailSuite struct {
@@ -31,9 +31,9 @@ var _ = SerialSuites(&testSnapshotFailSuite{})
 
 func (s *testSnapshotFailSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	client, pdClient, cluster, err := unistore.New("")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
 	c.Assert(err, IsNil)
-	unistore.BootstrapWithSingleStore(cluster)
+	mocktikv.BootstrapWithSingleStore(cluster)
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 	s.store = store
@@ -74,9 +74,9 @@ func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcBatchGetResult", `1*return("keyError")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcBatchGetResult", `1*return("keyError")`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcBatchGetResult"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcBatchGetResult"), IsNil)
 	}()
 
 	txn, err = s.store.Begin()
@@ -105,7 +105,7 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult", `1*return("keyError")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcScanResult", `1*return("keyError")`), IsNil)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	iter, err := txn.Iter([]byte("a"), []byte("z"))
@@ -120,9 +120,9 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	c.Assert(iter.Value(), DeepEquals, []byte("v3"))
 	c.Assert(iter.Next(), IsNil)
 	c.Assert(iter.Valid(), IsFalse)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcScanResult"), IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult", `1*return("keyError")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcScanResult", `1*return("keyError")`), IsNil)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	iter, err = txn.Iter([]byte("k2"), []byte("k4"))
@@ -134,7 +134,7 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	c.Assert(iter.Value(), DeepEquals, []byte("v3"))
 	c.Assert(iter.Next(), IsNil)
 	c.Assert(iter.Valid(), IsFalse)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcScanResult"), IsNil)
 }
 
 func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {

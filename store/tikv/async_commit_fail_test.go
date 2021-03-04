@@ -41,15 +41,15 @@ func (s *testAsyncCommitFailSuite) SetUpTest(c *C) {
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
 // committing primary region task.
 func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
-	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
+	// This test doesn't support tikv mode because it needs setting failpoint in mocktikv.
 	if *WithTiKV {
 		return
 	}
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/noRetryOnRpcError", "return(true)"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteTimeout", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteTimeout", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteTimeout"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteTimeout"), IsNil)
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/noRetryOnRpcError"), IsNil)
 	}()
 	// The rpc error will be wrapped to ErrResultUndetermined.
@@ -73,7 +73,7 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 }
 
 func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
-	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
+	// This test doesn't support tikv mode because it needs setting failpoint in mocktikv.
 	if *WithTiKV {
 		return
 	}
@@ -88,9 +88,9 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 	s.cluster.Split(loc.Region.GetID(), newRegionID, []byte(splitKey), []uint64{newPeerID}, newPeerID)
 	s.store.GetRegionCache().InvalidateCachedRegion(loc.Region)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult", `1*return("writeConflict")->sleep(50)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteResult", `1*return("writeConflict")->sleep(50)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteResult"), IsNil)
 	}()
 
 	t1 := s.beginAsyncCommit(c)

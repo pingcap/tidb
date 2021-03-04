@@ -16,7 +16,7 @@ package tikv
 import (
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
 type testPrewriteSuite struct {
@@ -26,9 +26,9 @@ type testPrewriteSuite struct {
 var _ = Suite(&testPrewriteSuite{})
 
 func (s *testPrewriteSuite) SetUpTest(c *C) {
-	client, pdClient, cluster, err := unistore.New("")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
 	c.Assert(err, IsNil)
-	unistore.BootstrapWithSingleStore(cluster)
+	mocktikv.BootstrapWithSingleStore(cluster)
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 	s.store = store
