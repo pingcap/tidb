@@ -159,7 +159,8 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 
 		// Make schema change.
 		tk.MustExec("drop table if exists prepare2")
-		tk.Exec("create table prepare2 (a int)")
+		_, err = tk.Exec("create table prepare2 (a int)")
+		c.Assert(err, IsNil)
 
 		// Should success as the changed schema do not affect the prepared statement.
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
@@ -252,8 +253,10 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 
 		// Coverage.
 		exec := &executor.ExecuteExec{}
-		exec.Next(ctx, nil)
-		exec.Close()
+		err = exec.Next(ctx, nil)
+		c.Assert(err, IsNil)
+		err = exec.Close()
+		c.Assert(err, IsNil)
 
 		// issue 8065
 		stmtID, _, _, err = tk.Se.PrepareStmt("select ? from dual")
@@ -447,19 +450,22 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 		tk.MustExec(`prepare stmt_insert from 'insert into prepare_test values (?, ?)'`)
 		tk.MustExec(`set @a=1,@b=1; execute stmt_insert using @a, @b;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(0))
 		}
 		tk.MustExec(`set @a=2,@b=2; execute stmt_insert using @a, @b;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(1))
 		}
 		tk.MustExec(`set @a=3,@b=3; execute stmt_insert using @a, @b;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(2))
 		}
@@ -474,19 +480,22 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 		tk.MustExec(`prepare stmt_insert_select from 'insert into prepare_test (id, c1) select id + 100, c1 + 100 from prepare_test where id = ?'`)
 		tk.MustExec(`set @a=1; execute stmt_insert_select using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(2))
 		}
 		tk.MustExec(`set @a=2; execute stmt_insert_select using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(3))
 		}
 		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(4))
 		}
@@ -529,19 +538,22 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		tk.MustExec(`prepare stmt_update from 'update prepare_test set c1 = c1 + ? where id = ?'`)
 		tk.MustExec(`set @a=1,@b=100; execute stmt_update using @b,@a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(2))
 		}
 		tk.MustExec(`set @a=2,@b=200; execute stmt_update using @b,@a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(3))
 		}
 		tk.MustExec(`set @a=3,@b=300; execute stmt_update using @b,@a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(4))
 		}
@@ -584,19 +596,22 @@ func (s *seqTestSuite) TestPreparedDelete(c *C) {
 		tk.MustExec(`prepare stmt_delete from 'delete from prepare_test where id = ?'`)
 		tk.MustExec(`set @a=1; execute stmt_delete using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(0))
 		}
 		tk.MustExec(`set @a=2; execute stmt_delete using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(1))
 		}
 		tk.MustExec(`set @a=3; execute stmt_delete using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(2))
 		}
