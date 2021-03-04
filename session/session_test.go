@@ -1839,6 +1839,7 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 	tk.MustExec("insert into test(id, val1, val2) values(2, 2, 2);")
 	_, err = tk.Exec("update test set val1 = 3, val2 = 2 where id = 1;")
 	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "*Duplicate entry '2' for key 'val2'")
 	tk.MustExec("insert into test(id, val1, val2) values(3, 3, 3);")
 }
 
