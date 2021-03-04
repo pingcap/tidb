@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
@@ -61,10 +62,6 @@ const (
 	// defBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(slice))+2*ptrSize
 	// The bucket size may be changed by golang implement in the future.
 	defBucketMemoryUsage = 8*(1+16+24) + 16
-	// Maximum average load of a bucket that triggers growth is 6.5.
-	// Represent as loadFactorNum/loadFactDen, to allow integer math.
-	loadFactorNum = 13
-	loadFactorDen = 2
 )
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
@@ -540,7 +537,7 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(mapper) > (1<<w.BInMap)*loadFactorNum/loadFactorDen {
+		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
 			w.BInMap++
 		}
@@ -914,7 +911,7 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 		e.partialResultMap[groupKey] = partialResults
 		allMemDelta += int64(len(groupKey))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(e.partialResultMap) > (1<<e.bInMap)*loadFactorNum/loadFactorDen {
+		if len(e.partialResultMap) > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			e.memTracker.Consume(defBucketMemoryUsage * (1 << e.bInMap))
 			e.bInMap++
 		}

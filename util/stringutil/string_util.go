@@ -366,3 +366,12 @@ func BuildStringFromLabels(labels map[string]string) string {
 	returned := r.String()
 	return returned[:len(returned)-1]
 }
+
+// GetTailSpaceCount returns the number of tailed spaces.
+func GetTailSpaceCount(str string) int64 {
+	length := len(str)
+	for length > 0 && str[length-1] == ' ' {
+		length--
+	}
+	return int64(len(str) - length)
+}
