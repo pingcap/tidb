@@ -133,8 +133,9 @@ func (s *testBinlogSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.serv.Stop()
 	err = os.Remove(s.unixFile)
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, fmt.Sprintf("remove %v: no such file or directory", s.unixFile))
+	if err != nil {
+		c.Assert(err, ErrorMatches, fmt.Sprintf("remove %v: no such file or directory", s.unixFile))
+	}
 	s.domain.Close()
 	err = s.store.Close()
 	c.Assert(err, IsNil)
