@@ -25,6 +25,7 @@ import (
 )
 
 type Obj struct {
+	val int64 // nolint:structcheck // Dummy field to make it non-empty.
 }
 
 func TestT(t *testing.T) {
