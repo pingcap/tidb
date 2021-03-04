@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -164,8 +165,12 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 				for i := 0; i < rows; i++ {
 					row := chk.GetRow(i)
 					d := row.GetDatum(e.hashKeyOffset, e.fieldTypes[e.hashKeyOffset])
-					hashKey := int(d.GetInt64() % int64(len(e.tunnels)))
-					targetChunks[hashKey].AppendRow(row)
+					if d.IsNull() {
+						targetChunks[0].AppendRow(row)
+					} else {
+						hashKey := int(d.GetInt64() % int64(len(e.tunnels)))
+						targetChunks[hashKey].AppendRow(row)
+					}
 				}
 				for i, tunnel := range e.tunnels {
 					if targetChunks[i].NumRows() > 0 {
@@ -441,6 +446,9 @@ type aggExec struct {
 	groupKeys    [][]byte
 	aggCtxsMap   map[string][]*aggregation.AggEvaluateContext
 
+	groupByRows  []chunk.Row
+	groupByTypes []*types.FieldType
+
 	processed bool
 }
 
@@ -448,24 +456,26 @@ func (e *aggExec) open() error {
 	return e.children[0].open()
 }
 
-func (e *aggExec) getGroupKey(row chunk.Row) ([]byte, error) {
+func (e *aggExec) getGroupKey(row chunk.Row) (*chunk.MutRow, []byte, error) {
 	length := len(e.groupByExprs)
 	if length == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	key := make([]byte, 0, 32)
-	for _, item := range e.groupByExprs {
+	gbyRow := chunk.MutRowFromTypes(e.groupByTypes)
+	for i, item := range e.groupByExprs {
 		v, err := item.Eval(row)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
+		gbyRow.SetDatum(i, v)
 		b, err := codec.EncodeValue(e.sc, nil, v)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		key = append(key, b...)
 	}
-	return key, nil
+	return &gbyRow, key, nil
 }
 
 func (e *aggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext {
@@ -492,13 +502,16 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 		rows := chk.NumRows()
 		for i := 0; i < rows; i++ {
 			row := chk.GetRow(i)
-			gk, err := e.getGroupKey(row)
+			gbyRow, gk, err := e.getGroupKey(row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			if _, ok := e.groups[string(gk)]; !ok {
 				e.groups[string(gk)] = struct{}{}
 				e.groupKeys = append(e.groupKeys, gk)
+				if gbyRow != nil {
+					e.groupByRows = append(e.groupByRows, gbyRow.ToRow())
+				}
 			}
 
 			aggCtxs := e.getContexts(gk)
@@ -513,12 +526,22 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 
 	chk := chunk.NewChunkWithCapacity(e.fieldTypes, 0)
 
-	for _, gk := range e.groupKeys {
+	for i, gk := range e.groupKeys {
 		newRow := chunk.MutRowFromTypes(e.fieldTypes)
 		aggCtxs := e.getContexts(gk)
 		for i, agg := range e.aggExprs {
-			partialResults := agg.GetPartialResult(aggCtxs[i])
-			newRow.SetDatum(i, partialResults[0])
+			result := agg.GetResult(aggCtxs[i])
+			if e.fieldTypes[i].Tp == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
+				var err error
+				result, err = result.ConvertTo(e.sc, e.fieldTypes[i])
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+			newRow.SetDatum(i, result)
+		}
+		if len(e.groupByRows) > 0 {
+			newRow.ShallowCopyPartialRow(len(e.aggExprs), e.groupByRows[i])
 		}
 		chk.AppendRow(newRow.ToRow())
 	}

@@ -174,4 +174,7 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size=1")
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(*) from t1 , t, t2 where t1.a = t.a and t2.a = t.a").Check(testkit.Rows("3"))
+
+	tk.MustExec("insert into t1 values(4,0)")
+	tk.MustQuery("select count(*), t2.b from t1 left join t2 on t1.a = t2.a group by t2.b").Check(testkit.Rows("3 0", "1 <nil>"))
 }
