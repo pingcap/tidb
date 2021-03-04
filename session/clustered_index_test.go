@@ -352,7 +352,7 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 		tk.MustQuery(showPKType).Check(testkit.Rows(pkType))
 	}
 
-	defer config.RestoreFunc()
+	defer config.RestoreFunc()()
 	for _, allowAlterPK := range []bool{true, false} {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.AlterPrimaryKey = allowAlterPK

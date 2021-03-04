@@ -1141,7 +1141,7 @@ func (s *testDBSuite4) TestAddIndex4(c *C) {
 }
 
 func (s *testSerialDBSuite) TestAddIndex5(c *C) {
-	defer config.RestoreFunc()
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = false
 	})
