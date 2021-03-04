@@ -302,7 +302,8 @@ func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
 		c.Assert(err, IsNil)
 		val, err := txn.Get(context.Background(), key)
 		c.Assert(err, IsNil)
-		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault, createRowcodecColInfo(tblInfo, idx.Meta()))
+		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
+			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
 		c.Assert(err, IsNil)
 		c.Assert(colVals, HasLen, 2)
 		_, d, err := codec.DecodeOne(colVals[0])
@@ -318,7 +319,8 @@ func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
 
 		unTouchedVal := append([]byte{1}, val[1:]...)
 		unTouchedVal = append(unTouchedVal, kv.UnCommitIndexKVFlag)
-		_, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault, createRowcodecColInfo(tblInfo, idx.Meta()))
+		_, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault,
+			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
 		c.Assert(err, IsNil)
 	}
 }
@@ -366,7 +368,7 @@ func (s *testIndexSuite) TestMultiColumnCommonHandle(c *C) {
 		c.Assert(err, IsNil)
 		val, err := txn.Get(context.Background(), key)
 		c.Assert(err, IsNil)
-		colInfo := createRowcodecColInfo(tblInfo, idx.Meta())
+		colInfo := tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo)
 		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         a.ID,
 			IsPKHandle: false,
@@ -402,17 +404,4 @@ func buildTableInfo(c *C, sql string) *model.TableInfo {
 	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
 	c.Assert(err, IsNil)
 	return tblInfo
-}
-
-func createRowcodecColInfo(table *model.TableInfo, index *model.IndexInfo) []rowcodec.ColInfo {
-	colInfos := make([]rowcodec.ColInfo, 0, len(index.Columns))
-	for _, idxCol := range index.Columns {
-		col := table.Columns[idxCol.Offset]
-		colInfos = append(colInfos, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
-	}
-	return colInfos
 }

@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -1027,24 +1026,14 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 	idxInfo := w.index.Meta()
 	tblInfo := w.table.Meta()
 	name := w.index.Meta().Name.String()
-
-	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
-	for _, idxCol := range idxInfo.Columns {
-		col := tblInfo.Columns[idxCol.Offset]
-		colInfo = append(colInfo, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
-	}
-
-	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleDefault, colInfo)
+	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
+	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleDefault, colInfos)
 	if err != nil {
 		return err
 	}
 
 	if !w.table.Meta().IsCommonHandle {
-		_, d, err := codec.DecodeOne(values[len(colInfo)])
+		_, d, err := codec.DecodeOne(values[len(colInfos)])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1055,7 +1044,7 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 		// We expect the two handle have the same number of columns, because they come from a same table.
 		// But we still need to check it explicitly, otherwise we will encounter undesired index out of range panic,
 		// or undefined behavior if someone change the format of the value returned by tablecodec.DecodeIndexKV.
-		colsOfHandle := len(values) - len(colInfo)
+		colsOfHandle := len(values) - len(colInfos)
 		if w.index.Meta().Global {
 			colsOfHandle--
 		}
@@ -1066,7 +1055,7 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 		}
 
 		for i := 0; i < handle.NumCols(); i++ {
-			if bytes.Equal(values[i+len(colInfo)], handle.EncodedCol(i)) {
+			if bytes.Equal(values[i+len(colInfos)], handle.EncodedCol(i)) {
 				colsOfHandle--
 			}
 		}
@@ -1075,9 +1064,9 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 		}
 	}
 
-	valueStr := make([]string, 0, len(colInfo))
-	for i, val := range values[:len(colInfo)] {
-		d, err := tablecodec.DecodeColumnValue(val, colInfo[i].Ft, time.Local)
+	valueStr := make([]string, 0, len(colInfos))
+	for i, val := range values[:len(colInfos)] {
+		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
 		if err != nil {
 			return kv.ErrKeyExists.FastGenByArgs(key.String(), name)
 		}
