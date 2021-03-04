@@ -24,18 +24,15 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
 type tiflashTestSuite struct {
-	cluster cluster.Cluster
-	store   kv.Storage
-	dom     *domain.Domain
+	store kv.Storage
+	dom   *domain.Domain
 	*parser.Parser
-	ctx *mock.Context
 }
 
 func (s *tiflashTestSuite) SetUpSuite(c *C) {
@@ -153,7 +150,6 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
-	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
 	for i := 0; i < 20; i++ {
 		// test if it is stable.
 		tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("3"))
@@ -174,6 +170,11 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustQuery("select avg(t1.a) from t1 , t where t1.a = t.a").Check(testkit.Rows("2.0000"))
 	// test proj and selection
 	tk.MustQuery("select count(*) from (select a * 2 as a from t1) t1 , (select b + 4 as a from t)t where t1.a = t.a").Check(testkit.Rows("3"))
+
+	// test shuffle hash join.
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size=1")
+	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from t1 , t, t2 where t1.a = t.a and t2.a = t.a").Check(testkit.Rows("3"))
 }
 
 func (s *tiflashTestSuite) TestPartitionTable(c *C) {

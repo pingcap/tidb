@@ -234,10 +234,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	originSchemaColumns := ds.schema.Columns
 	originColumns := ds.Columns
 	for i := len(used) - 1; i >= 0; i-- {
-		if ds.tableInfo.IsCommonHandle && mysql.HasPriKeyFlag(ds.schema.Columns[i].RetType.Flag) {
-			// Do not prune common handle column.
-			continue
-		}
 		if !used[i] && !exprUsed[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
@@ -255,10 +251,11 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 		} else {
 			if ds.handleCols != nil {
 				handleCol = ds.handleCols.GetCol(0)
+				handleColInfo = handleCol.ToInfo()
 			} else {
 				handleCol = ds.newExtraHandleSchemaCol()
+				handleColInfo = model.NewExtraHandleColInfo()
 			}
-			handleColInfo = model.NewExtraHandleColInfo()
 		}
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
@@ -317,6 +314,13 @@ func (p *LogicalJoin) mergeSchema() {
 		p.schema.Append(joinCol)
 	} else {
 		p.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
+		switch p.JoinType {
+		case LeftOuterJoin:
+			resetNotNullFlag(p.schema, p.children[1].Schema().Len(), p.schema.Len())
+		case RightOuterJoin:
+			resetNotNullFlag(p.schema, 0, p.children[0].Schema().Len())
+		default:
+		}
 	}
 }
 
