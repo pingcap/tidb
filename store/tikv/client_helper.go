@@ -83,10 +83,8 @@ func (ch *ClientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 	req.Context.ResolvedLocks = ch.resolvedLocks.GetAll()
 	failpoint.Inject("assertStaleReadFlag", func(val failpoint.Value) {
 		if val.(bool) {
-			if len(opts) > 0 {
-				if !req.StaleRead {
-					panic("req.StaleRead should be true")
-				}
+			if len(opts) > 0 && !req.StaleRead {
+				panic("req.StaleRead shouldn't be false when opts is not empty")
 			}
 		}
 	})

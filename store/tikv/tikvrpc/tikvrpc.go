@@ -389,7 +389,7 @@ func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
 }
 
-// EnableStaleRead enable the stale read
+// EnableStaleRead enables stale read
 func (req *Request) EnableStaleRead() {
 	req.StaleRead = true
 	req.ReplicaReadType = kv.ReplicaReadMixed
