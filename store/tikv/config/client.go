@@ -83,17 +83,17 @@ type AsyncCommit struct {
 
 // CoprocessorCache is the config for coprocessor cache.
 type CoprocessorCache struct {
-	// Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
-	// reuses the result when corresponding data in TiKV is unchanged, on a region basis.
-	Enable bool `toml:"enable" json:"enable"`
-	// The capacity in MB of the cache.
+	// The capacity in MB of the cache. Zero means disable coprocessor cache.
 	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
+
+	// No json fields for below config. In case to hide them.
+
 	// Only cache requests that containing small number of ranges. May to be changed in future.
-	AdmissionMaxRanges uint64 `toml:"admission-max-ranges" json:"admission-max-ranges"`
+	AdmissionMaxRanges uint64 `toml:"admission-max-ranges" json:"-"`
 	// Only cache requests whose result set is small.
-	AdmissionMaxResultMB float64 `toml:"admission-max-result-mb" json:"admission-max-result-mb"`
+	AdmissionMaxResultMB float64 `toml:"admission-max-result-mb" json:"-"`
 	// Only cache requests takes notable time to process.
-	AdmissionMinProcessMs uint64 `toml:"admission-min-process-ms" json:"admission-min-process-ms"`
+	AdmissionMinProcessMs uint64 `toml:"admission-min-process-ms" json:"-"`
 }
 
 // DefaultTiKVClient returns default config for TiKVClient.
@@ -126,7 +126,6 @@ func DefaultTiKVClient() TiKVClient {
 		TTLRefreshedTxnSize: 32 * 1024 * 1024,
 
 		CoprCache: CoprocessorCache{
-			Enable:                true,
 			CapacityMB:            1000,
 			AdmissionMaxRanges:    500,
 			AdmissionMaxResultMB:  10,
