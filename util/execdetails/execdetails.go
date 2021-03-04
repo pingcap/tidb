@@ -573,16 +573,6 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 	return totalRows
 }
 
-func (crs *CopRuntimeStats) writeFieldValue(buf *bytes.Buffer, field string, value string) {
-	bs := buf.Bytes()
-	if l := len(bs); l > 0 && bs[l-1] != '{' {
-		buf.WriteString(", ")
-	}
-	buf.WriteString(field)
-	buf.WriteString(": ")
-	buf.WriteString(value)
-}
-
 func (crs *CopRuntimeStats) String() string {
 	if len(crs.stats) == 0 {
 		return ""
