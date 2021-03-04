@@ -43,10 +43,14 @@ func (s *testSuite) TestGroupConcat(c *C) {
 	test2.orderBy = true
 	s.testMultiArgsAggFunc(c, test2)
 
-	defer variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewStringDatum("1024"))
+	defer func() {
+		err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewStringDatum("1024"))
+		c.Assert(err, IsNil)
+	}()
 	// minimum GroupConcatMaxLen is 4
 	for i := 4; i <= 7; i++ {
-		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewStringDatum(fmt.Sprint(i)))
+		err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewStringDatum(fmt.Sprint(i)))
+		c.Assert(err, IsNil)
 		test2 = buildMultiArgsAggTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5, nil, "44 33 22 11 00"[:i])
 		test2.orderBy = true
 		s.testMultiArgsAggFunc(c, test2)
