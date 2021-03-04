@@ -16,7 +16,6 @@ package ddl
 import (
 	"encoding/hex"
 	"math"
-	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
