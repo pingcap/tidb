@@ -1650,7 +1650,7 @@ func (s *testSuite4) TestPartitionedTableUpdate(c *C) {
 
 	// update partition column, old and new record locates on different partitions
 	tk.MustExec(`update t set id = 20 where id = 8`)
-	tk.CheckExecResult(2, 0)
+	tk.CheckExecResult(1, 0)
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
 	r = tk.MustQuery(`SELECT * from t order by id limit 2;`)
 	r.Check(testkit.Rows("2 abc", "20 abc"))
@@ -2689,7 +2689,7 @@ func (s *testSuite7) TestReplaceLog(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1))
+	_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1), nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
