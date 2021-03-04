@@ -134,8 +134,8 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 		}
 		lft = rft
 	}
-	setTypeFlag(flag, mysql.UnsignedFlag, unsigned)
-	setTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
+	SetTypeFlag(flag, mysql.UnsignedFlag, unsigned)
+	SetTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
 	return aggregatedEvalType
 }
 
@@ -160,7 +160,7 @@ func mergeEvalType(lhs, rhs EvalType, lft, rft *FieldType, isLHSUnsigned, isRHSU
 	return ETInt
 }
 
-func setTypeFlag(flag *uint, flagItem uint, on bool) {
+func SetTypeFlag(flag *uint, flagItem uint, on bool) {
 	if on {
 		*flag |= flagItem
 	} else {
