@@ -386,7 +386,7 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 			}
 			poped = append(poped, tmp)
 		}
-		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, t.expBucketNumber)
+		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, t.expBucketNumber, false)
 		c.Assert(err, IsNil)
 		for i, b := range t.expHist {
 			c.Assert(b.lower, Equals, globalHist.GetLower(i).GetInt64())
