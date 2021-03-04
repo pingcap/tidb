@@ -671,7 +671,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	}
 
 	ver := kv.Version{Ver: version}
-	snap := store.GetSnapshot(ver)
+	snap := store.GetSnapshot(ver).(tikv.Snapshot)
 	snap.SetOption(kv.Priority, priority)
 
 	it, err := snap.Iter(firstKey, upperBound)

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -213,7 +214,8 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 	}
 
 	if e.collectRuntimeStatsEnabled() {
-		if snapshot := txn.GetSnapshot(); snapshot != nil {
+		if s := txn.GetSnapshot(); s != nil {
+			snapshot := s.(tikv.Snapshot)
 			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}

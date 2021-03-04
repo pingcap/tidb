@@ -71,7 +71,7 @@ type PointGetExecutor struct {
 	idxVals      []types.Datum
 	startTS      uint64
 	txn          kv.Transaction
-	snapshot     kv.Snapshot
+	snapshot     tikv.Snapshot
 	done         bool
 	lock         bool
 	lockWaitTime int64
@@ -129,9 +129,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		return err
 	}
 	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
-		e.snapshot = e.txn.GetSnapshot()
+		e.snapshot = e.txn.GetSnapshot().(tikv.Snapshot)
 	} else {
-		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
+		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS}).(tikv.Snapshot)
 	}
 	if err := e.verifyTxnScope(); err != nil {
 		return err

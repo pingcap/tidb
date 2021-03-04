@@ -1044,7 +1044,8 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		return err
 	}
 	if e.collectRuntimeStatsEnabled() {
-		if snapshot := txn.GetSnapshot(); snapshot != nil {
+		if s := txn.GetSnapshot(); s != nil {
+			snapshot := s.(tikv.Snapshot)
 			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}

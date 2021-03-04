@@ -256,7 +256,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		if e.collectRuntimeStatsEnabled() {
 			txn, err := e.ctx.Txn(false)
 			if err == nil && txn.GetSnapshot() != nil {
-				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+				txn.GetSnapshot().(tikv.Snapshot).SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
@@ -404,7 +404,7 @@ func (e *UpdateExec) Close() error {
 	if e.runtimeStats != nil && e.stats != nil {
 		txn, err := e.ctx.Txn(false)
 		if err == nil && txn.GetSnapshot() != nil {
-			txn.GetSnapshot().DelOption(kv.CollectRuntimeStats)
+			txn.GetSnapshot().(tikv.Snapshot).DelOption(kv.CollectRuntimeStats)
 		}
 	}
 	return e.children[0].Close()

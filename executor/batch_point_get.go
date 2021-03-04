@@ -66,7 +66,7 @@ type BatchPointGetExec struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	snapshot kv.Snapshot
+	snapshot tikv.Snapshot
 	stats    *runtimeStatsWithSnapshot
 }
 
@@ -93,13 +93,13 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		return err
 	}
 	e.txn = txn
-	var snapshot kv.Snapshot
+	var snapshot tikv.Snapshot
 	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
 		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
 		// The snapshot may contains cache that can reduce RPC call.
-		snapshot = txn.GetSnapshot()
+		snapshot = txn.GetSnapshot().(tikv.Snapshot)
 	} else {
-		snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
+		snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS}).(tikv.Snapshot)
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}

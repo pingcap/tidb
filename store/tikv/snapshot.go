@@ -40,9 +40,14 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	_ kv.Snapshot = (*tikvSnapshot)(nil)
-)
+type Snapshot interface {
+	kv.Snapshot
+	// SetOption sets an option with a value, when val is nil, uses the default
+	// value of this option. Only ReplicaRead is supported for snapshot
+	SetOption(opt kv.Option, val interface{})
+	// DelOption deletes an option.
+	DelOption(opt kv.Option)
+}
 
 const (
 	scanBatchSize = 256
