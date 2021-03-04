@@ -729,11 +729,15 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			switch asyncCommit {
 			case "0":
-				s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOff)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOff)
 			case "1":
-				s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOn)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOn)
 			default:
 				writeError(w, errors.New("illegal argument"))
+				return
+			}
+			if err != nil {
+				writeError(w, err)
 				return
 			}
 		}
@@ -745,11 +749,15 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			switch onePC {
 			case "0":
-				s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOff)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOff)
 			case "1":
-				s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOn)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOn)
 			default:
 				writeError(w, errors.New("illegal argument"))
+				return
+			}
+			if err != nil {
+				writeError(w, err)
 				return
 			}
 		}
