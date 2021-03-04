@@ -3738,8 +3738,8 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 		jsBytes, err := json.MarshalIndent(jobs, "", " ")
 		c.Assert(err, IsNil)
 		jsStr := string(jsBytes)
-		c.Assert(strings.Contains(jsStr, "/*from(br_via_sql)*/CREATE TABLE"), IsTrue)
-		c.Assert(strings.Contains(jsStr, "/*from(br_via_sql)*/CREATE DATABASE"), IsTrue)
+		c.Assert(strings.Contains(jsStr, "/*from(br)*/CREATE TABLE"), IsTrue)
+		c.Assert(strings.Contains(jsStr, "/*from(br)*/CREATE DATABASE"), IsTrue)
 	}
 }
 

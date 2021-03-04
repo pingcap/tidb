@@ -51,7 +51,7 @@ import (
 const (
 	defaultCapOfCreateTable    = 512
 	defaultCapOfCreateDatabase = 64
-	brViaSQLComment            = `/*from(br_via_sql)*/`
+	brViaSQLComment            = `/*from(br)*/`
 )
 
 // brieTaskProgress tracks a task's current progress.
@@ -413,6 +413,9 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 // Execute implements glue.Session
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 	// FIXME: br relies on a deprecated API, it may be unsafe
+	if !strings.Contains(sql, brViaSQLComment) {
+		sql = brViaSQLComment + sql
+	}
 	_, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	return err
 }
