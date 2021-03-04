@@ -238,7 +238,10 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
@@ -296,7 +299,10 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		}),
 	)
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
@@ -393,7 +399,10 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		}),
 	)
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
@@ -474,25 +483,29 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	))
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Dynamic) + `'`)
 
-	// test fast analyze in dynamic mode
-	tk.MustExec("drop table if exists t4;")
-	tk.MustExec("create table t4(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
-	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
-	// Because the statistics of partition p1 are missing, the construction of global-level stats will fail.
-	tk.MustExec("analyze table t4 partition p1;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8131 Build global-level stats failed due to missing partition-level stats"))
-	// Although the global-level stats build failed, we build partition-level stats for partition p1 success.
-	result := tk.MustQuery("show stats_meta where table_name = 't4'").Sort()
-	c.Assert(len(result.Rows()), Equals, 1)
-	c.Assert(result.Rows()[0][5], Equals, "3")
-	// Now, we have the partition-level stats for partition p0. We need get the stats for partition p1. And build the global-level stats.
-	tk.MustExec("analyze table t4 partition p0;")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	result = tk.MustQuery("show stats_meta where table_name = 't4'").Sort()
-	c.Assert(len(result.Rows()), Equals, 3)
-	c.Assert(result.Rows()[0][5], Equals, "5")
-	c.Assert(result.Rows()[1][5], Equals, "2")
-	c.Assert(result.Rows()[2][5], Equals, "3")
+	// global-stats depends on stats-ver2, but stats-ver2 is not compatible with fast-analyze, so forbid using global-stats with fast-analyze now.
+	// TODO: add more test cases about global-stats with fast-analyze after resolving the compatibility problem.
+	/*
+		// test fast analyze in dynamic mode
+		tk.MustExec("drop table if exists t4;")
+		tk.MustExec("create table t4(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
+		tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
+		// Because the statistics of partition p1 are missing, the construction of global-level stats will fail.
+		tk.MustExec("analyze table t4 partition p1;")
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8131 Build global-level stats failed due to missing partition-level stats"))
+		// Although the global-level stats build failed, we build partition-level stats for partition p1 success.
+		result := tk.MustQuery("show stats_meta where table_name = 't4'").Sort()
+		c.Assert(len(result.Rows()), Equals, 1)
+		c.Assert(result.Rows()[0][5], Equals, "3")
+		// Now, we have the partition-level stats for partition p0. We need get the stats for partition p1. And build the global-level stats.
+		tk.MustExec("analyze table t4 partition p0;")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		result = tk.MustQuery("show stats_meta where table_name = 't4'").Sort()
+		c.Assert(len(result.Rows()), Equals, 3)
+		c.Assert(result.Rows()[0][5], Equals, "5")
+		c.Assert(result.Rows()[1][5], Equals, "2")
+		c.Assert(result.Rows()[2][5], Equals, "3")
+	*/
 }
 
 func (s *testSuite1) TestIssue15993(c *C) {
@@ -652,7 +665,10 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer dom.Close()

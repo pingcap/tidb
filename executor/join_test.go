@@ -2494,25 +2494,29 @@ func (s *testSuiteJoinSerial) TestExplainAnalyzeJoin(c *C) {
 
 func (s *testSuiteJoinSerial) TestIssue20270(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)")
+	err := failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)")
+	c.Assert(err, IsNil)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
-	err := tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	c.Assert(err, Equals, executor.ErrQueryInterrupted)
-	failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk")
+	c.Assert(err, IsNil)
 	plannercore.ForceUseOuterBuild4Test = true
 	defer func() {
 		plannercore.ForceUseOuterBuild4Test = false
 	}()
-	failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
+	err = failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
+	c.Assert(err, IsNil)
 	tk.MustExec("insert into t1 values(1,30),(2,40)")
 	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	c.Assert(err, Equals, executor.ErrQueryInterrupted)
-	failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin")
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuiteJoinSerial) TestIssue20710(c *C) {

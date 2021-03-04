@@ -621,8 +621,15 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[0][9], Equals, "0")
 	c.Assert(result.Rows()[1][9], Equals, "0.8285714285714286")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
+	testKit.MustExec("analyze table t")
+	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[0][9], Equals, "0")
+	c.Assert(result.Rows()[1][9], Equals, "0.8285714285714286")
 
 	testKit.MustExec("truncate table t")
+	testKit.MustExec("set @@session.tidb_analyze_version=1")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	c.Assert(len(result.Rows()), Equals, 0)
 	testKit.MustExec("insert into t values(1,21),(3,12),(4,7),(2,20),(5,1)")
@@ -637,8 +644,15 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[0][9], Equals, "0")
 	c.Assert(result.Rows()[1][9], Equals, "-0.9428571428571428")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
+	testKit.MustExec("analyze table t")
+	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[0][9], Equals, "0")
+	c.Assert(result.Rows()[1][9], Equals, "-0.9428571428571428")
 
 	testKit.MustExec("truncate table t")
+	testKit.MustExec("set @@session.tidb_analyze_version=1")
 	testKit.MustExec("insert into t values (1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(7,1),(8,1),(9,1),(10,1),(11,1),(12,1),(13,1),(14,1),(15,1),(16,1),(17,1),(18,1),(19,1),(20,2),(21,2),(22,2),(23,2),(24,2),(25,2)")
 	testKit.MustExec("analyze table t")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
@@ -649,6 +663,12 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	testKit.MustExec("drop table t")
 	testKit.MustExec("create table t(c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1,1),(2,7),(3,12),(4,20),(5,21),(8,18)")
+	testKit.MustExec("analyze table t")
+	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[0][9], Equals, "1")
+	c.Assert(result.Rows()[1][9], Equals, "0.8285714285714286")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("analyze table t")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	c.Assert(len(result.Rows()), Equals, 2)
@@ -695,8 +715,9 @@ func (s *testStatsSuite) TestShowGlobalStats(c *C) {
 	c.Assert(len(tk.MustQuery("show stats_healthy").Rows()), Equals, 2)
 	c.Assert(len(tk.MustQuery("show stats_healthy where partition_name='global'").Rows()), Equals, 0)
 
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("analyze table t with 1 buckets")
+	tk.MustExec("analyze table t with 0 topn, 1 buckets")
 	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 3)
 	c.Assert(len(tk.MustQuery("show stats_meta where partition_name='global'").Rows()), Equals, 1)
 	c.Assert(len(tk.MustQuery("show stats_buckets").Rows()), Equals, 6)
@@ -712,6 +733,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1;")
+	testKit.MustExec("set @@tidb_analyze_version = 2")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	testKit.MustExec("create table t(a int, b int, c int) PARTITION BY HASH(a) PARTITIONS 3;")
 	testKit.MustExec("create table t1(a int);")
@@ -777,26 +799,67 @@ partition by range (a) (
 	partition p0 values less than (10),
 	partition p1 values less than (20)
 )`)
+	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 0 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(
-		testkit.Rows("0 5", "0 3", "0 2")) // global row-count = sum(partition row-count)
+		testkit.Rows("0 18", "0 8", "0 10")) // global row-count = sum(partition row-count)
 
 	// distinct, null_count, tot_col_size should be the sum of their values in partition-stats, and correlation should be 0
-	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
-		testkit.Rows("4 1 4 0", "2 1 2 1", "2 0 2 1"))
+	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation=0 from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
+		testkit.Rows("15 1 17 1", "6 1 7 0", "9 0 10 0"))
+	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation=0 from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
+		testkit.Rows("15 1 0 1", "6 1 0 1", "9 0 0 1"))
 
 	tk.MustQuery("show stats_buckets where is_index=0").Check(
-		testkit.Rows("test t global a 0 0 2 1 1 5 0", "test t global a 0 1 4 1 5 15 0",
-			"test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 5 5 0",
-			"test t p1 a 0 0 1 1 11 11 0", "test t p1 a 0 1 2 1 15 15 0"))
+		// db table partition col is_idx bucket_id count repeats lower upper ndv
+		testkit.Rows("test t global a 0 0 7 2 1 6 0",
+			"test t global a 0 1 17 2 6 19 0",
+			"test t p0 a 0 0 4 1 1 4 0",
+			"test t p0 a 0 1 7 2 5 6 0",
+			"test t p1 a 0 0 6 1 11 16 0",
+			"test t p1 a 0 1 10 2 17 19 0"))
 	tk.MustQuery("show stats_buckets where is_index=1").Check(
-		testkit.Rows("test t global a 1 0 2 1 1 5 0", "test t global a 1 1 4 1 5 15 0",
-			"test t p0 a 1 0 1 1 1 1 0", "test t p0 a 1 1 2 1 5 5 0",
-			"test t p1 a 1 0 1 1 11 11 0", "test t p1 a 1 1 2 1 15 15 0"))
+		testkit.Rows("test t global a 1 0 7 2 1 6 6",
+			"test t global a 1 1 17 2 6 19 9",
+			"test t p0 a 1 0 4 1 1 4 4",
+			"test t p0 a 1 1 7 2 5 6 2",
+			"test t p1 a 1 0 8 1 11 18 8",
+			"test t p1 a 1 1 10 2 19 19 1"))
+}
+
+func (s *testStatsSuite) TestGlobalStatsVersion(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`
+create table t (
+	a int
+)
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20)
+)`)
+	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("analyze table t")
+	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 2) // p0 + p1
+
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@tidb_analyze_version=1")
+	err := tk.ExecToErr("analyze table t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[stats]: global statistics for partitioned tables only available in statistics version2, please set tidb_analyze_version to 2")
+
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("analyze table t")
+	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 3) // p0 + p1 + global
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
@@ -984,6 +1047,26 @@ func (s *testStatsSuite) TestStaticPartitionPruneMode(c *C) {
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
 	c.Assert(tk.MustNoGlobalStats("t"), IsTrue)
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
+}
+
+func (s *testStatsSuite) TestMergeIdxHist(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
+	defer tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
+	tk.MustExec("use test")
+	tk.MustExec(`
+		create table t (a int)
+		partition by range (a) (
+			partition p0 values less than (10),
+			partition p1 values less than (20))`)
+	tk.MustExec("set @@tidb_analyze_version=2")
+	defer tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
+
+	tk.MustExec("analyze table t with 2 topn, 2 buckets")
+	rows := tk.MustQuery("show stats_buckets where partition_name like 'global'")
+	c.Assert(len(rows.Rows()), Equals, 2)
 }
 
 var _ = SerialSuites(&statsSerialSuite{})
