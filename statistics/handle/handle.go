@@ -416,13 +416,9 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 				numBuckets = int64(hg.Len())
 			}
 		}
-		if numBuckets != 0 {
-			globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, allHg[i], popedTopN, numBuckets)
-			if err != nil {
-				return
-			}
-		} else {
-			globalStats.Hg[i] = allHg[i][0].Copy()
+		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, allHg[i], popedTopN, numBuckets)
+		if err != nil {
+			return
 		}
 
 		// Update NDV of global-level stats
