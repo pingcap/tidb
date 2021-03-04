@@ -1027,6 +1027,15 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	task = cop
 	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
 		cop.commonHandleCols = ds.commonHandleCols
+		commonHandle := ds.handleCols.(*CommonHandleCols)
+		for _, col := range commonHandle.columns {
+			if ds.schema.ColumnIndex(col) == -1 {
+				ts := cop.tablePlan.(*PhysicalTableScan)
+				ts.Schema().Append(col)
+				ts.Columns = append(ts.Columns, col.ToInfo())
+				cop.doubleReadNeedProj = true
+			}
+		}
 	}
 	if candidate.isMatchProp {
 		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
