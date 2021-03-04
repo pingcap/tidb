@@ -160,6 +160,7 @@ func mergeEvalType(lhs, rhs EvalType, lft, rft *FieldType, isLHSUnsigned, isRHSU
 	return ETInt
 }
 
+// Set flagItem if on is true, otherwise unset this flagItem.
 func SetTypeFlag(flag *uint, flagItem uint, on bool) {
 	if on {
 		*flag |= flagItem
