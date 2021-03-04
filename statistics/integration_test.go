@@ -14,6 +14,7 @@ package statistics_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -203,16 +204,25 @@ func (s *testIntegrationSuite) TestExpBackoffEstimation(c *C) {
 		output [][]string
 	)
 	s.testData.GetTestCases(c, &input, &output)
+	inputLen := len(input)
 	// The test cases are:
 	// Query a = 1, b = 1, c = 1, d >= 3 and d <= 5 separately. We got 5, 3, 2, 3.
 	// And then query and a = 1 and b = 1 and c = 1 and d >= 3 and d <= 5. It's result should follow the exp backoff,
 	// which is 2/5 * (3/5)^{1/2} * (3/5)*{1/4} * 1^{1/8} * 5 = 1.3634.
-	for i := 0; i < len(input); i++ {
+	for i := 0; i < inputLen-1; i++ {
 		s.testData.OnRecord(func() {
 			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
 		})
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
+
+	// The last case is that no column is loaded and we get no stats at all.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/cleanEstResults", `return(true)`), IsNil)
+	s.testData.OnRecord(func() {
+		output[inputLen-1] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[inputLen-1]).Rows())
+	})
+	tk.MustQuery(input[inputLen-1]).Check(testkit.Rows(output[inputLen-1]...))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/cleanEstResults"), IsNil)
 }
 
 func (s *testIntegrationSuite) TestGlobalStats(c *C) {

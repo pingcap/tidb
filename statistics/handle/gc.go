@@ -68,7 +68,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 	tbl, ok := h.getTableByPhysicalID(is, physicalID)
 	h.mu.Unlock()
 	if !ok {
-		return errors.Trace(h.DeleteTableStatsFromKV(physicalID))
+		return errors.Trace(h.DeleteTableStatsFromKV([]int64{physicalID}))
 	}
 	tblInfo := tbl.Meta()
 	for _, row := range rows {
@@ -171,7 +171,8 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
-func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
+// A statsID refers to statistic of a table or a partition.
+func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
@@ -188,24 +189,26 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 	}
 	ctx := context.Background()
 	startTS := txn.StartTS()
-	// We only update the version so that other tidb will know that this table is deleted.
-	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, physicalID); err != nil {
-		return err
-	}
-	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_histograms where table_id = %?", physicalID); err != nil {
-		return err
-	}
-	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %?", physicalID); err != nil {
-		return err
-	}
-	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %?", physicalID); err != nil {
-		return err
-	}
-	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_feedback where table_id = %?", physicalID); err != nil {
-		return err
-	}
-	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, StatsStatusDeleted, physicalID, StatsStatusAnalyzed, StatsStatusInited); err != nil {
-		return err
+	for _, statsID := range statsIDs {
+		// We only update the version so that other tidb will know that this table is deleted.
+		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
+			return err
+		}
+		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_histograms where table_id = %?", statsID); err != nil {
+			return err
+		}
+		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %?", statsID); err != nil {
+			return err
+		}
+		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %?", statsID); err != nil {
+			return err
+		}
+		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_feedback where table_id = %?", statsID); err != nil {
+			return err
+		}
+		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, StatsStatusDeleted, statsID, StatsStatusAnalyzed, StatsStatusInited); err != nil {
+			return err
+		}
 	}
 	return nil
 }
