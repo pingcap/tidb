@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -292,6 +293,12 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
+	// CacheIndexName caches the index name.
+	// PresumeKeyNotExists will use this to help decode error message.
+	CacheTableInfo(id int64, info *model.TableInfo)
+	// GetIndexName returns the cached index name.
+	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
+	GetTableInfo(id int64) *model.TableInfo
 }
 
 // LockCtx contains information for LockKeys method.
@@ -494,7 +501,7 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
-	// GetMemCache return memory mamager of the storage
+	// GetMemCache return memory manager of the storage.
 	GetMemCache() MemManager
 }
 

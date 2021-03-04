@@ -18,8 +18,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 )
 
 type testSplitSuite struct {
@@ -51,10 +51,10 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
-func (s *testSplitSuite) begin(c *C) *tikvTxn {
+func (s *testSplitSuite) begin(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 func (s *testSplitSuite) split(c *C, regionID uint64, key []byte) {

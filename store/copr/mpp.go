@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package copr
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
@@ -33,7 +34,7 @@ import (
 
 // MPPClient servers MPP requests.
 type MPPClient struct {
-	store *KVStore
+	store *tikv.KVStore
 }
 
 // GetAddress returns the network address.
@@ -43,25 +44,21 @@ func (c *batchCopTask) GetAddress() string {
 
 func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 	resultTasks := make([]kv.MPPTaskMeta, 0)
-	c.store.regionCache.storeMu.RLock()
-	for _, st := range c.store.regionCache.storeMu.stores {
-		if st.storeType == kv.TiFlash {
-			task := &batchCopTask{storeAddr: st.addr, cmdType: tikvrpc.CmdMPPTask}
-			resultTasks = append(resultTasks, task)
-		}
+	for _, addr := range c.store.GetRegionCache().GetTiFlashStoreAddrs() {
+		task := &batchCopTask{storeAddr: addr, cmdType: tikvrpc.CmdMPPTask}
+		resultTasks = append(resultTasks, task)
 	}
-	c.store.regionCache.storeMu.RUnlock()
 	return resultTasks
 }
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTaskMeta, error) {
-	ctx = context.WithValue(ctx, TxnStartKey, req.StartTS)
-	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
+	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTS)
+	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	if req.KeyRanges == nil {
 		return c.selectAllTiFlashStore(), nil
 	}
-	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, NewKeyRanges(req.KeyRanges), kv.TiFlash)
+	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), tikv.NewKeyRanges(req.KeyRanges), kv.TiFlash)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -117,7 +114,7 @@ func (m *mppResponse) RespTime() time.Duration {
 }
 
 type mppIterator struct {
-	store *KVStore
+	store *tikv.KVStore
 
 	tasks    []*kv.MPPDispatchRequest
 	finishCh chan struct{}
@@ -126,7 +123,7 @@ type mppIterator struct {
 
 	respChan chan *mppResponse
 
-	rpcCancel *RPCCanceller
+	rpcCancel *tikv.RPCCanceller
 
 	wg sync.WaitGroup
 
@@ -136,7 +133,7 @@ type mppIterator struct {
 func (m *mppIterator) run(ctx context.Context) {
 	for _, task := range m.tasks {
 		m.wg.Add(1)
-		bo := NewBackoffer(ctx, copNextMaxBackoff)
+		bo := tikv.NewBackoffer(ctx, copNextMaxBackoff)
 		go m.handleDispatchReq(ctx, bo, task)
 	}
 	m.wg.Wait()
@@ -159,7 +156,7 @@ func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
 // TODO:: Consider that which way is better:
 // - dispatch all tasks at once, and connect tasks at second.
 // - dispatch tasks and establish connection at the same time.
-func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req *kv.MPPDispatchRequest) {
+func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer, req *kv.MPPDispatchRequest) {
 	defer func() {
 		m.wg.Done()
 	}()
@@ -167,10 +164,10 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	originalTask := req.Meta.(*batchCopTask)
 	for _, task := range originalTask.copTasks {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-			RegionId: task.task.region.id,
+			RegionId: task.task.region.GetID(),
 			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: task.task.region.confVer,
-				Version: task.task.region.ver,
+				ConfVer: task.task.region.GetConfVer(),
+				Version: task.task.region.GetVer(),
 			},
 			Ranges: task.task.ranges.ToPBRanges(),
 		})
@@ -198,17 +195,17 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
 	if len(originalTask.copTasks) != 0 {
-		sender := NewRegionBatchRequestSender(m.store.regionCache, m.store.client)
-		rpcResp, _, _, err = sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, ReadTimeoutMedium)
+		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient())
+		rpcResp, _, _, err = sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, tikv.ReadTimeoutMedium)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
-		if sender.rpcError != nil {
-			m.sendError(sender.rpcError)
+		if sender.GetRPCError() != nil {
+			m.sendError(sender.GetRPCError())
 			return
 		}
 	} else {
-		rpcResp, err = m.store.client.SendRequest(ctx, originalTask.storeAddr, wrappedReq, ReadTimeoutMedium)
+		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, originalTask.storeAddr, wrappedReq, tikv.ReadTimeoutMedium)
 	}
 
 	if err != nil {
@@ -230,7 +227,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	m.establishMPPConns(bo, req, taskMeta)
 }
 
-func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) {
+func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) {
 	connReq := &mpp.EstablishMPPConnectionRequest{
 		SenderMeta: taskMeta,
 		ReceiverMeta: &mpp.TaskMeta{
@@ -244,7 +241,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	// Drain result from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
-	rpcResp, err := m.store.client.SendRequest(bo.ctx, req.Meta.GetAddress(), wrappedReq, ReadTimeoutUltraLong)
+	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
 
 	if err != nil {
 		m.sendError(err)
@@ -272,7 +269,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 				return
 			}
 
-			if err1 := bo.Backoff(BoTiKVRPC, errors.Errorf("recv stream response error: %v", err)); err1 != nil {
+			if err1 := bo.Backoff(tikv.BoTiKVRPC, errors.Errorf("recv stream response error: %v", err)); err1 != nil {
 				if errors.Cause(err) == context.Canceled {
 					logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
 				} else {
@@ -297,7 +294,7 @@ func (m *mppIterator) Close() error {
 	return nil
 }
 
-func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
+func (m *mppIterator) handleMPPStreamResponse(bo *tikv.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
 	if response.Error != nil {
 		err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
 		logutil.BgLogger().Warn("other error",
@@ -312,13 +309,14 @@ func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDa
 		detail: new(CopRuntimeStats),
 	}
 
-	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
-	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
-	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
-	for backoff := range bo.backoffTimes {
+	backoffTimes := bo.GetBackoffTimes()
+	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
+	for backoff := range backoffTimes {
 		backoffName := backoff.String()
-		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
-		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.backoffSleepMS[backoff]) * time.Millisecond
+		resp.detail.BackoffTimes[backoffName] = backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 	}
 	resp.detail.CalleeAddress = req.Meta.GetAddress()
 
@@ -374,11 +372,11 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, dispatchReqs []*kv.MPP
 		store:     c.store,
 		tasks:     dispatchReqs,
 		finishCh:  make(chan struct{}),
-		rpcCancel: NewRPCanceller(),
+		rpcCancel: tikv.NewRPCanceller(),
 		respChan:  make(chan *mppResponse, 4096),
 		startTs:   dispatchReqs[0].StartTs,
 	}
-	ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, iter.rpcCancel)
+	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, iter.rpcCancel)
 
 	// TODO: Process the case of query cancellation.
 	go iter.run(ctx)

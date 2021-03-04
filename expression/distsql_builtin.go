@@ -875,6 +875,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinFromUnixTime1ArgSig{base}
 	case tipb.ScalarFuncSig_FromUnixTime2Arg:
 		f = &builtinFromUnixTime2ArgSig{base}
+	case tipb.ScalarFuncSig_ExtractDatetimeFromString:
+		f = &builtinExtractDatetimeFromStringSig{base}
 	case tipb.ScalarFuncSig_ExtractDatetime:
 		f = &builtinExtractDatetimeSig{base}
 	case tipb.ScalarFuncSig_ExtractDuration:

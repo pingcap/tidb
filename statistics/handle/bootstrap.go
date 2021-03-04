@@ -223,6 +223,47 @@ func (h *Handle) initStatsTopN(cache *statsCache) error {
 	return nil
 }
 
+func (h *Handle) initStatsFMSketch4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		table, ok := cache.tables[row.GetInt64(0)]
+		if !ok {
+			continue
+		}
+		colStats, ok := table.Columns[row.GetInt64(1)]
+		if !ok {
+			continue
+		}
+		fms, err := statistics.DecodeFMSketch(row.GetBytes(2))
+		if err != nil {
+			fms = nil
+			terror.Log(errors.Trace(err))
+		}
+		colStats.FMSketch = fms
+	}
+}
+
+func (h *Handle) initStatsFMSketch(cache *statsCache) error {
+	sql := "select HIGH_PRIORITY table_id, hist_id, value from mysql.stats_fm_sketch where is_index = 0"
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer terror.Call(rc.Close)
+	req := rc.NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
+	for {
+		err := rc.Next(context.TODO(), req)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		h.initStatsFMSketch4Chunk(cache, iter)
+	}
+	return nil
+}
+
 func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
@@ -283,17 +324,14 @@ func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
 	}
 	req := rs[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
-	for {
-		err := rs[0].Next(context.TODO(), req)
-		if err != nil {
-			return 0, err
-		}
-		if req.NumRows() == 0 {
-			break
-		}
-		return iter.Begin().GetMyDecimal(0).ToInt()
+	err = rs[0].Next(context.TODO(), req)
+	if err != nil {
+		return 0, err
 	}
-	return 0, nil
+	if req.NumRows() == 0 {
+		return 0, nil
+	}
+	return iter.Begin().GetMyDecimal(0).ToInt()
 }
 
 func (h *Handle) initStatsBuckets(cache *statsCache) error {
@@ -358,6 +396,10 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		return errors.Trace(err)
 	}
 	err = h.initStatsTopN(&cache)
+	if err != nil {
+		return err
+	}
+	err = h.initStatsFMSketch(&cache)
 	if err != nil {
 		return err
 	}
