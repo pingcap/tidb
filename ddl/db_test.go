@@ -117,14 +117,17 @@ func setUpSuite(s *testDBSuite, c *C) {
 
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
-	s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
+	_, err = s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
+	c.Assert(err, IsNil)
 }
 
 func tearDownSuite(s *testDBSuite, c *C) {
-	s.s.Execute(context.Background(), "drop database if exists test_db")
+	_, err := s.s.Execute(context.Background(), "drop database if exists test_db")
+	c.Assert(err, IsNil)
 	s.s.Close()
 	s.dom.Close()
-	s.store.Close()
+	err = s.store.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testDBSuite) SetUpSuite(c *C) {
@@ -1259,8 +1262,7 @@ LOOP:
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := testGetTableByName(c, ctx, "test_db", "test_add_index")
 	handles := kv.NewHandleMap()
-	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
-	err := t.IterRecords(ctx, startKey, t.Cols(),
+	err := tables.IterRecords(t, ctx, t.Cols(),
 		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles.Set(h, struct{}{})
 			return true, nil
@@ -1284,7 +1286,8 @@ LOOP:
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
-	txn.Rollback()
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
 
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 
@@ -1708,7 +1711,10 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		txn, err := ctx.Txn(true)
 		c.Assert(err, IsNil)
-		defer txn.Rollback()
+		defer func() {
+			err := txn.Rollback()
+			c.Assert(err, IsNil)
+		}()
 
 		txn, err = ctx.Txn(true)
 		c.Assert(err, IsNil)
@@ -1744,7 +1750,10 @@ func checkGlobalIndexCleanUpDone(c *C, ctx sessionctx.Context, tblInfo *model.Ta
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
-	defer txn.Rollback()
+	defer func() {
+		err := txn.Rollback()
+		c.Assert(err, IsNil)
+	}()
 
 	cnt := 0
 	prefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idxInfo.ID)
@@ -1884,7 +1893,8 @@ func (s *testDBSuite4) TestAddIndexWithDupCols(c *C) {
 // checkGlobalIndexRow reads one record from global index and check. Only support int handle.
 func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo,
 	pid int64, idxVals []types.Datum, rowVals []types.Datum) {
-	ctx.NewTxn(context.Background())
+	err := ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
 	sc := ctx.GetSessionVars().StmtCtx
 	c.Assert(err, IsNil)
@@ -1918,8 +1928,7 @@ func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo,
 	c.Assert(err, IsNil)
 	value, err := txn.Get(context.Background(), key)
 	c.Assert(err, IsNil)
-	colVals, err := tablecodec.DecodeIndexKV(key, value, len(indexInfo.Columns),
-		tablecodec.HandleDefault, idxColInfos)
+	colVals, err := tablecodec.DecodeIndexKV(key, value, len(indexInfo.Columns), tablecodec.HandleDefault, idxColInfos)
 	c.Assert(err, IsNil)
 	c.Assert(colVals, HasLen, len(idxVals)+2)
 	for i, val := range idxVals {
@@ -1964,7 +1973,8 @@ func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
 	c.Assert(indexInfo.Global, IsTrue)
 
 	ctx := s.s.(sessionctx.Context)
-	ctx.NewTxn(context.Background())
+	err := ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
 
@@ -1979,7 +1989,8 @@ func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
 	idxVals = []types.Datum{types.NewDatum(2)}
 	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
 	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	// Test add global Primary Key index
 	tk.MustExec("create table test_t2 (a int, b int) partition by range (b)" +
@@ -1994,7 +2005,8 @@ func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
 	c.Assert(indexInfo, NotNil)
 	c.Assert(indexInfo.Global, IsTrue)
 
-	ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 
@@ -2010,7 +2022,8 @@ func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
 	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
 	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
 
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = false
 	})
@@ -2122,13 +2135,15 @@ LOOP:
 	t := s.testGetTable(c, "t2")
 	i := 0
 	j := 0
-	ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
 	defer func() {
 		if txn, err1 := ctx.Txn(true); err1 == nil {
-			txn.Rollback()
+			err := txn.Rollback()
+			c.Assert(err, IsNil)
 		}
 	}()
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+	err = tables.IterRecords(t, ctx, t.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0
@@ -2529,7 +2544,10 @@ func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 
 	// Test for table has tiflash  replica.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
 
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	tk.MustExec("drop table if exists t1,t2;")
@@ -3159,7 +3177,10 @@ func (s *testSerialDBSuite) TestTruncateTable(c *C) {
 
 	// Test for truncate table should clear the tiflash available status.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+	defer func() {
+		err = failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int);")
@@ -4030,7 +4051,8 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull", `return("insert into test.tt values (NULL, NULL)")`), IsNil)
 	defer func() {
 		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull")
+		err := failpoint.Disable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull")
+		c.Assert(err, IsNil)
 	}()
 
 	tk.MustExec("drop table if exists tt;")
@@ -4084,7 +4106,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeBlob)
 
 	// text to set
-	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a', value is 'KindBytes 10000'")
+	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a', value is 'KindString 10000'")
 	tk.MustExec("alter table tt change a a set('111', '10000');")
 	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeSet)
@@ -4354,7 +4376,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	ctx := context.Background()
 	err = tk.Se.NewTxn(ctx)
 	c.Assert(err, IsNil)
-	oldRow, err := writeOnlyTable.RowWithCols(tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
+	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
 	c.Assert(err, IsNil)
 	c.Assert(len(oldRow), Equals, 3)
 	err = writeOnlyTable.RemoveRecord(tk.Se, kv.IntHandle(1), oldRow)
@@ -5138,7 +5160,8 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	t, dbInfo, _ = is.FindTableByPartitionID(t.Meta().ID)
 	c.Assert(t, IsNil)
 	c.Assert(dbInfo, IsNil)
-	failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+	err = failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+	c.Assert(err, IsNil)
 
 	// Test for set replica count more than the tiflash store count.
 	s.mustExec(tk, c, "drop table if exists t_flash;")
@@ -5319,7 +5342,10 @@ func (s *testDBSuite2) TestWriteLocal(c *C) {
 
 func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5785,7 +5811,8 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {
 	tb := testGetTableByName(c, se, dbName, tableName)
 	dom := domain.GetDomain(se)
-	dom.Reload()
+	err := dom.Reload()
+	c.Assert(err, IsNil)
 	if lockTp != model.TableLockNone {
 		c.Assert(tb.Meta().Lock, NotNil)
 		c.Assert(tb.Meta().Lock.Tp, Equals, lockTp)

@@ -210,8 +210,7 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *baseExecutor) updateDeltaForTableID(id int64) {
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	udpp := e.ctx.GetSessionVars().UseDynamicPartitionPrune()
-	txnCtx.UpdateDeltaForTable(id, id, 0, 0, map[int64]int64{}, udpp)
+	txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
 }
 
 func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
@@ -1333,7 +1332,10 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 			columns[i] = table.ToColumn(colInfo)
 		}
 		mutableRow := chunk.MutRowFromTypes(retTypes(e))
-		err := e.t.IterRecords(e.ctx, nil, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+		type tableIter interface {
+			IterRecords(sessionctx.Context, []*table.Column, table.RecordIterFunc) error
+		}
+		err := (e.t.(tableIter)).IterRecords(e.ctx, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil

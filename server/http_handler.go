@@ -156,8 +156,46 @@ func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
 	return keyLocation.Region.GetID(), nil
 }
 
-func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
-	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
+func (t *tikvHandlerTool) getMvccByHandle(tb table.PhysicalTable, params map[string]string, values url.Values) (*mvccKV, error) {
+	var handle kv.Handle
+	if intHandleStr, ok := params[pHandle]; ok {
+		if tb.Meta().IsCommonHandle {
+			return nil, errors.BadRequestf("For clustered index tables, please use query strings to specify the column values.")
+		}
+		intHandle, err := strconv.ParseInt(intHandleStr, 0, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		handle = kv.IntHandle(intHandle)
+	} else {
+		tblInfo := tb.Meta()
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		if pkIdx == nil || !tblInfo.IsCommonHandle {
+			return nil, errors.BadRequestf("Clustered common handle not found.")
+		}
+		cols := tblInfo.Cols()
+		pkCols := make([]*model.ColumnInfo, 0, len(pkIdx.Columns))
+		for _, idxCol := range pkIdx.Columns {
+			pkCols = append(pkCols, cols[idxCol.Offset])
+		}
+		sc := new(stmtctx.StatementContext)
+		sc.TimeZone = time.UTC
+		pkDts, err := t.formValue2DatumRow(sc, values, pkCols)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
+		var handleBytes []byte
+		handleBytes, err = codec.EncodeKey(sc, nil, pkDts...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		handle, err = kv.NewCommonHandle(handleBytes)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	encodedKey := tablecodec.EncodeRecordKey(tb.RecordPrefix(), handle)
 	data, err := t.GetMvccByEncodedKey(encodedKey)
 	if err != nil {
 		return nil, err
@@ -430,10 +468,11 @@ type mvccTxnHandler struct {
 }
 
 const (
-	opMvccGetByHex = "hex"
-	opMvccGetByKey = "key"
-	opMvccGetByIdx = "idx"
-	opMvccGetByTxn = "txn"
+	opMvccGetByHex          = "hex"
+	opMvccGetByKey          = "key"
+	opMvccGetByIdx          = "idx"
+	opMvccGetByTxn          = "txn"
+	opMvccGetByClusteredKey = "cls_key"
 )
 
 // ServeHTTP handles request of list a database or table's schemas.
@@ -616,13 +655,6 @@ type FrameItem struct {
 	IndexName   string   `json:"index_name,omitempty"`
 	IndexID     int64    `json:"index_id,omitempty"`
 	IndexValues []string `json:"index_values,omitempty"`
-}
-
-// RegionFrameRange contains a frame range info which the region covered.
-type RegionFrameRange struct {
-	first  *FrameItem        // start frame of the region
-	last   *FrameItem        // end frame of the region
-	region *tikv.KeyLocation // the region
 }
 
 func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
@@ -1500,7 +1532,7 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	switch h.op {
 	case opMvccGetByHex:
 		data, err = h.handleMvccGetByHex(params)
-	case opMvccGetByIdx:
+	case opMvccGetByIdx, opMvccGetByKey, opMvccGetByClusteredKey:
 		if req.URL == nil {
 			err = errors.BadRequestf("Invalid URL")
 			break
@@ -1508,11 +1540,12 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		values := make(url.Values)
 		err = parseQuery(req.URL.RawQuery, values, true)
 		if err == nil {
-			data, err = h.handleMvccGetByIdx(params, values)
+			if h.op == opMvccGetByIdx {
+				data, err = h.handleMvccGetByIdx(params, values)
+			} else {
+				data, err = h.handleMvccGetByKey(params, values)
+			}
 		}
-	case opMvccGetByKey:
-		decode := len(req.URL.Query().Get("decode")) > 0
-		data, err = h.handleMvccGetByKey(params, decode)
 	case opMvccGetByTxn:
 		data, err = h.handleMvccGetByTxn(params)
 	default:
@@ -1567,21 +1600,18 @@ func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.
 	return h.getMvccByIdxValue(idx, values, idxCols, handleStr)
 }
 
-func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData bool) (interface{}, error) {
-	handle, err := strconv.ParseInt(params[pHandle], 0, 64)
+func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.Values) (interface{}, error) {
+	dbName := params[pDBName]
+	tableName := params[pTableName]
+	tb, err := h.getTable(dbName, tableName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	tb, err := h.getTable(params[pDBName], params[pTableName])
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	resp, err := h.getMvccByHandle(tb.GetPhysicalID(), handle)
+	resp, err := h.getMvccByHandle(tb, params, values)
 	if err != nil {
 		return nil, err
 	}
-	if !decodeData {
+	if len(values.Get("decode")) == 0 {
 		return resp, nil
 	}
 	colMap := make(map[int64]*types.FieldType, 3)
