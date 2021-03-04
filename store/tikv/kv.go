@@ -16,6 +16,7 @@ package tikv
 import (
 	"context"
 	"crypto/tls"
+	"math"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -75,6 +76,11 @@ type KVStore struct {
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
 	closed    chan struct{} // this is used to nofity when the store is closed
 
+	safeTSMu struct {
+		sync.RWMutex
+		storeSafeTS map[uint64]uint64 // storeID -> safeTS
+	}
+
 	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
 }
 
@@ -126,9 +132,11 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		closed:          make(chan struct{}),
 		replicaReadSeed: rand.Uint32(),
 	}
+	store.safeTSMu.storeSafeTS = make(map[uint64]uint64, 0)
 	store.lockResolver = newLockResolver(store)
-
+	ctx := context.Background()
 	go store.runSafePointChecker()
+	go store.safeTSUpdater(ctx)
 
 	return store, nil
 }
@@ -196,6 +204,24 @@ func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVT
 		return nil, errors.Trace(err)
 	}
 	return txn, nil
+}
+
+func (s *KVStore) BeginWithTimeBoundedStaleness(txnScope string, maxPrevSec uint64) (*KVTxn, error) {
+	safeTS := s.getMinSafeTS(txnScope)
+	safePhysical := oracle.ExtractPhysical(safeTS)
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
+	curTS, err := s.getTimestampWithRetry(bo, txnScope)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	physical := oracle.ExtractPhysical(curTS)
+	startTS := oracle.ComposeTS(physical-int64(maxPrevSec)*1000, 0)
+	// If the safeTS is larger then then currentTS - maxPrevSec, we will use safeTS as the startTS,
+	// otherwise we will directly use currentTS - maxPrevSec as startTS
+	if physical-int64(maxPrevSec)*1000 < safePhysical {
+		startTS = safeTS
+	}
+	return s.BeginWithStartTS(txnScope, startTS)
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
@@ -346,4 +372,57 @@ func (s *KVStore) SetTiKVClient(client Client) {
 // GetTiKVClient gets the client instance.
 func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
+}
+
+func (s *KVStore) GetSafeTSByStore() uint64 {
+	return 0
+}
+
+func (s *KVStore) getMinSafeTS(txnScope string) uint64 {
+	stores := s.regionCache.getStoresByType(TiKV)
+	minSafeTS := uint64(math.MaxUint64)
+	s.safeTSMu.RLock()
+	defer s.safeTSMu.RUnlock()
+	for _, store := range stores {
+		safeTS := s.safeTSMu.storeSafeTS[store.storeID]
+		if safeTS < minSafeTS {
+			minSafeTS = safeTS
+		}
+	}
+	return minSafeTS
+}
+
+func (s *KVStore) safeTSUpdater(ctx context.Context) {
+	t := time.NewTicker(time.Second * 2)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.updateSafeTS(ctx)
+		}
+	}
+}
+
+func (s *KVStore) updateSafeTS(ctx context.Context) {
+	stores := s.regionCache.getStoresByType(TiKV)
+	s.GetTiKVClient()
+	wg := &sync.WaitGroup{}
+	wg.Add(len(stores))
+	for _, store := range stores {
+		go func(ctx context.Context, wg *sync.WaitGroup, store *Store) {
+			defer wg.Done()
+			//_, err := tikvClient.SendRequest(ctx, store.addr, nil, readTimeoutShort)
+			//if err != nil {
+			//return
+			//}
+			safeTS := uint64(0)
+			s.safeTSMu.RLock()
+			s.safeTSMu.storeSafeTS[store.storeID] = safeTS
+			s.safeTSMu.RUnlock()
+			//log.Info("updateSafeTS", zap.Uint64("storeID", store.storeID))
+		}(ctx, wg, store)
+	}
+	wg.Wait()
 }
