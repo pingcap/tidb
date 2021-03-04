@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"bytes"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -154,10 +155,10 @@ type topN4Test struct {
 }
 
 func genHist4Test(buckets []*bucket4Test, totColSize int64) *Histogram {
-	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), len(buckets), totColSize)
+	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), len(buckets), totColSize)
 	for _, bucket := range buckets {
-		lower := types.NewIntDatum(bucket.lower)
-		upper := types.NewIntDatum(bucket.upper)
+		lower := types.NewBytesDatum(codec.EncodeInt(nil, bucket.lower))
+		upper := types.NewBytesDatum(codec.EncodeInt(nil, bucket.upper))
 		h.AppendBucketWithNDV(&lower, &upper, bucket.count, bucket.repeat, bucket.ndv)
 	}
 	return h
@@ -386,11 +387,11 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 			}
 			poped = append(poped, tmp)
 		}
-		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, t.expBucketNumber, false)
+		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, t.expBucketNumber, true)
 		c.Assert(err, IsNil)
 		for i, b := range t.expHist {
-			c.Assert(b.lower, Equals, globalHist.GetLower(i).GetInt64())
-			c.Assert(b.upper, Equals, globalHist.GetUpper(i).GetInt64())
+			c.Assert(bytes.Compare(codec.EncodeInt(nil, b.lower), globalHist.GetLower(i).GetBytes()), Equals, 0)
+			c.Assert(bytes.Compare(codec.EncodeInt(nil, b.upper), globalHist.GetUpper(i).GetBytes()), Equals, 0)
 			c.Assert(b.count, Equals, globalHist.Buckets[i].Count)
 			c.Assert(b.repeat, Equals, globalHist.Buckets[i].Repeat)
 			c.Assert(b.ndv, Equals, globalHist.Buckets[i].NDV)
