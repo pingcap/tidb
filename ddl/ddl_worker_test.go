@@ -77,6 +77,80 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	c.Assert(d1.GetLease(), Equals, testLease)
 }
 
+func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
+	store := testCreateStore(c, "test_notify_job")
+	defer store.Close()
+
+	getFirstNotificationAfterStartDDL := func(d *ddl) {
+		select {
+		case <-d.workers[addIdxWorker].ddlJobCh:
+		default:
+			// The notification may be received by the worker.
+		}
+		select {
+		case <-d.workers[generalWorker].ddlJobCh:
+		default:
+			// The notification may be received by the worker.
+		}
+	}
+
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(store),
+		WithLease(testLease),
+	)
+	defer d.Stop()
+	getFirstNotificationAfterStartDDL(d)
+
+	job := &model.Job{
+		SchemaID:   1,
+		TableID:    2,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
+	// This DDL request is a general DDL job.
+	d.asyncNotifyWorker(job)
+	select {
+	case <-d.workers[generalWorker].ddlJobCh:
+	default:
+		c.Fatal("do not get the general job notification")
+	}
+	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
+	// This DDL request is a add index DDL job.
+	job.Type = model.ActionAddIndex
+	d.asyncNotifyWorker(job)
+	select {
+	case <-d.workers[addIdxWorker].ddlJobCh:
+	default:
+		c.Fatal("do not get the add index job notification")
+	}
+	// Test the notification mechanism that the owner and the server receiving the DDL request are not on the same TiDB.
+	// And the etcd client is nil.
+	d1 := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(store),
+		WithLease(testLease),
+	)
+	getFirstNotificationAfterStartDDL(d1)
+	defer d1.Stop()
+	d1.ownerManager.RetireOwner()
+	d1.asyncNotifyWorker(job)
+	job.Type = model.ActionCreateTable
+	d1.asyncNotifyWorker(job)
+	testCheckOwner(c, d1, false)
+	select {
+	case <-d1.workers[addIdxWorker].ddlJobCh:
+		c.Fatal("should not get the add index job notification")
+	case <-d1.workers[generalWorker].ddlJobCh:
+		c.Fatal("should not get the general job notification")
+	default:
+	}
+}
+
 // testRunWorker tests no job is handled when the value of RunWorker is false.
 func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	store := testCreateStore(c, "test_run_worker")

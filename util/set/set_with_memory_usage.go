@@ -13,19 +13,20 @@
 
 package set
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/pingcap/tidb/util/hack"
+)
 
 const (
 	// DefStringSetBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(struct{}))+2*ptrSize
+	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
 	DefStringSetBucketMemoryUsage = 8*(1+16+0) + 16
 	// DefFloat64SetBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(float64) + unsafe.Sizeof(struct{}))+2*ptrSize
 	DefFloat64SetBucketMemoryUsage = 8*(1+8+0) + 16
 	// DefInt64SetBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(int64) + unsafe.Sizeof(struct{}))+2*ptrSize
 	DefInt64SetBucketMemoryUsage = 8*(1+8+0) + 16
-	// Maximum average load of a bucket that triggers growth is 6.5.
-	// Represent as loadFactorNum/loadFactDen, to allow integer math.
-	loadFactorNum = 13
-	loadFactorDen = 2
 
 	// DefFloat64Size is the size of float64
 	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
@@ -56,7 +57,7 @@ func NewStringSetWithMemoryUsage(ss ...string) (setWithMemoryUsage StringSetWith
 // Insert inserts `val` into `s` and return memDelta.
 func (s *StringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
 	s.StringSet.Insert(val)
-	if s.Count() > (1<<s.bInMap)*loadFactorNum/loadFactorDen {
+	if s.Count() > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 		memDelta = DefStringSetBucketMemoryUsage * (1 << s.bInMap)
 		s.bInMap++
 	}
@@ -86,7 +87,7 @@ func NewFloat64SetWithMemoryUsage(ss ...float64) (setWithMemoryUsage Float64SetW
 // Insert inserts `val` into `s` and return memDelta.
 func (s *Float64SetWithMemoryUsage) Insert(val float64) (memDelta int64) {
 	s.Float64Set.Insert(val)
-	if s.Count() > (1<<s.bInMap)*loadFactorNum/loadFactorDen {
+	if s.Count() > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 		memDelta = DefFloat64SetBucketMemoryUsage * (1 << s.bInMap)
 		s.bInMap++
 	}
@@ -116,7 +117,7 @@ func NewInt64SetWithMemoryUsage(ss ...int64) (setWithMemoryUsage Int64SetWithMem
 // Insert inserts `val` into `s` and return memDelta.
 func (s *Int64SetWithMemoryUsage) Insert(val int64) (memDelta int64) {
 	s.Int64Set.Insert(val)
-	if s.Count() > (1<<s.bInMap)*loadFactorNum/loadFactorDen {
+	if s.Count() > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 		memDelta = DefInt64SetBucketMemoryUsage * (1 << s.bInMap)
 		s.bInMap++
 	}
