@@ -1650,7 +1650,7 @@ func (s *testSuite4) TestPartitionedTableUpdate(c *C) {
 
 	// update partition column, old and new record locates on different partitions
 	tk.MustExec(`update t set id = 20 where id = 8`)
-	tk.CheckExecResult(2, 0)
+	tk.CheckExecResult(1, 0)
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
 	r = tk.MustQuery(`SELECT * from t order by id limit 2;`)
 	r.Check(testkit.Rows("2 abc", "20 abc"))

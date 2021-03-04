@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -1233,15 +1234,20 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 		if isSingleCol && lowIsNull {
 			totalCount += float64(idx.NullCount)
 		}
+		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
 		// If the first column's range is point.
 		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer == Version2 && coll != nil {
-			expBackoffSel, err := idx.expBackoffEstimation(sc, coll, indexRange)
+			var expBackoffSel float64
+			expBackoffSel, expBackoffSuccess, err = idx.expBackoffEstimation(sc, coll, indexRange)
 			if err != nil {
 				return 0, err
 			}
-			totalCount += expBackoffSel * idx.TotalRowCount()
-		} else {
+			if expBackoffSuccess {
+				totalCount += expBackoffSel * idx.TotalRowCount()
+			}
+		}
+		if !expBackoffSuccess {
 			totalCount += idx.BetweenRowCount(l, r)
 		}
 	}
@@ -1252,7 +1258,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
-func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistColl, indexRange *ranger.Range) (float64, error) {
+func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistColl, indexRange *ranger.Range) (float64, bool, error) {
 	tmpRan := []*ranger.Range{
 		{
 			LowVal:  make([]types.Datum, 1),
@@ -1286,7 +1292,7 @@ func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistC
 			continue
 		}
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		singleColumnEstResults = append(singleColumnEstResults, count)
 	}
@@ -1299,14 +1305,20 @@ func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistC
 	for i := 0; i < l && i < 4; i++ {
 		singleColumnEstResults[i] = singleColumnEstResults[i] / float64(coll.Count)
 	}
+	failpoint.Inject("cleanEstResults", func() {
+		singleColumnEstResults = singleColumnEstResults[:0]
+		l = 0
+	})
 	if l == 1 {
-		return singleColumnEstResults[0], nil
+		return singleColumnEstResults[0], true, nil
 	} else if l == 2 {
-		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]), nil
+		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]), true, nil
 	} else if l == 3 {
-		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])), nil
+		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])), true, nil
+	} else if l == 0 {
+		return 0, false, nil
 	}
-	return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])) * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3]))), nil
+	return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])) * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3]))), true, nil
 }
 
 type countByRangeFunc = func(*stmtctx.StatementContext, int64, []*ranger.Range) (float64, error)
