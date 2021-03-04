@@ -962,11 +962,10 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 		if !coveredByPlainIndex && !coveredByClusteredIndex {
 			return false
 		}
-
 		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
 			col.GetType().EvalType() == types.ETString &&
 			!mysql.HasBinaryFlag(col.GetType().Flag)
-		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx {
+		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.table.Meta().CommonHandleVersion == 0 {
 			return false
 		}
 	}

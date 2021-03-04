@@ -414,7 +414,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], uint32(opts[ast.AnalyzeOptNumTopN]))
 
 		// Merge histogram
-		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], popedTopN, int64(opts[ast.AnalyzeOptNumBuckets]))
+		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], popedTopN, int64(opts[ast.AnalyzeOptNumBuckets]), isIndex == 1)
 		if err != nil {
 			return
 		}

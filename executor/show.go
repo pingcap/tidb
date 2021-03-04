@@ -177,6 +177,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowProcessList()
 	case ast.ShowEvents:
 		// empty result
+	case ast.ShowStatsExtended:
+		return e.fetchShowStatsExtended()
 	case ast.ShowStatsMeta:
 		return e.fetchShowStatsMeta()
 	case ast.ShowStatsHistograms:
