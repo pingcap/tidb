@@ -111,6 +111,8 @@ type exchSenderExec struct {
 	exchangeSender *tipb.ExchangeSender
 	tunnels        []*ExchangerTunnel
 	outputOffsets  []uint32
+	exchangeTp     tipb.ExchangeType
+	hashKeyOffset  int
 }
 
 func (e *exchSenderExec) open() error {
@@ -153,16 +155,44 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 			}
 			return nil, nil
 		} else if chk != nil {
-			for _, tunnel := range e.tunnels {
-				tipbChunks, err := e.toTiPBChunk(chk)
-				if err != nil {
-					for _, tunnel := range e.tunnels {
-						tunnel.ErrCh <- err
-					}
-					return nil, nil
+			if e.exchangeTp == tipb.ExchangeType_Hash {
+				rows := chk.NumRows()
+				targetChunks := make([]*chunk.Chunk, 0, len(e.tunnels))
+				for i := 0; i < len(e.tunnels); i++ {
+					targetChunks = append(targetChunks, chunk.NewChunkWithCapacity(e.fieldTypes, rows))
 				}
-				for _, tipbChunk := range tipbChunks {
-					tunnel.DataCh <- &tipbChunk
+				for i := 0; i < rows; i++ {
+					row := chk.GetRow(i)
+					d := row.GetDatum(e.hashKeyOffset, e.fieldTypes[e.hashKeyOffset])
+					hashKey := int(d.GetInt64() % int64(len(e.tunnels)))
+					targetChunks[hashKey].AppendRow(row)
+				}
+				for i, tunnel := range e.tunnels {
+					if targetChunks[i].NumRows() > 0 {
+						tipbChunks, err := e.toTiPBChunk(targetChunks[i])
+						if err != nil {
+							for _, tunnel := range e.tunnels {
+								tunnel.ErrCh <- err
+							}
+							return nil, nil
+						}
+						for _, tipbChunk := range tipbChunks {
+							tunnel.DataCh <- &tipbChunk
+						}
+					}
+				}
+			} else {
+				for _, tunnel := range e.tunnels {
+					tipbChunks, err := e.toTiPBChunk(chk)
+					if err != nil {
+						for _, tunnel := range e.tunnels {
+							tunnel.ErrCh <- err
+						}
+						return nil, nil
+					}
+					for _, tipbChunk := range tipbChunks {
+						tunnel.DataCh <- &tipbChunk
+					}
 				}
 			}
 		} else {
@@ -291,8 +321,6 @@ type joinExec struct {
 
 	buildSideIdx int64
 
-	built bool
-
 	buildChild mppExec
 	probeChild mppExec
 
@@ -342,7 +370,6 @@ func (e *joinExec) fetchRows() (bool, error) {
 	chkSize := chk.NumRows()
 	for i := 0; i < chkSize; i++ {
 		row := chk.GetRow(i)
-		i++
 		keyCol := row.GetDatum(e.probeKey.Index, e.probeChild.getFieldTypes()[e.probeKey.Index])
 		key, err := keyCol.ToString()
 		if err != nil {

@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/tidb/kv"
@@ -23,8 +24,6 @@ import (
 
 // Storage represent the kv.Storage runs on TiKV.
 type Storage interface {
-	kv.Storage
-
 	// GetRegionCache gets the RegionCache.
 	GetRegionCache() *RegionCache
 
@@ -51,4 +50,20 @@ type Storage interface {
 
 	// Closed returns the closed channel.
 	Closed() <-chan struct{}
+
+	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
+	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+	GetSnapshot(ver kv.Version) kv.Snapshot
+	// Close store
+	Close() error
+	// UUID return a unique ID which represents a Storage.
+	UUID() string
+	// CurrentVersion returns current max committed version with the given txnScope (local or global).
+	CurrentVersion(txnScope string) (kv.Version, error)
+	// GetOracle gets a timestamp oracle client.
+	GetOracle() oracle.Oracle
+	// SupportDeleteRange gets the storage support delete range or not.
+	SupportDeleteRange() (supported bool)
+	// ShowStatus returns the specified status of the storage
+	ShowStatus(ctx context.Context, key string) (interface{}, error)
 }

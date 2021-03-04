@@ -1,4 +1,4 @@
-package store
+package driver
 
 import (
 	. "github.com/pingcap/check"
@@ -7,7 +7,6 @@ import (
 
 type testTiKVDriverSuite struct {
 	OneByOneSuite
-	store *tikvStore
 }
 
 var _ = Suite(&testTiKVDriverSuite{})
