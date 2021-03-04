@@ -148,13 +148,9 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		if !r.IsNull(colIdx) {
 			d.SetFloat64(r.GetFloat64(colIdx))
 		}
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString:
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		if !r.IsNull(colIdx) {
 			d.SetString(r.GetString(colIdx), tp.Collate)
-		}
-	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		if !r.IsNull(colIdx) {
-			d.SetBytes(r.GetBytes(colIdx))
 		}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if !r.IsNull(colIdx) {

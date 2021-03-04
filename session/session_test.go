@@ -78,6 +78,8 @@ var _ = Suite(&testIsolationSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
+var _ = Suite(&testClusteredSuite{})
+var _ = SerialSuites(&testClusteredSerialSuite{})
 
 type testSessionSuiteBase struct {
 	cluster cluster.Cluster
@@ -3269,10 +3271,7 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
-	defer func() {
-		config.GetGlobalConfig().Labels["zone"] = ""
-	}()
-	config.GetGlobalConfig().Labels["zone"] = ""
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("")`)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
@@ -3283,8 +3282,9 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
-
-	config.GetGlobalConfig().Labels["zone"] = "bj"
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
@@ -3303,9 +3303,6 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
-	defer func() {
-		config.GetGlobalConfig().Labels["zone"] = ""
-	}()
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
 	if *withTiKV {
@@ -3395,9 +3392,8 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
-	config.GetGlobalConfig().Labels = map[string]string{
-		"zone": "dc-1",
-	}
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("dc-1")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	// set txn_scope to local
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
