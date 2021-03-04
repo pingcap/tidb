@@ -670,12 +670,14 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 	}
 
 	var finalTopN TopN
+	remain := n
 	finalTopN.TopN = make([]TopNMeta, 0, n)
 	popedTopNPair := make([]TopNMeta, 0, uint32(numTop)-n)
 	for value, cnt := range counter {
 		data := hack.Slice(string(value))
-		if n > 0 && cnt >= lastTopCnt {
+		if n > 0 && remain > 0 && cnt >= lastTopCnt {
 			finalTopN.AppendTopN(data, cnt)
+			remain--
 		} else {
 			popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: data, Count: cnt})
 		}
