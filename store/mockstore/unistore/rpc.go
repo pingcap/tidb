@@ -14,7 +14,6 @@
 package unistore
 
 import (
-	"github.com/pingcap/tidb/store/tikv"
 	"io"
 	"math"
 	"os"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/codec"
 	"golang.org/x/net/context"
