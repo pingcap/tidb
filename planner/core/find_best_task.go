@@ -962,11 +962,10 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 		if !coveredByPlainIndex && !coveredByClusteredIndex {
 			return false
 		}
-
 		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
 			col.GetType().EvalType() == types.ETString &&
 			!mysql.HasBinaryFlag(col.GetType().Flag)
-		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx {
+		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.table.Meta().CommonHandleVersion == 0 {
 			return false
 		}
 	}
@@ -1028,6 +1027,15 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	task = cop
 	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
 		cop.commonHandleCols = ds.commonHandleCols
+		commonHandle := ds.handleCols.(*CommonHandleCols)
+		for _, col := range commonHandle.columns {
+			if ds.schema.ColumnIndex(col) == -1 {
+				ts := cop.tablePlan.(*PhysicalTableScan)
+				ts.Schema().Append(col)
+				ts.Columns = append(ts.Columns, col.ToInfo())
+				cop.doubleReadNeedProj = true
+			}
+		}
 	}
 	if candidate.isMatchProp {
 		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {

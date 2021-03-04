@@ -299,7 +299,7 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 func (s *tikvStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
 	txn, err := s.KVStore.BeginWithTxnScope(txnScope)
 	if err != nil {
-		return txn, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	return txn_driver.NewTiKVTxn(txn), err
 }
@@ -308,7 +308,7 @@ func (s *tikvStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
 func (s *tikvStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
 	txn, err := s.KVStore.BeginWithStartTS(txnScope, startTS)
 	if err != nil {
-		return txn, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	return txn_driver.NewTiKVTxn(txn), err
 }
@@ -317,7 +317,7 @@ func (s *tikvStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transa
 func (s *tikvStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
 	txn, err := s.KVStore.BeginWithExactStaleness(txnScope, prevSec)
 	if err != nil {
-		return txn, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	return txn_driver.NewTiKVTxn(txn), err
 }

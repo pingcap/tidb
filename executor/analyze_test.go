@@ -238,7 +238,10 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
@@ -296,7 +299,10 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		}),
 	)
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
@@ -393,7 +399,10 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		}),
 	)
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
@@ -656,7 +665,10 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer dom.Close()

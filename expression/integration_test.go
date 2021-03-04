@@ -3932,7 +3932,8 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	_, err := tk.Exec("insert into d select group_concat(a) from t")
 	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, errors.ErrCode(mysql.ErrCutValueGroupConcat))
 
-	tk.Exec("set sql_mode=''")
+	_, err = tk.Exec("set sql_mode=''")
+	c.Assert(err, IsNil)
 	tk.MustExec("insert into d select group_concat(a) from t")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
 	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
@@ -7595,6 +7596,20 @@ func (s *testIntegrationSerialSuite) TestIssue18638(c *C) {
 	tk.MustQuery("select * from t t1 left join t t2 on t1.a = t2.b collate utf8mb4_general_ci;").Check(testkit.Rows("a A a A"))
 }
 
+func (s *testIntegrationSerialSuite) TestCollationText(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a TINYTEXT collate UTF8MB4_GENERAL_CI, UNIQUE KEY `a`(`a`(10)));")
+	tk.MustExec("insert into t (a) values ('A');")
+	tk.MustQuery("select * from t t1 inner join t t2 on t1.a = t2.a where t1.a = 'A';").Check(testkit.Rows("A A"))
+	tk.MustExec("update t set a = 'B';")
+	tk.MustExec("admin check table t;")
+}
+
 func (s *testIntegrationSuite) TestIssue18850(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7892,6 +7907,76 @@ func (s *testIntegrationSuite) TestIssue17476(c *C) {
  IS NULL WHERE col_int_6=0;`).Check(testkit.Rows("14"))
 	tk.MustQuery(`SELECT count(*) FROM (table_float JOIN table_int_float_varchar AS tmp3 ON (tmp3.col_varchar_6 AND NULL) IS NULL);`).Check(testkit.Rows("154"))
 	tk.MustQuery(`SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;`).Check(testkit.Rows("13 0 -0.1 <nil>"))
+}
+
+func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollationIndexEncodeDecodeV5(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.MustExec("create table t(a int, b char(10) collate utf8mb4_bin, c char(10) collate utf8mb4_general_ci," +
+		"d varchar(10) collate utf8mb4_bin, e varchar(10) collate utf8mb4_general_ci, f char(10) collate utf8mb4_unicode_ci, g varchar(10) collate utf8mb4_unicode_ci, " +
+		"primary key(a, b, c, d, e, f, g), key a(a), unique key ua(a), key b(b), unique key ub(b), key c(c), unique key uc(c)," +
+		"key d(d), unique key ud(d),key e(e), unique key ue(e), key f(f), key g(g), unique key uf(f), unique key ug(g))")
+
+	tk.MustExec("insert into t values (1, '啊  ', '啊  ', '啊  ', '啊  ', '啊  ', '啊  ')")
+	// Single Read.
+	tk.MustQuery("select * from t ").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+
+	tk.MustQuery("select * from t use index(a)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ua)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(b)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ub)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(c)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(uc)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(d)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ud)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(e)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ue)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(f)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(uf)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(g)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ug)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+
+	tk.MustExec("alter table t add column h varchar(10) collate utf8mb4_general_ci default '🐸'")
+	tk.MustExec("alter table t add column i varchar(10) collate utf8mb4_general_ci default '🐸'")
+	tk.MustExec("alter table t add index h(h)")
+	tk.MustExec("alter table t add unique index uh(h)")
+
+	tk.MustQuery("select * from t use index(h)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(uh)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+
+	// Double read.
+	tk.MustQuery("select * from t use index(a)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ua)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(b)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ub)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(c)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(uc)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(d)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ud)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(e)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ue)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin recover index t a")
+	tk.MustExec("alter table t add column n char(10) COLLATE utf8mb4_unicode_ci")
+	tk.MustExec("alter table t add index n(n)")
+	tk.MustExec("update t set n = '吧';")
+	tk.MustQuery("select * from t").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
+	tk.MustQuery("select * from t use index(n)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255) COLLATE utf8_general_ci primary key clustered, b int) partition by range columns(a) " +
+		"(partition p0 values less than ('0'), partition p1 values less than MAXVALUE);")
+	tk.MustExec("alter table t add index b(b);")
+	tk.MustExec("insert into t values ('0', 1);")
+	tk.MustQuery("select * from t use index(b);").Check(testkit.Rows("0 1"))
+	tk.MustQuery("select * from t use index();").Check(testkit.Rows("0 1"))
+	tk.MustExec("admin check table t")
 }
 
 func (s *testIntegrationSuite) TestIssue11645(c *C) {
@@ -8788,4 +8873,17 @@ func (s *testIntegrationSerialSuite) TestPartitionPruningRelaxOP(c *C) {
 
 	tk.MustQuery("SELECT COUNT(*) FROM t1 WHERE d < '2018-01-01'").Check(testkit.Rows("6"))
 	tk.MustQuery("SELECT COUNT(*) FROM t1 WHERE d > '2018-01-01'").Check(testkit.Rows("12"))
+}
+
+func (s *testIntegrationSuite) TestClusteredIndexCorCol(c *C) {
+	// For issue 23076
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int, c_str) , key(c_int) );")
+	tk.MustExec("create table t2  like t1 ;")
+	tk.MustExec("insert into t1 values (1, 'crazy lumiere'), (10, 'goofy mestorf');")
+	tk.MustExec("insert into t2 select * from t1 ;")
+	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str = t1.c_str and t2.c_int = 10 order by t2.c_str limit 1) x from t1;").Check(testkit.Rows("<nil>", "goofy mestorf"))
 }
