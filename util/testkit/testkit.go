@@ -231,6 +231,30 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+func containGloabl(rs *Result) bool {
+	partitionNameCol := 2
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][partitionNameCol], "global") {
+			return true
+		}
+	}
+	return false
+}
+
+// MustNoGlobalStats checks if there is no global stats.
+func (tk *TestKit) MustNoGlobalStats(table string) bool {
+	if containGloabl(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
+		return false
+	}
+	if containGloabl(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
+		return false
+	}
+	if containGloabl(tk.MustQuery("show stats_histograms where table_name like '" + table + "'")) {
+		return false
+	}
+	return true
+}
+
 // MustUseIndex checks if the result execution plan contains specific index(es).
 func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)

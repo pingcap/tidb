@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package copr
 
 import (
 	"context"
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -26,33 +27,35 @@ import (
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
 type RegionBatchRequestSender struct {
-	RegionRequestSender
+	*tikv.RegionRequestSender
 }
 
 // NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
-func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatchRequestSender {
-	return &RegionBatchRequestSender{RegionRequestSender: RegionRequestSender{regionCache: cache, client: client}}
+func NewRegionBatchRequestSender(cache *tikv.RegionCache, client tikv.Client) *RegionBatchRequestSender {
+	return &RegionBatchRequestSender{
+		RegionRequestSender: tikv.NewRegionRequestSender(cache, client),
+	}
 }
 
-func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
+func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *tikv.Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
 	// use the first ctx to send request, because every ctx has same address.
 	cancel = func() {}
 	rpcCtx := ctxs[0].ctx
 	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, cancel, errors.Trace(e)
 	}
-	ctx := bo.ctx
-	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
-		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
+	ctx := bo.GetCtx()
+	if rawHook := ctx.Value(tikv.RPCCancellerCtxKey{}); rawHook != nil {
+		ctx, cancel = rawHook.(*tikv.RPCCanceller).WithCancel(ctx)
 	}
 	start := time.Now()
-	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
+	resp, err = ss.GetClient().SendRequest(ctx, rpcCtx.Addr, req, timout)
 	if ss.Stats != nil {
-		RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
+		tikv.RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
 	}
 	if err != nil {
 		cancel()
-		ss.rpcError = err
+		ss.SetRPCError(err)
 		e := ss.onSendFail(bo, ctxs, err)
 		if e != nil {
 			return nil, false, func() {}, errors.Trace(e)
@@ -63,18 +66,18 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	return
 }
 
-func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctxs []copTaskAndRPCContext, err error) error {
+func (ss *RegionBatchRequestSender) onSendFail(bo *tikv.Backoffer, ctxs []copTaskAndRPCContext, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
-	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
-		return ErrTiDBShuttingDown
+	} else if atomic.LoadUint32(&tikv.ShuttingDown) > 0 {
+		return tikv.ErrTiDBShuttingDown
 	}
 
 	for _, failedCtx := range ctxs {
 		ctx := failedCtx.ctx
 		if ctx.Meta != nil {
-			ss.regionCache.OnSendFail(bo, ctx, ss.NeedReloadRegion(ctx), err)
+			ss.GetRegionCache().OnSendFail(bo, ctx, ss.NeedReloadRegion(ctx), err)
 		}
 	}
 
@@ -82,6 +85,6 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctxs []copTaskAndR
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
-	err = bo.Backoff(BoTiKVRPC, errors.Errorf("send tikv request error: %v, ctxs: %v, try next peer later", err, ctxs))
+	err = bo.Backoff(tikv.BoTiKVRPC, errors.Errorf("send tikv request error: %v, ctxs: %v, try next peer later", err, ctxs))
 	return errors.Trace(err)
 }
