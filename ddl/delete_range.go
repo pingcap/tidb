@@ -16,8 +16,8 @@ package ddl
 import (
 	"context"
 	"encoding/hex"
-	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	insertDeleteRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d")`
+	insertDeleteRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?)`
 
 	delBatchSize = 65536
 	delBackLog   = 128
@@ -335,10 +335,12 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 
 func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts uint64) error {
 	logutil.Logger(ddlLogCtx).Info("[ddl] insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64("elementID", elementID))
+	var buf strings.Builder
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
-	sql := fmt.Sprintf(insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
-	_, err := s.Execute(context.Background(), sql)
+	sqlexec.MustFormatSQL(&buf, insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
+
+	_, err := s.Execute(context.Background(), buf.String())
 	return errors.Trace(err)
 }
 
