@@ -804,6 +804,8 @@ func (ts *TiFlashFallbackTestSuite) TestTiFlashFallback(c *C) {
 	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+	// use cursor
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}), NotNil)
 
 	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 0")
 	c.Assert(cc.handleQuery(ctx, "select sum(a) from t"), NotNil)
