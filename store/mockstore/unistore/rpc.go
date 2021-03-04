@@ -14,6 +14,7 @@
 package unistore
 
 import (
+	"github.com/pingcap/tidb/store/tikv"
 	"io"
 	"math"
 	"os"
@@ -236,6 +237,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		failpoint.Inject("BatchCopRpcErr"+addr, func(value failpoint.Value) {
 			if value.(string) == addr {
 				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
+
+		failpoint.Inject("errorMockTiFlashUnavailable", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, errors.Trace(tikv.ErrTiFlashServerTimeout))
 			}
 		})
 		resp.Resp, err = c.handleBatchCop(ctx, req.BatchCop(), timeout)
