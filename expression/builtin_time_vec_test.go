@@ -68,10 +68,6 @@ type dateTimeUnitStrGener struct {
 	randGen *defaultRandGen
 }
 
-func newDateTimeUnitStrGener() *dateTimeUnitStrGener {
-	return &dateTimeUnitStrGener{newDefaultRandGen()}
-}
-
 // tzStrGener is used to generate strings which are timezones
 type tzStrGener struct{}
 
