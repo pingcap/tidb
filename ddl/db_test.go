@@ -3350,9 +3350,7 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 }
 
 func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
-<<<<<<< HEAD
 	s.tk = testkit.NewTestKit(c, s.store)
-=======
 	sql1 := "alter table t1 change c2 c2 int not null;"
 	sql2 := "alter table t1 change c2 c2 int not null;"
 	testModifyColumnNullToNotNull(c, s.testDBSuite, false, sql1, sql2)
