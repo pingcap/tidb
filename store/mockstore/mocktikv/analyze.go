@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coprocessor.Response {
+func (h coprHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	if len(req.Ranges) == 0 {
 		return resp
@@ -62,7 +62,7 @@ func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coproces
 	return resp
 }
 
-func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
+func (h coprHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
 	ranges, err := h.extractKVRanges(req.Ranges, false)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -125,7 +125,7 @@ type analyzeColumnsExec struct {
 	fields  []*ast.ResultField
 }
 
-func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
+func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
 	sc := flagsToStatementContext(analyzeReq.Flags)
 	sc.TimeZone, err = constructTimeZone("", int(analyzeReq.TimeZoneOffset))
 	if err != nil {
