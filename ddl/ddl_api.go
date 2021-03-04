@@ -5923,11 +5923,27 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		// refer to tidb#22065.
 		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
 		// placement rules in SQL is not compatible with `set tiflash replica` yet
-		rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
-			Op:     placement.NotIn,
-			Key:    placement.EngineLabelKey,
-			Values: []string{placement.EngineLabelTiFlash},
-		})
+		hasNotInTiflashLabel := false
+		for _, label := range rule.LabelConstraints {
+			if label.Op == placement.NotIn && label.Key == placement.EngineLabelKey &&
+				len(label.Values) > 0 && label.Values[0] == placement.EngineLabelTiFlash {
+				hasNotInTiflashLabel = true
+				break
+			}
+		}
+		// notIn tiflash label is seen as an internal label
+		// it is same as an empty constraint
+		if len(rule.LabelConstraints) == 1 && hasNotInTiflashLabel {
+			extraCnt[rule.Role] += rule.Count
+			continue
+		}
+		if !hasNotInTiflashLabel {
+			rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+				Op:     placement.NotIn,
+				Key:    placement.EngineLabelKey,
+				Values: []string{placement.EngineLabelTiFlash},
+			})
+		}
 		rule.GroupID = bundle.ID
 		rule.ID = strconv.Itoa(i)
 		rule.StartKeyHex = startKey
