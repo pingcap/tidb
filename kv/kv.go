@@ -510,6 +510,7 @@ type Storage interface {
 	// Begin a transaction with given option
 	BeginWithOption(txnScope string, option TransactionOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
+	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
