@@ -46,13 +46,7 @@ type ConnTestSuite struct {
 	store kv.Storage
 }
 
-type TiFlashFallbackTestSuite struct {
-	dom   *domain.Domain
-	store kv.Storage
-}
-
 var _ = SerialSuites(&ConnTestSuite{})
-var _ = SerialSuites(&TiFlashFallbackTestSuite{})
 
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
@@ -744,13 +738,13 @@ func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Ta
 }
 
 func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
-  tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc := &clientConn{
 		alloc: arena.NewAllocator(1024),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 	}
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
 
 	tk.MustExec("drop table if exists t")
@@ -763,13 +757,13 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	tk.MustExec("insert into t values(2,0)")
 	tk.MustExec("insert into t values(3,0)")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("3"))
-  
+
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 	// test batch cop send req error
 	testFallbackWork(c, tk, cc, "select sum(a) from t")
-  // test COM_STMT_EXECUTE
-  ctx := context.Background()
-  tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 1")
+	// test COM_STMT_EXECUTE
+	ctx := context.Background()
+	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 1")
 	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
