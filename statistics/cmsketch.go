@@ -662,25 +662,37 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i] > sorted[j]
 	})
-	n = mathutil.MinUint32(uint32(numTop), n)
+	remain := mathutil.MinUint32(uint32(numTop), n)
 	// lastTopCnt is the smallest value in the new TopN structure
 	var lastTopCnt uint64
-	if n > 0 {
-		lastTopCnt = sorted[n-1]
+	if remain > 0 {
+		lastTopCnt = sorted[remain-1]
 	}
 
 	var finalTopN TopN
-	remain := n
-	finalTopN.TopN = make([]TopNMeta, 0, n)
-	popedTopNPair := make([]TopNMeta, 0, uint32(numTop)-n)
+	finalTopN.TopN = make([]TopNMeta, 0, remain)
+	popedTopNPair := make([]TopNMeta, 0, uint32(numTop)-remain)
+	boundaryTopN := make([]TopNMeta, 0, numTop)
 	for value, cnt := range counter {
 		data := hack.Slice(string(value))
-		if n > 0 && remain > 0 && cnt >= lastTopCnt {
+		if remain > 0 && cnt == lastTopCnt {
+			boundaryTopN = append(boundaryTopN, TopNMeta{Encoded: data, Count: cnt})
+			continue
+		}
+		if remain > 0 && cnt > lastTopCnt {
 			finalTopN.AppendTopN(data, cnt)
 			remain--
-		} else {
-			popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: data, Count: cnt})
+			continue
 		}
+		popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: data, Count: cnt})
+	}
+	for _, b := range boundaryTopN {
+		if remain > 0 {
+			finalTopN.AppendTopN(b.Encoded, b.Count)
+			remain--
+			continue
+		}
+		popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: b.Encoded, Count: b.Count})
 	}
 	finalTopN.Sort()
 	return &finalTopN, popedTopNPair
