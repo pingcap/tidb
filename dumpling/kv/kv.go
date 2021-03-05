@@ -467,17 +467,38 @@ type Driver interface {
 	Open(path string) (Storage, error)
 }
 
+// TransactionOption indicates the option when beginning a transaction
+type TransactionOption struct {
+	TxnScope string
+	StartTS  *uint64
+	PrevSec  *uint64
+}
+
+// SetStartTs set startTS
+func (to TransactionOption) SetStartTs(startTS uint64) TransactionOption {
+	to.StartTS = &startTS
+	return to
+}
+
+// SetPrevSec set prevSec
+func (to TransactionOption) SetPrevSec(prevSec uint64) TransactionOption {
+	to.PrevSec = &prevSec
+	return to
+}
+
+// SetTxnScope set txnScope
+func (to TransactionOption) SetTxnScope(txnScope string) TransactionOption {
+	to.TxnScope = txnScope
+	return to
+}
+
 // Storage defines the interface for storage.
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
 	// Begin a global transaction
 	Begin() (Transaction, error)
-	// Begin a transaction with the given txnScope (local or global)
-	BeginWithTxnScope(txnScope string) (Transaction, error)
-	// BeginWithStartTS begins transaction with given txnScope and startTS.
-	BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error)
-	// BeginWithStalenessTS begins transaction with given staleness
-	BeginWithExactStaleness(txnScope string, prevSec uint64) (Transaction, error)
+	// Begin a transaction with given option
+	BeginWithOption(option TransactionOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot
