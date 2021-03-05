@@ -1606,7 +1606,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			attachPlan2Task(proj, newMpp)
 		}
 		// TODO: how to set 2-phase cost?
-		newMpp.addCost(p.GetCost(inputRows/2, false))
+		newMpp.addCost(p.GetCost(inputRows, false))
 		return newMpp
 	case MppTiDB:
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
@@ -1811,9 +1811,10 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		ChildPf: f,
 	}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
+	cst := t.cst + t.count()*ctx.GetSessionVars().NetworkFactor
 	return &mppTask{
 		p:         receiver,
-		cst:       t.cst,
+		cst:       cst,
 		partTp:    prop.PartitionTp,
 		hashCols:  prop.PartitionCols,
 		receivers: []*PhysicalExchangeReceiver{receiver},
