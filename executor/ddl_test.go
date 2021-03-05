@@ -805,13 +805,14 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tblInfo.ShardRowIDBits = 5
 	tblInfo.MaxShardRowIDBits = 5
 
-	kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
 		c.Assert(m.UpdateTable(db.ID, tblInfo), IsNil)
 		return nil
 	})
+	c.Assert(err, IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
 
