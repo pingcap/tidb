@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -83,17 +82,13 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
+	stmt, err := se.ParseWithParams(context.Background(), "select * from mysql.user limit 1")
+	c.Assert(err, IsNil)
 	count := 200
-	var wg sync.WaitGroup
-	wg.Add(count)
 	for i := 0; i < count; i++ {
-		go func(se *session) {
-			_, _, err := se.ExecRestrictedSQL("select * from mysql.user limit 1")
-			c.Assert(err, IsNil)
-			wg.Done()
-		}(se)
+		_, _, err := se.ExecRestrictedStmt(context.Background(), stmt)
+		c.Assert(err, IsNil)
 	}
-	wg.Wait()
 }
 
 func (s *testMainSuite) TestParseErrorWarn(c *C) {
