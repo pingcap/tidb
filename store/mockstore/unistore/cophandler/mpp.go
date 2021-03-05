@@ -331,11 +331,11 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 	}
 	err = mppExec.open()
 	if err != nil {
-		return &coprocessor.Response{OtherError: err.Error()}
+		panic("open phase find error: " + err.Error())
 	}
 	_, err = mppExec.next()
 	if err != nil {
-		return &coprocessor.Response{OtherError: err.Error()}
+		panic("running phase find error: " + err.Error())
 	}
 	return &coprocessor.Response{}
 }

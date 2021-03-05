@@ -66,6 +66,20 @@ func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
 	return txn.Transaction.GetUnionStore()
 }
 
+func (txn *wrapTxn) CacheTableInfo(id int64, info *model.TableInfo) {
+	if txn.Transaction == nil {
+		return
+	}
+	txn.Transaction.CacheTableInfo(id, info)
+}
+
+func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
+	if txn.Transaction == nil {
+		return nil
+	}
+	return txn.Transaction.GetTableInfo(id)
+}
+
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported.")
