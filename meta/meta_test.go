@@ -47,11 +47,13 @@ func (s *testSuite) TestMeta(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Rollback()
 
 	t := meta.NewMeta(txn)
 
@@ -275,23 +277,30 @@ func (s *testSuite) TestSnapshot(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	txn, _ := store.Begin()
 	m := meta.NewMeta(txn)
-	m.GenGlobalID()
+	_, err = m.GenGlobalID()
+	c.Assert(err, IsNil)
 	n, _ := m.GetGlobalID()
 	c.Assert(n, Equals, int64(1))
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	ver1, _ := store.CurrentVersion(oracle.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
 	txn, _ = store.Begin()
 	m = meta.NewMeta(txn)
-	m.GenGlobalID()
+	_, err = m.GenGlobalID()
+	c.Assert(err, IsNil)
 	n, _ = m.GetGlobalID()
 	c.Assert(n, Equals, int64(2))
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	snapshot := store.GetSnapshot(ver1)
 	snapMeta := meta.NewSnapshotMeta(snapshot)
@@ -331,12 +340,13 @@ func (s *testSuite) TestDDL(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
-
-	defer txn.Rollback()
 
 	t := meta.NewMeta(txn)
 
@@ -437,7 +447,8 @@ func (s *testSuite) TestDDL(c *C) {
 		c.Assert(job.ID, Greater, lastID)
 		lastID = job.ID
 		arg1 := ""
-		job.DecodeArgs(&arg1)
+		err := job.DecodeArgs(&arg1)
+		c.Assert(err, IsNil)
 		if job.ID == historyJob1.ID {
 			c.Assert(*(job.Args[0].(*string)), Equals, historyJob1.Args[0])
 		} else {
@@ -469,7 +480,6 @@ func (s *testSuite) TestDDL(c *C) {
 	// Test for add index job.
 	txn1, err := store.Begin()
 	c.Assert(err, IsNil)
-	defer txn1.Rollback()
 
 	m := meta.NewMeta(txn1, meta.AddIndexJobListKey)
 	err = m.EnQueueDDLJob(job)
@@ -498,11 +508,17 @@ func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Rollback()
+	defer func() {
+		err := txn.Rollback()
+		c.Assert(err, IsNil)
+	}()
 
 	t := meta.NewMeta(txn)
 
@@ -519,11 +535,17 @@ func (s *testSuite) BenchmarkGenGlobalIDOneByOne(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Rollback()
+	defer func() {
+		err := txn.Rollback()
+		c.Assert(err, IsNil)
+	}()
 
 	t := meta.NewMeta(txn)
 

@@ -86,10 +86,12 @@ func (s *testStateChangeSuiteBase) SetUpSuite(c *C) {
 }
 
 func (s *testStateChangeSuiteBase) TearDownSuite(c *C) {
-	s.se.Execute(context.Background(), "drop database if exists test_db_state")
+	_, err := s.se.Execute(context.Background(), "drop database if exists test_db_state")
+	c.Assert(err, IsNil)
 	s.se.Close()
 	s.dom.Close()
-	s.store.Close()
+	err = s.store.Close()
+	c.Assert(err, IsNil)
 }
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
@@ -194,7 +196,8 @@ func (s *testStateChangeSuite) TestDropNotNullColumn(c *C) {
 		if checkErr != nil {
 			return
 		}
-		originalCallback.OnChanged(nil)
+		err := originalCallback.OnChanged(nil)
+		c.Assert(err, IsNil)
 		if job.SchemaState == model.StateWriteOnly {
 			switch sqlNum {
 			case 0:
@@ -265,7 +268,10 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table t")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table t")
+		c.Assert(err, IsNil)
+	}()
 	_, err = s.se.Execute(context.Background(), "insert into t values(1, 'a', 'N', '2017-07-01')")
 	c.Assert(err, IsNil)
 
@@ -470,7 +476,10 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 			c4 int primary key,
 			unique key idx2 (c2, c3))`)
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table t")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table t")
+		c.Assert(err, IsNil)
+	}()
 	_, err = s.se.Execute(context.Background(), "insert into t values('a', 'N', '2017-07-01', 8)")
 	c.Assert(err, IsNil)
 	// Make sure these sqls use the the plan of index scan.
@@ -502,14 +511,17 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	result, err := s.execQuery(tk, "select c4, c2 from t order by c4 asc")
 	c.Assert(err, IsNil)
 	expected := []string{"8 N", "10 A", "11 A"}
-	checkResult(result, testkit.Rows(expected...))
+	err = checkResult(result, testkit.Rows(expected...))
+	c.Assert(err, IsNil)
 
 	_, err = s.se.Execute(context.Background(), "update t set c2='N' where c4 = 10")
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "select c2 from t where c4 = 10")
 	c.Assert(err, IsNil)
-	expected = []string{"8 N", "10 N", "11 A"}
-	checkResult(result, testkit.Rows(expected...))
+	// fixed
+	expected = []string{"N"}
+	err = checkResult(result, testkit.Rows(expected...))
+	c.Assert(err, IsNil)
 }
 
 // https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
@@ -583,7 +595,10 @@ func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values(1, 11)")
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table tt")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table tt")
+		c.Assert(err, IsNil)
+	}()
 
 	sqls := make([]sqlWithErr, 12)
 	sqls[0] = sqlWithErr{"delete from tt where c = -11", nil}
@@ -650,7 +665,10 @@ func (s *serialTestStateChangeSuite) testModifyColumn(c *C, state model.SchemaSt
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values('b', 22)")
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table tt")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table tt")
+		c.Assert(err, IsNil)
+	}()
 
 	sqls := make([]sqlWithErr, 13)
 	sqls[0] = sqlWithErr{"delete from tt where c = 11", nil}
@@ -708,7 +726,10 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tt (c, c4) values('a', 8)")
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table tt")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table tt")
+		c.Assert(err, IsNil)
+	}()
 
 	sqls := make([]sqlWithErr, 5)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
@@ -742,7 +763,10 @@ func (s *serialTestStateChangeSuite) TestDeleteOnlyForDropExpressionIndex(c *C) 
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tt (a, b) values(8, 8)")
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table tt")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table tt")
+		c.Assert(err, IsNil)
+	}()
 
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"delete from tt where b=8", nil}
@@ -769,7 +793,10 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumn(c *C) {
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tt (c1, c4) values(8, 8)")
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table tt")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table tt")
+		c.Assert(err, IsNil)
+	}()
 
 	sqls := make([]sqlWithErr, 2)
 	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
@@ -789,7 +816,10 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumns(c *C) {
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into t_drop_columns (c1, c4) values(8, 8)")
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table t_drop_columns")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table t_drop_columns")
+		c.Assert(err, IsNil)
+	}()
 
 	sqls := make([]sqlWithErr, 2)
 	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
@@ -811,7 +841,10 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	 	c4 int primary key,
 	 	unique key idx2 (c2))`)
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table t")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table t")
+		c.Assert(err, IsNil)
+	}()
 	_, err = s.se.Execute(context.Background(), "insert into t values('a', 'N', '2017-07-01', 8)")
 	c.Assert(err, IsNil)
 	// Make sure these sqls use the the plan of index scan.
@@ -904,7 +937,10 @@ func (s *testStateChangeSuiteBase) CheckResult(tk *testkit.TestKit, sql string, 
 func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	_, err := s.se.Execute(context.Background(), `create table t(c1 int primary key, c2 int)`)
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table t")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table t")
+		c.Assert(err, IsNil)
+	}()
 
 	callback := &ddl.TestDDLCallback{}
 	prevState := model.StateNone
@@ -959,7 +995,10 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
     	partition p5 values less than (2015)
    	);`)
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table tr")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table tr")
+		c.Assert(err, IsNil)
+	}()
 	_, err = s.se.Execute(context.Background(), "create index idx1 on tr (purchased);")
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "show index from tr;")
@@ -1028,7 +1067,10 @@ func (s *testStateChangeSuite) TestParallelAddColumAndSetDefaultValue(c *C) {
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tx values('a', 'N')")
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table tx")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table tx")
+		c.Assert(err, IsNil)
+	}()
 
 	sql1 := "alter table tx add column cx int after c1"
 	sql2 := "alter table tx alter c2 set default 'N'"
@@ -1161,7 +1203,11 @@ func (s *testStateChangeSuite) TestParallelDropPrimaryKey(c *C) {
 func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	sql1 := "create table t_exists(c int);"
 	sql2 := "alter table t rename to t_exists;"
-	defer s.se.Execute(context.Background(), "drop table t_exists")
+	defer func() {
+		// fixed
+		_, err := s.se.Execute(context.Background(), "drop table if exists t_exists ")
+		c.Assert(err, IsNil)
+	}()
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")
@@ -1193,7 +1239,7 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 		}
 		var qLen int
 		for {
-			kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				jobs, err1 := admin.GetDDLJobs(txn)
 				if err1 != nil {
 					return err1
@@ -1201,6 +1247,7 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 				qLen = len(jobs)
 				return nil
 			})
+			c.Assert(err, IsNil)
 			if qLen == 2 {
 				break
 			}
@@ -1225,7 +1272,7 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 	go func() {
 		var qLen int
 		for {
-			kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				jobs, err3 := admin.GetDDLJobs(txn)
 				if err3 != nil {
 					return err3
@@ -1233,6 +1280,7 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 				qLen = len(jobs)
 				return nil
 			})
+			c.Assert(err, IsNil)
 			if qLen == 1 {
 				// Make sure sql2 is executed after the sql1.
 				close(ch)
@@ -1253,15 +1301,20 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 		_, err := s.se.Execute(context.Background(), s.preSQL)
 		c.Assert(err, IsNil)
 	}
-	defer s.se.Execute(context.Background(), "drop table t")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table t")
+		c.Assert(err, IsNil)
+	}()
 
-	_, err = s.se.Execute(context.Background(), "drop database if exists t_part")
+	// fixed
+	_, err = s.se.Execute(context.Background(), "drop table if exists t_part")
 	c.Assert(err, IsNil)
-	s.se.Execute(context.Background(), `create table t_part (a int key)
+	_, err = s.se.Execute(context.Background(), `create table t_part (a int key)
 	 partition by range(a) (
 	 partition p0 values less than (10),
 	 partition p1 values less than (20)
 	 );`)
+	c.Assert(err, IsNil)
 
 	se, se1, ch, originalCallback := s.prepareTestControlParallelExecSQL(c)
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalCallback)
@@ -1286,7 +1339,10 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 
 func (s *serialTestStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
 
 	ctx := context.Background()
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
@@ -1368,19 +1424,28 @@ func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 
 // TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
 func (s *testStateChangeSuite) TestCreateTableIfNotExists(c *C) {
-	defer s.se.Execute(context.Background(), "drop table test_not_exists")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table test_not_exists")
+		c.Assert(err, IsNil)
+	}()
 	s.testParallelExecSQL(c, "create table if not exists test_not_exists(a int);")
 }
 
 // TestCreateDBIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
 func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
-	defer s.se.Execute(context.Background(), "drop database test_not_exists")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop database test_not_exists")
+		c.Assert(err, IsNil)
+	}()
 	s.testParallelExecSQL(c, "create database if not exists test_not_exists;")
 }
 
 // TestDDLIfNotExists parallel exec some DDLs with `if not exists` clause. No error returns is expected.
 func (s *testStateChangeSuite) TestDDLIfNotExists(c *C) {
-	defer s.se.Execute(context.Background(), "drop table test_not_exists")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table test_not_exists")
+		c.Assert(err, IsNil)
+	}()
 	_, err := s.se.Execute(context.Background(), "create table if not exists test_not_exists(a int)")
 	c.Assert(err, IsNil)
 
@@ -1400,8 +1465,10 @@ func (s *testStateChangeSuite) TestDDLIfNotExists(c *C) {
 // TestDDLIfExists parallel exec some DDLs with `if exists` clause. No error returns is expected.
 func (s *testStateChangeSuite) TestDDLIfExists(c *C) {
 	defer func() {
-		s.se.Execute(context.Background(), "drop table test_exists")
-		s.se.Execute(context.Background(), "drop table test_exists_2")
+		_, err := s.se.Execute(context.Background(), "drop table test_exists")
+		c.Assert(err, IsNil)
+		_, err = s.se.Execute(context.Background(), "drop table test_exists_2")
+		c.Assert(err, IsNil)
 	}()
 	_, err := s.se.Execute(context.Background(), "create table if not exists test_exists (a int key, b int)")
 	c.Assert(err, IsNil)
@@ -1434,7 +1501,10 @@ func (s *testStateChangeSuite) TestDDLIfExists(c *C) {
 // In a cluster, TiDB "a" executes the DDL.
 // TiDB "b" fails to load schema, then TiDB "b" executes the DDL statement associated with the DDL statement executed by "a".
 func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
-	defer s.se.Execute(context.Background(), "drop table test_table")
+	defer func() {
+		_, err := s.se.Execute(context.Background(), "drop table test_table")
+		c.Assert(err, IsNil)
+	}()
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table test_table (c1 int, c2 int default 1, index (c1))")

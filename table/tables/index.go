@@ -20,7 +20,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -80,27 +79,26 @@ func (c *indexIter) Next() (val []types.Datum, h kv.Handle, err error) {
 
 // index is the data structure for index data in the KV store.
 type index struct {
-	idxInfo                *model.IndexInfo
-	tblInfo                *model.TableInfo
-	prefix                 kv.Key
-	containNonBinaryString bool
-	phyTblID               int64
+	idxInfo          *model.IndexInfo
+	tblInfo          *model.TableInfo
+	prefix           kv.Key
+	needRestoredData bool
+	phyTblID         int64
 }
 
-// ContainsNonBinaryString checks whether the index columns contains non binary string column, the input
-// colInfos should be column info correspond to the table contains the index.
-func ContainsNonBinaryString(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+// NeedRestoredData checks whether the index columns needs restored data.
+func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	for _, idxCol := range idxCols {
 		col := colInfos[idxCol.Offset]
-		if col.EvalType() == types.ETString && !mysql.HasBinaryFlag(col.Flag) {
+		if types.NeedRestoredData(&col.FieldType) {
 			return true
 		}
 	}
 	return false
 }
 
-func (c *index) checkContainNonBinaryString() bool {
-	return ContainsNonBinaryString(c.idxInfo.Columns, c.tblInfo.Columns)
+func (c *index) checkNeedRestoredData() bool {
+	return NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 }
 
 // NewIndex builds a new Index object.
@@ -120,7 +118,7 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		prefix:   prefix,
 		phyTblID: physicalID,
 	}
-	index.containNonBinaryString = index.checkContainNonBinaryString()
+	index.needRestoredData = index.checkNeedRestoredData()
 	return index
 }
 
@@ -139,50 +137,12 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
 }
 
-func (c *index) GenIndexValue(sc *stmtctx.StatementContext, indexedValues []types.Datum, distinct bool, untouched bool, h kv.Handle) (val []byte, err error) {
-	return tablecodec.GenIndexValueNew(sc, c.tblInfo, c.idxInfo, c.containNonBinaryString, distinct, untouched, indexedValues, h, c.phyTblID)
-}
-
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-// Value layout:
-//		+--New Encoding (with restore data, or common handle, or index is global)
-//		|
-//		|  Layout: TailLen | Options      | Padding      | [IntHandle] | [UntouchedFlag]
-//		|  Length:   1     | len(options) | len(padding) |    8        |     1
-//		|
-//		|  TailLen:       len(padding) + len(IntHandle) + len(UntouchedFlag)
-//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
-//		|                 See below for more information.
-//		|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
-//		|  IntHandle:     Only exists when table use int handles and index is unique.
-//		|  UntouchedFlag: Only exists when index is untouched.
-//		|
-//		|  Layout of Options:
-//		|
-//		|     Segment:             Common Handle                 |     Global Index      | New Collation
-// 		|     Layout:  CHandle Flag | CHandle Len | CHandle      | PidFlag | PartitionID | restoreData
-//		|     Length:     1         | 2           | len(CHandle) |    1    |    8        | len(restoreData)
-//		|
-//		|     Common Handle Segment: Exists when unique index used common handles.
-//		|     Global Index Segment:  Exists when index is global.
-//		|     New Collation Segment: Exists when new collation is used and index contains non-binary string.
-//		|
-//		+--Old Encoding (without restore data, integer handle, local)
-//
-//		   Layout: [Handle] | [UntouchedFlag]
-//		   Length:   8      |     1
-//
-//		   Handle:        Only exists in unique index.
-//		   UntouchedFlag: Only exists when index is untouched.
-//
-//		   If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
-//		   Length of value <= 9, use to distinguish from the new encoding.
-//
-func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	if c.Meta().Unique {
-		us.CacheTableInfo(c.phyTblID, c.tblInfo)
+		txn.CacheTableInfo(c.phyTblID, c.tblInfo)
 	}
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
@@ -213,12 +173,12 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 
 	// save the key buffer to reuse.
 	writeBufs.IndexKeyBuf = key
-	idxVal, err := tablecodec.GenIndexValueNew(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo,
-		c.containNonBinaryString, distinct, opt.Untouched, indexedValues, h, c.phyTblID)
+	idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, opt.Untouched, indexedValues, h, c.phyTblID, handleRestoreData)
 	if err != nil {
 		return nil, err
 	}
 
+	us := txn.GetUnionStore()
 	if !distinct || skipCheck || opt.Untouched {
 		err = us.GetMemBuffer().Set(key, idxVal)
 		return nil, err
@@ -381,4 +341,13 @@ func FindChangingCol(cols []*table.Column, idxInfo *model.IndexInfo) *table.Colu
 		}
 	}
 	return nil
+}
+
+// IsIndexWritable check whether the index is writable.
+func IsIndexWritable(idx table.Index) bool {
+	s := idx.Meta().State
+	if s != model.StateDeleteOnly && s != model.StateDeleteReorganization {
+		return true
+	}
+	return false
 }

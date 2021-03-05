@@ -1022,6 +1022,16 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, ds.blockOffset)
 		ts.schema = is.dataSourceSchema.Clone()
+		if ds.tableInfo.IsCommonHandle {
+			commonHandle := ds.handleCols.(*CommonHandleCols)
+			for _, col := range commonHandle.columns {
+				if ts.schema.ColumnIndex(col) == -1 {
+					ts.Schema().Append(col)
+					ts.Columns = append(ts.Columns, col.ToInfo())
+					cop.doubleReadNeedProj = true
+				}
+			}
+		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
 			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)

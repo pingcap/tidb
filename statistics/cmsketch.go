@@ -664,14 +664,17 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 	})
 	n = mathutil.MinUint32(uint32(numTop), n)
 	// lastTopCnt is the smallest value in the new TopN structure
-	lastTopCnt := sorted[numTop-1]
+	var lastTopCnt uint64
+	if n > 0 {
+		lastTopCnt = sorted[n-1]
+	}
 
 	var finalTopN TopN
 	finalTopN.TopN = make([]TopNMeta, 0, n)
 	popedTopNPair := make([]TopNMeta, 0, uint32(numTop)-n)
 	for value, cnt := range counter {
 		data := hack.Slice(string(value))
-		if cnt >= lastTopCnt {
+		if n > 0 && cnt >= lastTopCnt {
 			finalTopN.AppendTopN(data, cnt)
 		} else {
 			popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: data, Count: cnt})
