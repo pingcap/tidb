@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -325,7 +326,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 	colIDs = make([]int64, 0, numColsCap)
 	row = make([]types.Datum, 0, numColsCap)
-	if shouldWriteBinlog(sctx) {
+	if shouldWriteBinlog(sctx, t.meta) {
 		binlogColIDs = make([]int64, 0, numColsCap)
 		binlogOldRow = make([]types.Datum, 0, numColsCap)
 		binlogNewRow = make([]types.Datum, 0, numColsCap)
@@ -367,7 +368,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
-		if shouldWriteBinlog(sctx) && !t.canSkipUpdateBinlog(col, value) {
+		if shouldWriteBinlog(sctx, t.meta) && !t.canSkipUpdateBinlog(col, value) {
 			binlogColIDs = append(binlogColIDs, col.ID)
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
 			binlogNewRow = append(binlogNewRow, value)
@@ -402,7 +403,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	memBuffer.Release(sh)
-	if shouldWriteBinlog(sctx) {
+	if shouldWriteBinlog(sctx, t.meta) {
 		if !t.meta.PKIsHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
 			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h.IntValue()))
@@ -473,7 +474,7 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 		if err != nil {
 			return err
 		}
-		if err := t.buildIndexForRow(ctx, h, newVs, idx, txn, untouched, opts...); err != nil {
+		if err := t.buildIndexForRow(ctx, h, newVs, newData, idx, txn, untouched, opts...); err != nil {
 			return err
 		}
 	}
@@ -616,7 +617,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		hasRecordID = true
 	} else {
 		tblInfo := t.Meta()
-		txn.GetUnionStore().CacheTableInfo(t.physicalTableID, tblInfo)
+		txn.CacheTableInfo(t.physicalTableID, tblInfo)
 		if tblInfo.PKIsHandle {
 			recordID = kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64())
 			hasRecordID = true
@@ -778,7 +779,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	memBuffer.Release(sh)
 
-	if shouldWriteBinlog(sctx) {
+	if shouldWriteBinlog(sctx, t.meta) {
 		// For insert, TiDB and Binlog can use same row and schema.
 		binlogRow = row
 		binlogColIDs = colIDs
@@ -787,7 +788,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			return nil, err
 		}
 	}
-	sc.AddAffectedRows(1)
 	if sessVars.TxnCtx == nil {
 		return recordID, nil
 	}
@@ -846,7 +846,8 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 			idxMeta := v.Meta()
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
 		}
-		if dupHandle, err := v.Create(sctx, txn.GetUnionStore(), indexVals, recordID, opts...); err != nil {
+		rsData := TryGetHandleRestoredDataWrapper(t, r, nil)
+		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
 			}
@@ -989,7 +990,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 
-	if shouldWriteBinlog(ctx) {
+	if shouldWriteBinlog(ctx, t.meta) {
 		cols := t.Cols()
 		colIDs := make([]int64, 0, len(cols)+1)
 		for _, col := range cols {
@@ -1138,13 +1139,14 @@ func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, h kv.Handle, 
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
+func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals []types.Datum, newData []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
 	var opts []table.CreateIdxOptFunc
 	opts = append(opts, popts...)
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
-	if _, err := idx.Create(ctx, txn.GetUnionStore(), vals, h, opts...); err != nil {
+	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil)
+	if _, err := idx.Create(ctx, txn, vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)
@@ -1369,11 +1371,11 @@ func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
 }
 
-func shouldWriteBinlog(ctx sessionctx.Context) bool {
+func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
 	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}
-	return !ctx.GetSessionVars().InRestrictedSQL
+	return !ctx.GetSessionVars().InRestrictedSQL && !tblInfo.IsCommonHandle
 }
 
 func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
@@ -1680,6 +1682,50 @@ func (t *TableCommon) GetSequenceID() int64 {
 // GetSequenceCommon is used in test to get sequenceCommon.
 func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 	return t.sequence
+}
+
+// TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.
+func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap map[int64]types.Datum) []types.Datum {
+	if !collate.NewCollationEnabled() || !t.Meta().IsCommonHandle || t.Meta().CommonHandleVersion == 0 {
+		return nil
+	}
+
+	useIDMap := false
+	if len(rowMap) > 0 {
+		useIDMap = true
+	}
+
+	var datum types.Datum
+	rsData := make([]types.Datum, 0, 4)
+	pkCols := TryGetCommonPkColumns(t)
+	for _, col := range pkCols {
+		if !types.NeedRestoredData(&col.FieldType) {
+			continue
+		}
+		if collate.IsBinCollation(col.Collate) {
+			if useIDMap {
+				datum = rowMap[col.ID]
+			} else {
+				datum = row[col.Offset]
+			}
+			rsData = append(rsData, types.NewIntDatum(stringutil.GetTailSpaceCount(datum.GetString())))
+		} else {
+			if useIDMap {
+				rsData = append(rsData, rowMap[col.ID])
+			} else {
+				rsData = append(rsData, row[col.Offset])
+			}
+		}
+	}
+
+	for _, idx := range t.Meta().Indices {
+		if idx.Primary {
+			tablecodec.TruncateIndexValues(t.Meta(), idx, rsData)
+			break
+		}
+	}
+
+	return rsData
 }
 
 func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {

@@ -69,7 +69,7 @@ func (s *testAsyncCommitCommon) putKV(c *C, key, value []byte, enableAsyncCommit
 	return txn.StartTS(), txn.commitTS
 }
 
-func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn kv.Transaction, key, expectedValue []byte) {
+func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn *KVTxn, key, expectedValue []byte) {
 	v, err := txn.Get(context.Background(), key)
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, expectedValue)

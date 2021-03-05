@@ -919,6 +919,10 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
 func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType) bool {
+	if priv == mysql.UsagePriv {
+		return true
+	}
+
 	roleList := p.FindAllRole(activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
 
