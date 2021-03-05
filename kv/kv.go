@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -70,6 +71,8 @@ const (
 	TxnScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
 	IsStalenessReadOnly
+	// MatchStoreLabels indicates the labels the store should be matched
+	MatchStoreLabels
 )
 
 // Priority value for transaction priority.
@@ -418,6 +421,10 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
+	// IsStaleness indicates whether the request read staleness data
+	IsStaleness bool
+	// MatchStoreLabels indicates the labels the store should be matched
+	MatchStoreLabels []*metapb.StoreLabel
 }
 
 // ResultSubset represents a result subset from a single storage unit.
