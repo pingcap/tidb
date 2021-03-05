@@ -1429,7 +1429,7 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 		"Projection 1.80 root  test.t.a, test.t.b",
 		"└─IndexMerge 2.00 root  ",
 		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
 		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1437,16 +1437,16 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)").Check(testkit.Rows(
 		"Projection 1.60 root  test.t.a, test.t.b",
 		"└─IndexMerge 2.00 root  ",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
 		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
 		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(b)=1) or (b=1 and length(a)=1)").Check(testkit.Rows(
 		"TableReader 1.60 root  data:Selection",
-		"└─Selection 1.60 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b)), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a)), 1)))",
+		"└─Selection 1.60 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b, var_string(20))), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a, var_string(20))), 1)))",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
 }
