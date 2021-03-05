@@ -371,7 +371,9 @@ func (h *topNRows) concat(sep string, truncated bool) string {
 	if truncated && uint64(buffer.Len()) < h.limitSize {
 		// append the last separator, because the last separator may be truncated in tryToAdd.
 		buffer.WriteString(sep)
-		buffer.Truncate(int(h.limitSize))
+		if uint64(buffer.Len()) > h.limitSize {
+			buffer.Truncate(int(h.limitSize))
+		}
 	}
 	return buffer.String()
 }
