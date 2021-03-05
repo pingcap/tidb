@@ -474,18 +474,19 @@ type TransactionOption struct {
 	PrevSec  *uint64
 }
 
-// SetStartTs ...
+// SetStartTs set startTS
 func (to TransactionOption) SetStartTs(startTS uint64) TransactionOption {
 	to.StartTS = &startTS
 	return to
 }
 
-// WithPrevSecOption provides a option with prevSec
+// SetPrevSec set prevSec
 func (to TransactionOption) SetPrevSec(prevSec uint64) TransactionOption {
 	to.PrevSec = &prevSec
 	return to
 }
 
+// SetTxnScope set txnScope
 func (to TransactionOption) SetTxnScope(txnScope string) TransactionOption {
 	to.TxnScope = txnScope
 	return to
