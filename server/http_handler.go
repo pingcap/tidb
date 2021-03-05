@@ -727,6 +727,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeError(w, err)
 				return
 			}
+			if s != nil {
+				defer s.Close()
+			}
 			switch asyncCommit {
 			case "0":
 				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOff)
@@ -746,6 +749,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if err != nil {
 				writeError(w, err)
 				return
+			}
+			if s != nil {
+				defer s.Close()
 			}
 			switch onePC {
 			case "0":
