@@ -2277,7 +2277,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		}
 		// TODO: permute various partition columns from group-by columns
 		// 1-phase agg
-		// If there are no avialable parititon cols, but still have group by items, that means group by items are all expressions or constants.
+		// If there are no available parititon cols, but still have group by items, that means group by items are all expressions or constants.
 		// To avoid mess, we don't do any one-phase aggregation in this case.
 		if len(partitionCols) != 0 {
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
