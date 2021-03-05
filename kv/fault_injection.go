@@ -63,9 +63,18 @@ func (s *InjectedStore) Begin() (Transaction, error) {
 	}, err
 }
 
-// BeginWithStartTS creates an injected Transaction with startTS.
-func (s *InjectedStore) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
-	txn, err := s.Storage.BeginWithStartTS(txnScope, startTS)
+// BeginWithTxnScope creates an injected Transaction with txnScope.
+func (s *InjectedStore) BeginWithTxnScope(txnScope string) (Transaction, error) {
+	txn, err := s.Storage.BeginWithTxnScope(txnScope)
+	return &InjectedTransaction{
+		Transaction: txn,
+		cfg:         s.cfg,
+	}, err
+}
+
+// BeginWithOption creates an injected Transaction with given option.
+func (s *InjectedStore) BeginWithOption(txnScope string, option TransactionOption) (Transaction, error) {
+	txn, err := s.Storage.BeginWithOption(txnScope, option)
 	return &InjectedTransaction{
 		Transaction: txn,
 		cfg:         s.cfg,

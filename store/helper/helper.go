@@ -49,8 +49,7 @@ import (
 type Storage interface {
 	Begin() (kv.Transaction, error)
 	BeginWithTxnScope(txnScope string) (kv.Transaction, error)
-	BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error)
-	BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error)
+	BeginWithOption(txnScope string, option kv.TransactionOption) (kv.Transaction, error)
 	GetSnapshot(ver kv.Version) kv.Snapshot
 	GetClient() kv.Client
 	GetMPPClient() kv.MPPClient

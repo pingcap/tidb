@@ -467,6 +467,39 @@ type Driver interface {
 	Open(path string) (Storage, error)
 }
 
+// TransactionOptionType indicates the method when beginning a transaction
+type TransactionOptionType uint8
+
+const (
+	// WithStartTS indicates the startTS option
+	WithStartTS TransactionOptionType = iota
+	// WithPrevSec indicates the prevSec option
+	WithPrevSec
+)
+
+// TransactionOption indicates the option when beginning a transaction
+type TransactionOption struct {
+	TransactionOptionType
+	StartTS uint64
+	PrevSec uint64
+}
+
+// WithStartTSOption provides a option startTS
+func WithStartTSOption(startTS uint64) TransactionOption {
+	return TransactionOption{
+		TransactionOptionType: WithStartTS,
+		StartTS:               startTS,
+	}
+}
+
+// WithPrevSecOption provides a option with prevSec
+func WithPrevSecOption(prevSec uint64) TransactionOption {
+	return TransactionOption{
+		TransactionOptionType: WithPrevSec,
+		PrevSec:               prevSec,
+	}
+}
+
 // Storage defines the interface for storage.
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
@@ -474,12 +507,9 @@ type Storage interface {
 	Begin() (Transaction, error)
 	// Begin a transaction with the given txnScope (local or global)
 	BeginWithTxnScope(txnScope string) (Transaction, error)
-	// BeginWithStartTS begins transaction with given txnScope and startTS.
-	BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error)
-	// BeginWithStalenessTS begins transaction with given staleness
-	BeginWithExactStaleness(txnScope string, prevSec uint64) (Transaction, error)
+	// Begin a transaction with given option
+	BeginWithOption(txnScope string, option TransactionOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
-	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client

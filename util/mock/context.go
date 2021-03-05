@@ -211,7 +211,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
+		txn, err := c.Store.BeginWithOption(oracle.GlobalTxnScope, kv.WithStartTSOption(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}
