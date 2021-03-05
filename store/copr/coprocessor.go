@@ -703,7 +703,14 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *tikv.Backoffer, task *copTas
 	if worker.Stats == nil {
 		worker.Stats = make(map[tikvrpc.CmdType]*tikv.RPCRuntimeStats)
 	}
-	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, tikv.ReadTimeoutMedium, task.storeType, task.storeAddr)
+	if worker.req.IsStaleness {
+		req.EnableStaleRead()
+	}
+	var ops []tikv.StoreSelectorOption
+	if len(worker.req.MatchStoreLabels) > 0 {
+		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
+	}
+	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, tikv.ReadTimeoutMedium, task.storeType, task.storeAddr, ops...)
 	if err != nil {
 		if task.storeType == kv.TiDB {
 			err = worker.handleTiDBSendReqErr(err, task, ch)
