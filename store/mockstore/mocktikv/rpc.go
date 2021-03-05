@@ -867,7 +867,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	case tikvrpc.CmdPrewrite:
 		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
-			switch val.(string) {
+			v, ok := val.(string)
+			if !ok {
+				return
+			}
+			switch v {
 			case "notLeader":
 				failpoint.Return(&tikvrpc.Response{
 					Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
