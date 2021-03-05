@@ -44,18 +44,6 @@ func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 	return nil
 }
 
-func (t *mockTxn) SetOption(opt Option, val interface{}) {
-	t.opts[opt] = val
-}
-
-func (t *mockTxn) DelOption(opt Option) {
-	delete(t.opts, opt)
-}
-
-func (t *mockTxn) GetOption(opt Option) interface{} {
-	return t.opts[opt]
-}
-
 func (t *mockTxn) IsReadOnly() bool {
 	return true
 }

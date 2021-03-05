@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -47,6 +48,9 @@ type TxnState struct {
 	// Pending: kv.Transaction == nil && txnFuture != nil
 	// Valid:	kv.Transaction != nil && txnFuture == nil
 	kv.Transaction
+	// now we only support tikv.
+	option.Setter
+	option.Getter
 	txnFuture *txnFuture
 
 	initCnt       int
@@ -70,11 +74,15 @@ func (txn *TxnState) init() {
 
 func (txn *TxnState) initStmtBuf() {
 	if txn.Transaction == nil {
+		txn.Setter = nil
+		txn.Getter = nil
 		return
 	}
 	buf := txn.Transaction.GetMemBuffer()
 	txn.initCnt = buf.Len()
 	txn.stagingHandle = buf.Staging()
+	txn.Setter = txn.Transaction.(option.Setter)
+	txn.Getter = txn.Transaction.(option.Getter)
 }
 
 // countHint is estimated count of mutations.

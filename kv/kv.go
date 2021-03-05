@@ -264,13 +264,6 @@ type Transaction interface {
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
-	// SetOption sets an option with a value, when val is nil, uses the default
-	// value of this option.
-	SetOption(opt Option, val interface{})
-	// GetOption returns the option
-	GetOption(opt Option) interface{}
-	// DelOption deletes an option.
-	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
 	// StartTS returns the transaction start timestamp.

@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	kvoption "github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
@@ -1949,7 +1950,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	txn.SetVars(s.sessionVars.KVVars)
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		txn.(kvoption.Setter).SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
@@ -2783,8 +2784,8 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 		return s.NewTxn(ctx)
 	}
 	txn.SetVars(s.sessionVars.KVVars)
-	txn.SetOption(kv.IsStalenessReadOnly, true)
-	txn.SetOption(kv.TxnScope, txnScope)
+	txn.(kvoption.Setter).SetOption(kv.IsStalenessReadOnly, true)
+	txn.(kvoption.Setter).SetOption(kv.TxnScope, txnScope)
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{

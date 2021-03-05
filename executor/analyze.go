@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -947,9 +948,9 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 			return nil, errors.Trace(err)
 		}
 	}
-	txn.SetOption(kv.Priority, kv.PriorityLow)
-	txn.SetOption(kv.IsolationLevel, kv.RC)
-	txn.SetOption(kv.NotFillCache, true)
+	txn.(option.Setter).SetOption(kv.Priority, kv.PriorityLow)
+	txn.(option.Setter).SetOption(kv.IsolationLevel, kv.RC)
+	txn.(option.Setter).SetOption(kv.NotFillCache, true)
 	return rollbackFn, nil
 }
 

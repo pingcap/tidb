@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -1159,7 +1160,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, w.priority)
+		txn.(option.Setter).SetOption(kv.Priority, w.priority)
 
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -1371,7 +1372,7 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, w.priority)
+		txn.(option.Setter).SetOption(kv.Priority, w.priority)
 
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
@@ -52,6 +53,8 @@ type Context struct {
 
 type wrapTxn struct {
 	kv.Transaction
+	option.Getter
+	option.Setter
 }
 
 func (txn *wrapTxn) Valid() bool {
@@ -64,6 +67,18 @@ func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
 		return nil
 	}
 	return txn.Transaction.GetUnionStore()
+}
+
+func (txn *wrapTxn) setTransaction(t kv.Transaction) {
+	txn.Transaction = t
+	if txn.Transaction == nil {
+		txn.Setter = nil
+		txn.Getter = nil
+		return
+	}
+	txn.Setter = txn.Transaction.(option.Setter)
+	txn.Getter = txn.Transaction.(option.Getter)
+
 }
 
 func (txn *wrapTxn) CacheTableInfo(id int64, info *model.TableInfo) {
@@ -191,7 +206,7 @@ func (c *Context) NewTxn(context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	c.txn.Transaction = txn
+	c.txn.setTransaction(txn)
 	return nil
 }
 
@@ -215,7 +230,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		c.txn.Transaction = txn
+		c.txn.setTransaction(txn)
 	}
 	return nil
 }

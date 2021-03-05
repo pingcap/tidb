@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1336,7 +1337,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, w.priority)
+		txn.(option.Setter).SetOption(kv.Priority, w.priority)
 
 		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {

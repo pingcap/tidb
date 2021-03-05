@@ -294,7 +294,7 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 		},
 		Client: client,
 	}
-	txn.SetOption(kv.BinlogInfo, info)
+	txn.GetUnionStore().SetOption(kv.BinlogInfo, info)
 }
 
 const specialPrefix = `/*T! `

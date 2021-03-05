@@ -40,12 +40,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Check(err, IsNil)
 	err = transaction.LockKeys(context.Background(), new(LockCtx), Key("lock"))
 	c.Check(err, IsNil)
-	transaction.SetOption(Option(23), struct{}{})
-	if mock, ok := transaction.(*mockTxn); ok {
-		mock.GetOption(Option(23))
-	}
 	transaction.StartTS()
-	transaction.DelOption(Option(23))
 	if transaction.IsReadOnly() {
 		_, err = transaction.Get(context.TODO(), Key("lock"))
 		c.Check(err, IsNil)

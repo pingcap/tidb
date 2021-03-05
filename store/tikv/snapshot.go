@@ -51,12 +51,12 @@ const (
 
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
-	store           *KVStore
-	version         kv.Version
-	isolationLevel  kv.IsoLevel
-	priority        pb.CommandPri
-	notFillCache    bool
-	syncLog         bool
+	store          *KVStore
+	version        kv.Version
+	isolationLevel kv.IsoLevel
+	priority       pb.CommandPri
+	notFillCache   bool
+	//syncLog         bool
 	keyOnly         bool
 	vars            *kv.Variables
 	replicaReadSeed uint32
@@ -533,7 +533,7 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	case kv.NotFillCache:
 		s.notFillCache = val.(bool)
 	case kv.SyncLog:
-		s.syncLog = val.(bool)
+		//s.syncLog = val.(bool)
 	case kv.KeyOnly:
 		s.keyOnly = val.(bool)
 	case kv.SnapshotTS:

@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -626,7 +627,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 		newForUpdateTS = version.Ver
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
-	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
+	txn.(option.Setter).SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
 	return nil
 }
 

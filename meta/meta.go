@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	kvoption "github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -93,8 +94,8 @@ type Meta struct {
 // NewMeta creates a Meta in transaction txn.
 // If the current Meta needs to handle a job, jobListKey is the type of the job's list.
 func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
-	txn.SetOption(kv.Priority, kv.PriorityHigh)
-	txn.SetOption(kv.SyncLog, true)
+	txn.(kvoption.Setter).SetOption(kv.Priority, kv.PriorityHigh)
+	txn.(kvoption.Setter).SetOption(kv.SyncLog, true)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	listKey := DefaultJobListKey
 	if len(jobListKeys) != 0 {
