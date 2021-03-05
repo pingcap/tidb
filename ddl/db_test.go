@@ -1950,8 +1950,10 @@ func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo,
 }
 
 func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
+		conf.AlterPrimaryKey = true
 	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
@@ -2019,9 +2021,6 @@ func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
 
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = false
-	})
 }
 
 func (s *testDBSuite) showColumns(tk *testkit.TestKit, c *C, tableName string) [][]interface{} {
@@ -2673,6 +2672,10 @@ func (s *testSerialDBSuite) TestRepairTable(c *C) {
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
 	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, other_table, origin")

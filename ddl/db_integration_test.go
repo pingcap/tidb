@@ -2640,6 +2640,7 @@ func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
 			restoreConfig := config.RestoreFunc()
 			config.UpdateGlobal(func(conf *config.Config) {
 				conf.EnableGlobalIndex = globalIndex
+				conf.AlterPrimaryKey = false
 			})
 			for _, clusteredIndex := range []bool{false, true} {
 				tk.Se.GetSessionVars().EnableClusteredIndex = clusteredIndex

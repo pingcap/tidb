@@ -382,3 +382,20 @@ func BuildFieldTypesForIndexColumn(idxInfo *model.IndexInfo, tblInfo *model.Tabl
 	}
 	return tps
 }
+
+// TryAppendCommonHandleRowcodecColInfos tries to append common handle columns to `colInfo`.
+func TryAppendCommonHandleRowcodecColInfos(colInfo []rowcodec.ColInfo, tblInfo *model.TableInfo) []rowcodec.ColInfo {
+	if !tblInfo.IsCommonHandle {
+		return colInfo
+	}
+	if pkIdx := FindPrimaryIndex(tblInfo); pkIdx != nil {
+		for _, idxCol := range pkIdx.Columns {
+			col := tblInfo.Columns[idxCol.Offset]
+			colInfo = append(colInfo, rowcodec.ColInfo{
+				ID: col.ID,
+				Ft: rowcodec.FieldTypeFromModelColumn(col),
+			})
+		}
+	}
+	return colInfo
+}

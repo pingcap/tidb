@@ -381,3 +381,28 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 		assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] clustered */);", clustered)
 	}
 }
+
+// https://github.com/pingcap/tidb/issues/23106
+func (s *testClusteredSerialSuite) TestClusteredIndexDecodeRestoredDataV5(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	defer collate.SetNewCollationEnabledForTest(false)
+	collate.SetNewCollationEnabledForTest(true)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id1 int, id2 varchar(10), a1 int, primary key(id1, id2) clustered) collate utf8mb4_general_ci;")
+	tk.MustExec("insert into t values (1, 'asd', 1), (1, 'dsa', 1);")
+	tk.MustGetErrCode("alter table t add unique index t_idx(id1, a1);", errno.ErrDupEntry)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id1 int, id2 varchar(10), a1 int, primary key(id1, id2) clustered, unique key t_idx(id1, a1)) collate utf8mb4_general_ci;")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, 'asd', 1);")
+	tk.MustQuery("select * from t use index (t_idx);").Check(testkit.Rows("1 asd 1"))
+	tk.MustExec("commit;")
+	tk.MustExec("admin check table t;")
+}

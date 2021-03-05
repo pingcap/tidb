@@ -121,6 +121,7 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		hdStatus = tablecodec.HandleIsUnsigned
 	}
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(m.index, m.table)
+	colInfos = tables.TryAppendCommonHandleRowcodecColInfos(colInfos, m.table)
 	values, err := tablecodec.DecodeIndexKV(key, value, len(m.index.Columns), hdStatus, colInfos)
 	if err != nil {
 		return nil, errors.Trace(err)

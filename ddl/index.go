@@ -1027,6 +1027,7 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 	tblInfo := w.table.Meta()
 	name := w.index.Meta().Name.String()
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
+	colInfos = tables.TryAppendCommonHandleRowcodecColInfos(colInfos, tblInfo)
 	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleDefault, colInfos)
 	if err != nil {
 		return err
@@ -1041,31 +1042,20 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 			return nil
 		}
 	} else {
-		// We expect the two handle have the same number of columns, because they come from a same table.
-		// But we still need to check it explicitly, otherwise we will encounter undesired index out of range panic,
-		// or undefined behavior if someone change the format of the value returned by tablecodec.DecodeIndexKV.
-		colsOfHandle := len(values) - len(colInfos)
-		if w.index.Meta().Global {
-			colsOfHandle--
-		}
-		if colsOfHandle != handle.NumCols() {
-			// We can claim these two handle are different, because they have different length.
-			// But we'd better report an error at here to detect compatibility problem introduced in other package during tests.
-			return errors.New("number of columns in two handle is different")
-		}
-
+		handleColStartIdx := len(idxInfo.Columns)
+		match := true
 		for i := 0; i < handle.NumCols(); i++ {
-			if bytes.Equal(values[i+len(colInfos)], handle.EncodedCol(i)) {
-				colsOfHandle--
+			if !bytes.Equal(values[i+handleColStartIdx], handle.EncodedCol(i)) {
+				match = false
 			}
 		}
-		if colsOfHandle == 0 {
+		if match {
 			return nil
 		}
 	}
 
-	valueStr := make([]string, 0, len(colInfos))
-	for i, val := range values[:len(colInfos)] {
+	valueStr := make([]string, 0, len(idxInfo.Columns))
+	for i, val := range values[:len(idxInfo.Columns)] {
 		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
 		if err != nil {
 			return kv.ErrKeyExists.FastGenByArgs(key.String(), name)
