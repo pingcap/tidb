@@ -4300,6 +4300,9 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 		return err
 	}
 	tblInfo := tbl.Meta()
+	if tblInfo.GetPartitionInfo() != nil {
+		return errors.New("Extended statistics on partitioned tables are not supported now")
+	}
 	colIDs := make([]int64, 0, 2)
 	// Check whether columns exist.
 	for _, colName := range stats.Columns {

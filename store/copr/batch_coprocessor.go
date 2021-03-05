@@ -391,7 +391,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return errors.Trace(err)
+			return tikv.ErrTiFlashServerTimeout
 		}
 	}
 }
