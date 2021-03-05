@@ -19,7 +19,7 @@ type testBRIESuite struct{}
 
 var _ = Suite(&testBRIESuite{})
 
-func (s *testPartitionSuite) TestGlueGetVersion(c *C) {
+func (s *testBRIESuite) TestGlueGetVersion(c *C) {
 	g := tidbGlueSession{}
 	version := g.GetVersion()
 	c.Assert(version, Matches, `(.|\n)*Release Version(.|\n)*`)
