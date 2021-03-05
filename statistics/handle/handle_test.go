@@ -1130,7 +1130,7 @@ func (s *testStatsSuite) TestMergeIdxHist(c *C) {
 
 	tk.MustExec("analyze table t with 2 topn, 2 buckets")
 	rows := tk.MustQuery("show stats_buckets where partition_name like 'global'")
-	c.Assert(len(rows.Rows()), Equals, 2)
+	c.Assert(len(rows.Rows()), Equals, 4)
 }
 
 func (s *testStatsSuite) TestAnalyzeWithDynamicPartitionPruneMode(c *C) {
