@@ -13,7 +13,7 @@
       {
         "SQL": "explain format = 'brief' select * from t where cast(t.a as float) + 3 = 5.1",
         "Plan": [
-          "Selection 10000.00 root  eq(plus(cast(test.t.a), 3), 5.1)",
+          "Selection 10000.00 root  eq(plus(cast(test.t.a, float BINARY), 3), 5.1)",
           "└─TableReader 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -25,7 +25,7 @@
           "└─TopN 2.00 root  Column#3, offset:0, count:2",
           "  └─Projection 2.00 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
           "    └─TableReader 2.00 root  data:TopN",
-          "      └─TopN 2.00 cop[tiflash]  cast(test.t.b), offset:0, count:2",
+          "      └─TopN 2.00 cop[tiflash]  cast(test.t.b, bigint(22) UNSIGNED BINARY), offset:0, count:2",
           "        └─Selection 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
           "          └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -1739,7 +1739,7 @@
           "    └─HashJoin 7992.00 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
           "      ├─ExchangeReceiver(Build) 6393.60 cop[tiflash]  ",
           "      │ └─ExchangeSender 6393.60 cop[tiflash]  ExchangeType: Broadcast",
-          "      │   └─Selection 6393.60 cop[tiflash]  lt(plus(test.t.value, cast(Column#7)), 10)",
+          "      │   └─Selection 6393.60 cop[tiflash]  lt(plus(test.t.value, cast(Column#7, decimal(20,0) BINARY)), 10)",
           "      │     └─Projection 7992.00 cop[tiflash]  Column#7, test.t.id, test.t.value",
           "      │       └─HashAgg 7992.00 cop[tiflash]  group by:test.t.id, test.t.value, funcs:sum(Column#10)->Column#7, funcs:firstrow(test.t.id)->test.t.id, funcs:firstrow(test.t.value)->test.t.value",
           "      │         └─ExchangeReceiver 7992.00 cop[tiflash]  ",
