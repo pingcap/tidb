@@ -385,7 +385,7 @@ func BuildFieldTypesForIndexColumn(idxInfo *model.IndexInfo, tblInfo *model.Tabl
 
 // TryAppendCommonHandleRowcodecColInfos tries to append common handle columns to `colInfo`.
 func TryAppendCommonHandleRowcodecColInfos(colInfo []rowcodec.ColInfo, tblInfo *model.TableInfo) []rowcodec.ColInfo {
-	if !tblInfo.IsCommonHandle {
+	if !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return colInfo
 	}
 	if pkIdx := FindPrimaryIndex(tblInfo); pkIdx != nil {

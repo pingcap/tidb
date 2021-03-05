@@ -405,4 +405,5 @@ func (s *testClusteredSerialSuite) TestClusteredIndexDecodeRestoredDataV5(c *C) 
 	tk.MustQuery("select * from t use index (t_idx);").Check(testkit.Rows("1 asd 1"))
 	tk.MustExec("commit;")
 	tk.MustExec("admin check table t;")
+	tk.MustExec("drop table t;")
 }
