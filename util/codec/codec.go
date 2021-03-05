@@ -748,7 +748,7 @@ func DecodeRange(b []byte, size int, idxColumnTypes []byte, loc *time.Location) 
 			if i >= len(idxColumnTypes) {
 				return values, b, errors.New("invalid length of index's columns")
 			}
-			if idxColumnTypes[i] == mysql.TypeDatetime || idxColumnTypes[i] == mysql.TypeTimestamp || idxColumnTypes[i] == mysql.TypeDate {
+			if types.IsTypeTime(idxColumnTypes[i]) {
 				b, d, err = DecodeAsDateTime(b, idxColumnTypes[i], loc)
 			} else {
 				b, d, err = DecodeOne(b)
