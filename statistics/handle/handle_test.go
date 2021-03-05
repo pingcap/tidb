@@ -1120,7 +1120,7 @@ func (s *testStatsSuite) TestMergeIdxHist(c *C) {
 	defer tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 	tk.MustExec("use test")
 	tk.MustExec(`
-		create table t (a int)
+		create table t (a int, key(a))
 		partition by range (a) (
 			partition p0 values less than (10),
 			partition p1 values less than (20))`)
@@ -1130,7 +1130,33 @@ func (s *testStatsSuite) TestMergeIdxHist(c *C) {
 
 	tk.MustExec("analyze table t with 2 topn, 2 buckets")
 	rows := tk.MustQuery("show stats_buckets where partition_name like 'global'")
-	c.Assert(len(rows.Rows()), Equals, 2)
+	c.Assert(len(rows.Rows()), Equals, 4)
+}
+
+func (s *testStatsSuite) TestAnalyzeWithDynamicPartitionPruneMode(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec(`create table t (a int, key(a)) partition by range(a) 
+					(partition p0 values less than (10),
+					partition p1 values less than (22))`)
+	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
+	tk.MustExec(`analyze table t with 1 topn, 2 buckets`)
+	rows := tk.MustQuery("show stats_buckets where partition_name = 'global' and is_index=1").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[1][6], Equals, "4")
+	tk.MustExec("insert into t values (1), (2), (2)")
+	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
+	rows = tk.MustQuery("show stats_buckets where partition_name = 'global' and is_index=1").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[1][6], Equals, "5")
+	tk.MustExec("insert into t values (3)")
+	tk.MustExec("analyze table t partition p0 index a with 1 topn, 2 buckets")
+	rows = tk.MustQuery("show stats_buckets where partition_name = 'global' and is_index=1").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[1][6], Equals, "6")
 }
 
 var _ = SerialSuites(&statsSerialSuite{})
