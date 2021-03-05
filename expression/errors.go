@@ -42,7 +42,6 @@ var (
 	errUnknownCharacterSet           = dbterror.ClassExpression.NewStd(mysql.ErrUnknownCharacterSet)
 	errDefaultValue                  = dbterror.ClassExpression.NewStdErr(mysql.ErrInvalidDefault, pmysql.Message("invalid default value", nil))
 	errDeprecatedSyntaxNoReplacement = dbterror.ClassExpression.NewStd(mysql.ErrWarnDeprecatedSyntaxNoReplacement)
-	errBadField                      = dbterror.ClassExpression.NewStd(mysql.ErrBadField)
 	errWarnAllowedPacketOverflowed   = dbterror.ClassExpression.NewStd(mysql.ErrWarnAllowedPacketOverflowed)
 	errWarnOptionIgnored             = dbterror.ClassExpression.NewStd(mysql.WarnOptionIgnored)
 	errTruncatedWrongValue           = dbterror.ClassExpression.NewStd(mysql.ErrTruncatedWrongValue)

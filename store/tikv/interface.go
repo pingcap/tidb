@@ -14,18 +14,16 @@
 package tikv
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/tikv/pd/client"
 )
 
 // Storage represent the kv.Storage runs on TiKV.
 type Storage interface {
-	kv.Storage
-
 	// GetRegionCache gets the RegionCache.
 	GetRegionCache() *RegionCache
 
@@ -41,9 +39,6 @@ type Storage interface {
 	// UpdateSPCache updates the cache of safe point.
 	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
 
-	// GetGCHandler gets the GCHandler.
-	GetGCHandler() GCHandler
-
 	// SetOracle sets the Oracle.
 	SetOracle(oracle oracle.Oracle)
 
@@ -55,17 +50,20 @@ type Storage interface {
 
 	// Closed returns the closed channel.
 	Closed() <-chan struct{}
+
+	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
+	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+	GetSnapshot(ver kv.Version) kv.Snapshot
+	// Close store
+	Close() error
+	// UUID return a unique ID which represents a Storage.
+	UUID() string
+	// CurrentVersion returns current max committed version with the given txnScope (local or global).
+	CurrentVersion(txnScope string) (kv.Version, error)
+	// GetOracle gets a timestamp oracle client.
+	GetOracle() oracle.Oracle
+	// SupportDeleteRange gets the storage support delete range or not.
+	SupportDeleteRange() (supported bool)
+	// ShowStatus returns the specified status of the storage
+	ShowStatus(ctx context.Context, key string) (interface{}, error)
 }
-
-// GCHandler runs garbage collection job.
-type GCHandler interface {
-	// Start starts the GCHandler.
-	Start()
-
-	// Close closes the GCHandler.
-	Close()
-}
-
-// NewGCHandlerFunc creates a new GCHandler.
-// To enable real GC, we should assign the function to `gcworker.NewGCWorker`.
-var NewGCHandlerFunc func(storage Storage, pdClient pd.Client) (GCHandler, error)

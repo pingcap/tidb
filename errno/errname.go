@@ -1032,10 +1032,12 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 
-	ErrJSONObjectKeyTooLong: mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+	ErrJSONObjectKeyTooLong:        mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+	ErrBuildGlobalLevelStatsFailed: mysql.Message("Build global-level stats failed due to missing partition-level stats", nil),
 
-	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
-	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
+	ErrInvalidPlacementSpec:   mysql.Message("Invalid placement policy '%s': %s", nil),
+	ErrPlacementPolicyCheck:   mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
+	ErrMultiStatementDisabled: mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),

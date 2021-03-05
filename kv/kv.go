@@ -15,9 +15,11 @@ package kv
 
 import (
 	"context"
+	"crypto/tls"
 	"sync"
 	"time"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -62,8 +64,8 @@ const (
 	EnableAsyncCommit
 	// Enable1PC indicates whether one-phase commit is enabled
 	Enable1PC
-	// GuaranteeExternalConsistency indicates whether to guarantee external consistency at the cost of an extra tso request before prewrite
-	GuaranteeExternalConsistency
+	// GuaranteeLinearizability indicates whether to guarantee linearizability at the cost of an extra tso request before prewrite
+	GuaranteeLinearizability
 	// TxnScope indicates which @@txn_scope this transaction will work with.
 	TxnScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
@@ -265,6 +267,8 @@ type Transaction interface {
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
+	// GetOption returns the option
+	GetOption(opt Option) interface{}
 	// DelOption deletes an option.
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
@@ -289,6 +293,12 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
+	// CacheIndexName caches the index name.
+	// PresumeKeyNotExists will use this to help decode error message.
+	CacheTableInfo(id int64, info *model.TableInfo)
+	// GetIndexName returns the cached index name.
+	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
+	GetTableInfo(id int64) *model.TableInfo
 }
 
 // LockCtx contains information for LockKeys method.
@@ -473,7 +483,7 @@ type Storage interface {
 	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
-	// GetClient gets a mpp client instance.
+	// GetMPPClient gets a mpp client instance.
 	GetMPPClient() MPPClient
 	// Close store
 	Close() error
@@ -491,8 +501,15 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
-	// GetMemCache return memory mamager of the storage
+	// GetMemCache return memory manager of the storage.
 	GetMemCache() MemManager
+}
+
+// EtcdBackend is used for judging a storage is a real TiKV.
+type EtcdBackend interface {
+	EtcdAddrs() ([]string, error)
+	TLSConfig() *tls.Config
+	StartGCWorker() error
 }
 
 // FnKeyCmp is the function for iterator the keys
