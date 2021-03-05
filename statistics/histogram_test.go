@@ -14,7 +14,8 @@
 package statistics
 
 import (
-	"bytes"
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -157,9 +158,17 @@ type topN4Test struct {
 func genHist4Test(buckets []*bucket4Test, totColSize int64) *Histogram {
 	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), len(buckets), totColSize)
 	for _, bucket := range buckets {
-		lower := types.NewBytesDatum(codec.EncodeInt(nil, bucket.lower))
-		upper := types.NewBytesDatum(codec.EncodeInt(nil, bucket.upper))
-		h.AppendBucketWithNDV(&lower, &upper, bucket.count, bucket.repeat, bucket.ndv)
+		lower, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.lower))
+		if err != nil {
+			panic(err)
+		}
+		upper, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.upper))
+		if err != nil {
+			panic(err)
+		}
+
+		di, du := types.NewBytesDatum(lower), types.NewBytesDatum(upper)
+		h.AppendBucketWithNDV(&di, &du, bucket.count, bucket.repeat, bucket.ndv)
 	}
 	return h
 }
@@ -173,98 +182,6 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 		expBucketNumber int64
 	}
 	tests := []testCase{
-		{
-			partitionHists: [][]*bucket4Test{
-				{
-					// Col(1) = [1, 4,|| 6, 9, 9,|| 12, 12, 12,|| 13, 14, 15]
-					{
-						lower:  1,
-						upper:  4,
-						count:  2,
-						repeat: 1,
-						ndv:    2,
-					},
-					{
-						lower:  6,
-						upper:  9,
-						count:  5,
-						repeat: 2,
-						ndv:    2,
-					},
-					{
-						lower:  12,
-						upper:  12,
-						count:  8,
-						repeat: 3,
-						ndv:    1,
-					},
-					{
-						lower:  13,
-						upper:  15,
-						count:  11,
-						repeat: 1,
-						ndv:    3,
-					},
-				},
-				// Col(2) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
-				{
-					{
-						lower:  2,
-						upper:  5,
-						count:  2,
-						repeat: 1,
-						ndv:    2,
-					},
-					{
-						lower:  6,
-						upper:  7,
-						count:  5,
-						repeat: 2,
-						ndv:    2,
-					},
-					{
-						lower:  11,
-						upper:  11,
-						count:  8,
-						repeat: 3,
-						ndv:    1,
-					},
-					{
-						lower:  13,
-						upper:  17,
-						count:  11,
-						repeat: 1,
-						ndv:    3,
-					},
-				},
-			},
-			totColSize: []int64{11, 11},
-			popedTopN:  []topN4Test{},
-			expHist: []*bucket4Test{
-				{
-					lower:  1,
-					upper:  7,
-					count:  7,
-					repeat: 2,
-					ndv:    4,
-				},
-				{
-					lower:  7,
-					upper:  11,
-					count:  13,
-					repeat: 3,
-					ndv:    3,
-				},
-				{
-					lower:  11,
-					upper:  17,
-					count:  22,
-					repeat: 1,
-					ndv:    5,
-				},
-			},
-			expBucketNumber: 3,
-		},
 		{
 			partitionHists: [][]*bucket4Test{
 				{
@@ -390,8 +307,12 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, t.expBucketNumber, true)
 		c.Assert(err, IsNil)
 		for i, b := range t.expHist {
-			c.Assert(bytes.Compare(codec.EncodeInt(nil, b.lower), globalHist.GetLower(i).GetBytes()), Equals, 0)
-			c.Assert(bytes.Compare(codec.EncodeInt(nil, b.upper), globalHist.GetUpper(i).GetBytes()), Equals, 0)
+			lo, err := ValueToString(ctx.GetSessionVars(), globalHist.GetLower(i), 1, []byte{types.KindInt64})
+			c.Assert(err, IsNil)
+			up, err := ValueToString(ctx.GetSessionVars(), globalHist.GetUpper(i), 1, []byte{types.KindInt64})
+			c.Assert(err, IsNil)
+			c.Assert(fmt.Sprintf("%v", b.lower), Equals, lo)
+			c.Assert(fmt.Sprintf("%v", b.upper), Equals, up)
 			c.Assert(b.count, Equals, globalHist.Buckets[i].Count)
 			c.Assert(b.repeat, Equals, globalHist.Buckets[i].Repeat)
 			c.Assert(b.ndv, Equals, globalHist.Buckets[i].NDV)
