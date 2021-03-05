@@ -209,9 +209,14 @@ type exchRecvExec struct {
 	lock             sync.Mutex
 	wg               sync.WaitGroup
 	err              error
+	inited           bool
 }
 
 func (e *exchRecvExec) open() error {
+	return nil
+}
+
+func (e *exchRecvExec) init() error {
 	e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, 0)
 	serverMetas := make([]*mpp.TaskMeta, 0, len(e.exchangeReceiver.EncodedTaskMeta))
 	for _, encodedMeta := range e.exchangeReceiver.EncodedTaskMeta {
@@ -231,6 +236,12 @@ func (e *exchRecvExec) open() error {
 }
 
 func (e *exchRecvExec) next() (*chunk.Chunk, error) {
+	if !e.inited {
+		e.inited = true
+		if err := e.init(); err != nil {
+			return nil, err
+		}
+	}
 	if e.chk != nil {
 		defer func() {
 			e.chk = nil
@@ -326,6 +337,7 @@ type joinExec struct {
 
 	idx          int
 	reservedRows []chunk.Row
+	inited       bool
 }
 
 func (e *joinExec) buildHashTable() error {
@@ -399,11 +411,16 @@ func (e *joinExec) open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.buildHashTable()
-	return errors.Trace(err)
+	return nil
 }
 
 func (e *joinExec) next() (*chunk.Chunk, error) {
+	if !e.inited {
+		e.inited = true
+		if err := e.buildHashTable(); err != nil {
+			return nil, err
+		}
+	}
 	for {
 		if e.idx < len(e.reservedRows) {
 			idx := e.idx
