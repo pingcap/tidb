@@ -31,7 +31,7 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20210219030914-d0fb1ee6f3d2
+	github.com/ngaut/unistore v0.0.0-20210304095907-0ebafaf44efb
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
@@ -44,7 +44,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20210219064844-c1844a4775d6
+	github.com/pingcap/kvproto v0.0.0-20210223121704-3cd2fc5fad22
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
 	github.com/pingcap/parser v0.0.0-20210303061548-f6776f61e268
 	github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99
