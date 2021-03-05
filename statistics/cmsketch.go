@@ -655,48 +655,21 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 	if numTop == 0 {
 		return nil, nil
 	}
-	sorted := make([]uint64, numTop)
-	for _, cnt := range counter {
-		sorted = append(sorted, cnt)
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i] > sorted[j]
-	})
-	remain := mathutil.MinUint32(uint32(numTop), n)
-	// lastTopCnt is the smallest value in the new TopN structure
-	var lastTopCnt uint64
-	if remain > 0 {
-		lastTopCnt = sorted[remain-1]
-	}
-
-	var finalTopN TopN
-	finalTopN.TopN = make([]TopNMeta, 0, remain)
-	popedTopNPair := make([]TopNMeta, 0, uint32(numTop)-remain)
-	boundaryTopN := make([]TopNMeta, 0, numTop)
+	sorted := make([]TopNMeta, 0, numTop)
 	for value, cnt := range counter {
 		data := hack.Slice(string(value))
-		if remain > 0 && cnt == lastTopCnt {
-			boundaryTopN = append(boundaryTopN, TopNMeta{Encoded: data, Count: cnt})
-			continue
-		}
-		if remain > 0 && cnt > lastTopCnt {
-			finalTopN.AppendTopN(data, cnt)
-			remain--
-			continue
-		}
-		popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: data, Count: cnt})
+		sorted = append(sorted, TopNMeta{Encoded: data, Count: cnt})
 	}
-	sort.Slice(boundaryTopN, func(i, j int) bool {
-		return bytes.Compare(boundaryTopN[i].Encoded, boundaryTopN[j].Encoded) < 0
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Count != sorted[j].Count {
+			return sorted[i].Count > sorted[j].Count
+		}
+		return bytes.Compare(sorted[i].Encoded, sorted[j].Encoded) < 0
 	})
-	for _, b := range boundaryTopN {
-		if remain > 0 {
-			finalTopN.AppendTopN(b.Encoded, b.Count)
-			remain--
-			continue
-		}
-		popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: b.Encoded, Count: b.Count})
-	}
+	n = mathutil.MinUint32(uint32(numTop), n)
+
+	var finalTopN TopN
+	finalTopN.TopN = sorted[:n]
 	finalTopN.Sort()
-	return &finalTopN, popedTopNPair
+	return &finalTopN, sorted[n:]
 }
