@@ -686,6 +686,9 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 		}
 		popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: data, Count: cnt})
 	}
+	sort.Slice(boundaryTopN, func(i, j int) bool {
+		return bytes.Compare(boundaryTopN[i].Encoded, boundaryTopN[j].Encoded) < 0
+	})
 	for _, b := range boundaryTopN {
 		if remain > 0 {
 			finalTopN.AppendTopN(b.Encoded, b.Count)
