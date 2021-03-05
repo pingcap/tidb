@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"math"
 	"math/rand"
 	"sort"
@@ -25,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -1301,6 +1301,8 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 
 func (s *testSerialSuite) TestAggConsume(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_max_chunk_size=32")
+	tk.MustExec("set @@tidb_init_chunk_size=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
