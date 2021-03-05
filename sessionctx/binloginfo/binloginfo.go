@@ -46,7 +46,6 @@ var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
 var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+\s*`)
 var preSplitPat = regexp.MustCompile(`PRE_SPLIT_REGIONS\s*=\s*\d+\s*`)
-var autoRandomPat = regexp.MustCompile(`AUTO_RANDOM\s*\(\s*\d+\s*\)\s*`)
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {

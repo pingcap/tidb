@@ -110,7 +110,7 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if err := e.ctx.NewTxn(ctx); err != nil {
 			return err
 		}
-		defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()
+		defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()
 	}
 
 	switch x := e.Statement.(type) {
@@ -586,7 +586,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
-	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
+	e.ctx.GetSessionVars().SetInTxn(true)
 	// Call ctx.Txn(true) to active pending txn.
 	txnMode := s.Mode
 	if txnMode == "" {
@@ -668,7 +668,7 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
-	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
+	e.ctx.GetSessionVars().SetInTxn(true)
 	return nil
 }
 
@@ -737,13 +737,13 @@ func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 }
 
 func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
-	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
+	e.ctx.GetSessionVars().SetInTxn(false)
 }
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
-	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	sessVars.SetInTxn(false)
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
@@ -1351,10 +1351,17 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
+func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	h := domain.GetDomain(e.ctx).StatsHandle()
-	err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID)
-	if err != nil {
+	var statsIDs []int64
+	if s.IsGlobalStats {
+		statsIDs = []int64{s.Table.TableInfo.ID}
+	} else {
+		if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Table.TableInfo, s.PartitionNames); err != nil {
+			return err
+		}
+	}
+	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
 	}
 	return h.Update(infoschema.GetInfoSchema(e.ctx))

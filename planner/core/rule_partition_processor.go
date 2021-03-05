@@ -875,7 +875,16 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 		default:
 			return pruner.fullRange()
 		}
-		val, err := constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
+
+		var val int64
+		var err error
+		if pruner.partFn != nil {
+			// replace fn(col) to fn(const)
+			partFnConst := replaceColumnWithConst(pruner.partFn, constExpr)
+			val, _, err = partFnConst.EvalInt(sctx, chunk.Row{})
+		} else {
+			val, err = constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
+		}
 		if err != nil {
 			return pruner.fullRange()
 		}
@@ -977,6 +986,13 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	} else {
 		// If the partition expression is col, use constExpr.
 		constExpr = con
+	}
+	// If the partition expression is related with more than one columns such as 'a + b' or 'a * b' or something else,
+	// the constExpr may not a really constant when coming here.
+	// Suppose the partition expression is 'a + b' and we have a condition 'a = 2',
+	// the constExpr is '2 + b' after the replacement which we can't evaluate.
+	if !constExpr.ConstItem(sctx.GetSessionVars().StmtCtx) {
+		return ret, false
 	}
 	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
 	if err == nil && !isNull {

@@ -46,6 +46,7 @@ const (
 	DefPartialResult4FirstRowSetSize = int64(unsafe.Sizeof(partialResult4FirstRowSet{}))
 )
 
+// nolint:structcheck
 type basePartialResult4FirstRow struct {
 	// isNull indicates whether the first row is null.
 	isNull bool
@@ -508,14 +509,13 @@ func (e *firstRow4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
-	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
+	if len(rowsInGroup) > 0 {
+		d, err := e.args[0].Eval(rowsInGroup[0])
 		if err != nil {
 			return memDelta, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlEnum().Copy()
 		memDelta += int64(len(p.val.Name))
-		break
 	}
 	return memDelta, nil
 }
@@ -556,14 +556,13 @@ func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
-	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
+	if len(rowsInGroup) > 0 {
+		d, err := e.args[0].Eval(rowsInGroup[0])
 		if err != nil {
 			return memDelta, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlSet().Copy()
 		memDelta += int64(len(p.val.Name))
-		break
 	}
 	return memDelta, nil
 }

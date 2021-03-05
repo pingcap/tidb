@@ -620,10 +620,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		} else {
 			d.SetString("", col.Collate)
 		}
-	case mysql.TypeVarString, mysql.TypeVarchar:
+	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetString("", col.Collate)
-	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		d.SetBytes([]byte{})
 	case mysql.TypeDuration:
 		d.SetMysqlDuration(types.ZeroDuration)
 	case mysql.TypeDate:
