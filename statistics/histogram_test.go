@@ -155,18 +155,13 @@ type topN4Test struct {
 	count int64
 }
 
-func genHist4Test(buckets []*bucket4Test, totColSize int64) *Histogram {
+func genHist4Test(c *C, buckets []*bucket4Test, totColSize int64) *Histogram {
 	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), len(buckets), totColSize)
 	for _, bucket := range buckets {
 		lower, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.lower))
-		if err != nil {
-			panic(err)
-		}
+		c.Assert(err, IsNil)
 		upper, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.upper))
-		if err != nil {
-			panic(err)
-		}
-
+		c.Assert(err, IsNil)
 		di, du := types.NewBytesDatum(lower), types.NewBytesDatum(upper)
 		h.AppendBucketWithNDV(&di, &du, bucket.count, bucket.repeat, bucket.ndv)
 	}
@@ -381,7 +376,7 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 		var expTotColSize int64
 		hists := make([]*Histogram, 0, len(t.partitionHists))
 		for i := range t.partitionHists {
-			hists = append(hists, genHist4Test(t.partitionHists[i], t.totColSize[i]))
+			hists = append(hists, genHist4Test(c, t.partitionHists[i], t.totColSize[i]))
 			expTotColSize += t.totColSize[i]
 		}
 		ctx := mock.NewContext()
