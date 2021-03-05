@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"math"
 	"math/rand"
 	"sort"
@@ -1295,5 +1296,45 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 				}
 			}
 		}
+	}
+}
+
+func (s *testSerialSuite) TestAggConsume(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i <= 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v),(%v),(%v)", i, i, i))
+	}
+
+	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
+	c.Assert(failpoint.Enable(fpName, `1%panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+
+	// Test 10 times panic for each AggExec.
+	for i := 1; i <= 10; i++ {
+		var err error
+		for err == nil {
+			// Test paralleled hash agg.
+			err = tk.QueryToErr("select /*+ HASH_AGG() */ count(a) from t group by a")
+		}
+		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+
+		err = nil
+		for err == nil {
+			// Test unparalleled hash agg.
+			err = tk.QueryToErr("select /*+ HASH_AGG() */ count(distinct a) from t")
+		}
+		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+
+		err = nil
+		for err == nil {
+			// Test stream agg.
+			err = tk.QueryToErr("select /*+ STREAM_AGG() */ count(a) from t")
+		}
+		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 	}
 }
