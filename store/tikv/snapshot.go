@@ -569,7 +569,9 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
 	case kv.IsStalenessReadOnly:
+		s.mu.Lock()
 		s.isStaleness = val.(bool)
+		s.mu.Unlock()
 	case kv.MatchStoreLabels:
 		s.matchStoreLabels = val.([]*metapb.StoreLabel)
 	case kv.TxnScope:
