@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -1299,7 +1302,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	}
 }
 
-func (s *testSerialSuite) TestAggConsume(c *C) {
+func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@tidb_max_chunk_size=32")
 	tk.MustExec("set @@tidb_init_chunk_size=1")
@@ -1317,25 +1320,35 @@ func (s *testSerialSuite) TestAggConsume(c *C) {
 	}()
 
 	// Test 10 times panic for each AggExec.
-	for i := 1; i <= 10; i++ {
+	var res sqlexec.RecordSet
+	for i := 1; i <= 100; i++ {
 		var err error
 		for err == nil {
 			// Test paralleled hash agg.
-			err = tk.QueryToErr("select /*+ HASH_AGG() */ count(a) from t group by a")
+			res, err = tk.Exec("select /*+ HASH_AGG() */ count(a) from t group by a")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+			}
 		}
 		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 
 		err = nil
 		for err == nil {
 			// Test unparalleled hash agg.
-			err = tk.QueryToErr("select /*+ HASH_AGG() */ count(distinct a) from t")
+			res, err = tk.Exec("select /*+ HASH_AGG() */ count(distinct a) from t")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+			}
 		}
 		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 
 		err = nil
 		for err == nil {
 			// Test stream agg.
-			err = tk.QueryToErr("select /*+ STREAM_AGG() */ count(a) from t")
+			res, err = tk.Exec("select /*+ STREAM_AGG() */ count(a) from t")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+			}
 		}
 		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 	}

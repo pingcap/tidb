@@ -282,6 +282,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.groupSet = set.NewStringSet()
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.bInMap = 0
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(defBucketMemoryUsage * (1 << e.bInMap))
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
@@ -324,6 +325,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupKey:          make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
@@ -724,6 +726,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 			e.memTracker.Consume(-mSize)
 			return
 		}
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(chk.MemoryUsage() - mSize)
 		input.giveBackCh <- chk
 	}
@@ -900,6 +903,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 				allMemDelta += memDelta
 			}
 		}
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(allMemDelta)
 	}
 }
@@ -922,6 +926,7 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 			e.bInMap++
 		}
 	}
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(allMemDelta)
 	return partialResults
 }
@@ -1082,6 +1087,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 	return nil
 }
