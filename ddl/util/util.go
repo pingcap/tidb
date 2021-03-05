@@ -14,8 +14,8 @@
 package util
 
 import (
+	"context"
 	"encoding/hex"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -24,17 +24,17 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 const (
 	deleteRangesTable         = `gc_delete_range`
 	doneDeleteRangesTable     = `gc_delete_range_done`
-	loadDeleteRangeSQL        = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%s WHERE ts < %v`
-	recordDoneDeletedRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
-	completeDeleteRangeSQL    = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
-	updateDeleteRangeSQL      = `UPDATE mysql.gc_delete_range SET start_key = "%s" WHERE job_id = %d AND element_id = %d AND start_key = "%s"`
-	deleteDoneRecordSQL       = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %d AND element_id = %d`
+	loadDeleteRangeSQL        = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?`
+	recordDoneDeletedRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
+	completeDeleteRangeSQL    = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
+	updateDeleteRangeSQL      = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
+	deleteDoneRecordSQL       = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
+	loadDDLReorgVarsSQL       = `select HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?)`
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -59,7 +59,10 @@ func LoadDoneDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []De
 }
 
 func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	sql := fmt.Sprintf(loadDeleteRangeSQL, table, safePoint)
+	sql, err := sqlexec.EscapeSQL(loadDeleteRangeSQL, table, safePoint)
+	if err != nil {
+		return nil, err
+	}
 	rss, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rss) > 0 {
 		defer terror.Call(rss[0].Close)
@@ -103,21 +106,30 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 // CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
 // NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
-	sql := fmt.Sprintf(recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	sql, err := sqlexec.EscapeSQL(recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+	if err != nil {
+		return err
+	}
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	sql = fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
+	sql, err = sqlexec.EscapeSQL(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
+	if err != nil {
+		return err
+	}
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 
 // DeleteDoneRecord removes a record from gc_delete_range_done table.
 func DeleteDoneRecord(ctx sessionctx.Context, dr DelRangeTask) error {
-	sql := fmt.Sprintf(deleteDoneRecordSQL, dr.JobID, dr.ElementID)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	sql, err := sqlexec.EscapeSQL(deleteDoneRecordSQL, dr.JobID, dr.ElementID)
+	if err != nil {
+		return err
+	}
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 
@@ -125,19 +137,22 @@ func DeleteDoneRecord(ctx sessionctx.Context, dr DelRangeTask) error {
 func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
-	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	sql, err := sqlexec.EscapeSQL(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
+	if err != nil {
+		return err
+	}
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
-
-const loadDDLReorgVarsSQL = "select HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in ('" +
-	variable.TiDBDDLReorgWorkerCount + "', '" +
-	variable.TiDBDDLReorgBatchSize + "')"
 
 // LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
 func LoadDDLReorgVars(ctx sessionctx.Context) error {
 	if sctx, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
-		rows, _, err := sctx.ExecRestrictedSQL(ctx, loadDDLReorgVarsSQL)
+		sql, err := sqlexec.EscapeSQL(loadDDLReorgVarsSQL, variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize)
+		if err != nil {
+			return err
+		}
+		rows, _, err := sctx.ExecRestrictedSQL(ctx, sql)
 		if err != nil {
 			return errors.Trace(err)
 		}
