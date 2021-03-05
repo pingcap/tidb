@@ -1943,7 +1943,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 			zap.String("txnScope", txnScope))
 	}
 
-	txn, err := s.store.BeginWithTxnScope(s.sessionVars.CheckAndGetTxnScope())
+	txn, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
 	if err != nil {
 		return err
 	}
@@ -2736,7 +2736,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithOption(s.GetSessionVars().CheckAndGetTxnScope(), kv.WithStartTSOption(startTS))
+	txn, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(s.GetSessionVars().CheckAndGetTxnScope()).SetStartTs(startTS))
 	if err != nil {
 		return err
 	}
@@ -2769,12 +2769,12 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	txnScope := s.GetSessionVars().CheckAndGetTxnScope()
 	switch option.Mode {
 	case ast.TimestampBoundReadTimestamp:
-		txn, err = s.store.BeginWithOption(txnScope, kv.WithStartTSOption(option.StartTS))
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetStartTs(option.StartTS))
 		if err != nil {
 			return err
 		}
 	case ast.TimestampBoundExactStaleness:
-		txn, err = s.store.BeginWithOption(txnScope, kv.WithPrevSecOption(option.PrevSec))
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
 		if err != nil {
 			return err
 		}

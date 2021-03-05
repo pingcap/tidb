@@ -350,14 +350,15 @@ type txnFuture struct {
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
 	if err == nil {
-		return tf.store.BeginWithOption(tf.txnScope, kv.WithStartTSOption(startTS))
+		return tf.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(tf.txnScope).SetStartTs(startTS))
+		//return tf.store.BeginWithOption(tf.txnScope, kv.WithStartTSOption(startTS))
 	} else if config.GetGlobalConfig().Store == "unistore" {
 		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
-	return tf.store.BeginWithTxnScope(tf.txnScope)
+	return tf.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(tf.txnScope))
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {

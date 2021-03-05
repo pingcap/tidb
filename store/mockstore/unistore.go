@@ -95,15 +95,9 @@ func (s *mockStorage) Begin() (kv.Transaction, error) {
 	return newTiKVTxn(txn, err)
 }
 
-// BeginWithTxnScope creates a Transaction with txnScope.
-func (s *mockStorage) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithTxnScope(txnScope)
-	return newTiKVTxn(txn, err)
-}
-
 // BeginWithOption begins a transaction with given option
-func (s *mockStorage) BeginWithOption(txnScope string, option kv.TransactionOption) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithOption(txnScope, option)
+func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithOption(option)
 	return newTiKVTxn(txn, err)
 }
 

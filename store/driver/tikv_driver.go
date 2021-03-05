@@ -299,18 +299,9 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 	return txn_driver.NewTiKVTxn(txn), err
 }
 
-// BeginWithTxnScope creates a Transaction with txnScope.
-func (s *tikvStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithTxnScope(txnScope)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return txn_driver.NewTiKVTxn(txn), err
-}
-
 // BeginWithOption begins a transaction with given option
-func (s *tikvStore) BeginWithOption(txnScope string, option kv.TransactionOption) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithOption(txnScope, option)
+func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithOption(option)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -158,11 +158,7 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
-func (s *mockStorage) BeginWithTxnScope(txnScope string) (Transaction, error) {
-	return newMockTxn(), nil
-}
-
-func (s *mockStorage) BeginWithOption(txnScope string, option TransactionOption) (Transaction, error) {
+func (s *mockStorage) BeginWithOption(option TransactionOption) (Transaction, error) {
 	return newMockTxn(), nil
 }
 

@@ -170,24 +170,21 @@ func (s *KVStore) Begin() (*KVTxn, error) {
 	return s.beginWithTxnScope(oracle.GlobalTxnScope)
 }
 
-// BeginWithTxnScope begins a transaction with given txnScope
-func (s *KVStore) BeginWithTxnScope(txnScope string) (*KVTxn, error) {
-	return s.beginWithTxnScope(txnScope)
-}
-
 // BeginWithOption begins a transaction with given option
-func (s *KVStore) BeginWithOption(txnScope string, option kv.TransactionOption) (*KVTxn, error) {
-	switch option.TransactionOptionType {
-	case kv.WithStartTS:
-		return s.beginWithStartTS(txnScope, option.StartTS)
-	case kv.WithPrevSec:
-		return s.beginWithExactStaleness(txnScope, option.PrevSec)
-	default:
+func (s *KVStore) BeginWithOption(option kv.TransactionOption) (*KVTxn, error) {
+	txnScope := option.TxnScope
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
+	}
+	if option.StartTS != nil {
+		return s.beginWithStartTS(txnScope, *option.StartTS)
+	} else if option.PrevSec != nil {
+		return s.beginWithExactStaleness(txnScope, *option.PrevSec)
 	}
 	return s.beginWithTxnScope(txnScope)
 }
 
-// BeginWithTxnScope begins a transaction with the given txnScope (local or global)
+// beginWithTxnScope begins a transaction with the given txnScope (local or global)
 func (s *KVStore) beginWithTxnScope(txnScope string) (*KVTxn, error) {
 	txn, err := newTiKVTxn(s, txnScope)
 	if err != nil {

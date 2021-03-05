@@ -467,37 +467,28 @@ type Driver interface {
 	Open(path string) (Storage, error)
 }
 
-// TransactionOptionType indicates the method when beginning a transaction
-type TransactionOptionType uint8
-
-const (
-	// WithStartTS indicates the startTS option
-	WithStartTS TransactionOptionType = iota
-	// WithPrevSec indicates the prevSec option
-	WithPrevSec
-)
-
 // TransactionOption indicates the option when beginning a transaction
 type TransactionOption struct {
-	TransactionOptionType
-	StartTS uint64
-	PrevSec uint64
+	TxnScope string
+	StartTS  *uint64
+	PrevSec  *uint64
 }
 
-// WithStartTSOption provides a option startTS
-func WithStartTSOption(startTS uint64) TransactionOption {
-	return TransactionOption{
-		TransactionOptionType: WithStartTS,
-		StartTS:               startTS,
-	}
+// SetStartTs ...
+func (to TransactionOption) SetStartTs(startTS uint64) TransactionOption {
+	to.StartTS = &startTS
+	return to
 }
 
 // WithPrevSecOption provides a option with prevSec
-func WithPrevSecOption(prevSec uint64) TransactionOption {
-	return TransactionOption{
-		TransactionOptionType: WithPrevSec,
-		PrevSec:               prevSec,
-	}
+func (to TransactionOption) SetPrevSec(prevSec uint64) TransactionOption {
+	to.PrevSec = &prevSec
+	return to
+}
+
+func (to TransactionOption) SetTxnScope(txnScope string) TransactionOption {
+	to.TxnScope = txnScope
+	return to
 }
 
 // Storage defines the interface for storage.
@@ -505,10 +496,8 @@ func WithPrevSecOption(prevSec uint64) TransactionOption {
 type Storage interface {
 	// Begin a global transaction
 	Begin() (Transaction, error)
-	// Begin a transaction with the given txnScope (local or global)
-	BeginWithTxnScope(txnScope string) (Transaction, error)
 	// Begin a transaction with given option
-	BeginWithOption(txnScope string, option TransactionOption) (Transaction, error)
+	BeginWithOption(option TransactionOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot

@@ -37,13 +37,8 @@ func (s *Store) GetOracle() oracle.Oracle { return nil }
 // Begin implements kv.Storage interface.
 func (s *Store) Begin() (kv.Transaction, error) { return nil, nil }
 
-// BeginWithTxnScope implements kv.Storage interface.
-func (s *Store) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
-	return s.Begin()
-}
-
 // BeginWithOption implements kv.Storage interface.
-func (s *Store) BeginWithOption(txnScope string, option kv.TransactionOption) (kv.Transaction, error) {
+func (s *Store) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
 	return s.Begin()
 }
 
