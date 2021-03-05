@@ -178,6 +178,10 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 
 	tk.MustExec("insert into t1 values(4,0)")
 	tk.MustQuery("select count(*), t2.b from t1 left join t2 on t1.a = t2.a group by t2.b").Check(testkit.Rows("3 0", "1 <nil>"))
+	tk.MustQuery("select count(*) k, t2.b+1 from t1 left join t2 on t1.a = t2.a group by t2.b+1 order by k").Check(testkit.Rows("1 <nil>", "3 1"))
+	tk.MustQuery("select count(*) k, t2.b * t2.a from t2 group by t2.b * t2.a").Check(testkit.Rows("3 0"))
+	tk.MustQuery("select count(*) k, t2.a/2 from t2 group by t2.a / 2").Check(testkit.Rows("1 0.5000", "1 1.0000", "1 1.5000"))
+	tk.MustQuery("select count(*) k, t2.a div 2 from t2 group by t2.a div 2").Check(testkit.Rows("1 0", "2 1"))
 }
 
 func (s *tiflashTestSuite) TestPartitionTable(c *C) {
