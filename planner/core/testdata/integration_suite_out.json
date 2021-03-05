@@ -52,7 +52,7 @@
         "Plan": [
           "Projection 9990.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
           "└─HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "  ├─Selection(Build) 7992.00 root  from_unixtime(cast(test.t.b))",
+          "  ├─Selection(Build) 7992.00 root  from_unixtime(cast(test.t.b, decimal(20,0) BINARY))",
           "  │ └─TableReader 7992.00 root  data:Selection",
           "  │   └─Selection 7992.00 cop[tikv]  not(isnull(test.t.a))",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
@@ -87,7 +87,7 @@
         "Plan": [
           "HashJoin 10000.00 root  left outer join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader(Build) 8000.00 root  data:Selection",
-          "│ └─Selection 8000.00 cop[tikv]  ge(cast(test.t.b), 2019-01-01 00:00:00.000000)",
+          "│ └─Selection 8000.00 cop[tikv]  ge(cast(test.t.b, date BINARY), 2019-01-01 00:00:00.000000)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
