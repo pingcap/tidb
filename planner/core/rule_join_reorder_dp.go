@@ -22,7 +22,7 @@ import (
 
 type joinReorderDPSolver struct {
 	*baseSingleGroupJoinOrderSolver
-	newJoin func(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, otherConds []expression.Expression) LogicalPlan
+	newJoin func(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, otherConds []expression.Expression, joinType JoinType) LogicalPlan
 }
 
 type joinGroupEqEdge struct {
@@ -244,7 +244,7 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan LogicalPlan, e
 			eqConds = append(eqConds, newSf)
 		}
 	}
-	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds)
+	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, InnerJoin)
 	_, err := join.recursiveDeriveStats(nil)
 	return join, err
 }
@@ -266,7 +266,7 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan, ot
 			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
 				return expression.ExprFromSchema(expr, mergedSchema)
 			})
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds))
+			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, InnerJoin))
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}

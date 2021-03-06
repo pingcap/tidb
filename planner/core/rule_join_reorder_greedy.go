@@ -23,7 +23,9 @@ import (
 
 type joinReorderGreedySolver struct {
 	*baseSingleGroupJoinOrderSolver
-	eqEdges []*expression.ScalarFunction
+	eqEdges       []*expression.ScalarFunction
+	joinTypes     []JoinType
+	directedEdges [][]LogicalPlan
 }
 
 // solve reorders the join nodes in the group based on a greedy algorithm.
@@ -41,6 +43,7 @@ type joinReorderGreedySolver struct {
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPlan, error) {
+	s.directMap = make(map[LogicalPlan]map[LogicalPlan]struct{}, len(s.directedEdges))
 	for _, node := range joinNodePlans {
 		_, err := node.recursiveDeriveStats(nil)
 		if err != nil {
@@ -51,9 +54,59 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 			cumCost: s.baseNodeCumCost(node),
 		})
 	}
+
+	for _, edge := range s.directedEdges {
+		nodeSet := s.directMap[edge[0]]
+		if nodeSet == nil {
+			nodeSet = make(map[LogicalPlan]struct{}, 0)
+			s.directMap[edge[0]] = nodeSet
+		}
+		nodeSet[edge[1]] = struct{}{}
+	}
+
+	isChanged := true
+	for isChanged {
+		isChanged = false
+		for _, set := range s.directMap {
+			oldSize := len(set)
+			newSet := make(map[LogicalPlan]struct{}, 0)
+			for k1, _ := range set {
+				for k2, _ := range s.directMap[k1] {
+					newSet[k2] = struct{}{}
+				}
+			}
+
+			for k2, _ := range newSet {
+				set[k2] = struct{}{}
+			}
+			newSize := len(set)
+			if oldSize != newSize {
+				isChanged = true
+			}
+		}
+	}
+
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
+
+	for key, set := range s.directMap {
+		keyIdx := -1
+		lowerStart := -1
+		for idx, node := range s.curJoinGroup {
+			if key == node.p {
+				keyIdx = idx
+			}
+			if _, ok := set[node.p]; ok && lowerStart < 0 {
+				lowerStart = idx
+			}
+		}
+		if keyIdx > lowerStart {
+			selectNode := s.curJoinGroup[keyIdx]
+			s.curJoinGroup = append(s.curJoinGroup[0:keyIdx], s.curJoinGroup[keyIdx+1:]...)
+			s.curJoinGroup = append(s.curJoinGroup[0:lowerStart], append([]*jrNode{selectNode}, s.curJoinGroup[lowerStart:]...)...)
+		}
+	}
 
 	var cartesianGroup []LogicalPlan
 	for len(s.curJoinGroup) > 0 {
@@ -70,6 +123,8 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
+	s.remainJoinGroup = s.remainJoinGroup[:0]
+	s.remainJoinGroup = append(s.remainJoinGroup, s.curJoinGroup...)
 	for {
 		bestCost := math.MaxFloat64
 		bestIdx := -1
@@ -102,23 +157,36 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) 
 		}
 		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
 		s.otherConds = finalRemainOthers
+		s.remainJoinGroup = append(s.remainJoinGroup[0:bestIdx], s.remainJoinGroup[bestIdx+1:]...)
 	}
 	return curJoinTree, nil
 }
 
 func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode LogicalPlan) (LogicalPlan, []expression.Expression) {
 	var usedEdges []*expression.ScalarFunction
+	for _, node := range []LogicalPlan{leftNode, leftNode} {
+		for _, remainPlan := range s.remainJoinGroup {
+			if _, ok := s.directMap[remainPlan.p][node]; ok {
+				return nil, nil
+			}
+		}
+	}
+
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
-	for _, edge := range s.eqEdges {
+	joinType := InnerJoin
+	for idx, edge := range s.eqEdges {
 		lCol := edge.GetArgs()[0].(*expression.Column)
 		rCol := edge.GetArgs()[1].(*expression.Column)
 		if leftNode.Schema().Contains(lCol) && rightNode.Schema().Contains(rCol) {
 			usedEdges = append(usedEdges, edge)
+			joinType = s.joinTypes[idx]
 		} else if rightNode.Schema().Contains(lCol) && leftNode.Schema().Contains(rCol) {
 			newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
 			usedEdges = append(usedEdges, newSf)
+			joinType = s.joinTypes[idx]
 		}
+
 	}
 	if len(usedEdges) == 0 {
 		return nil, nil
@@ -128,5 +196,5 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
-	return s.newJoinWithEdges(leftNode, rightNode, usedEdges, otherConds), remainOtherConds
+	return s.newJoinWithEdges(leftNode, rightNode, usedEdges, otherConds, joinType), remainOtherConds
 }
