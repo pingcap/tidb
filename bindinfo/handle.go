@@ -764,7 +764,9 @@ func getEvolveParameters(ctx sessionctx.Context) (time.Duration, time.Time, time
 		return 0, time.Time{}, time.Time{}, err
 	}
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.TODO(), stmt)
-
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, err
+	}
 	maxTime, startTimeStr, endTimeStr := int64(variable.DefTiDBEvolvePlanTaskMaxTime), variable.DefTiDBEvolvePlanTaskStartTime, variable.DefAutoAnalyzeEndTime
 	for _, row := range rows {
 		switch row.GetString(0) {
