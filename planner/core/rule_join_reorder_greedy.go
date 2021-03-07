@@ -70,13 +70,13 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 		for _, set := range s.directMap {
 			oldSize := len(set)
 			newSet := make(map[LogicalPlan]struct{}, 0)
-			for k1, _ := range set {
-				for k2, _ := range s.directMap[k1] {
+			for k1 := range set {
+				for k2 := range s.directMap[k1] {
 					newSet[k2] = struct{}{}
 				}
 			}
 
-			for k2, _ := range newSet {
+			for k2 := range newSet {
 				set[k2] = struct{}{}
 			}
 			newSize := len(set)
