@@ -192,9 +192,18 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 		return nil, nil
 	}
 	var otherConds []expression.Expression
+	var leftConds []expression.Expression
+	var rightConds []expression.Expression
 	mergedSchema := expression.MergeSchema(leftNode.Schema(), rightNode.Schema())
+
+	remainOtherConds, leftConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		return expression.ExprFromSchema(expr, leftNode.Schema()) && !expression.ExprFromSchema(expr, rightNode.Schema())
+	})
+	remainOtherConds, rightConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		return expression.ExprFromSchema(expr, rightNode.Schema()) && !expression.ExprFromSchema(expr, leftNode.Schema())
+	})
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
-	return s.newJoinWithEdges(leftNode, rightNode, usedEdges, otherConds, joinType), remainOtherConds
+	return s.newJoinWithEdges(leftNode, rightNode, usedEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds
 }

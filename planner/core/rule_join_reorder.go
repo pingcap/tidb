@@ -64,6 +64,8 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	eqEdges = append(eqEdges, lhsEqualConds...)
 	eqEdges = append(eqEdges, rhsEqualConds...)
 	otherConds = append(otherConds, join.OtherConditions...)
+	otherConds = append(otherConds, join.LeftConditions...)
+	otherConds = append(otherConds, join.RightConditions...)
 	otherConds = append(otherConds, lhsOtherConds...)
 	otherConds = append(otherConds, rhsOtherConds...)
 	for range join.EqualConditions {
@@ -102,7 +104,14 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			otherConds: otherConds,
 		}
 		originalSchema := p.Schema()
-		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
+
+		isSupportDP := true
+		for _, joinType := range joinTypes {
+			if joinType != InnerJoin {
+				isSupportDP = false
+			}
+		}
+		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold && !isSupportDP {
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 				eqEdges:                        eqEdges,
@@ -206,10 +215,13 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 	return join
 }
 
-func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression, joinType JoinType) LogicalPlan {
+func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild LogicalPlan,
+	eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType JoinType) LogicalPlan {
 	newJoin := s.newCartesianJoin(lChild, rChild)
 	newJoin.EqualConditions = eqEdges
 	newJoin.OtherConditions = otherConds
+	newJoin.LeftConditions = leftConds
+	newJoin.RightConditions = rightConds
 	newJoin.JoinType = joinType
 	return newJoin
 }
