@@ -137,7 +137,6 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	// No need to acquire the session context lock for ExecRestrictedStmt, it
 	// uses another background session.
 	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
-
 	if err != nil {
 		h.bindInfo.Unlock()
 		return err
@@ -403,15 +402,6 @@ func (h *BindHandle) lockBindInfoTable() error {
 	return err
 }
 
-// LockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
-func (h *BindHandle) LockBindInfoSQL() string {
-	sql, err := sqlexec.EscapeSQL("UPDATE mysql.bind_info SET source= %? WHERE original_sql= %?", Builtin, BuiltinPseudoSQL4BindLock)
-	if err != nil {
-		return ""
-	}
-	return sql
-}
-
 // tmpBindRecordMap is used to temporarily save bind record changes.
 // Those changes will be flushed into store periodically.
 type tmpBindRecordMap struct {
@@ -610,6 +600,15 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return nil
 }
 
+// LockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
+func (h *BindHandle) LockBindInfoSQL() string {
+	sql, err := sqlexec.EscapeSQL("UPDATE mysql.bind_info SET source= %? WHERE original_sql= %?", Builtin, BuiltinPseudoSQL4BindLock)
+	if err != nil {
+		return ""
+	}
+	return sql
+}
+
 // CaptureBaselines is used to automatically capture plan baselines.
 func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
@@ -651,27 +650,14 @@ func (h *BindHandle) CaptureBaselines() {
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	oriVals := sctx.GetSessionVars().UsePlanBaselines
 	sctx.GetSessionVars().UsePlanBaselines = false
-<<<<<<< HEAD
-	recordSets, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = oriVals
-	if len(recordSets) > 0 {
-		defer terror.Log(recordSets[0].Close())
-=======
-
-	// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
-	// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
-	// the statement won't be able to "break out" from EXPLAIN.
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("EXPLAIN FORMAT='hint' %s", sql))
-	sctx.GetSessionVars().UsePlanBaselines = origVals
-	if rs != nil {
-		defer terror.Call(rs.Close)
->>>>>>> 745729fd9... bindinfo: use new sql apis (#22653)
-	}
 	if err != nil {
 		return "", err
 	}
-	chk := recordSets[0].NewChunk()
-	err = recordSets[0].Next(context.TODO(), chk)
+	defer terror.Call(rs.Close)
+	chk := rs.NewChunk()
+	err = rs.Next(context.TODO(), chk)
 	if err != nil {
 		return "", err
 	}
@@ -778,9 +764,7 @@ func getEvolveParameters(ctx sessionctx.Context) (time.Duration, time.Time, time
 		return 0, time.Time{}, time.Time{}, err
 	}
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.TODO(), stmt)
-	if err != nil {
-		return 0, time.Time{}, time.Time{}, err
-	}
+
 	maxTime, startTimeStr, endTimeStr := int64(variable.DefTiDBEvolvePlanTaskMaxTime), variable.DefTiDBEvolvePlanTaskStartTime, variable.DefAutoAnalyzeEndTime
 	for _, row := range rows {
 		switch row.GetString(0) {
@@ -882,23 +866,20 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 			resultChan <- fmt.Errorf("run sql panicked: %v", string(buf))
 		}
 	}()
-	recordSets, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
-		if len(recordSets) > 0 {
-			terror.Call(recordSets[0].Close)
-		}
+		terror.Call(rs.Close)
 		resultChan <- err
 		return
 	}
-	recordSet := recordSets[0]
-	chk := recordSets[0].NewChunk()
+	chk := rs.NewChunk()
 	for {
-		err = recordSet.Next(ctx, chk)
+		err = rs.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			break
 		}
 	}
-	terror.Call(recordSets[0].Close)
+	terror.Call(rs.Close)
 	resultChan <- err
 }
 
