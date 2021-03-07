@@ -763,18 +763,24 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	testFallbackWork(c, tk, cc, "select sum(a) from t")
 	// test COM_STMT_EXECUTE
 	ctx := context.Background()
-	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 1")
+	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv=1")
 	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 	// use cursor
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	c.Assert(cc.handleStmtFetch(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), NotNil)
-	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 0")
+	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv=0")
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"), IsNil)
 
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/copRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
+	tk.MustExec("set @@session.tidb_allow_batch_cop=0")
+	testFallbackWork(c, tk, cc, "select sum(a) from t")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/copRpcErrtiflash0"), IsNil)
+
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout", "return(true)"), IsNil)
+	tk.MustExec("set @@session.tidb_allow_batch_cop=1")
 	testFallbackWork(c, tk, cc, "select sum(a) from t")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout"), IsNil)
 
@@ -791,9 +797,9 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 
 func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
 	ctx := context.Background()
-	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 0")
+	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv=0")
 	c.Assert(tk.QueryToErr(sql), NotNil)
-	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 1")
+	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv=1")
 
 	c.Assert(cc.handleQuery(ctx, sql), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
