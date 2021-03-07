@@ -1143,6 +1143,13 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 
 	// Check whether this function can be pushed.
 	if !canFuncBePushed(scalarFunc, storeType) {
+		if pc.sc.InExplainStmt {
+			storageName := storeType.Name()
+			if storeType == kv.UnSpecified {
+				storageName = "storage layer"
+			}
+			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ") can not be pushed to " + storageName))
+		}
 		return false
 	}
 
@@ -1166,6 +1173,9 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
 	if storeType == kv.TiFlash && expr.GetType().Tp == mysql.TypeDuration {
+		if pc.sc.InExplainStmt {
+			pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Duration type"))
+		}
 		return false
 	}
 	switch x := expr.(type) {

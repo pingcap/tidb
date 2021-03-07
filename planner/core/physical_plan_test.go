@@ -880,7 +880,7 @@ func (s *testPlanSuite) TestLimitToCopHint(c *C) {
 		output []struct {
 			SQL     string
 			Plan    []string
-			Warning string
+			Warning []string
 		}
 	)
 
@@ -897,15 +897,20 @@ func (s *testPlanSuite) TestLimitToCopHint(c *C) {
 		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 		s.testData.OnRecord(func() {
 			if len(warnings) > 0 {
-				output[i].Warning = warnings[0].Err.Error()
+				output[i].Warning = make([]string, len(warnings))
+				for j, warning := range warnings {
+					output[i].Warning[j] = warning.Err.Error()
+				}
 			}
 		})
-		if output[i].Warning == "" {
+		if len(output[i].Warning) == 0 {
 			c.Assert(len(warnings), Equals, 0, comment)
 		} else {
-			c.Assert(len(warnings), Equals, 1, comment)
-			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
-			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning, comment)
+			c.Assert(len(warnings), Equals, len(output[i].Warning), comment)
+			for j, warning := range warnings {
+				c.Assert(warning.Level, Equals, stmtctx.WarnLevelWarning, comment)
+				c.Assert(warning.Err.Error(), Equals, output[i].Warning[j], comment)
+			}
 		}
 	}
 }
