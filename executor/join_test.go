@@ -1109,7 +1109,7 @@ func (s *testSuiteJoin1) TestJoinLeak(c *C) {
 	err = result.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond)
-	result.Close()
+	c.Assert(result.Close(), IsNil)
 
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
@@ -2293,6 +2293,7 @@ func (s *testSuite9) TestIssue18572_1(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinInnerWorkerErr"), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuite9) TestIssue18572_2(c *C) {
@@ -2311,6 +2312,7 @@ func (s *testSuite9) TestIssue18572_2(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinOuterWorkerErr"), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuite9) TestIssue18572_3(c *C) {
@@ -2329,6 +2331,7 @@ func (s *testSuite9) TestIssue18572_3(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuite9) TestApplyOuterAggEmptyInput(c *C) {
@@ -2494,25 +2497,29 @@ func (s *testSuiteJoinSerial) TestExplainAnalyzeJoin(c *C) {
 
 func (s *testSuiteJoinSerial) TestIssue20270(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)")
+	err := failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)")
+	c.Assert(err, IsNil)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
-	err := tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	c.Assert(err, Equals, executor.ErrQueryInterrupted)
-	failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk")
+	c.Assert(err, IsNil)
 	plannercore.ForceUseOuterBuild4Test = true
 	defer func() {
 		plannercore.ForceUseOuterBuild4Test = false
 	}()
-	failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
+	err = failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
+	c.Assert(err, IsNil)
 	tk.MustExec("insert into t1 values(1,30),(2,40)")
 	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	c.Assert(err, Equals, executor.ErrQueryInterrupted)
-	failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin")
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuiteJoinSerial) TestIssue20710(c *C) {
@@ -2554,6 +2561,7 @@ func (s *testSuiteJoinSerial) TestIssue20779(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(err.Error(), Matches, "testIssue20779")
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuiteJoinSerial) TestIssue20219(c *C) {

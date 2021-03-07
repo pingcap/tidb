@@ -69,7 +69,7 @@ func (s *testAsyncCommitCommon) putKV(c *C, key, value []byte, enableAsyncCommit
 	return txn.StartTS(), txn.commitTS
 }
 
-func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn kv.Transaction, key, expectedValue []byte) {
+func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn *KVTxn, key, expectedValue []byte) {
 	v, err := txn.Get(context.Background(), key)
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, expectedValue)
@@ -115,23 +115,23 @@ func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, ke
 	c.Assert(errors.Cause(err), Equals, kv.ErrNotExist)
 }
 
-func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) *tikvTxn {
+func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) *KVTxn {
 	txn := s.beginAsyncCommit(c)
 	txn.SetOption(kv.GuaranteeLinearizability, true)
 	return txn
 }
 
-func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) *tikvTxn {
+func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
-	return txn.(*tikvTxn)
+	return txn
 }
 
-func (s *testAsyncCommitCommon) begin(c *C) *tikvTxn {
+func (s *testAsyncCommitCommon) begin(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 type testAsyncCommitSuite struct {

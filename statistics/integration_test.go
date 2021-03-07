@@ -14,6 +14,7 @@ package statistics_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -203,14 +204,118 @@ func (s *testIntegrationSuite) TestExpBackoffEstimation(c *C) {
 		output [][]string
 	)
 	s.testData.GetTestCases(c, &input, &output)
+	inputLen := len(input)
 	// The test cases are:
 	// Query a = 1, b = 1, c = 1, d >= 3 and d <= 5 separately. We got 5, 3, 2, 3.
 	// And then query and a = 1 and b = 1 and c = 1 and d >= 3 and d <= 5. It's result should follow the exp backoff,
 	// which is 2/5 * (3/5)^{1/2} * (3/5)*{1/4} * 1^{1/8} * 5 = 1.3634.
-	for i := 0; i < len(input); i++ {
+	for i := 0; i < inputLen-1; i++ {
 		s.testData.OnRecord(func() {
 			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
 		})
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
+
+	// The last case is that no column is loaded and we get no stats at all.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/cleanEstResults", `return(true)`), IsNil)
+	s.testData.OnRecord(func() {
+		output[inputLen-1] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[inputLen-1]).Rows())
+	})
+	tk.MustQuery(input[inputLen-1]).Check(testkit.Rows(output[inputLen-1]...))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/cleanEstResults"), IsNil)
+}
+
+func (s *testIntegrationSuite) TestGlobalStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@tidb_analyze_version = 2;")
+	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30)
+	);`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("insert into t values (1), (5), (null), (11), (15), (21), (25);")
+	tk.MustExec("analyze table t;")
+	// On the table with global-stats, we use explain to query a multi-partition query.
+	// And we should get the result that global-stats is used instead of pseudo-stats.
+	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
+		"IndexReader 4.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 4.00 cop[tikv] table:t, index:a(a) range:(5,+inf], keep order:false"))
+	// On the table with global-stats, we use explain to query a single-partition query.
+	// And we should get the result that global-stats is used instead of pseudo-stats.
+	tk.MustQuery("explain format = 'brief' select * from t partition(p1) where a > 15;").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:p1 index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(15,+inf], keep order:false"))
+
+	// Even if we have global-stats, we will not use it when the switch is set to `static`.
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
+		"PartitionUnion 4.00 root  ",
+		"├─IndexReader 0.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 0.00 cop[tikv] table:t, partition:p0, index:a(a) range:(5,+inf], keep order:false",
+		"├─IndexReader 2.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) range:(5,+inf], keep order:false",
+		"└─IndexReader 2.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p2, index:a(a) range:(5,+inf], keep order:false"))
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a int, b int, key(a)) PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("insert into t values(1,1),(3,3),(4,4),(2,2),(5,5);")
+	// When we set the mode to `static`, using analyze will not report an error and will not generate global-stats.
+	// In addition, when using explain to view the plan of the related query, it was found that `Union` was used.
+	tk.MustExec("analyze table t;")
+	result := tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[0][5], Equals, "2")
+	c.Assert(result.Rows()[1][5], Equals, "3")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"PartitionUnion 2.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p0, index:a(a) range:(3,+inf], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
+
+	// When we turned on the switch, we found that pseudo-stats will be used in the plan instead of `Union`.
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"IndexReader 3333.33 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 3333.33 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false, stats:pseudo"))
+
+	// Execute analyze again without error and can generate global-stats.
+	// And when executing related queries, neither Union nor pseudo-stats are used.
+	tk.MustExec("analyze table t;")
+	result = tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 3)
+	c.Assert(result.Rows()[0][5], Equals, "5")
+	c.Assert(result.Rows()[1][5], Equals, "2")
+	c.Assert(result.Rows()[2][5], Equals, "3")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int, c int)  PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("create index idx_ab on t(a, b);")
+	tk.MustExec("insert into t values (1, 1, 1), (5, 5, 5), (11, 11, 11), (15, 15, 15), (21, 21, 21), (25, 25, 25);")
+	tk.MustExec("analyze table t;")
+	// test the indexScan
+	tk.MustQuery("explain format = 'brief' select b from t where a > 5 and b > 10;").Check(testkit.Rows(
+		"Projection 2.67 root  test.t.b",
+		"└─IndexReader 2.67 root partition:all index:Selection",
+		"  └─Selection 2.67 cop[tikv]  gt(test.t.b, 10)",
+		"    └─IndexRangeScan 4.00 cop[tikv] table:t, index:idx_ab(a, b) range:(5,+inf], keep order:false"))
+	// test the indexLookUp
+	tk.MustQuery("explain format = 'brief' select * from t use index(idx_ab) where a > 1;").Check(testkit.Rows(
+		"IndexLookUp 5.00 root partition:all ",
+		"├─IndexRangeScan(Build) 5.00 cop[tikv] table:t, index:idx_ab(a, b) range:(1,+inf], keep order:false",
+		"└─TableRowIDScan(Probe) 5.00 cop[tikv] table:t keep order:false"))
+	// test the tableScan
+	tk.MustQuery("explain format = 'brief' select * from t;").Check(testkit.Rows(
+		"TableReader 6.00 root partition:all data:TableFullScan",
+		"└─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
 }

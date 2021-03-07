@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
@@ -61,10 +62,6 @@ const (
 	// defBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(slice))+2*ptrSize
 	// The bucket size may be changed by golang implement in the future.
 	defBucketMemoryUsage = 8*(1+16+24) + 16
-	// Maximum average load of a bucket that triggers growth is 6.5.
-	// Represent as loadFactorNum/loadFactDen, to allow integer math.
-	loadFactorNum = 13
-	loadFactorDen = 2
 )
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
@@ -167,6 +164,7 @@ type HashAggExec struct {
 	PartialAggFuncs  []aggfuncs.AggFunc
 	FinalAggFuncs    []aggfuncs.AggFunc
 	partialResultMap aggPartialResultMapper
+	bInMap           int64 // indicate there are 2^bInMap buckets in partialResultMap
 	groupSet         set.StringSet
 	groupKeys        []string
 	cursor4GroupKey  int
@@ -283,6 +281,8 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 func (e *HashAggExec) initForUnparallelExec() {
 	e.groupSet = set.NewStringSet()
 	e.partialResultMap = make(aggPartialResultMapper)
+	e.bInMap = 0
+	e.memTracker.Consume(defBucketMemoryUsage * (1 << e.bInMap))
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
@@ -537,7 +537,7 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(mapper) > (1<<w.BInMap)*loadFactorNum/loadFactorDen {
+		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
 			w.BInMap++
 		}
@@ -878,6 +878,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			return err
 		}
 
+		allMemDelta := int64(0)
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
@@ -890,23 +891,32 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 				if err != nil {
 					return err
 				}
-				e.memTracker.Consume(memDelta)
+				allMemDelta += memDelta
 			}
 		}
+		e.memTracker.Consume(allMemDelta)
 	}
 }
 
 func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResult {
 	partialResults, ok := e.partialResultMap[groupKey]
+	allMemDelta := int64(0)
 	if !ok {
 		partialResults = make([]aggfuncs.PartialResult, 0, len(e.PartialAggFuncs))
 		for _, af := range e.PartialAggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
 			partialResults = append(partialResults, partialResult)
-			e.memTracker.Consume(memDelta)
+			allMemDelta += memDelta
 		}
 		e.partialResultMap[groupKey] = partialResults
+		allMemDelta += int64(len(groupKey))
+		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
+		if len(e.partialResultMap) > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+			e.memTracker.Consume(defBucketMemoryUsage * (1 << e.bInMap))
+			e.bInMap++
+		}
 	}
+	e.memTracker.Consume(allMemDelta)
 	return partialResults
 }
 
