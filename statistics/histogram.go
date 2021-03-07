@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -900,6 +901,7 @@ type Column struct {
 	Histogram
 	*CMSketch
 	*TopN
+	*FMSketch
 	PhysicalID int64
 	Count      int64
 	Info       *model.ColumnInfo
@@ -946,6 +948,9 @@ func (c *Column) MemoryUsage() (sum int64) {
 	if c.CMSketch != nil {
 		sum += c.CMSketch.MemoryUsage()
 	}
+	if c.FMSketch != nil {
+		sum += c.FMSketch.MemoryUsage()
+	}
 	return
 }
 
@@ -959,11 +964,11 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
-	if c.NDV > 0 && c.notNullCount() == 0 && sc != nil {
+	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sc != nil {
 		sc.SetHistogramsNotLoad()
 		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
 	}
-	return c.TotalRowCount() == 0 || (c.NDV > 0 && c.notNullCount() == 0)
+	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
@@ -975,8 +980,8 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		if c.Histogram.Bounds.NumRows() == 0 {
 			return 0.0, nil
 		}
-		if c.NDV > 0 && c.outOfRange(val) {
-			return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
+		if c.Histogram.NDV > 0 && c.outOfRange(val) {
+			return outOfRangeEQSelectivity(c.Histogram.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
 			count, err := queryValue(sc, c.CMSketch, c.TopN, val)
@@ -1019,7 +1024,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 	if c.TopN != nil {
 		topNLen = int64(len(c.TopN.TopN))
 	}
-	ndv := c.NDV - topNLen - int64(len(c.Histogram.Buckets))
+	ndv := c.Histogram.NDV - topNLen - int64(len(c.Histogram.Buckets))
 	if ndv <= 0 {
 		return 0, nil
 	}
@@ -1185,7 +1190,7 @@ func (idx *Index) QueryBytes(d []byte) uint64 {
 
 // GetRowCount returns the row count of the given ranges.
 // It uses the modifyCount to adjust the influence of modifications on the table.
-func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.Range, modifyCount int64) (float64, error) {
+func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, indexRanges []*ranger.Range, modifyCount int64) (float64, error) {
 	totalCount := float64(0)
 	isSingleCol := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
@@ -1222,7 +1227,6 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		}
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
-		totalCount += idx.BetweenRowCount(l, r)
 		lowIsNull := bytes.Equal(lb, nullKeyBytes)
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
 			totalCount += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
@@ -1230,11 +1234,91 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		if isSingleCol && lowIsNull {
 			totalCount += float64(idx.NullCount)
 		}
+		expBackoffSuccess := false
+		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
+		// If the first column's range is point.
+		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer == Version2 && coll != nil {
+			var expBackoffSel float64
+			expBackoffSel, expBackoffSuccess, err = idx.expBackoffEstimation(sc, coll, indexRange)
+			if err != nil {
+				return 0, err
+			}
+			if expBackoffSuccess {
+				totalCount += expBackoffSel * idx.TotalRowCount()
+			}
+		}
+		if !expBackoffSuccess {
+			totalCount += idx.BetweenRowCount(l, r)
+		}
 	}
 	if totalCount > idx.TotalRowCount() {
 		totalCount = idx.TotalRowCount()
 	}
 	return totalCount, nil
+}
+
+// expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
+func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistColl, indexRange *ranger.Range) (float64, bool, error) {
+	tmpRan := []*ranger.Range{
+		{
+			LowVal:  make([]types.Datum, 1),
+			HighVal: make([]types.Datum, 1),
+		},
+	}
+	colsIDs := coll.Idx2ColumnIDs[idx.ID]
+	singleColumnEstResults := make([]float64, 0, len(indexRange.LowVal))
+	// The following codes uses Exponential Backoff to reduce the impact of independent assumption. It works like:
+	//   1. Calc the selectivity of each column.
+	//   2. Sort them and choose the first 4 most selective filter and the corresponding selectivity is sel_1, sel_2, sel_3, sel_4 where i < j => sel_i < sel_j.
+	//   3. The final selectivity would be sel_1 * sel_2^{1/2} * sel_3^{1/4} * sel_4^{1/8}.
+	// This calculation reduced the independence assumption and can work well better than it.
+	for i := 0; i < len(indexRange.LowVal); i++ {
+		tmpRan[0].LowVal[0] = indexRange.LowVal[i]
+		tmpRan[0].HighVal[0] = indexRange.HighVal[i]
+		if i == len(indexRange.LowVal)-1 {
+			tmpRan[0].LowExclude = indexRange.LowExclude
+			tmpRan[0].HighExclude = indexRange.HighExclude
+		}
+		colID := colsIDs[i]
+		var (
+			count float64
+			err   error
+		)
+		if anotherIdxID, ok := coll.ColID2IdxID[colID]; ok && anotherIdxID != idx.ID {
+			count, err = coll.GetRowCountByIndexRanges(sc, anotherIdxID, tmpRan)
+		} else if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sc, coll.Pseudo) {
+			count, err = coll.GetRowCountByColumnRanges(sc, colID, tmpRan)
+		} else {
+			continue
+		}
+		if err != nil {
+			return 0, false, err
+		}
+		singleColumnEstResults = append(singleColumnEstResults, count)
+	}
+	// Sort them.
+	sort.Slice(singleColumnEstResults, func(i, j int) bool {
+		return singleColumnEstResults[i] < singleColumnEstResults[j]
+	})
+	l := len(singleColumnEstResults)
+	// Convert the first 4 to selectivity results.
+	for i := 0; i < l && i < 4; i++ {
+		singleColumnEstResults[i] = singleColumnEstResults[i] / float64(coll.Count)
+	}
+	failpoint.Inject("cleanEstResults", func() {
+		singleColumnEstResults = singleColumnEstResults[:0]
+		l = 0
+	})
+	if l == 1 {
+		return singleColumnEstResults[0], true, nil
+	} else if l == 2 {
+		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]), true, nil
+	} else if l == 3 {
+		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])), true, nil
+	} else if l == 0 {
+		return 0, false, nil
+	}
+	return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])) * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3]))), true, nil
 }
 
 type countByRangeFunc = func(*stmtctx.StatementContext, int64, []*ranger.Range) (float64, error)
@@ -1365,7 +1449,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			IsHandle:   oldCol.IsHandle,
 			CMSketch:   oldCol.CMSketch,
 		}
-		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
+		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.Histogram.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
 		var err error
 		splitRanges, ok := oldCol.Histogram.SplitRange(sc, node.Ranges, false)
 		if !ok {
@@ -1704,7 +1788,7 @@ func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
 }
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64) (*Histogram, error) {
+func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
 	var totCount, totNull, bucketNumber, totColSize int64
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
@@ -1742,9 +1826,15 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 
 	for _, meta := range popedTopN {
 		totCount += int64(meta.Count)
-		_, d, err := codec.DecodeOne(meta.Encoded)
-		if err != nil {
-			return nil, err
+		var d types.Datum
+		if isIndex {
+			d.SetBytes(meta.Encoded)
+		} else {
+			var err error
+			_, d, err = codec.DecodeOne(meta.Encoded)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if minValue == nil {
 			minValue = d.Clone()
@@ -1816,8 +1906,8 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 
 	// Calc the bucket lower.
-	if minValue == nil {
-		return nil, errors.Errorf("merge partition-level hist failed")
+	if minValue == nil { // both hists and popedTopN are empty, returns an empty hist in this case
+		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
 	}
 	globalBuckets[0].lower = minValue.Clone()
 	for i := 1; i < len(globalBuckets); i++ {
@@ -1826,6 +1916,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize)
 	for _, bucket := range globalBuckets {
+		if !isIndex {
+			bucket.NDV = 0 // bucket.NDV is not maintained for column histograms
+		}
 		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
 	}
 	return globalHist, nil

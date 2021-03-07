@@ -19,6 +19,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
@@ -235,6 +236,15 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
 	}
 	builder.txnScope = sv.TxnCtx.TxnScope
+	builder.IsStaleness = sv.TxnCtx.IsStaleness
+	if builder.IsStaleness && builder.txnScope != oracle.GlobalTxnScope {
+		builder.MatchStoreLabels = []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: builder.txnScope,
+			},
+		}
+	}
 	return builder
 }
 
