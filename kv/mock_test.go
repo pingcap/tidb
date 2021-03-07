@@ -80,7 +80,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Assert(storage.Describe(), Equals, "KVMockStorage is a mock Store implementation, only for unittests in KV package")
 	c.Assert(storage.SupportDeleteRange(), IsFalse)
 
-	status, err := storage.ShowStatus(nil, "")
+	status, err := storage.ShowStatus(context.Background(), "")
 	c.Assert(status, IsNil)
 	c.Assert(err, IsNil)
 

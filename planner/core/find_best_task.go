@@ -90,10 +90,6 @@ func (c *PlanCounterTp) IsForce() bool {
 	return *c != -1
 }
 
-// wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
-// these tasks one by one.
-var wholeTaskTypes = [...]property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.RootTaskType}
-
 var invalidTask = &rootTask{cst: math.MaxFloat64}
 
 // GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
@@ -966,11 +962,10 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 		if !coveredByPlainIndex && !coveredByClusteredIndex {
 			return false
 		}
-
 		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
 			col.GetType().EvalType() == types.ETString &&
 			!mysql.HasBinaryFlag(col.GetType().Flag)
-		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx {
+		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.table.Meta().CommonHandleVersion == 0 {
 			return false
 		}
 	}
@@ -1032,6 +1027,15 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	task = cop
 	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
 		cop.commonHandleCols = ds.commonHandleCols
+		commonHandle := ds.handleCols.(*CommonHandleCols)
+		for _, col := range commonHandle.columns {
+			if ds.schema.ColumnIndex(col) == -1 {
+				ts := cop.tablePlan.(*PhysicalTableScan)
+				ts.Schema().Append(col)
+				ts.Columns = append(ts.Columns, col.ToInfo())
+				cop.doubleReadNeedProj = true
+			}
+		}
 	}
 	if candidate.isMatchProp {
 		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
@@ -1373,10 +1377,11 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 // `1 + row_count(a < 1 or a is null)`
 func (ds *DataSource) crossEstimateIndexRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	filtersLen := len(path.TableFilters) + len(path.IndexFilters)
-	if ds.statisticTable.Pseudo || filtersLen == 0 {
+	sessVars := ds.ctx.GetSessionVars()
+	if ds.statisticTable.Pseudo || filtersLen == 0 || !sessVars.EnableExtendedStats {
 		return 0, false, 0
 	}
-	col, corr := getMostCorrCol4Index(path, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
+	col, corr := getMostCorrCol4Index(path, ds.statisticTable, sessVars.CorrelationThreshold)
 	filters := make([]expression.Expression, 0, filtersLen)
 	filters = append(filters, path.TableFilters...)
 	filters = append(filters, path.IndexFilters...)
@@ -1480,7 +1485,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	ts, cost, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
 	if prop.TaskTp == property.MppTaskType {
-		if prop.PartitionTp != property.AnyType {
+		if prop.PartitionTp != property.AnyType || ts.isPartition {
+			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
 			return &mppTask{}, nil
 		}
 		mppTask := &mppTask{
@@ -1488,6 +1494,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			cst:    cost,
 			partTp: property.AnyType,
 			ts:     ts,
+		}
+		ts.PartitionInfo = PartitionInfo{
+			PruningConds:   ds.allConds,
+			PartitionNames: ds.partitionNames,
+			Columns:        ds.TblCols,
+			ColumnNames:    ds.names,
 		}
 		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.stats)
 		return mppTask, nil

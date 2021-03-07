@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package driver
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 )
@@ -51,7 +52,9 @@ func NewTestStore(c *C) kv.Storage {
 	unistore.BootstrapWithSingleStore(cluster)
 	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-	return &tikvStore{KVStore: store}
+	coprStore, err := copr.NewStore(store, nil)
+	c.Assert(err, IsNil)
+	return &tikvStore{KVStore: store, coprStore: coprStore}
 }
 
 func clearStorage(store kv.Storage) error {

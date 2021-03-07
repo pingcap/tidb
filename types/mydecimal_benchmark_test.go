@@ -41,19 +41,31 @@ func BenchmarkRound(b *testing.B) {
 	}
 
 	for i := 0; i < len(tests); i++ {
-		tests[i].inputDec.FromString([]byte(tests[i].input))
+		err := tests[i].inputDec.FromString([]byte(tests[i].input))
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 
 	b.StartTimer()
 	for n := 0; n < b.N; n++ {
 		for i := 0; i < len(tests); i++ {
-			tests[i].inputDec.Round(&roundTo, tests[i].scale, ModeHalfEven)
+			err := tests[i].inputDec.Round(&roundTo, tests[i].scale, ModeHalfEven)
+			if err != nil {
+				b.Fatal(err)
+			}
 		}
 		for i := 0; i < len(tests); i++ {
-			tests[i].inputDec.Round(&roundTo, tests[i].scale, ModeTruncate)
+			err := tests[i].inputDec.Round(&roundTo, tests[i].scale, ModeTruncate)
+			if err != nil {
+				b.Fatal(err)
+			}
 		}
 		for i := 0; i < len(tests); i++ {
-			tests[i].inputDec.Round(&roundTo, tests[i].scale, modeCeiling)
+			err := tests[i].inputDec.Round(&roundTo, tests[i].scale, modeCeiling)
+			if err != nil {
+				b.Fatal(err)
+			}
 		}
 	}
 }

@@ -23,14 +23,19 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -46,7 +51,17 @@ var _ = SerialSuites(&ConnTestSuite{})
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	var err error
-	ts.store, err = mockstore.NewMockStore()
+	ts.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			store := c.AllocID()
+			peer := c.AllocID()
+			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+			mockCluster.AddPeer(region1, store, peer)
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
 	c.Assert(err, IsNil)
 	ts.dom, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
@@ -712,8 +727,17 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
 }
 
-func (ts *ConnTestSuite) TestFallbackToTiKVWhenTiFlashIsDown(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/errorMockTiFlashServerTimeout", "return(true)"), IsNil)
+func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, IsNil)
+	return tbl
+}
+
+func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	cc := &clientConn{
 		alloc: arena.NewAllocator(1024),
 		pkt: &packetIO{
@@ -723,37 +747,47 @@ func (ts *ConnTestSuite) TestFallbackToTiKVWhenTiFlashIsDown(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
 
-	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 1")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int)")
-	tk.MustExec("insert into t values (3, 4), (6, 7), (9, 10)")
-
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Se)
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	c.Assert(exists, IsTrue)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
-
-	tk.MustQuery("explain select sum(a) from t").Check(testkit.Rows(
-		"StreamAgg_20 1.00 root  funcs:sum(Column#6)->Column#4",
-		"└─TableReader_21 1.00 root  data:StreamAgg_8",
-		"  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(test.t.a)->Column#6",
-		"    └─TableFullScan_19 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"))
-
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("insert into t values(3,0)")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("3"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
+	// test batch cop send req error
+	testFallbackWork(c, tk, cc, "select sum(a) from t")
 	ctx := context.Background()
-	c.Assert(cc.handleQuery(ctx, "select sum(a) from t"), IsNil)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/errorMockTiFlashServerTimeout"), IsNil)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout", "return(true)"), IsNil)
+	testFallbackWork(c, tk, cc, "select sum(a) from t")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "return(true)"), IsNil)
+	tk.MustExec("set @@session.tidb_allow_mpp=1")
+	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout", "return(-1)"), IsNil)
+	tk.MustExec("set @@session.tidb_allow_mpp=1")
+	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout"), IsNil)
+}
+
+func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
+	ctx := context.Background()
+	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 0")
+	c.Assert(tk.QueryToErr(sql), NotNil)
+	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 1")
+
+	c.Assert(cc.handleQuery(ctx, sql), IsNil)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 }

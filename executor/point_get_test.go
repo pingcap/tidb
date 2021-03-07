@@ -464,7 +464,8 @@ func (s *testPointGetSuite) TestIssue10677(c *C) {
 
 func (s *testPointGetSuite) TestForUpdateRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Exec("drop table if exists t")
+	_, err := tk.Exec("drop table if exists t")
+	c.Assert(err, IsNil)
 	tk.MustExec("create table t(pk int primary key, c int)")
 	tk.MustExec("insert into t values (1, 1), (2, 2)")
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
@@ -473,7 +474,7 @@ func (s *testPointGetSuite) TestForUpdateRetry(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("update t set c = c + 1 where pk = 1")
 	tk.MustExec("update t set c = c + 1 where pk = 2")
-	_, err := tk.Exec("commit")
+	_, err = tk.Exec("commit")
 	c.Assert(session.ErrForUpdateCantRetry.Equal(err), IsTrue)
 }
 
@@ -586,7 +587,7 @@ func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
-		plan := tk.MustQuery("explain " + tt)
+		plan := tk.MustQuery("explain format = 'brief' " + tt)
 		res := tk.MustQuery(tt).Sort()
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
