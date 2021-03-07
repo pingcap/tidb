@@ -137,7 +137,7 @@ func (tk *TestKit) GetConnectionID() {
 	}
 }
 
-// Exec executes a sql statement using the prepared stmt API
+// Exec executes a sql statement.
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
