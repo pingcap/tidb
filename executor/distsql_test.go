@@ -80,7 +80,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(500))
@@ -95,7 +95,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 
 	// Check there is no goroutine leak.
 	rs, err = tk.Exec("select * from copclient order by id")
@@ -103,7 +103,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	req = rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	keyword := "(*copIterator).work"
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 }
