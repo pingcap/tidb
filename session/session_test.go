@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -77,6 +78,8 @@ var _ = Suite(&testIsolationSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
+var _ = Suite(&testClusteredSuite{})
+var _ = SerialSuites(&testClusteredSerialSuite{})
 
 type testSessionSuiteBase struct {
 	cluster cluster.Cluster
@@ -3256,10 +3259,7 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
-	defer func() {
-		config.GetGlobalConfig().Labels["zone"] = ""
-	}()
-	config.GetGlobalConfig().Labels["zone"] = ""
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("")`)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
@@ -3270,8 +3270,9 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
-
-	config.GetGlobalConfig().Labels["zone"] = "bj"
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
@@ -3290,9 +3291,6 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
-	defer func() {
-		config.GetGlobalConfig().Labels["zone"] = ""
-	}()
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
 	if *withTiKV {
@@ -3382,9 +3380,8 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
-	config.GetGlobalConfig().Labels = map[string]string{
-		"zone": "dc-1",
-	}
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("dc-1")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	// set txn_scope to local
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
@@ -3728,6 +3725,15 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	}
 }
 
+func (s *testSessionSuite2) TestIssue19127(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists issue19127")
+	tk.MustExec("create table issue19127 (c_int int, c_str varchar(40), primary key (c_int, c_str) ) partition by hash (c_int) partitions 4;")
+	tk.MustExec("insert into issue19127 values (9, 'angry williams'), (10, 'thirsty hugle');")
+	tk.Exec("update issue19127 set c_int = c_int + 10, c_str = 'adoring stonebraker' where c_int in (10, 9);")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+}
+
 func (s *testSessionSuite2) TestMemoryUsageAlarmVariable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -3794,13 +3800,13 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert")
 
 	enableOOM := func(tk *testkit.TestKit, name, sql string) {
 		c.Logf("enable OOM, testcase: %v", name)
 		// larger than 4 copResponse, smaller than 5 copResponse
-		quota := 5*tikv.MockResponseSizeForTest - 100
+		quota := 5*copr.MockResponseSizeForTest - 100
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
@@ -3815,7 +3821,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 
 	disableOOM := func(tk *testkit.TestKit, name, sql string) {
 		c.Logf("disable OOM, testcase: %v", name)
-		quota := 5*tikv.MockResponseSizeForTest - 100
+		quota := 5*copr.MockResponseSizeForTest - 100
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
@@ -3824,7 +3830,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
 	}
 
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockWaitMax", `return(true)`)
 	// assert oom action and switch
 	for _, testcase := range testcases {
 		se, err := session.CreateSession4Test(s.store)
@@ -3855,7 +3861,7 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		enableOOM(tk, testcase.name, testcase.sql)
 		se.Close()
 	}
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockWaitMax")
 
 	// assert oom fallback
 	for _, testcase := range testcases {

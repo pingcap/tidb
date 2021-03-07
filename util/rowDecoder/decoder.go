@@ -38,14 +38,13 @@ type Column struct {
 
 // RowDecoder decodes a byte slice into datums and eval the generated column value.
 type RowDecoder struct {
-	tbl           table.Table
-	mutRow        chunk.MutRow
-	colMap        map[int64]Column
-	colTypes      map[int64]*types.FieldType
-	haveGenColumn bool
-	defaultVals   []types.Datum
-	cols          []*table.Column
-	pkCols        []int64
+	tbl         table.Table
+	mutRow      chunk.MutRow
+	colMap      map[int64]Column
+	colTypes    map[int64]*types.FieldType
+	defaultVals []types.Datum
+	cols        []*table.Column
+	pkCols      []int64
 }
 
 // NewRowDecoder returns a new RowDecoder.

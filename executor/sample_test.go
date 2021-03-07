@@ -37,7 +37,6 @@ type testTableSampleSuite struct {
 	cluster cluster.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
-	ctx     *mock.Context
 }
 
 func (s *testTableSampleSuite) SetUpSuite(c *C) {
