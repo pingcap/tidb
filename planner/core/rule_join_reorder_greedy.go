@@ -58,7 +58,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 	for _, edge := range s.directedEdges {
 		nodeSet := s.directMap[edge[0]]
 		if nodeSet == nil {
-			nodeSet = make(map[LogicalPlan]struct{}, 0)
+			nodeSet = make(map[LogicalPlan]struct{})
 			s.directMap[edge[0]] = nodeSet
 		}
 		nodeSet[edge[1]] = struct{}{}
@@ -69,7 +69,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 		isChanged = false
 		for _, set := range s.directMap {
 			oldSize := len(set)
-			newSet := make(map[LogicalPlan]struct{}, 0)
+			newSet := make(map[LogicalPlan]struct{})
 			for k1 := range set {
 				for k2 := range s.directMap[k1] {
 					newSet[k2] = struct{}{}

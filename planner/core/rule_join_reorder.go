@@ -111,7 +111,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				isSupportDP = false
 			}
 		}
-		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold && !isSupportDP {
+		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP {
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 				eqEdges:                        eqEdges,
