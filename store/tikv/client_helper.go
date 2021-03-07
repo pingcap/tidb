@@ -16,6 +16,7 @@ package tikv
 import (
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -73,13 +74,20 @@ func (ch *ClientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 }
 
 // SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
-func (ch *ClientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, sType kv.StoreType, directStoreAddr string) (*tikvrpc.Response, *RPCContext, string, error) {
+func (ch *ClientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, sType kv.StoreType, directStoreAddr string, opts ...StoreSelectorOption) (*tikvrpc.Response, *RPCContext, string, error) {
 	sender := NewRegionRequestSender(ch.regionCache, ch.client)
 	if len(directStoreAddr) > 0 {
 		sender.SetStoreAddr(directStoreAddr)
 	}
 	sender.Stats = ch.Stats
 	req.Context.ResolvedLocks = ch.resolvedLocks.GetAll()
-	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType)
+	failpoint.Inject("assertStaleReadFlag", func(val failpoint.Value) {
+		if val.(bool) {
+			if len(opts) > 0 && !req.StaleRead {
+				panic("req.StaleRead shouldn't be false when opts is not empty")
+			}
+		}
+	})
+	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType, opts...)
 	return resp, ctx, sender.GetStoreAddr(), err
 }

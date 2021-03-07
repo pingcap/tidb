@@ -152,6 +152,16 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 	}
 }
 
+// GetRegionCache returns the region cache.
+func (s *RegionRequestSender) GetRegionCache() *RegionCache {
+	return s.regionCache
+}
+
+// GetClient returns the RPC client.
+func (s *RegionRequestSender) GetClient() Client {
+	return s.client
+}
+
 // SetStoreAddr specifies the dest store address.
 func (s *RegionRequestSender) SetStoreAddr(addr string) {
 	s.storeAddr = addr
@@ -183,6 +193,7 @@ func (s *RegionRequestSender) getRPCContext(
 	req *tikvrpc.Request,
 	regionID RegionVerID,
 	sType kv.StoreType,
+	opts ...StoreSelectorOption,
 ) (*RPCContext, error) {
 	switch sType {
 	case kv.TiKV:
@@ -190,7 +201,7 @@ func (s *RegionRequestSender) getRPCContext(
 		if req.ReplicaReadSeed != nil {
 			seed = *req.ReplicaReadSeed
 		}
-		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed)
+		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed, opts...)
 	case kv.TiFlash:
 		return s.regionCache.GetTiFlashRPCContext(bo, regionID)
 	case kv.TiDB:
@@ -207,6 +218,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	regionID RegionVerID,
 	timeout time.Duration,
 	sType kv.StoreType,
+	opts ...StoreSelectorOption,
 ) (
 	resp *tikvrpc.Response,
 	rpcCtx *RPCContext,
@@ -252,7 +264,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
 
-		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType)
+		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType, opts...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -614,7 +626,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 
 	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
 		// store not match
-		logutil.BgLogger().Warn("tikv reports `StoreNotMatch` retry later",
+		logutil.BgLogger().Debug("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
 		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)

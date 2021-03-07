@@ -361,8 +361,10 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 
 func (s *testTableSuite) TearDownSuite(c *C) {
 	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
-	s.d.Stop()
-	s.store.Close()
+	err := s.d.Stop()
+	c.Assert(err, IsNil)
+	err = s.store.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testTableSuite) TestTable(c *C) {
