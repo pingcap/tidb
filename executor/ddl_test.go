@@ -136,6 +136,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 			c.Assert(req.GetRow(0).GetString(1), Equals, "double")
 		}
 	}
+	c.Assert(rs.Close(), IsNil)
 
 	// test multiple collate specified in column when create.
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
@@ -471,7 +472,7 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())
-	r.Close()
+	c.Assert(r.Close(), IsNil)
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
@@ -498,7 +499,7 @@ func (s *testSuite6) TestAlterTableAddColumns(c *C) {
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
-	r.Close()
+	c.Assert(r.Close(), IsNil)
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
 	_, err = tk.Exec("alter table alter_view add column (c4 varchar(50), c5 varchar(50))")
