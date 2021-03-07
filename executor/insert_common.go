@@ -46,6 +46,7 @@ import (
 )
 
 // InsertValues is the data to insert.
+// nolint:structcheck
 type InsertValues struct {
 	baseExecutor
 
@@ -1121,6 +1122,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	if err != nil {
 		return err
 	}
+	vars.StmtCtx.AddAffectedRows(1)
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
 	}

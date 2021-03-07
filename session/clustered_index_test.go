@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package session_test
 
 import (
 	. "github.com/pingcap/check"
@@ -20,16 +20,32 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
-type testClusteredSuiteBase struct{ baseTestSuite }
-type testClusteredSuite struct{ testClusteredSuiteBase }
+type testClusteredSuiteBase struct{ testSessionSuiteBase }
+type testClusteredSuite struct {
+	testClusteredSuiteBase
+	testData testutil.TestData
+}
 type testClusteredSerialSuite struct{ testClusteredSuiteBase }
 
 func (s *testClusteredSuiteBase) newTK(c *C) *testkit.TestKit {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	return tk
+}
+
+func (s *testClusteredSuite) SetUpSuite(c *C) {
+	s.testClusteredSuiteBase.SetUpSuite(c)
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "clustered_index_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testClusteredSuite) TearDownSuite(c *C) {
+	s.testClusteredSuiteBase.TearDownSuite(c)
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testClusteredSuite) TestClusteredUnionScan(c *C) {
@@ -49,6 +65,38 @@ func (s *testClusteredSuite) TestClusteredUnionScan(c *C) {
 	tk.MustExec("update t set c = 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
 	tk.MustExec("rollback")
+}
+
+func (s *testClusteredSuite) TestClusteredPrefixColumn(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(cb varchar(12), ci int, v int, primary key(cb(1)), key idx_1(cb))")
+	tk.MustExec("insert into t1 values('PvtYW2', 1, 1)")
+	tk.MustQuery("select cb from t1").Check(testkit.Rows("PvtYW2"))
+	tk.MustQuery("select * from t1").Check(testkit.Rows("PvtYW2 1 1"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100), c3 varchar(100), primary key (c1,c2), key idx1 (c2(1)))")
+	tk.MustExec("insert into t1 select 'a', 'cd', 'ef'")
+	tk.MustExec("create table t2(c1 varchar(100), c2 varchar(100), c3 varchar(100), primary key (c1,c2(1)), key idx1 (c1,c2))")
+	tk.MustExec("insert into t2 select 'a', 'cd', 'ef'")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
 }
 
 func (s *testClusteredSuite) TestClusteredUnionScanIndexLookup(c *C) {

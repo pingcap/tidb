@@ -25,6 +25,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/copr"
+	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -147,14 +149,18 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		return nil, errors.Trace(err)
 	}
 
-	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
 	pdClient := tikv.CodecPDClient{Client: pdCli}
-	s, err := tikv.NewKVStore(uuid, &pdClient, spkv, tikv.NewRPCClient(d.security), coprCacheConfig)
+	s, err := tikv.NewKVStore(uuid, &pdClient, spkv, tikv.NewRPCClient(d.security))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if d.txnLocalLatches.Enabled {
 		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
+	}
+	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
+	coprStore, err := copr.NewStore(s, coprCacheConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	store := &tikvStore{
@@ -164,6 +170,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		memCache:  kv.NewCacheDB(),
 		pdClient:  &pdClient,
 		enableGC:  !disableGC,
+		coprStore: coprStore,
 	}
 
 	mc.cache[uuid] = store
@@ -178,6 +185,7 @@ type tikvStore struct {
 	pdClient  pd.Client
 	enableGC  bool
 	gcWorker  *gcworker.GCWorker
+	coprStore *copr.Store
 }
 
 // Name gets the name of the storage engine
@@ -257,6 +265,14 @@ func (s *tikvStore) StartGCWorker() error {
 	return nil
 }
 
+func (s *tikvStore) GetClient() kv.Client {
+	return s.coprStore.GetClient()
+}
+
+func (s *tikvStore) GetMPPClient() kv.MPPClient {
+	return s.coprStore.GetMPPClient()
+}
+
 // Close and unregister the store.
 func (s *tikvStore) Close() error {
 	mc.Lock()
@@ -265,10 +281,29 @@ func (s *tikvStore) Close() error {
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
 	}
+	s.coprStore.Close()
 	return s.KVStore.Close()
 }
 
 // GetMemCache return memory manager of the storage
 func (s *tikvStore) GetMemCache() kv.MemManager {
 	return s.memCache
+}
+
+// Begin a global transaction.
+func (s *tikvStore) Begin() (kv.Transaction, error) {
+	txn, err := s.KVStore.Begin()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return txn_driver.NewTiKVTxn(txn), err
+}
+
+// BeginWithOption begins a transaction with given option
+func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithOption(option)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return txn_driver.NewTiKVTxn(txn), err
 }

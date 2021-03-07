@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
@@ -57,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -65,7 +65,10 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -81,7 +84,6 @@ type seqTestSuite struct {
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
-	ctx *mock.Context
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
@@ -148,9 +150,9 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	}
 
 	// Goroutine should not leak when error happen.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/copr/handleTaskOnceError", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/copr/handleTaskOnceError"), IsNil)
 	}()
 	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
 	c.Assert(err, IsNil)
@@ -662,25 +664,30 @@ func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (1), (2)")
 	do, _ := session.GetDomain(s.store)
-	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
+	err := do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
+	c.Assert(err, IsNil)
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
-	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
-	do.StatsHandle().Update(do.InfoSchema())
+	err = do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
+	c.Assert(err, IsNil)
+	err = do.StatsHandle().Update(do.InfoSchema())
+	c.Assert(err, IsNil)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
-	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
-	do.StatsHandle().Update(do.InfoSchema())
+	err = do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
+	c.Assert(err, IsNil)
+	err = do.StatsHandle().Update(do.InfoSchema())
+	c.Assert(err, IsNil)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 }
 
 // TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
 // leak. For testing distsql with multiple regions, we need to manually split a mock TiKV.
 func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
-	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
+	if _, ok := s.store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
 		return
 	}
@@ -779,7 +786,10 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 func checkGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)
 	profile := pprof.Lookup("goroutine")
-	profile.WriteTo(buf, 1)
+	err := profile.WriteTo(buf, 1)
+	if err != nil {
+		panic(err)
+	}
 	str := buf.String()
 	return strings.Contains(str, keyword)
 }

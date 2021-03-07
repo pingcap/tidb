@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
@@ -62,6 +63,7 @@ type AnalyzeExec struct {
 	baseExecutor
 	tasks []*analyzeTask
 	wg    *sync.WaitGroup
+	opts  map[ast.AnalyzeOptionType]uint64
 }
 
 var (
@@ -99,7 +101,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
-	needGlobalStats := pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic
+	needGlobalStats := pruneMode == variable.Dynamic
 	type globalStatsKey struct {
 		tableID int64
 		indexID int64
@@ -168,9 +170,13 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if needGlobalStats {
 		for globalStatsID, info := range globalStatsMap {
-			sc := e.ctx.GetSessionVars().StmtCtx
-			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(sc, infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(e.ctx, e.opts, infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
 			if err != nil {
+				if types.ErrBuildGlobalLevelStatsFailed.Equal(err) {
+					// When we find some partition-level stats are missing, we need to report warning.
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					continue
+				}
 				return err
 			}
 			for i := 0; i < globalStats.Num; i++ {
@@ -371,6 +377,47 @@ func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error
 	return nil
 }
 
+func updateIndexResult(
+	ctx *stmtctx.StatementContext,
+	resp *tipb.AnalyzeIndexResp,
+	job *statistics.AnalyzeJob,
+	hist *statistics.Histogram,
+	cms *statistics.CMSketch,
+	topn *statistics.TopN,
+	idxInfo *model.IndexInfo,
+	numBuckets int,
+	numTopN int,
+	statsVer int,
+) (
+	*statistics.Histogram,
+	*statistics.CMSketch,
+	*statistics.TopN,
+	error,
+) {
+	var err error
+	needCMS := cms != nil
+	respHist := statistics.HistogramFromProto(resp.Hist)
+	if job != nil {
+		job.Update(int64(respHist.TotalRowCount()))
+	}
+	hist, err = statistics.MergeHistograms(ctx, hist, respHist, numBuckets, statsVer)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if needCMS {
+		if resp.Cms == nil {
+			logutil.Logger(context.TODO()).Warn("nil CMS in response", zap.String("table", idxInfo.Table.O), zap.String("index", idxInfo.Name.O))
+		} else {
+			cm, tmpTopN := statistics.CMSketchAndTopNFromProto(resp.Cms)
+			if err := cms.MergeCMSketch(cm); err != nil {
+				return nil, nil, nil, err
+			}
+			statistics.MergeTopNAndUpdateCMSketch(topn, tmpTopN, cms, uint32(numTopN))
+		}
+	}
+	return hist, cms, topn, nil
+}
+
 func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, *statistics.TopN, error) {
 	failpoint.Inject("buildStatsFromResult", func(val failpoint.Value) {
 		if val.(bool) {
@@ -401,22 +448,10 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		respHist := statistics.HistogramFromProto(resp.Hist)
-		e.job.Update(int64(respHist.TotalRowCount()))
-		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]), statsVer)
+		hist, cms, topn, err = updateIndexResult(e.ctx.GetSessionVars().StmtCtx, resp, e.job, hist, cms, topn,
+			e.idxInfo, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), statsVer)
 		if err != nil {
 			return nil, nil, nil, err
-		}
-		if needCMS {
-			if resp.Cms == nil {
-				logutil.Logger(context.TODO()).Warn("nil CMS in response", zap.String("table", e.idxInfo.Table.O), zap.String("index", e.idxInfo.Name.O))
-			} else {
-				cm, tmpTopN := statistics.CMSketchAndTopNFromProto(resp.Cms)
-				if err := cms.MergeCMSketch(cm); err != nil {
-					return nil, nil, nil, err
-				}
-				statistics.MergeTopNAndUpdateCMSketch(topn, tmpTopN, cms, uint32(e.opts[ast.AnalyzeOptNumTopN]))
-			}
 		}
 	}
 	if needCMS && topn.TotalCount() > 0 {
@@ -466,7 +501,8 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 	} else {
 		ranges = ranger.FullIntRange(false)
 	}
-	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, true)
+	collExtStats := colExec.ctx.GetSessionVars().EnableExtendedStats
+	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, collExtStats)
 	if err != nil {
 		return []analyzeResult{{Err: err, job: colExec.job}}
 	}
@@ -496,7 +532,23 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 		restResult.Count = PKresult.Count
 		return []analyzeResult{PKresult, restResult}
 	}
-	result := analyzeResult{
+	var result []analyzeResult
+	if colExec.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
+		result = append(result, analyzeResult{
+			TableID:  colExec.tableID,
+			Hist:     []*statistics.Histogram{hists[0]},
+			Cms:      []*statistics.CMSketch{cms[0]},
+			TopNs:    []*statistics.TopN{topNs[0]},
+			Fms:      []*statistics.FMSketch{nil},
+			IsIndex:  1,
+			job:      colExec.job,
+			StatsVer: colExec.analyzeVer,
+		})
+		hists = hists[1:]
+		cms = cms[1:]
+		topNs = topNs[1:]
+	}
+	colResult := analyzeResult{
 		TableID:  colExec.tableID,
 		Hist:     hists,
 		Cms:      cms,
@@ -506,11 +558,11 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 		job:      colExec.job,
 		StatsVer: colExec.analyzeVer,
 	}
-	result.Count = int64(result.Hist[0].TotalRowCount())
-	if result.StatsVer == statistics.Version2 {
-		result.Count += int64(topNs[0].TotalCount())
+	colResult.Count = int64(colResult.Hist[0].TotalRowCount())
+	if colResult.StatsVer == statistics.Version2 {
+		colResult.Count += int64(topNs[0].TotalCount())
 	}
-	return []analyzeResult{result}
+	return append(result, colResult)
 }
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
@@ -522,6 +574,7 @@ type AnalyzeColumnsExec struct {
 	concurrency   int
 	priority      int
 	analyzePB     *tipb.AnalyzeReq
+	commonHandle  *model.IndexInfo
 	resultHandler *tableResultHandler
 	opts          map[ast.AnalyzeOptionType]uint64
 	job           *statistics.AnalyzeJob
@@ -584,6 +637,18 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			err = err1
 		}
 	}()
+	var handleHist *statistics.Histogram
+	var handleCms *statistics.CMSketch
+	var handleTopn *statistics.TopN
+	statsVer := statistics.Version1
+	if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
+		handleHist = &statistics.Histogram{}
+		handleCms = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
+		handleTopn = statistics.NewTopN(int(e.opts[ast.AnalyzeOptNumTopN]))
+		if e.analyzePB.IdxReq.Version != nil {
+			statsVer = int(*e.analyzePB.IdxReq.Version)
+		}
+	}
 	pkHist := &statistics.Histogram{}
 	collectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	for i := range collectors {
@@ -602,22 +667,36 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if data == nil {
 			break
 		}
-		resp := &tipb.AnalyzeColumnsResp{}
-		err = resp.Unmarshal(data)
-		if err != nil {
-			return nil, nil, nil, nil, nil, err
-		}
 		sc := e.ctx.GetSessionVars().StmtCtx
+		var colResp *tipb.AnalyzeColumnsResp
+		if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
+			resp := &tipb.AnalyzeMixedResp{}
+			err = resp.Unmarshal(data)
+			if err != nil {
+				return nil, nil, nil, nil, nil, err
+			}
+			colResp = resp.ColumnsResp
+			handleHist, handleCms, handleTopn, err = updateIndexResult(sc, resp.IndexResp, nil, handleHist,
+				handleCms, handleTopn, e.commonHandle, int(e.opts[ast.AnalyzeOptNumBuckets]),
+				int(e.opts[ast.AnalyzeOptNumTopN]), statsVer)
+
+			if err != nil {
+				return nil, nil, nil, nil, nil, err
+			}
+		} else {
+			colResp = &tipb.AnalyzeColumnsResp{}
+			err = colResp.Unmarshal(data)
+		}
 		rowCount := int64(0)
 		if hasPkHist(e.handleCols) {
-			respHist := statistics.HistogramFromProto(resp.PkHist)
+			respHist := statistics.HistogramFromProto(colResp.PkHist)
 			rowCount = int64(respHist.TotalRowCount())
 			pkHist, err = statistics.MergeHistograms(sc, pkHist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
 		}
-		for i, rc := range resp.Collectors {
+		for i, rc := range colResp.Collectors {
 			respSample := statistics.SampleCollectorFromProto(rc)
 			rowCount = respSample.Count + respSample.NullCount
 			collectors[i].MergeSampleCollector(sc, respSample)
@@ -681,6 +760,18 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
+	}
+	if handleHist != nil {
+		handleHist.ID = e.commonHandle.ID
+		if handleTopn != nil && handleTopn.TotalCount() > 0 {
+			handleHist.RemoveIdxVals(handleTopn.TopN)
+		}
+		if handleCms != nil {
+			handleCms.CalcDefaultValForAnalyze(uint64(handleHist.NDV))
+		}
+		hists = append([]*statistics.Histogram{handleHist}, hists...)
+		cms = append([]*statistics.CMSketch{handleCms}, cms...)
+		topNs = append([]*statistics.TopN{handleTopn}, topNs...)
 	}
 	return hists, cms, topNs, fms, extStats, nil
 }
@@ -809,8 +900,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 		sql := new(strings.Builder)
 		sqlexec.MustFormatSQL(sql, "select count(*) from %n.%n", dbInfo.Name.L, e.tblInfo.Name.L)
 
-		pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
-		if pruneMode != variable.DynamicOnly && e.tblInfo.ID != e.tableID.GetStatisticsID() {
+		if e.tblInfo.ID != e.tableID.GetStatisticsID() {
 			for _, definition := range e.tblInfo.Partition.Definitions {
 				if definition.ID == e.tableID.GetStatisticsID() {
 					sqlexec.MustFormatSQL(sql, " partition(%n)", definition.Name.L)
@@ -1303,6 +1393,11 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 	var statsVer = statistics.Version1
 	if idxExec.analyzePB.IdxReq.Version != nil {
 		statsVer = int(*idxExec.analyzePB.IdxReq.Version)
+	}
+	pruneMode := variable.PartitionPruneMode(idxExec.ctx.GetSessionVars().PartitionPruneMode.Load())
+	if idxExec.tableID.IsPartitionTable() && pruneMode == variable.Dynamic {
+		err := errors.Errorf("[stats]: global statistics for partitioned tables unavailable in ANALYZE INCREMENTAL")
+		return analyzeResult{Err: err, job: idxExec.job}
 	}
 	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
 	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns), nil, nil)

@@ -28,11 +28,10 @@ load stats 's/wout_cluster_index_tbl_3.json';
 load stats 's/wout_cluster_index_tbl_4.json';
 explain select count(*) from with_cluster_index.tbl_0 where col_0 < 5429  ;
 id	estRows	task	access object	operator info
-StreamAgg_27	1.00	root		funcs:count(Column#9)->Column#6
-└─TableReader_28	1.00	root		data:StreamAgg_9
-  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#9
-    └─Selection_26	798.90	cop[tikv]		lt(with_cluster_index.tbl_0.col_0, 5429)
-      └─TableFullScan_25	2244.00	cop[tikv]	table:tbl_0	keep order:false
+StreamAgg_17	1.00	root		funcs:count(Column#8)->Column#6
+└─IndexReader_18	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan_16	798.90	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,5429), keep order:false
 explain select count(*) from wout_cluster_index.tbl_0 where col_0 < 5429  ;
 id	estRows	task	access object	operator info
 StreamAgg_17	1.00	root		funcs:count(Column#9)->Column#7
@@ -41,11 +40,10 @@ StreamAgg_17	1.00	root		funcs:count(Column#9)->Column#7
     └─IndexRangeScan_16	798.90	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,5429), keep order:false
 explain select count(*) from with_cluster_index.tbl_0 where col_0 < 41  ;
 id	estRows	task	access object	operator info
-HashAgg_17	1.00	root		funcs:count(Column#8)->Column#6
-└─IndexLookUp_18	1.00	root		
-  ├─IndexRangeScan_15(Build)	41.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,41), keep order:false
-  └─HashAgg_7(Probe)	1.00	cop[tikv]		funcs:count(1)->Column#8
-    └─TableRowIDScan_16	41.00	cop[tikv]	table:tbl_0	keep order:false
+StreamAgg_17	1.00	root		funcs:count(Column#8)->Column#6
+└─IndexReader_18	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan_16	41.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,41), keep order:false
 explain select count(*) from wout_cluster_index.tbl_0 where col_0 < 41  ;
 id	estRows	task	access object	operator info
 StreamAgg_17	1.00	root		funcs:count(Column#9)->Column#7
@@ -78,19 +76,16 @@ StreamAgg_37	1.00	root		funcs:sum(Column#20)->Column#7
       └─TableFullScan_35	2244.00	cop[tikv]	table:tbl_0	keep order:false
 explain select col_0 from with_cluster_index.tbl_0 where col_0 <= 0  ;
 id	estRows	task	access object	operator info
-Projection_4	1.00	root		with_cluster_index.tbl_0.col_0
-└─IndexLookUp_10	1.00	root		
-  ├─IndexRangeScan_8(Build)	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
-  └─TableRowIDScan_9(Probe)	1.00	cop[tikv]	table:tbl_0	keep order:false
+IndexReader_6	1.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
 explain select col_0 from wout_cluster_index.tbl_0 where col_0 <= 0  ;
 id	estRows	task	access object	operator info
 IndexReader_6	1.00	root		index:IndexRangeScan_5
 └─IndexRangeScan_5	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
 explain select col_3 from with_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
 id	estRows	task	access object	operator info
-Projection_4	1859.31	root		with_cluster_index.tbl_0.col_3
-└─TableReader_6	1859.31	root		data:TableRangeScan_5
-  └─TableRangeScan_5	1859.31	cop[tikv]	table:tbl_0	range:[1981-09-15 00:00:00,+inf], keep order:false
+TableReader_6	1859.31	root		data:TableRangeScan_5
+└─TableRangeScan_5	1859.31	cop[tikv]	table:tbl_0	range:[1981-09-15 00:00:00,+inf], keep order:false
 explain select col_3 from wout_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
 id	estRows	task	access object	operator info
 IndexReader_10	1859.31	root		index:IndexRangeScan_9
@@ -112,10 +107,10 @@ HashJoin_22	2533.51	root		right outer join, equal:[eq(wout_cluster_index.tbl_2.c
     └─TableFullScan_41	4673.00	cop[tikv]	table:tbl_2	keep order:false
 explain select count(*) from with_cluster_index.tbl_0 where col_0 <= 0 ;
 id	estRows	task	access object	operator info
-StreamAgg_10	1.00	root		funcs:count(1)->Column#6
-└─IndexLookUp_24	1.00	root		
-  ├─IndexRangeScan_22(Build)	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
-  └─TableRowIDScan_23(Probe)	1.00	cop[tikv]	table:tbl_0	keep order:false
+StreamAgg_16	1.00	root		funcs:count(Column#8)->Column#6
+└─IndexReader_17	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan_11	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
 explain select count(*) from wout_cluster_index.tbl_0 where col_0 <= 0 ;
 id	estRows	task	access object	operator info
 StreamAgg_16	1.00	root		funcs:count(Column#9)->Column#7
@@ -124,11 +119,10 @@ StreamAgg_16	1.00	root		funcs:count(Column#9)->Column#7
     └─IndexRangeScan_11	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
 explain select count(*) from with_cluster_index.tbl_0 where col_0 >= 803163  ;
 id	estRows	task	access object	operator info
-HashAgg_17	1.00	root		funcs:count(Column#8)->Column#6
-└─IndexLookUp_18	1.00	root		
-  ├─IndexRangeScan_15(Build)	109.70	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
-  └─HashAgg_7(Probe)	1.00	cop[tikv]		funcs:count(1)->Column#8
-    └─TableRowIDScan_16	109.70	cop[tikv]	table:tbl_0	keep order:false
+StreamAgg_17	1.00	root		funcs:count(Column#8)->Column#6
+└─IndexReader_18	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan_16	109.70	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
 explain select count(*) from wout_cluster_index.tbl_0 where col_0 >= 803163  ;
 id	estRows	task	access object	operator info
 StreamAgg_17	1.00	root		funcs:count(Column#9)->Column#7

@@ -49,19 +49,10 @@ gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
 check-static: tools/bin/golangci-lint
-	@git fetch https://github.com/pingcap/tidb
-	tools/bin/golangci-lint run -v --disable-all --deadline=5m \
+	tools/bin/golangci-lint run -v --disable-all --deadline=3m \
 	  --enable=misspell \
 	  --enable=ineffassign \
-	  --enable=deadcode \
-	  --enable=errcheck \
-	  --enable=gosimple \
-	  --enable=staticcheck \
-	  --enable=typecheck \
-	  --enable=unused \
 	  --enable=varcheck \
-	  --enable=structcheck \
-	  --new-from-rev=FETCH_HEAD \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec

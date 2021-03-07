@@ -315,6 +315,16 @@ func (s *testSuite) TestInsert(c *C) {
 	_, err = tk.Exec("replace into seq values()")
 	c.Assert(err.Error(), Equals, "replace into sequence seq is not supported now.")
 	tk.MustExec("drop sequence seq")
+
+	// issue 22851
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(name varchar(255), b int, c int, primary key(name(2)))")
+	tk.MustExec("insert into t(name, b) values(\"cha\", 3)")
+	_, err = tk.Exec("insert into t(name, b) values(\"chb\", 3)")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry 'ch' for key 'PRIMARY'")
+	tk.MustExec("insert into t(name, b) values(\"测试\", 3)")
+	_, err = tk.Exec("insert into t(name, b) values(\"测试\", 3)")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '测试' for key 'PRIMARY'")
 }
 
 func (s *testSuiteP2) TestMultiBatch(c *C) {
@@ -1640,7 +1650,7 @@ func (s *testSuite4) TestPartitionedTableUpdate(c *C) {
 
 	// update partition column, old and new record locates on different partitions
 	tk.MustExec(`update t set id = 20 where id = 8`)
-	tk.CheckExecResult(2, 0)
+	tk.CheckExecResult(1, 0)
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
 	r = tk.MustQuery(`SELECT * from t order by id limit 2;`)
 	r.Check(testkit.Rows("2 abc", "20 abc"))
@@ -2412,7 +2422,10 @@ func (s *testBypassSuite) TestLatch(c *C) {
 		mockstore.WithTxnLocalLatches(64),
 	)
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	dom, err1 := session.BootstrapSession(store)
 	c.Assert(err1, IsNil)
@@ -2676,7 +2689,7 @@ func (s *testSuite7) TestReplaceLog(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1))
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), kv.IntHandle(1), nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
