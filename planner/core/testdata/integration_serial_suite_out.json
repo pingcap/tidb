@@ -1649,9 +1649,14 @@
       {
         "SQL": "desc format = 'brief' select count(distinct value),id from t group by id",
         "Plan": [
-          "HashAgg 8000.00 root  group by:test.t.id, funcs:count(distinct test.t.value)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "[TableReader 8000.00 root  data:ExchangeSender]",
+          "[└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough]",
+          "[  └─Projection 8000.00 batchCop[tiflash]  Column#4, test.t.id]",
+          "[    └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:count(distinct test.t.value)->Column#4, funcs:firstrow(test.t.id)->test.t.id]",
+          "[      └─ExchangeReceiver 8000.00 batchCop[tiflash]  ]",
+          "[        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id]",
+          "[          └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, test.t.value, ]",
+          "[            └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo]"
         ]
       },
       {
