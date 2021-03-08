@@ -48,9 +48,12 @@ func fakePlanDigestGenerator() string {
 
 func (s *testStmtSummarySuite) SetUpSuite(c *C) {
 	s.ssMap = newStmtSummaryByDigestMap()
-	s.ssMap.SetEnabled("1", false)
-	s.ssMap.SetRefreshInterval("1800", false)
-	s.ssMap.SetHistorySize("24", false)
+	err := s.ssMap.SetEnabled("1", false)
+	c.Assert(err, IsNil)
+	err = s.ssMap.SetRefreshInterval("1800", false)
+	c.Assert(err, IsNil)
+	err = s.ssMap.SetHistorySize("24", false)
+	c.Assert(err, IsNil)
 }
 
 func TestT(t *testing.T) {
@@ -840,7 +843,8 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	now := time.Now().Unix()
 
 	// Set false in global scope, it should work.
-	s.ssMap.SetEnabled("0", false)
+	err := s.ssMap.SetEnabled("0", false)
+	c.Assert(err, IsNil)
 	s.ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo1 := generateAnyExecInfo()
@@ -849,14 +853,16 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	c.Assert(len(datums), Equals, 0)
 
 	// Set true in session scope, it will overwrite global scope.
-	s.ssMap.SetEnabled("1", true)
+	err = s.ssMap.SetEnabled("1", true)
+	c.Assert(err, IsNil)
 
 	s.ssMap.AddStatement(stmtExecInfo1)
 	datums = s.ssMap.ToCurrentDatum(nil, true)
 	c.Assert(len(datums), Equals, 1)
 
 	// Set false in global scope, it shouldn't work.
-	s.ssMap.SetEnabled("0", false)
+	err = s.ssMap.SetEnabled("0", false)
+	c.Assert(err, IsNil)
 	s.ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo2 := stmtExecInfo1
@@ -868,21 +874,24 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	c.Assert(len(datums), Equals, 2)
 
 	// Unset in session scope.
-	s.ssMap.SetEnabled("", true)
+	err = s.ssMap.SetEnabled("", true)
+	c.Assert(err, IsNil)
 	s.ssMap.beginTimeForCurInterval = now + 60
 	s.ssMap.AddStatement(stmtExecInfo2)
 	datums = s.ssMap.ToCurrentDatum(nil, true)
 	c.Assert(len(datums), Equals, 0)
 
 	// Unset in global scope.
-	s.ssMap.SetEnabled("", false)
+	err = s.ssMap.SetEnabled("", false)
+	c.Assert(err, IsNil)
 	s.ssMap.beginTimeForCurInterval = now + 60
 	s.ssMap.AddStatement(stmtExecInfo1)
 	datums = s.ssMap.ToCurrentDatum(nil, true)
 	c.Assert(len(datums), Equals, 1)
 
 	// Set back.
-	s.ssMap.SetEnabled("1", false)
+	err = s.ssMap.SetEnabled("1", false)
+	c.Assert(err, IsNil)
 }
 
 // Test disable and enable statement summary concurrently with adding statements.
@@ -901,12 +910,14 @@ func (s *testStmtSummarySuite) TestEnableSummaryParallel(c *C) {
 		// Add 32 times with same digest.
 		for i := 0; i < loops; i++ {
 			// Sometimes enable it and sometimes disable it.
-			s.ssMap.SetEnabled(fmt.Sprintf("%d", i%2), false)
+			err := s.ssMap.SetEnabled(fmt.Sprintf("%d", i%2), false)
+			c.Assert(err, IsNil)
 			s.ssMap.AddStatement(stmtExecInfo1)
 			// Try to read it.
 			s.ssMap.ToHistoryDatum(nil, true)
 		}
-		s.ssMap.SetEnabled("1", false)
+		err := s.ssMap.SetEnabled("1", false)
+		c.Assert(err, IsNil)
 	}
 
 	for i := 0; i < threads; i++ {
@@ -986,7 +997,8 @@ func (s *testStmtSummarySuite) TestRefreshCurrentSummary(c *C) {
 	c.Assert(ssElement.beginTime, Greater, now-1900)
 	c.Assert(ssElement.execCount, Equals, int64(1))
 
-	s.ssMap.SetRefreshInterval("10", false)
+	err := s.ssMap.SetRefreshInterval("10", false)
+	c.Assert(err, IsNil)
 	s.ssMap.beginTimeForCurInterval = now - 20
 	ssElement.beginTime = now - 20
 	s.ssMap.AddStatement(stmtExecInfo1)
@@ -997,10 +1009,18 @@ func (s *testStmtSummarySuite) TestRefreshCurrentSummary(c *C) {
 func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 	s.ssMap.Clear()
 	now := time.Now().Unix()
-	s.ssMap.SetRefreshInterval("10", false)
-	s.ssMap.SetHistorySize("10", false)
-	defer s.ssMap.SetRefreshInterval("1800", false)
-	defer s.ssMap.SetHistorySize("24", false)
+	err := s.ssMap.SetRefreshInterval("10", false)
+	c.Assert(err, IsNil)
+	err = s.ssMap.SetHistorySize("10", false)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := s.ssMap.SetRefreshInterval("1800", false)
+		c.Assert(err, IsNil)
+	}()
+	defer func() {
+		err := s.ssMap.SetHistorySize("24", false)
+		c.Assert(err, IsNil)
+	}()
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	key := &stmtSummaryByDigestKey{
@@ -1031,7 +1051,8 @@ func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 	datum := s.ssMap.ToHistoryDatum(nil, true)
 	c.Assert(len(datum), Equals, 10)
 
-	s.ssMap.SetHistorySize("5", false)
+	err = s.ssMap.SetHistorySize("5", false)
+	c.Assert(err, IsNil)
 	datum = s.ssMap.ToHistoryDatum(nil, true)
 	c.Assert(len(datum), Equals, 5)
 }
@@ -1092,15 +1113,20 @@ func (s *testStmtSummarySuite) TestEndTime(c *C) {
 	c.Assert(ssElement.beginTime, Equals, now-100)
 	c.Assert(ssElement.endTime, Equals, now+1700)
 
-	s.ssMap.SetRefreshInterval("3600", false)
-	defer s.ssMap.SetRefreshInterval("1800", false)
+	err := s.ssMap.SetRefreshInterval("3600", false)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := s.ssMap.SetRefreshInterval("1800", false)
+		c.Assert(err, IsNil)
+	}()
 	s.ssMap.AddStatement(stmtExecInfo1)
 	c.Assert(ssbd.history.Len(), Equals, 1)
 	ssElement = ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 	c.Assert(ssElement.beginTime, Equals, now-100)
 	c.Assert(ssElement.endTime, Equals, now+3500)
 
-	s.ssMap.SetRefreshInterval("60", false)
+	err = s.ssMap.SetRefreshInterval("60", false)
+	c.Assert(err, IsNil)
 	s.ssMap.AddStatement(stmtExecInfo1)
 	c.Assert(ssbd.history.Len(), Equals, 2)
 	now2 := time.Now().Unix()

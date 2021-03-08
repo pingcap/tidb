@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -139,10 +140,27 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if e.corColInAccess {
 		ts := e.plans[0].(*plannercore.PhysicalTableScan)
 		access := ts.AccessCondition
-		pkTP := ts.Table.GetPkColInfo().FieldType
-		e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
-		if err != nil {
-			return err
+		if e.table.Meta().IsCommonHandle {
+			pkIdx := tables.FindPrimaryIndex(ts.Table)
+			idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
+			for _, cond := range access {
+				newCond, err1 := expression.SubstituteCorCol2Constant(cond)
+				if err1 != nil {
+					return err1
+				}
+				access = append(access, newCond)
+			}
+			res, err := ranger.DetachCondAndBuildRangeForIndex(e.ctx, access, idxCols, idxColLens)
+			if err != nil {
+				return err
+			}
+			e.ranges = res.Ranges
+		} else {
+			pkTP := ts.Table.GetPkColInfo().FieldType
+			e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
