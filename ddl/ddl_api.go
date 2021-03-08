@@ -4303,6 +4303,7 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 		return errors.New("Extended statistics on partitioned tables are not supported now")
 	}
 	colIDs := make([]int64, 0, 2)
+	colIDSet := make(map[int64]struct{}, 2)
 	// Check whether columns exist.
 	for _, colName := range stats.Columns {
 		col := table.FindCol(tbl.VisibleCols(), colName.Name.L)
@@ -4313,6 +4314,10 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("No need to create correlation statistics on the integer primary key column"))
 			return nil
 		}
+		if _, exist := colIDSet[col.ID]; exist {
+			return errors.Errorf("Cannot create extended statistics on duplicate column names '%s'", colName.Name.L)
+		}
+		colIDSet[col.ID] = struct{}{}
 		colIDs = append(colIDs, col.ID)
 	}
 	if len(colIDs) != 2 && (stats.StatsType == ast.StatsTypeCorrelation || stats.StatsType == ast.StatsTypeDependency) {

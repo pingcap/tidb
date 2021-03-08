@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -1221,6 +1222,7 @@ const (
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
+	sort.Slice(colIDs, func(i, j int) bool { return colIDs[i] < colIDs[j] })
 	bytes, err := json.Marshal(colIDs)
 	if err != nil {
 		return errors.Trace(err)
@@ -1238,15 +1240,23 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 		err = finishTransaction(ctx, exec, err)
 	}()
 	// No need to use `exec.ExecuteInternal` since we have acquired the lock.
-	rows, _, err := h.execRestrictedSQL(ctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, StatsStatusInited, StatsStatusAnalyzed)
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)", tableID, StatsStatusInited, StatsStatusAnalyzed)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(rows) > 0 {
-		if ifNotExists {
-			return nil
+	for _, row := range rows {
+		currStatsName := row.GetString(0)
+		currTp := row.GetInt64(1)
+		currStrColIDs := row.GetString(2)
+		if currStatsName == statsName {
+			if ifNotExists {
+				return nil
+			}
+			return errors.Errorf("extended statistics '%s' for the specified table already exists", statsName)
 		}
-		return errors.New(fmt.Sprintf("extended statistics '%s' for the specified table already exists", statsName))
+		if tp == int(currTp) && currStrColIDs == strColIDs {
+			return errors.Errorf("extended statistics '%s' with same type on same columns already exists", statsName)
+		}
 	}
 	// Remove the existing 'deleted' records.
 	if _, err = exec.ExecuteInternal(ctx, "DELETE FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID); err != nil {

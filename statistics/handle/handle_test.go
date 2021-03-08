@@ -2141,3 +2141,25 @@ func (s *testStatsSuite) TestRepetitiveAddDropExtendedStats(c *C) {
 	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
 	c.Assert(len(result.Rows()), Equals, 1)
 }
+
+func (s *testStatsSuite) TestDuplicateExtendedStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	err := tk.ExecToErr("alter table t add stats_extended s1 correlation(a,a)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Cannot create extended statistics on duplicate column names 'a'")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	err = tk.ExecToErr("alter table t add stats_extended s1 correlation(a,c)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "extended statistics 's1' for the specified table already exists")
+	err = tk.ExecToErr("alter table t add stats_extended s2 correlation(a,b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "extended statistics 's2' with same type on same columns already exists")
+	err = tk.ExecToErr("alter table t add stats_extended s2 correlation(b,a)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "extended statistics 's2' with same type on same columns already exists")
+	tk.MustExec("alter table t add stats_extended s2 correlation(a,c)")
+}
