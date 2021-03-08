@@ -645,7 +645,15 @@ func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 	tk.MustExec("insert into t1 values(3, 'Ace');")
 	tk.MustExec("set @@group_concat_max_len=5;")
 	rows := tk.MustQuery("select group_concat(sname order by sname) from t1 group by cid;")
-	rows.Check(testkit.Rows("Alice", "Ace,"))
+	rows.Check(testkit.Rows("Alice", "Ace"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(10));")
+	tk.MustExec("insert into t1 values('0123456789');")
+	tk.MustExec("insert into t1 values('12345');")
+	tk.MustExec("set @@group_concat_max_len=8;")
+	rows = tk.MustQuery("select group_concat(c1 order by c1) from t1 group by c1;")
+	rows.Check(testkit.Rows("01234567", "12345"))
 }
 
 func (s *testSuiteAgg) TestSelectDistinct(c *C) {

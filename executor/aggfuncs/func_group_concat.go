@@ -280,6 +280,10 @@ type topNRows struct {
 	currSize  uint64
 	limitSize uint64
 	sepSize   uint64
+	// If (separator, row) pair is poped from heap, we need to append separator in concat()
+	// In the following example, (sep2, str3) pair is poped, but partial sep2 need to be appended.
+	// eg: "str1 sep1 str2 sep2 str3" -> "str1 sep1 str2 se"
+	isSepPoped bool
 }
 
 func (h topNRows) Len() int {
@@ -348,6 +352,7 @@ func (h *topNRows) tryToAdd(row sortRow) (truncated bool, memDelta int64) {
 				memDelta -= GetDatumMemSize(dt)
 			}
 			heap.Pop(h)
+			h.isSepPoped = true
 		}
 	}
 	return true, memDelta
@@ -368,8 +373,7 @@ func (h *topNRows) concat(sep string, truncated bool) string {
 		}
 		buffer.Write(row.buffer.Bytes())
 	}
-	if truncated && uint64(buffer.Len()) < h.limitSize {
-		// append the last separator, because the last separator may be truncated in tryToAdd.
+	if h.isSepPoped {
 		buffer.WriteString(sep)
 		if uint64(buffer.Len()) > h.limitSize {
 			buffer.Truncate(int(h.limitSize))
@@ -403,10 +407,11 @@ func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int6
 	}
 	p := &partialResult4GroupConcatOrder{
 		topN: &topNRows{
-			desc:      desc,
-			currSize:  0,
-			limitSize: e.maxLen,
-			sepSize:   uint64(len(e.sep)),
+			desc:       desc,
+			currSize:   0,
+			limitSize:  e.maxLen,
+			sepSize:    uint64(len(e.sep)),
+			isSepPoped: false,
 		},
 	}
 	return PartialResult(p), DefPartialResult4GroupConcatOrderSize + DefTopNRowsSize
@@ -504,10 +509,11 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 	}
 	p := &partialResult4GroupConcatOrderDistinct{
 		topN: &topNRows{
-			desc:      desc,
-			currSize:  0,
-			limitSize: e.maxLen,
-			sepSize:   uint64(len(e.sep)),
+			desc:       desc,
+			currSize:   0,
+			limitSize:  e.maxLen,
+			sepSize:    uint64(len(e.sep)),
+			isSepPoped: false,
 		},
 		valSet: set.NewStringSet(),
 	}
