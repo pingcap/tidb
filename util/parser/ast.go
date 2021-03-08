@@ -55,8 +55,8 @@ func RestoreWithDefaultDB(node ast.StmtNode, defaultDB string) string {
 	// Three flags for restore with default DB:
 	// 1. RestoreStringSingleQuotes specifies to use single quotes to surround the string;
 	// 2. RestoreSpacesAroundBinaryOperation specifies to add space around binary operation;
-	// 3. RestoreStringWithoutDefaultCharset specifies to not print default charset before string;
-	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutDefaultCharset, &sb)
+	// 3. RestoreStringWithoutCharset specifies to not print charset before string;
+	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset, &sb)
 	ctx.DefaultDB = defaultDB
 	if err := node.Restore(ctx); err != nil {
 		return ""
