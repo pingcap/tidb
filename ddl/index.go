@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"sync/atomic"
@@ -40,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -1025,40 +1023,26 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.Handle) error {
 	idxInfo := w.index.Meta()
 	tblInfo := w.table.Meta()
-	name := w.index.Meta().Name.String()
+	idxColLen := len(idxInfo.Columns)
+	h, err := tablecodec.DecodeIndexHandle(key, value, idxColLen)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	hasBeenBackFilled := h.Equal(handle)
+	if hasBeenBackFilled {
+		return nil
+	}
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
-	colInfos = tables.TryAppendCommonHandleRowcodecColInfos(colInfos, tblInfo)
-	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleDefault, colInfos)
+	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
 	if err != nil {
 		return err
 	}
-
-	if !w.table.Meta().IsCommonHandle {
-		_, d, err := codec.DecodeOne(values[len(colInfos)])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if d.GetInt64() == handle.IntValue() {
-			return nil
-		}
-	} else {
-		handleColStartIdx := len(idxInfo.Columns)
-		match := true
-		for i := 0; i < handle.NumCols(); i++ {
-			if !bytes.Equal(values[i+handleColStartIdx], handle.EncodedCol(i)) {
-				match = false
-			}
-		}
-		if match {
-			return nil
-		}
-	}
-
-	valueStr := make([]string, 0, len(idxInfo.Columns))
-	for i, val := range values[:len(idxInfo.Columns)] {
+	indexName := w.index.Meta().Name.String()
+	valueStr := make([]string, 0, idxColLen)
+	for i, val := range values[:idxColLen] {
 		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
 		if err != nil {
-			return kv.ErrKeyExists.FastGenByArgs(key.String(), name)
+			return kv.ErrKeyExists.FastGenByArgs(key.String(), indexName)
 		}
 		str, err := d.ToString()
 		if err != nil {
@@ -1066,7 +1050,7 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 		}
 		valueStr = append(valueStr, str)
 	}
-	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), name)
+	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
 }
 
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
