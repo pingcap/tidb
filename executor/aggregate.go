@@ -294,7 +294,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	finalConcurrency := sessionVars.HashAggFinalConcurrency()
 	partialConcurrency := sessionVars.HashAggPartialConcurrency()
 	e.isChildReturnEmpty = true
-	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency)
+	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency+partialConcurrency+1)
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)
 	e.finishCh = make(chan struct{}, 1)
 
@@ -743,13 +743,13 @@ func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGro
 	}
 }
 
-func (e *HashAggExec) waitFinalWorkerAndCloseFinalOutput(waitGroup *sync.WaitGroup) {
-	waitGroup.Wait()
-	close(e.finalOutputCh)
-}
-
 func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
-	go e.fetchChildData(ctx)
+	fetchChildWorkerWaitGroup := &sync.WaitGroup{}
+	fetchChildWorkerWaitGroup.Add(1)
+	go func() {
+		e.fetchChildData(ctx)
+		fetchChildWorkerWaitGroup.Done()
+	}()
 
 	partialWorkerWaitGroup := &sync.WaitGroup{}
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
@@ -770,10 +770,19 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
 	}
 	go func() {
-		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
+		finalWorkerWaitGroup.Wait()
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.FinalWallTime, int64(time.Since(finalStart)))
 		}
+	}()
+
+	go func() {
+		// All workers maybe send error message to e.finalOutputCh when they panic.
+		// And e.finalOutputCh should be closed after all goroutines gone.
+		fetchChildWorkerWaitGroup.Wait()
+		partialWorkerWaitGroup.Wait()
+		finalWorkerWaitGroup.Wait()
+		close(e.finalOutputCh)
 	}()
 }
 
