@@ -86,7 +86,7 @@ type CoprocessorCache struct {
 	// The capacity in MB of the cache. Zero means disable coprocessor cache.
 	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
 
-	// No json fields for below config. In case to hide them.
+	// No json fields for below config. Intend to hide them.
 
 	// Only cache requests that containing small number of ranges. May to be changed in future.
 	AdmissionMaxRanges uint64 `toml:"admission-max-ranges" json:"-"`
