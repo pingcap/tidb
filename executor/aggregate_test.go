@@ -1314,7 +1314,7 @@ func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
 	}
 
 	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
-	c.Assert(failpoint.Enable(fpName, `1%panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
+	c.Assert(failpoint.Enable(fpName, "1%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]\")"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable(fpName), IsNil)
 	}()
@@ -1328,6 +1328,7 @@ func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
 			res, err = tk.Exec("select /*+ HASH_AGG() */ count(a) from t group by a")
 			if err == nil {
 				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+				c.Assert(res.Close(), IsNil)
 			}
 		}
 		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
@@ -1338,6 +1339,7 @@ func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
 			res, err = tk.Exec("select /*+ HASH_AGG() */ count(distinct a) from t")
 			if err == nil {
 				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+				c.Assert(res.Close(), IsNil)
 			}
 		}
 		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
@@ -1348,6 +1350,7 @@ func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
 			res, err = tk.Exec("select /*+ STREAM_AGG() */ count(a) from t")
 			if err == nil {
 				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+				c.Assert(res.Close(), IsNil)
 			}
 		}
 		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
