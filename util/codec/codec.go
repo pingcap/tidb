@@ -749,6 +749,7 @@ func DecodeRange(b []byte, size int, idxColumnTypes []byte, loc *time.Location) 
 				return values, b, errors.New("invalid length of index's columns")
 			}
 			if types.IsTypeTime(idxColumnTypes[i]) {
+				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
 				b, d, err = DecodeAsDateTime(b, idxColumnTypes[i], loc)
 			} else {
 				b, d, err = DecodeOne(b)
