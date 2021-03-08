@@ -582,16 +582,11 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
-	tableFilterCnt := 0
 	for _, path := range partialPaths {
-		// IndexMerge should not be used when the SQL is like 'select x from t WHERE (key1=1 AND key2=2) OR (key1=4 AND key3=6);'.
-		// Check issue https://github.com/pingcap/tidb/issues/22105 for details.
+		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
-			tableFilterCnt++
-			if tableFilterCnt > 1 {
-				return nil
-			}
-			indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.TableFilters...)
+			indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current])
+			break
 		}
 	}
 	return indexMergePath
