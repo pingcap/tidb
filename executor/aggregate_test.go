@@ -1314,7 +1314,7 @@ func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
 	}
 
 	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
-	c.Assert(failpoint.Enable(fpName, "1%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]\")"), IsNil)
+	c.Assert(failpoint.Enable(fpName, "5%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]\")"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable(fpName), IsNil)
 	}()
