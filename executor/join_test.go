@@ -2277,8 +2277,8 @@ func (s *testSuiteJoin1) TestIssue18564(c *C) {
 	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t1 FORCE INDEX (idx) join t2 on t1.b=t2.b and t1.a = t2.a").Check(testkit.Rows("1 1 1 1"))
 }
 
-// test hash join when enum column got zero value
-func (s *testSuiteJoin1) TestZeroEnumVal(c *C) {
+// test hash join when enum column got invalid value
+func (s *testSuiteJoin1) TestInvalidEnumVal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("set sql_mode = '';")
@@ -2286,9 +2286,10 @@ func (s *testSuiteJoin1) TestZeroEnumVal(c *C) {
 	tk.MustExec("create table t1(c1 enum('a', 'b'));")
 	tk.MustExec("insert into t1 values('a');")
 	tk.MustExec("insert into t1 values(0);")
+	tk.MustExec("insert into t1 values(100);")
 	rows := tk.MustQuery("select /*+ hash_join(t_alias1, t_alias2)*/ * from t1 t_alias1 inner join t1 t_alias2 on t_alias1.c1 = t_alias2.c1;")
-	// zero enum val is empty str
-	rows.Check(testkit.Rows("a a", " "))
+	// use empty string if got invalid enum int val.
+	rows.Check(testkit.Rows("a a", " ", " ", " ", " "))
 }
 
 func (s *testSuite9) TestIssue18572_1(c *C) {
