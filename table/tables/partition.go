@@ -773,7 +773,27 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 }
 
 // LocateRange locates partition range by the column range
-func (lp *ForListPruning) LocateRange(lowVal int64, isLowNull bool, highVal int64, isHighNull bool) []int {
+func (lp *ForListPruning) LocateRange(ctx sessionctx.Context, r *ranger.Range) ([]int, error) {
+	if r.LowVal[0].Kind() == types.KindMinNotNull {
+		r.LowVal[0] = types.GetMinValue(lp.PruneExpr.GetType())
+	}
+	if r.HighVal[0].Kind() == types.KindMaxValue {
+		r.HighVal[0] = types.GetMaxValue(lp.PruneExpr.GetType())
+	}
+	lowVal, isLowNull, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
+	if err != nil {
+		return nil, err
+	}
+	highVal, isHighNull, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+	if err != nil {
+		return nil, err
+	}
+	if r.LowExclude {
+		lowVal++
+	}
+	if !r.HighExclude {
+		highVal++
+	}
 	partitionIdxes := make([]int, 0, lp.sorted.Len())
 	if isLowNull {
 		partitionIdxes = append(partitionIdxes, lp.nullPartitionIdx)
@@ -785,7 +805,7 @@ func (lp *ForListPruning) LocateRange(lowVal int64, isLowNull bool, highVal int6
 		partitionIdxes = append(partitionIdxes, item.(*btreeItem).partitionIdx)
 		return true
 	})
-	return partitionIdxes
+	return partitionIdxes, nil
 }
 
 // buildListPartitionValueMapAndSorted builds list columns partition value map for the specified column.
