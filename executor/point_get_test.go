@@ -91,7 +91,7 @@ func (s *testPointGetSuite) TestPointGet(c *C) {
 	c.Assert(err, IsNil)
 	fields := result.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "ident")
-	result.Close()
+	c.Assert(result.Close(), IsNil)
 
 	tk.MustExec("CREATE TABLE tab3(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
 	tk.MustExec("CREATE UNIQUE INDEX idx_tab3_0 ON tab3 (col4);")
