@@ -1438,6 +1438,9 @@ func buildTableInfo(
 					tbInfo.PKIsHandle = true
 				} else {
 					tbInfo.IsCommonHandle = noBinlog
+					if tbInfo.IsCommonHandle {
+						tbInfo.CommonHandleVersion = 1
+					}
 					if !noBinlog {
 						errMsg := "cannot build clustered index table because the binlog is ON"
 						ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf(errMsg))
@@ -1449,6 +1452,9 @@ func buildTableInfo(
 					tbInfo.PKIsHandle = !alterPKConf
 				} else {
 					tbInfo.IsCommonHandle = !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex && noBinlog
+					if tbInfo.IsCommonHandle {
+						tbInfo.CommonHandleVersion = 1
+					}
 				}
 			}
 			if tbInfo.PKIsHandle || tbInfo.IsCommonHandle {
@@ -4294,6 +4300,9 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 		return err
 	}
 	tblInfo := tbl.Meta()
+	if tblInfo.GetPartitionInfo() != nil {
+		return errors.New("Extended statistics on partitioned tables are not supported now")
+	}
 	colIDs := make([]int64, 0, 2)
 	// Check whether columns exist.
 	for _, colName := range stats.Columns {

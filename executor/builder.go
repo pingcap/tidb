@@ -24,6 +24,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -2616,6 +2617,16 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
+	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
+		if val.(bool) != useMPPExecution(b.ctx, v) {
+			if val.(bool) {
+				b.err = errors.New("expect mpp but not used")
+			} else {
+				b.err = errors.New("don't expect mpp but we used it")
+			}
+			failpoint.Return(nil)
+		}
+	})
 	if useMPPExecution(b.ctx, v) {
 		return b.buildMPPGather(v)
 	}

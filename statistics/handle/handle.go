@@ -414,7 +414,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], uint32(opts[ast.AnalyzeOptNumTopN]))
 
 		// Merge histogram
-		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], popedTopN, int64(opts[ast.AnalyzeOptNumBuckets]))
+		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], popedTopN, int64(opts[ast.AnalyzeOptNumBuckets]), isIndex == 1)
 		if err != nil {
 			return
 		}
@@ -441,6 +441,12 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 				globalStatsNDV += bucket.NDV
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
+
+			// hg.NDV still includes TopN although TopN is not included by hg.Buckets
+			// TODO: remove the line below after fixing the meaning of hg.NDV
+			if globalStats.TopN[i] != nil { // if analyze with 0 topN, topN is nil here
+				globalStats.Hg[i].NDV += int64(len(globalStats.TopN[i].TopN))
+			}
 		}
 	}
 	return
