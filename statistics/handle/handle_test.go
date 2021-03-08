@@ -1235,7 +1235,7 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@tidb_analyze_version = 2;")
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.0")
-	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
+	tk.MustExec(`create table t (a int, index idx(a)) partition by range (a) (
 		partition p0 values less than (10),
 		partition p1 values less than (20),
 		partition p2 values less than (30)
@@ -1270,7 +1270,7 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 	statsTblBefore := h.GetTableStats(tblInfo)
 	// trigger feedback
 	tk.MustExec("select * from t where t.a <= 5 order by a desc")
-	tk.MustExec("select a from t partition(p2) where t.a > 20;")
+	tk.MustExec("select a from t partition(p2) use index(idx) where t.a > 20;")
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 	err = h.DumpStatsFeedbackToKV()
