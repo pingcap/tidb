@@ -1064,7 +1064,7 @@ type StreamAggExec struct {
 	memTracker *memory.Tracker // track memory usage.
 	// initPartialResultMemoryUsage indicates the memory usage of all partial results after initialization.
 	// All partial results will be reset after processing one group data, and the memory usage should also be reset.
-	// We can't get memory delta from ResetPartialReset, so record the memory usage here.
+	// We can't get memory delta from ResetPartialResult, so record the memory usage here.
 	initPartialResultMemoryUsage int64
 }
 
