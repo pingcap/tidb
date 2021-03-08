@@ -481,6 +481,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 				return nil, errors.Trace(err)
 			}
 
+			snapVer := s.version.Ver
 			if s.version == kv.MaxVersion {
 				newTS, err := tsFuture.Wait()
 				if err != nil {
@@ -494,7 +495,10 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 				}
 			}
 
-			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
+			// Use the original snapshot version to resolve locks so we can use MaxUint64
+			// as the callerStartTS if it's an auto-commit point get. This could save us
+			// one write at TiKV by not pushing forward the minCommitTS.
+			msBeforeExpired, err := cli.ResolveLocks(bo, snapVer, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
