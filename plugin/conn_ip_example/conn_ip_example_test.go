@@ -16,18 +16,19 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"strconv"
-	"testing"
 )
 
-type testConnIpExampleSuite struct{}
+type testConnIPExampleSuite struct{}
 
-var _ = SerialSuites(&testConnIpExampleSuite{})
+var _ = SerialSuites(&testConnIPExampleSuite{})
 
-func (s *testConnIpExampleSuite) TestLoadPlugin(c *C) {
+func (s *testConnIPExampleSuite) TestLoadPlugin(c *C) {
 	ctx := context.Background()
 	pluginName := "conn_ip_example"
 	pluginVersion := uint16(1)
