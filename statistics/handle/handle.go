@@ -367,15 +367,15 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		if err != nil {
 			return
 		}
-		statistics.CheckAnalyzeVerOnTable(partitionStats, &statsVer)
-		if statsVer != statistics.Version2 { // global-stats only support stats-ver2
-			return nil, fmt.Errorf("[stats]: global statistics for partitioned tables only available in statistics version2, please set tidb_analyze_version to 2")
-
-		}
 		// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
 		if partitionStats == nil {
 			err = types.ErrBuildGlobalLevelStatsFailed
 			return
+		}
+		statistics.CheckAnalyzeVerOnTable(partitionStats, &statsVer)
+		if statsVer != statistics.Version2 { // global-stats only support stats-ver2
+			return nil, fmt.Errorf("[stats]: global statistics for partitioned tables only available in statistics version2, please set tidb_analyze_version to 2")
+
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			ID := tableInfo.Columns[i].ID

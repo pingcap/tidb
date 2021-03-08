@@ -1419,6 +1419,25 @@ func (s *testStatsSuite) TestAnalyzeWithDynamicPartitionPruneMode(c *C) {
 	c.Assert(rows[1][6], Equals, "6")
 }
 
+func (s *testStatsSuite) TestFMSWithAnalyzePartition(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec(`create table t (a int, key(a)) partition by range(a) 
+					(partition p0 values less than (10),
+					partition p1 values less than (22))`)
+	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
+	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats",
+	))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
+}
+
 var _ = SerialSuites(&statsSerialSuite{})
 
 type statsSerialSuite struct {
