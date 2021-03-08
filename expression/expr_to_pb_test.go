@@ -270,6 +270,7 @@ func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 	client := new(mock.Client)
 
 	retTp := types.NewFieldType(mysql.TypeString)
+	retTp.Flag |= mysql.NotNullFlag
 	retTp.Charset = charset.CharsetUTF8
 	retTp.Collate = charset.CollationUTF8
 	args := []Expression{
