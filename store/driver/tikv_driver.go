@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -293,31 +292,18 @@ func (s *tikvStore) GetMemCache() kv.MemManager {
 
 // Begin a global transaction.
 func (s *tikvStore) Begin() (kv.Transaction, error) {
-	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
-}
-
-func (s *tikvStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithTxnScope(txnScope)
+	txn, err := s.KVStore.Begin()
 	if err != nil {
-		return txn, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	return txn_driver.NewTiKVTxn(txn), err
 }
 
-// BeginWithStartTS begins a transaction with startTS.
-func (s *tikvStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithStartTS(txnScope, startTS)
+// BeginWithOption begins a transaction with given option
+func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+	txn, err := s.KVStore.BeginWithOption(option)
 	if err != nil {
-		return txn, errors.Trace(err)
-	}
-	return txn_driver.NewTiKVTxn(txn), err
-}
-
-// BeginWithExactStaleness begins transaction with given staleness
-func (s *tikvStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithExactStaleness(txnScope, prevSec)
-	if err != nil {
-		return txn, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	return txn_driver.NewTiKVTxn(txn), err
 }

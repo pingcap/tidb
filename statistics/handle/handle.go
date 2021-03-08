@@ -308,7 +308,7 @@ type GlobalStats struct {
 }
 
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
+func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -351,6 +351,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
 		allFms[i] = make([]*statistics.FMSketch, 0, partitionNum)
 	}
+	statsVer := sc.GetSessionVars().AnalyzeVersion
 
 	for _, partitionID := range partitionIDs {
 		h.mu.Lock()
@@ -365,6 +366,11 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
 		if err != nil {
 			return
+		}
+		statistics.CheckAnalyzeVerOnTable(partitionStats, &statsVer)
+		if statsVer != statistics.Version2 { // global-stats only support stats-ver2
+			return nil, fmt.Errorf("[stats]: global statistics for partitioned tables only available in statistics version2, please set tidb_analyze_version to 2")
+
 		}
 		// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
 		if partitionStats == nil {
@@ -405,23 +411,10 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		// Because after merging TopN, some numbers will be left.
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
-		n := uint32(0)
-		for _, topN := range allTopN[i] {
-			if topN == nil {
-				continue
-			}
-			n = mathutil.MaxUint32(n, uint32(len(topN.TopN)))
-		}
-		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], n)
+		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], uint32(opts[ast.AnalyzeOptNumTopN]))
 
 		// Merge histogram
-		numBuckets := int64(0)
-		for _, hg := range allHg[i] {
-			if int64(hg.Len()) > numBuckets {
-				numBuckets = int64(hg.Len())
-			}
-		}
-		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, allHg[i], popedTopN, numBuckets)
+		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], popedTopN, int64(opts[ast.AnalyzeOptNumBuckets]), isIndex == 1)
 		if err != nil {
 			return
 		}
@@ -448,6 +441,12 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 				globalStatsNDV += bucket.NDV
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
+
+			// hg.NDV still includes TopN although TopN is not included by hg.Buckets
+			// TODO: remove the line below after fixing the meaning of hg.NDV
+			if globalStats.TopN[i] != nil { // if analyze with 0 topN, topN is nil here
+				globalStats.Hg[i].NDV += int64(len(globalStats.TopN[i].TopN))
+			}
 		}
 	}
 	return
