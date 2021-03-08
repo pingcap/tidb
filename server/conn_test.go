@@ -779,14 +779,14 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/secondNextErr"), IsNil)
 
 	// simple TiFlash query (unary + non-streaming)
-	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=0; set @@tidb_enable_streaming=0;")
+	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=0;")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/copRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 	testFallbackWork(c, tk, cc, "select sum(a) from t")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/copRpcErrtiflash0"), IsNil)
 
 	// TiFlash query based on batch cop (batch + streaming)
-	tk.MustExec("set @@tidb_allow_batch_cop=1; set @@tidb_allow_mpp=0; set @@tidb_enable_streaming=1;")
+	tk.MustExec("set @@tidb_allow_batch_cop=1; set @@tidb_allow_mpp=0;")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 	testFallbackWork(c, tk, cc, "select sum(a) from t")
@@ -797,7 +797,7 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout"), IsNil)
 
 	// TiFlash MPP query (MPP + streaming)
-	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=1; set @@tidb_enable_streaming=1;")
+	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=1;")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "return(true)"), IsNil)
 	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
