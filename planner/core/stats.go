@@ -391,8 +391,10 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
-			if len(path.AccessConds) == 0 {
-				// If AccessConds is empty, we ignore the access path.
+			// If `AccessConds` is empty, we ignore the access path.
+			// If the path contains a full range, ignore it also. This can happen when `AccessConds` is constant true, and
+			// it comes from the result of a subquery, so it is not folded.
+			if len(path.AccessConds) == 0 || ranger.HasFullRange(path.Ranges) {
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
@@ -416,8 +418,10 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
-			if len(path.AccessConds) == 0 {
-				// If AccessConds is empty, we ignore the access path.
+			// If `AccessConds` is empty, we ignore the access path.
+			// If the path contains a full range, ignore it also. This can happen when `AccessConds` is constant true, and
+			// it comes from the result of a subquery, so it is not folded.
+			if len(path.AccessConds) == 0 || ranger.HasFullRange(path.Ranges) {
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
@@ -447,6 +451,7 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.Access
 		return indexAccessPaths[0]
 	}
 
+<<<<<<< HEAD
 	maxColsIndex := 0
 	maxCols := len(indexAccessPaths[0].IdxCols)
 	for i := 1; i < len(indexAccessPaths); i++ {
@@ -454,6 +459,18 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.Access
 		if current > maxCols {
 			maxColsIndex = i
 			maxCols = current
+=======
+	minEstRowIndex := 0
+	minEstRow := math.MaxFloat64
+	for i := 0; i < len(indexAccessPaths); i++ {
+		rc := indexAccessPaths[i].CountAfterAccess
+		if len(indexAccessPaths[i].IndexFilters) > 0 {
+			rc = indexAccessPaths[i].CountAfterIndex
+		}
+		if rc < minEstRow {
+			minEstRowIndex = i
+			minEstRow = rc
+>>>>>>> 3b016a9a0... planner: fix panic when building index merge plan (#23141)
 		}
 	}
 	return indexAccessPaths[maxColsIndex]
