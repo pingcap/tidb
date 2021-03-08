@@ -1321,7 +1321,7 @@ func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
 
 	// Test 10 times panic for each AggExec.
 	var res sqlexec.RecordSet
-	for i := 1; i <= 100000; i++ {
+	for i := 1; i <= 10; i++ {
 		var err error
 		for err == nil {
 			// Test paralleled hash agg.
