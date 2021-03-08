@@ -500,6 +500,9 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		return nil, err
 	}
 	retTp := InferType4ControlFuncs(args[1], args[2])
+	// Here we turn off NotNullFlag. Because Nullif(e1, e2) is rewriten as If(e1 = e2, NULL, e2).
+	// The result can be NULL if e1 equals e2.
+	types.SetTypeFlag(&retTp.Flag, mysql.NotNullFlag, false)
 	evalTps := retTp.EvalType()
 	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
 	if err != nil {
