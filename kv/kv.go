@@ -26,59 +26,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
-// Transaction options
-const (
-	// BinlogInfo contains the binlog data and client.
-	BinlogInfo Option = iota + 1
-	// SchemaChecker is used for checking schema-validity.
-	SchemaChecker
-	// IsolationLevel sets isolation level for current transaction. The default level is SI.
-	IsolationLevel
-	// Priority marks the priority of this transaction.
-	Priority
-	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
-	NotFillCache
-	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
-	SyncLog
-	// KeyOnly retrieve only keys, it can be used in scan now.
-	KeyOnly
-	// Pessimistic is defined for pessimistic lock
-	Pessimistic
-	// SnapshotTS is defined to set snapshot ts.
-	SnapshotTS
-	// Set replica read
-	ReplicaRead
-	// Set task ID
-	TaskID
-	// InfoSchema is schema version used by txn startTS.
-	InfoSchema
-	// CollectRuntimeStats is used to enable collect runtime stats.
-	CollectRuntimeStats
-	// SchemaAmender is used to amend mutations for pessimistic transactions
-	SchemaAmender
-	// SampleStep skips 'SampleStep - 1' number of keys after each returned key.
-	SampleStep
-	// CommitHook is a callback function called right after the transaction gets committed
-	CommitHook
-	// EnableAsyncCommit indicates whether async commit is enabled
-	EnableAsyncCommit
-	// Enable1PC indicates whether one-phase commit is enabled
-	Enable1PC
-	// GuaranteeLinearizability indicates whether to guarantee linearizability at the cost of an extra tso request before prewrite
-	GuaranteeLinearizability
-	// TxnScope indicates which @@txn_scope this transaction will work with.
-	TxnScope
-	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
-	IsStalenessReadOnly
-)
-
-// Priority value for transaction priority.
-const (
-	PriorityNormal = iota
-	PriorityLow
-	PriorityHigh
-)
-
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
 // This is used in the situation of the index key/value was unchanged when do update.
 // Usage:
@@ -266,11 +213,11 @@ type Transaction interface {
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
-	SetOption(opt Option, val interface{})
+	SetOption(opt int, val interface{})
 	// GetOption returns the option
-	GetOption(opt Option) interface{}
+	GetOption(opt int) interface{}
 	// DelOption deletes an option.
-	DelOption(opt Option)
+	DelOption(opt int)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
 	// StartTS returns the transaction start timestamp.
@@ -449,9 +396,9 @@ type Snapshot interface {
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option. Only ReplicaRead is supported for snapshot
-	SetOption(opt Option, val interface{})
+	SetOption(opt int, val interface{})
 	// DelOption deletes an option.
-	DelOption(opt Option)
+	DelOption(opt int)
 }
 
 // BatchGetter is the interface for BatchGet.

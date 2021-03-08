@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
@@ -141,7 +142,7 @@ func (s *testLockSuite) TestScanLockResolveWithSeekKeyOnly(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.KeyOnly, true)
+	txn.SetOption(option.KeyOnly, true)
 	iter, err := txn.Iter([]byte("a"), nil)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {

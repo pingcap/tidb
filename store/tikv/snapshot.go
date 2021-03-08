@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -524,47 +525,47 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 
 // SetOption sets an option with a value, when val is nil, uses the default
 // value of this option. Only ReplicaRead is supported for snapshot
-func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
+func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case kv.IsolationLevel:
+	case option.IsolationLevel:
 		s.isolationLevel = val.(kv.IsoLevel)
-	case kv.Priority:
+	case option.Priority:
 		s.priority = PriorityToPB(val.(int))
-	case kv.NotFillCache:
+	case option.NotFillCache:
 		s.notFillCache = val.(bool)
-	case kv.SyncLog:
+	case option.SyncLog:
 		s.syncLog = val.(bool)
-	case kv.KeyOnly:
+	case option.KeyOnly:
 		s.keyOnly = val.(bool)
-	case kv.SnapshotTS:
+	case option.SnapshotTS:
 		s.setSnapshotTS(val.(uint64))
-	case kv.ReplicaRead:
+	case option.ReplicaRead:
 		s.mu.Lock()
 		s.mu.replicaRead = val.(kv.ReplicaReadType)
 		s.mu.Unlock()
-	case kv.TaskID:
+	case option.TaskID:
 		s.mu.Lock()
 		s.mu.taskID = val.(uint64)
 		s.mu.Unlock()
-	case kv.CollectRuntimeStats:
+	case option.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
 		s.mu.Unlock()
-	case kv.SampleStep:
+	case option.SampleStep:
 		s.sampleStep = val.(uint32)
-	case kv.TxnScope:
+	case option.TxnScope:
 		s.txnScope = val.(string)
 	}
 }
 
 // ClearFollowerRead disables follower read on current transaction
-func (s *tikvSnapshot) DelOption(opt kv.Option) {
+func (s *tikvSnapshot) DelOption(opt int) {
 	switch opt {
-	case kv.ReplicaRead:
+	case option.ReplicaRead:
 		s.mu.Lock()
 		s.mu.replicaRead = kv.ReplicaReadLeader
 		s.mu.Unlock()
-	case kv.CollectRuntimeStats:
+	case option.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = nil
 		s.mu.Unlock()

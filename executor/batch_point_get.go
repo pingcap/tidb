@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	txnoption "github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -106,13 +107,13 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
-		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		snapshot.SetOption(txnoption.CollectRuntimeStats, snapshotStats)
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		snapshot.SetOption(txnoption.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	snapshot.SetOption(txnoption.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -132,7 +133,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(kv.CollectRuntimeStats)
+		e.snapshot.DelOption(txnoption.CollectRuntimeStats)
 	}
 	e.inited = 0
 	e.index = 0

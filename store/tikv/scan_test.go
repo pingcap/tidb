@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -133,7 +134,7 @@ func (s *testScanSuite) TestScan(c *C) {
 		check(c, scan, upperBound, false)
 
 		txn3 := s.beginTxn(c)
-		txn3.SetOption(kv.KeyOnly, true)
+		txn3.SetOption(option.KeyOnly, true)
 		// Test scan without upper bound
 		scan, err = txn3.Iter(s.recordPrefix, nil)
 		c.Assert(err, IsNil)
@@ -144,7 +145,7 @@ func (s *testScanSuite) TestScan(c *C) {
 		check(c, scan, upperBound, true)
 
 		// Restore KeyOnly to false
-		txn3.SetOption(kv.KeyOnly, false)
+		txn3.SetOption(option.KeyOnly, false)
 		scan, err = txn3.Iter(s.recordPrefix, nil)
 		c.Assert(err, IsNil)
 		check(c, scan, rowNum, true)

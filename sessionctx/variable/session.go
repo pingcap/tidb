@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	txnoption "github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/types"
@@ -939,7 +940,7 @@ func NewSessionVars() *SessionVars {
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:            kv.PriorityLow,
+		DDLReorgPriority:            txnoption.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		preferRangeScan:             DefOptPreferRangeScan,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
@@ -1285,13 +1286,13 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	val = strings.ToLower(val)
 	switch val {
 	case "priority_low":
-		s.DDLReorgPriority = kv.PriorityLow
+		s.DDLReorgPriority = txnoption.PriorityLow
 	case "priority_normal":
-		s.DDLReorgPriority = kv.PriorityNormal
+		s.DDLReorgPriority = txnoption.PriorityNormal
 	case "priority_high":
-		s.DDLReorgPriority = kv.PriorityHigh
+		s.DDLReorgPriority = txnoption.PriorityHigh
 	default:
-		s.DDLReorgPriority = kv.PriorityLow
+		s.DDLReorgPriority = txnoption.PriorityLow
 	}
 }
 

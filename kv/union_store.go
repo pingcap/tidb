@@ -15,6 +15,15 @@ package kv
 
 import (
 	"context"
+
+	txnoption "github.com/pingcap/tidb/store/tikv/option"
+)
+
+// Priority value for transaction priority.TODO:remove it when br is ready
+const (
+	PriorityNormal = txnoption.PriorityNormal
+	PriorityLow    = txnoption.PriorityLow
+	PriorityHigh   = txnoption.PriorityHigh
 )
 
 // UnionStore is a store that wraps a snapshot for read and a MemBuffer for buffered write.
@@ -29,11 +38,11 @@ type UnionStore interface {
 
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
-	SetOption(opt Option, val interface{})
+	SetOption(opt int, val interface{})
 	// DelOption deletes an option.
-	DelOption(opt Option)
+	DelOption(opt int)
 	// GetOption gets an option.
-	GetOption(opt Option) interface{}
+	GetOption(opt int) interface{}
 	// GetMemBuffer return the MemBuffer binding to this unionStore.
 	GetMemBuffer() MemBuffer
 }
@@ -48,13 +57,10 @@ const (
 	NotExist
 )
 
-// Option is used for customizing kv store's behaviors during a transaction.
-type Option int
-
 // Options is an interface of a set of options. Each option is associated with a value.
 type Options interface {
 	// Get gets an option value.
-	Get(opt Option) (v interface{}, ok bool)
+	Get(opt int) (v interface{}, ok bool)
 }
 
 // unionStore is an in-memory Store which contains a buffer for write and a
@@ -70,7 +76,7 @@ func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
 		snapshot:  snapshot,
 		memBuffer: newMemDB(),
-		opts:      make(map[Option]interface{}),
+		opts:      make(map[int]interface{}),
 	}
 }
 
@@ -135,23 +141,23 @@ func (us *unionStore) UnmarkPresumeKeyNotExists(k Key) {
 }
 
 // SetOption implements the unionStore SetOption interface.
-func (us *unionStore) SetOption(opt Option, val interface{}) {
+func (us *unionStore) SetOption(opt int, val interface{}) {
 	us.opts[opt] = val
 }
 
 // DelOption implements the unionStore DelOption interface.
-func (us *unionStore) DelOption(opt Option) {
+func (us *unionStore) DelOption(opt int) {
 	delete(us.opts, opt)
 }
 
 // GetOption implements the unionStore GetOption interface.
-func (us *unionStore) GetOption(opt Option) interface{} {
+func (us *unionStore) GetOption(opt int) interface{} {
 	return us.opts[opt]
 }
 
-type options map[Option]interface{}
+type options map[int]interface{}
 
-func (opts options) Get(opt Option) (interface{}, bool) {
+func (opts options) Get(opt int) (interface{}, bool) {
 	v, ok := opts[opt]
 	return v, ok
 }

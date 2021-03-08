@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	txnoption "github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
@@ -473,7 +474,7 @@ func (s *session) doCommit(ctx context.Context) error {
 				},
 				Client: s.sessionVars.BinlogClient,
 			}
-			s.txn.SetOption(kv.BinlogInfo, info)
+			s.txn.SetOption(txnoption.BinlogInfo, info)
 		}
 	}
 
@@ -484,22 +485,22 @@ func (s *session) doCommit(ctx context.Context) error {
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
-	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
-	s.txn.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
+	s.txn.SetOption(txnoption.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
+	s.txn.SetOption(txnoption.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+	s.txn.SetOption(txnoption.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
-		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+		s.txn.SetOption(txnoption.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
-	s.txn.SetOption(kv.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
-	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
+	s.txn.SetOption(txnoption.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
+	s.txn.SetOption(txnoption.Enable1PC, s.GetSessionVars().Enable1PC)
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
-	if s.txn.GetOption(kv.GuaranteeLinearizability) == nil {
+	if s.txn.GetOption(txnoption.GuaranteeLinearizability) == nil {
 		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
 		// because the property is naturally holds:
 		// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
 		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
 		// of any previously committed transactions.
-		s.txn.SetOption(kv.GuaranteeLinearizability,
+		s.txn.SetOption(txnoption.GuaranteeLinearizability,
 			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
 
@@ -1771,7 +1772,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
 		s.PrepareTSFuture(ctx)
-		stmtCtx.Priority = kv.PriorityHigh
+		stmtCtx.Priority = txnoption.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
 		prepared.CachedPlan = nil
@@ -1877,7 +1878,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		}
 		s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 		if s.sessionVars.TxnCtx.IsPessimistic {
-			s.txn.SetOption(kv.Pessimistic, true)
+			s.txn.SetOption(txnoption.Pessimistic, true)
 		}
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetInTxn(true)
@@ -1885,7 +1886,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 		s.txn.SetVars(s.sessionVars.KVVars)
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
-			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+			s.txn.SetOption(txnoption.ReplicaRead, kv.ReplicaReadFollower)
 		}
 	}
 	return &s.txn, nil
@@ -1949,7 +1950,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	txn.SetVars(s.sessionVars.KVVars)
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		txn.SetOption(txnoption.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
@@ -2753,7 +2754,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
-		txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+		txnScope := s.txn.GetUnionStore().GetOption(txnoption.TxnScope).(string)
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return err
@@ -2783,8 +2784,8 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 		return s.NewTxn(ctx)
 	}
 	txn.SetVars(s.sessionVars.KVVars)
-	txn.SetOption(kv.IsStalenessReadOnly, true)
-	txn.SetOption(kv.TxnScope, txnScope)
+	txn.SetOption(txnoption.IsStalenessReadOnly, true)
+	txn.SetOption(txnoption.TxnScope, txnScope)
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{

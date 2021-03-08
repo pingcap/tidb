@@ -29,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	txnoption "github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -141,20 +142,20 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.snapshot.SetOption(txnoption.CollectRuntimeStats, snapshotStats)
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		e.snapshot.SetOption(txnoption.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	e.snapshot.SetOption(txnoption.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	return nil
 }
 
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(kv.CollectRuntimeStats)
+		e.snapshot.DelOption(txnoption.CollectRuntimeStats)
 	}
 	if e.idxInfo != nil && e.tblInfo != nil {
 		actRows := int64(0)
@@ -372,7 +373,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	txnScope := e.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+	txnScope := e.txn.GetUnionStore().GetOption(txnoption.TxnScope).(string)
 	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
 		return nil
 	}

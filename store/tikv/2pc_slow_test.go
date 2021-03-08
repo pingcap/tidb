@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/option"
 )
 
 // TestCommitMultipleRegions tests commit multiple regions.
@@ -82,7 +83,7 @@ func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 		checkKeyRegion(bo, startKey, endKey, Equals)
 		txn := s.beginTxn(c)
 		if m == "pessimistic" {
-			txn.SetOption(kv.Pessimistic, true)
+			txn.SetOption(option.Pessimistic, true)
 			lockCtx := &kv.LockCtx{}
 			lockCtx.ForUpdateTS = txn.startTS
 			keys := make([]kv.Key, 0, preSplitThresholdInTest)

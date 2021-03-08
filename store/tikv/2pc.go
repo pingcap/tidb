@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -813,12 +814,12 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 // checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
 func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 	// Disable async commit in local transactions
-	txnScopeOption := c.txn.us.GetOption(kv.TxnScope)
+	txnScopeOption := c.txn.us.GetOption(option.TxnScope)
 	if txnScopeOption == nil || txnScopeOption.(string) != oracle.GlobalTxnScope {
 		return false
 	}
 
-	enableAsyncCommitOption := c.txn.us.GetOption(kv.EnableAsyncCommit)
+	enableAsyncCommitOption := c.txn.us.GetOption(option.EnableAsyncCommit)
 	enableAsyncCommit := enableAsyncCommitOption != nil && enableAsyncCommitOption.(bool)
 	asyncCommitCfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
 	// TODO the keys limit need more tests, this value makes the unit test pass by now.
@@ -841,17 +842,17 @@ func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 // checkOnePC checks if 1PC protocol is available for current transaction.
 func (c *twoPhaseCommitter) checkOnePC() bool {
 	// Disable 1PC in local transactions
-	txnScopeOption := c.txn.us.GetOption(kv.TxnScope)
+	txnScopeOption := c.txn.us.GetOption(option.TxnScope)
 	if txnScopeOption == nil || txnScopeOption.(string) != oracle.GlobalTxnScope {
 		return false
 	}
 
-	enable1PCOption := c.txn.us.GetOption(kv.Enable1PC)
+	enable1PCOption := c.txn.us.GetOption(option.Enable1PC)
 	return c.sessionID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
 }
 
 func (c *twoPhaseCommitter) needLinearizability() bool {
-	GuaranteeLinearizabilityOption := c.txn.us.GetOption(kv.GuaranteeLinearizability)
+	GuaranteeLinearizabilityOption := c.txn.us.GetOption(option.GuaranteeLinearizability)
 	// by default, guarantee
 	return GuaranteeLinearizabilityOption == nil || GuaranteeLinearizabilityOption.(bool)
 }
@@ -1075,7 +1076,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	} else {
 		start = time.Now()
 		logutil.Event(ctx, "start get commit ts")
-		commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
+		commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(option.TxnScope).(string))
 		if err != nil {
 			logutil.Logger(ctx).Warn("2PC get commitTS failed",
 				zap.Error(err),
@@ -1351,7 +1352,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *execdetails.CommitDetails) (uint64, error) {
 	start := time.Now()
 	logutil.Event(ctx, "start get commit ts")
-	commitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
+	commitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(option.TxnScope).(string))
 	if err != nil {
 		logutil.Logger(ctx).Warn("2PC get commitTS failed",
 			zap.Error(err),
@@ -1376,7 +1377,7 @@ func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *execd
 // this transaction using the related schema changes.
 func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64, startInfoSchema SchemaVer,
 	tryAmend bool) (*RelatedSchemaChange, bool, error) {
-	checker, ok := c.txn.us.GetOption(kv.SchemaChecker).(schemaLeaseChecker)
+	checker, ok := c.txn.us.GetOption(option.SchemaChecker).(schemaLeaseChecker)
 	if !ok {
 		if c.sessionID > 0 {
 			logutil.Logger(ctx).Warn("schemaLeaseChecker is not set for this transaction",
@@ -1430,7 +1431,7 @@ func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 }
 
 func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
-	return c.txn.us.GetOption(kv.BinlogInfo) != nil
+	return c.txn.us.GetOption(option.BinlogInfo) != nil
 }
 
 // TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's
@@ -1628,14 +1629,14 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 }
 
 func getTxnPriority(txn *KVTxn) pb.CommandPri {
-	if pri := txn.us.GetOption(kv.Priority); pri != nil {
+	if pri := txn.us.GetOption(option.Priority); pri != nil {
 		return PriorityToPB(pri.(int))
 	}
 	return pb.CommandPri_Normal
 }
 
 func getTxnSyncLog(txn *KVTxn) bool {
-	if syncOption := txn.us.GetOption(kv.SyncLog); syncOption != nil {
+	if syncOption := txn.us.GetOption(option.SyncLog); syncOption != nil {
 		return syncOption.(bool)
 	}
 	return false
@@ -1644,9 +1645,9 @@ func getTxnSyncLog(txn *KVTxn) bool {
 // PriorityToPB converts priority type to wire type.
 func PriorityToPB(pri int) pb.CommandPri {
 	switch pri {
-	case kv.PriorityLow:
+	case option.PriorityLow:
 		return pb.CommandPri_Low
-	case kv.PriorityHigh:
+	case option.PriorityHigh:
 		return pb.CommandPri_High
 	default:
 		return pb.CommandPri_Normal

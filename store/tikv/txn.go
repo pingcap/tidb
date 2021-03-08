@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
@@ -91,7 +92,7 @@ func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, repl
 		valid:     true,
 		vars:      kv.DefaultVars,
 	}
-	newTiKVTxn.SetOption(kv.TxnScope, txnScope)
+	newTiKVTxn.SetOption(option.TxnScope, txnScope)
 	return newTiKVTxn, nil
 }
 
@@ -180,32 +181,32 @@ func (txn *KVTxn) Delete(k kv.Key) error {
 
 // SetOption sets an option with a value, when val is nil, uses the default
 // value of this option.
-func (txn *KVTxn) SetOption(opt kv.Option, val interface{}) {
+func (txn *KVTxn) SetOption(opt int, val interface{}) {
 	txn.us.SetOption(opt, val)
 	txn.snapshot.SetOption(opt, val)
 	switch opt {
-	case kv.InfoSchema:
+	case option.InfoSchema:
 		txn.txnInfoSchema = val.(SchemaVer)
-	case kv.SchemaAmender:
+	case option.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
-	case kv.CommitHook:
+	case option.CommitHook:
 		txn.commitCallback = val.(func(info kv.TxnInfo, err error))
 	}
 }
 
 // GetOption returns the option
-func (txn *KVTxn) GetOption(opt kv.Option) interface{} {
+func (txn *KVTxn) GetOption(opt int) interface{} {
 	return txn.us.GetOption(opt)
 }
 
 // DelOption deletes an option.
-func (txn *KVTxn) DelOption(opt kv.Option) {
+func (txn *KVTxn) DelOption(opt int) {
 	txn.us.DelOption(opt)
 }
 
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
-	return txn.us.GetOption(kv.Pessimistic) != nil
+	return txn.us.GetOption(option.Pessimistic) != nil
 }
 
 // Commit commits the transaction operations to KV store.
@@ -360,7 +361,7 @@ func (txn *KVTxn) collectLockedKeys() [][]byte {
 
 func (txn *KVTxn) onCommitted(err error) {
 	if txn.commitCallback != nil {
-		info := kv.TxnInfo{TxnScope: txn.GetUnionStore().GetOption(kv.TxnScope).(string), StartTS: txn.startTS, CommitTS: txn.commitTS}
+		info := kv.TxnInfo{TxnScope: txn.GetUnionStore().GetOption(option.TxnScope).(string), StartTS: txn.startTS, CommitTS: txn.commitTS}
 		if err != nil {
 			info.ErrMsg = err.Error()
 		}

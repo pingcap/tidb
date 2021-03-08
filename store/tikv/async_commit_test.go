@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -117,14 +118,14 @@ func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, ke
 
 func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) *KVTxn {
 	txn := s.beginAsyncCommit(c)
-	txn.SetOption(kv.GuaranteeLinearizability, true)
+	txn.SetOption(option.GuaranteeLinearizability, true)
 	return txn
 }
 
 func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetOption(option.EnableAsyncCommit, true)
 	return txn
 }
 
@@ -150,7 +151,7 @@ func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 func (s *testAsyncCommitSuite) lockKeysWithAsyncCommit(c *C, keys, values [][]byte, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
 	txn, err := newTiKVTxn(s.store, oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetOption(option.EnableAsyncCommit, true)
 	for i, k := range keys {
 		if len(values[i]) > 0 {
 			err = txn.Set(k, values[i])
@@ -336,7 +337,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 		sessionID++
 		ctx := context.WithValue(context.Background(), util.SessionID, sessionID)
 		txn1 := s.beginAsyncCommit(c)
-		txn1.SetOption(kv.Pessimistic, isPessimistic)
+		txn1.SetOption(option.Pessimistic, isPessimistic)
 		s.mustGetFromTxn(c, txn1, []byte("k1"), []byte("v1"))
 		txn1.Set([]byte("k1"), []byte("v2"))
 
@@ -395,7 +396,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 
 	localTxn := s.beginAsyncCommit(c)
 	err := localTxn.Set([]byte("a"), []byte("a1"))
-	localTxn.SetOption(kv.TxnScope, "bj")
+	localTxn.SetOption(option.TxnScope, "bj")
 	c.Assert(err, IsNil)
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = localTxn.Commit(ctx)
@@ -404,7 +405,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 
 	globalTxn := s.beginAsyncCommit(c)
 	err = globalTxn.Set([]byte("b"), []byte("b1"))
-	globalTxn.SetOption(kv.TxnScope, oracle.GlobalTxnScope)
+	globalTxn.SetOption(option.TxnScope, oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = globalTxn.Commit(ctx)
 	c.Assert(err, IsNil)

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -144,7 +145,7 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 		builder.Request.Data, builder.err = ana.Marshal()
 		builder.Request.NotFillCache = true
 		builder.Request.IsolationLevel = kv.RC
-		builder.Request.Priority = kv.PriorityLow
+		builder.Request.Priority = option.PriorityLow
 	}
 
 	return builder
@@ -208,13 +209,13 @@ func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 	switch sv.StmtCtx.Priority {
 	case mysql.NoPriority, mysql.DelayedPriority:
-		return kv.PriorityNormal
+		return option.PriorityNormal
 	case mysql.LowPriority:
-		return kv.PriorityLow
+		return option.PriorityLow
 	case mysql.HighPriority:
-		return kv.PriorityHigh
+		return option.PriorityHigh
 	}
-	return kv.PriorityNormal
+	return option.PriorityNormal
 }
 
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:

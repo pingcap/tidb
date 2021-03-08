@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv/option"
 )
 
 type testSnapshotFailSuite struct {
@@ -152,8 +153,8 @@ func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("k4"), []byte("v4"))
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
-	txn.SetOption(kv.GuaranteeLinearizability, false)
+	txn.SetOption(option.EnableAsyncCommit, true)
+	txn.SetOption(option.GuaranteeLinearizability, false)
 	// Prewrite an async-commit lock and do not commit it.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", `return`), IsNil)
 	committer, err := newTwoPhaseCommitterWithInit(txn, 1)

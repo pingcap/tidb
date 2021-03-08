@@ -25,6 +25,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
 )
@@ -307,7 +308,7 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Second)
 	RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Millisecond)
 	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: 0}, 0)
-	snapshot.SetOption(kv.CollectRuntimeStats, &SnapshotRuntimeStats{})
+	snapshot.SetOption(option.CollectRuntimeStats, &SnapshotRuntimeStats{})
 	snapshot.mergeRegionRequestStats(reqStats.Stats)
 	snapshot.mergeRegionRequestStats(reqStats.Stats)
 	bo := NewBackofferWithVars(context.Background(), 2000, nil)

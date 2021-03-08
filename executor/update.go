@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/tikv"
+	txnoption "github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -256,7 +257,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		if e.collectRuntimeStatsEnabled() {
 			txn, err := e.ctx.Txn(false)
 			if err == nil && txn.GetSnapshot() != nil {
-				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+				txn.GetSnapshot().SetOption(txnoption.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
@@ -404,7 +405,7 @@ func (e *UpdateExec) Close() error {
 	if e.runtimeStats != nil && e.stats != nil {
 		txn, err := e.ctx.Txn(false)
 		if err == nil && txn.GetSnapshot() != nil {
-			txn.GetSnapshot().DelOption(kv.CollectRuntimeStats)
+			txn.GetSnapshot().DelOption(txnoption.CollectRuntimeStats)
 		}
 	}
 	return e.children[0].Close()

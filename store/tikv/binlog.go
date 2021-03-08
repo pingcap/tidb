@@ -18,9 +18,9 @@ import (
 	"sync"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/option"
 	"github.com/pingcap/tipb/go-binlog"
 	zap "go.uber.org/zap"
 )
@@ -50,7 +50,7 @@ func (e *binlogExecutor) Prewrite(ctx context.Context, primary []byte) <-chan Bi
 	ch := make(chan BinlogWriteResult, 1)
 	go func() {
 		logutil.Eventf(ctx, "start prewrite binlog")
-		binInfo := e.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
+		binInfo := e.txn.us.GetOption(option.BinlogInfo).(*binloginfo.BinlogInfo)
 		bin := binInfo.Data
 		bin.StartTs = int64(e.txn.startTS)
 		if bin.Tp == binlog.BinlogType_Prewrite {
@@ -68,7 +68,7 @@ func (e *binlogExecutor) Prewrite(ctx context.Context, primary []byte) <-chan Bi
 }
 
 func (e *binlogExecutor) Commit(ctx context.Context, commitTS int64) {
-	binInfo := e.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
+	binInfo := e.txn.us.GetOption(option.BinlogInfo).(*binloginfo.BinlogInfo)
 	binInfo.Data.Tp = binlog.BinlogType_Commit
 	if commitTS == 0 {
 		binInfo.Data.Tp = binlog.BinlogType_Rollback
