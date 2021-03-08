@@ -68,6 +68,8 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 	resultFieldType := &types.FieldType{}
 	if lhs.Tp == mysql.TypeNull {
 		*resultFieldType = *rhs
+		// If any of arg is NULL, result type need unset NotNullFlag.
+		types.SetTypeFlag(&resultFieldType.Flag, mysql.NotNullFlag, false)
 		// If both arguments are NULL, make resulting type BINARY(0).
 		if rhs.Tp == mysql.TypeNull {
 			resultFieldType.Tp = mysql.TypeString
@@ -76,6 +78,7 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 		}
 	} else if rhs.Tp == mysql.TypeNull {
 		*resultFieldType = *lhs
+		types.SetTypeFlag(&resultFieldType.Flag, mysql.NotNullFlag, false)
 	} else {
 		resultFieldType = types.AggFieldType([]*types.FieldType{lhs, rhs})
 		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &resultFieldType.Flag)
@@ -500,9 +503,6 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		return nil, err
 	}
 	retTp := InferType4ControlFuncs(args[1], args[2])
-	// Here we turn off NotNullFlag. Because Nullif(e1, e2) is rewriten as If(e1 = e2, NULL, e2).
-	// The result can be NULL if e1 equals e2.
-	types.SetTypeFlag(&retTp.Flag, mysql.NotNullFlag, false)
 	evalTps := retTp.EvalType()
 	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
 	if err != nil {
