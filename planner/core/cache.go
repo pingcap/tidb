@@ -152,7 +152,10 @@ func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 		return false
 	}
 	for i := range tps {
-		if !s[i].Equal(tps[i]) {
+		tpEqual := (s[i].Tp == tps[i].Tp) ||
+			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
+			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar)
+		if !tpEqual {
 			return false
 		}
 	}
