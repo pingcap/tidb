@@ -1448,10 +1448,11 @@ func buildTableInfo(
 				}
 			case model.PrimaryKeyTypeDefault:
 				alterPKConf := config.GetGlobalConfig().AlterPrimaryKey
+				clustered := !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex
 				if isSingleIntPK(constr, lastCol) {
-					tbInfo.PKIsHandle = !alterPKConf
+					tbInfo.PKIsHandle = clustered || (!alterPKConf && ctx.GetSessionVars().IntPrimaryKeyDefaultAsClustered)
 				} else {
-					tbInfo.IsCommonHandle = !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex && noBinlog
+					tbInfo.IsCommonHandle = clustered && noBinlog
 					if tbInfo.IsCommonHandle {
 						tbInfo.CommonHandleVersion = 1
 					}

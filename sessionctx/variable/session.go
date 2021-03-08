@@ -818,6 +818,10 @@ type SessionVars struct {
 	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
+
+	// IntPrimaryKeyDefaultAsClustered indicates whether create integer primary table as clustered
+	// when `@@tidb_enable_clustered_index=0` and create-table stmt without `clustered`, like 4.0 behavior.
+	IntPrimaryKeyDefaultAsClustered bool
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -1758,6 +1762,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
 			}
 		}
+	case TiDBIntPrimaryKeyDefaultAsClustered:
+		s.IntPrimaryKeyDefaultAsClustered = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
