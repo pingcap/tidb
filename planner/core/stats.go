@@ -457,10 +457,7 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.Access
 	minEstRowIndex := 0
 	minEstRow := math.MaxFloat64
 	for i := 0; i < len(indexAccessPaths); i++ {
-		rc, err := ds.stats.HistColl.GetRowCountByIndexRanges(ds.ctx.GetSessionVars().StmtCtx, indexAccessPaths[i].Index.ID, indexAccessPaths[i].Ranges)
-		if err != nil {
-			return nil, err
-		}
+		rc := indexAccessPaths[i].CountAfterAccess
 		if rc < minEstRow {
 			minEstRowIndex = i
 			minEstRow = rc
