@@ -753,10 +753,10 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	tb := testGetTableByName(c, tk.Se, "test", "t")
 	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
-	tk.MustExec("insert into t values(1,0)")
-	tk.MustExec("insert into t values(2,0)")
-	tk.MustExec("insert into t values(3,0)")
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("3"))
+	for i := 0; i < 50; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v, 0)", i))
+	}
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 	// test COM_STMT_EXECUTE
@@ -771,6 +771,12 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	tk.MustExec("set @@tidb_enable_tiflash_fallback_tikv=0")
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"), IsNil)
+
+	// test that TiDB would not retry if the first execution already sends data to client
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/secondNextErr", "return(true)"), IsNil)
+	tk.MustExec("set @@tidb_enable_tiflash_fallback_tikv=1")
+	c.Assert(cc.handleQuery(ctx, "select * from t t1 join t t2 on t1.a = t2.a"), NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/secondNextErr"), IsNil)
 
 	// simple TiFlash query (unary + non-streaming)
 	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=0; set @@tidb_enable_streaming=0;")
