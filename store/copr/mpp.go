@@ -233,7 +233,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	m.establishMPPConns(bo, req, taskMeta)
 }
 
-// TODO: retry once failed?
+// NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution will stop after some minutes.
 func (m *mppIterator) cancelMppTask(bo *tikv.Backoffer, meta *mpp.TaskMeta) {
 	killReq := &mpp.CancelTaskRequest{
 		Meta: meta,
@@ -247,7 +247,7 @@ func (m *mppIterator) cancelMppTask(bo *tikv.Backoffer, meta *mpp.TaskMeta) {
 		_, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), addr, wrappedReq, tikv.ReadTimeoutUltraLong)
 		logutil.BgLogger().Debug("cancel task ", zap.Uint64("query id ", meta.GetStartTs()), zap.String(" on addr ", addr))
 		if err != nil {
-			logutil.BgLogger().Error("cancel task error: ", zap.Error(err))
+			logutil.BgLogger().Error("cancel task error: ", zap.Error(err), zap.Uint64(" for query id ", meta.GetStartTs()), zap.String(" on addr ", addr))
 		}
 	}
 }
@@ -310,23 +310,11 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 				}
 			}
-<<<<<<< HEAD
 			m.sendToRespCh(&mppResponse{
 				err: tikv.ErrTiFlashServerTimeout,
 			})
-=======
-			// TODO
-			if resp != nil && resp.Error != nil {
-				m.sendToRespCh(&mppResponse{
-					err: errors.New(resp.Error.Msg),
-				})
-			}
-<<<<<<< HEAD
-			m.cancelMppTask(bo, req, taskMeta)
->>>>>>> run ok
-=======
+
 			m.cancelMppTask(bo, taskMeta)
->>>>>>> send cancle cmd to all tiflash stores
 			return
 		}
 	}
