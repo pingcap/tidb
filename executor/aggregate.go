@@ -294,7 +294,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	finalConcurrency := sessionVars.HashAggFinalConcurrency()
 	partialConcurrency := sessionVars.HashAggPartialConcurrency()
 	e.isChildReturnEmpty = true
-	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency+partialConcurrency+1)
+	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency)
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)
 	e.finishCh = make(chan struct{}, 1)
 
@@ -743,9 +743,8 @@ func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGro
 	}
 }
 
-func (e *HashAggExec) waitAllWorkerAndCloseFinalOutput(waitGroup *sync.WaitGroup, waitGroup2 *sync.WaitGroup) {
+func (e *HashAggExec) waitFinalWorkerAndCloseFinalOutput(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
-	waitGroup2.Wait()
 	close(e.finalOutputCh)
 }
 
@@ -771,7 +770,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
 	}
 	go func() {
-		e.waitAllWorkerAndCloseFinalOutput(finalWorkerWaitGroup, partialWorkerWaitGroup)
+		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.FinalWallTime, int64(time.Since(finalStart)))
 		}
