@@ -712,7 +712,7 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	time.Sleep(time.Millisecond * 10)
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)

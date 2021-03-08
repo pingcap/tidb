@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -65,7 +66,10 @@ type tikvSnapshot struct {
 	keyOnly         bool
 	vars            *kv.Variables
 	replicaReadSeed uint32
-	resolvedLocks   *util.TSSet
+	isStaleness     bool
+	// MatchStoreLabels indicates the labels the store should be matched
+	matchStoreLabels []*metapb.StoreLabel
+	resolvedLocks    *util.TSSet
 
 	// Cache the result of BatchGet.
 	// The invariance is that calling BatchGet multiple times using the same start ts,
@@ -287,8 +291,14 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			TaskId:       s.mu.taskID,
 		})
 		s.mu.RUnlock()
-
-		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "")
+		var ops []StoreSelectorOption
+		if s.isStaleness {
+			req.EnableStaleRead()
+		}
+		if len(s.matchStoreLabels) > 0 {
+			ops = append(ops, WithMatchLabels(s.matchStoreLabels))
+		}
+		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "", ops...)
 
 		if err != nil {
 			return errors.Trace(err)
@@ -435,13 +445,19 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			TaskId:       s.mu.taskID,
 		})
 	s.mu.RUnlock()
-
+	var ops []StoreSelectorOption
+	if s.isStaleness {
+		req.EnableStaleRead()
+	}
+	if len(s.matchStoreLabels) > 0 {
+		ops = append(ops, WithMatchLabels(s.matchStoreLabels))
+	}
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "")
+		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "", ops...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -470,6 +486,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 				return nil, errors.Trace(err)
 			}
 
+			snapVer := s.version.Ver
 			if s.version == kv.MaxVersion {
 				newTS, err := tsFuture.Wait()
 				if err != nil {
@@ -483,7 +500,10 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 				}
 			}
 
-			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
+			// Use the original snapshot version to resolve locks so we can use MaxUint64
+			// as the callerStartTS if it's an auto-commit point get. This could save us
+			// one write at TiKV by not pushing forward the minCommitTS.
+			msBeforeExpired, err := cli.ResolveLocks(bo, snapVer, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -557,6 +577,12 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.mu.Unlock()
 	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
+	case kv.IsStalenessReadOnly:
+		s.mu.Lock()
+		s.isStaleness = val.(bool)
+		s.mu.Unlock()
+	case kv.MatchStoreLabels:
+		s.matchStoreLabels = val.([]*metapb.StoreLabel)
 	case kv.TxnScope:
 		s.txnScope = val.(string)
 	}
