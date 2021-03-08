@@ -53,6 +53,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_extended")
+	tk.MustExec("delete from mysql.stats_fm_sketch")
 	tk.MustExec("delete from mysql.schema_index_usage")
 	do.StatsHandle().Clear()
 }
@@ -1431,9 +1432,9 @@ func (s *testStatsSuite) TestFMSWithAnalyzePartition(c *C) {
 	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats",
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
+		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
 	))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
 }

@@ -369,7 +369,19 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		}
 		// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
 		if partitionStats == nil {
-			err = types.ErrBuildGlobalLevelStatsFailed
+			var errMsg string
+			if isIndex == 0 {
+				errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
+			} else {
+				indexName := ""
+				for _, idx := range tableInfo.Indices {
+					if idx.ID == idxID {
+						indexName = idx.Name.L
+					}
+				}
+				errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, indexName)
+			}
+			err = types.ErrBuildGlobalLevelStatsFailed.GenWithStackByArgs(errMsg)
 			return
 		}
 		statistics.CheckAnalyzeVerOnTable(partitionStats, &statsVer)
