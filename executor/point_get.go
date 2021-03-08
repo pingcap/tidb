@@ -19,9 +19,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -149,6 +151,16 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot.SetOption(txnoption.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	e.snapshot.SetOption(txnoption.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
+	e.snapshot.SetOption(txnoption.IsStalenessReadOnly, isStaleness)
+	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != oracle.GlobalTxnScope {
+		e.snapshot.SetOption(txnoption.MatchStoreLabels, []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
+			},
+		})
+	}
 	return nil
 }
 
