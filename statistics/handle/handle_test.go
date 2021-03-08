@@ -14,6 +14,7 @@
 package handle_test
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"testing"
@@ -790,20 +791,107 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec(` create table t (a int) partition by range (a) ` +
-		`(partition p0 values less than (10), partition p1 values less than (20))`)
-	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
+	tk.MustExec(` create table t (a int, key(a)) partition by range (a) ` +
+		`(partition p0 values less than (100000), partition p1 values less than (200000))`)
+	buf1 := bytes.NewBufferString("insert into t values (0)")
+	buf2 := bytes.NewBufferString("insert into t values (100000)")
+	for i := 0; i < 5000; i += 3 {
+		buf1.WriteString(fmt.Sprintf(", (%v)", i))
+		buf2.WriteString(fmt.Sprintf(", (%v)", 100000+i))
+	}
+	tk.MustExec(buf1.String())
+	tk.MustExec(buf2.String())
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 
-	// with num topn
-	tk.MustExec("analyze table t with 1 topn")
-	tk.MustQuery("show stats_topn where partition_name='p0'").Check(testkit.Rows("x"))
+	type opt struct {
+		topn    int
+		buckets int
+		err     bool
+	}
 
-	c.Assert(len(tk.MustQuery("show stats_topn where partition_name='global'").Rows()), Equals, 1)
-	c.Assert(len(tk.MustQuery("show stats_topn where partition_name='p0'").Rows()), Equals, 1)
-	c.Assert(len(tk.MustQuery("show stats_topn where partition_name='p1'").Rows()), Equals, 1)
+	cases := []opt{
+		{1, 37, false},
+		{2, 47, false},
+		{10, 77, false},
+		{77, 219, false},
+		{-31, 222, true},
+		{10, -77, true},
+		{10000, 47, true},
+		{77, 47000, true},
+	}
+	for _, ca := range cases {
+		sql := fmt.Sprintf("analyze table t with %v topn, %v buckets", ca.topn, ca.buckets)
+		if !ca.err {
+			tk.MustExec(sql)
+			for _, p := range []string{"p0", "p1", "global"} {
+				for _, isIndex := range []int{0, 1} {
+					c.Assert(len(tk.MustQuery(fmt.Sprintf("show stats_topn where partition_name='%v' and is_index=%v", p, isIndex)).Rows()), Equals, ca.topn)
+					numBuckets := len(tk.MustQuery(fmt.Sprintf("show stats_buckets where partition_name='%v' and is_index=%v", p, isIndex)).Rows())
+					// since the hist-building algorithm doesn't stipulate the final bucket number to be equal to the expected number exactly,
+					// we have to check the results by a range here.
+					delta := ca.buckets/2 + 1
+					c.Assert(numBuckets >= ca.buckets-delta, IsTrue)
+					c.Assert(numBuckets <= ca.buckets+delta, IsTrue)
+				}
+			}
+		} else {
+			err := tk.ExecToErr(sql)
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
+func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(` create table t (a int, key(a)) partition by range (a) ` +
+		`(partition p0 values less than (100000), partition p1 values less than (200000))`)
+	buf1 := bytes.NewBufferString("insert into t values (0)")
+	buf2 := bytes.NewBufferString("insert into t values (100000)")
+	for i := 0; i < 5000; i += 3 {
+		buf1.WriteString(fmt.Sprintf(", (%v)", i))
+		buf2.WriteString(fmt.Sprintf(", (%v)", 100000+i))
+	}
+	tk.MustExec(buf1.String())
+	tk.MustExec(buf2.String())
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	check := func(p string, topn, buckets int) {
+		delta := buckets/2 + 1
+		for _, isIdx := range []int{0, 1} {
+			c.Assert(len(tk.MustQuery(fmt.Sprintf("show stats_topn where partition_name='%v' and is_index=%v", p, isIdx)).Rows()), Equals, topn)
+			numBuckets := len(tk.MustQuery(fmt.Sprintf("show stats_buckets where partition_name='%v' and is_index=%v", p, isIdx)).Rows())
+			c.Assert(numBuckets >= buckets-delta, IsTrue)
+			c.Assert(numBuckets <= buckets+delta, IsTrue)
+		}
+	}
+
+	tk.MustExec("analyze table t with 20 topn, 50 buckets")
+	check("global", 20, 50)
+	check("p0", 20, 50)
+	check("p1", 20, 50)
+
+	// analyze a partition to let its options be different with others'
+	tk.MustExec("analyze table t partition p0 with 10 topn, 20 buckets")
+	check("global", 10, 20) // use new options
+	check("p0", 10, 20)
+	check("p1", 20, 50)
+
+	tk.MustExec("analyze table t partition p1 with 100 topn, 200 buckets")
+	check("global", 100, 200) // use new options
+	check("p0", 10, 20)
+	check("p1", 100, 200)
+
+	tk.MustExec("analyze table t partition p0") // default options
+	check("global", 20, 256)                    // use new options
+	check("p0", 20, 256)
+	check("p1", 100, 200)
 }
 
 func (s *testStatsSuite) TestGlobalStatsData(c *C) {
@@ -1420,7 +1508,7 @@ func (s *testStatsSuite) TestAnalyzeWithDynamicPartitionPruneMode(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec(`create table t (a int, key(a)) partition by range(a) 
+	tk.MustExec(`create table t (a int, key(a)) partition by range(a)
 					(partition p0 values less than (10),
 					partition p1 values less than (22))`)
 	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
