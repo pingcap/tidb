@@ -1,7 +1,5 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/tipb => github.com/TisonKun/tipb v0.0.0-20210223074431-8d70982f3317
-
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/HdrHistogram/hdrhistogram-go v0.9.0 // indirect
@@ -51,7 +49,7 @@ require (
 	github.com/pingcap/parser v0.0.0-20210303061548-f6776f61e268
 	github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
-	github.com/pingcap/tipb v0.0.0-20210220073817-777cefd7ea62
+	github.com/pingcap/tipb v0.0.0-20210308034246-066a76fd4e1b
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
@@ -75,7 +73,7 @@ require (
 	golang.org/x/mod v0.4.1 // indirect
 	golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
 	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
-	golang.org/x/sys v0.0.0-20210220050731-9a76102bfb43
+	golang.org/x/sys v0.0.0-20210305230114-8fe3ee5dd75b
 	golang.org/x/text v0.3.5
 	golang.org/x/tools v0.1.0
 	google.golang.org/grpc v1.27.1
