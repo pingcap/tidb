@@ -63,7 +63,7 @@
               "Projection_3 1.00 root  10->Column#1, cba->Column#2",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "0",
+            "LastPlanUseCache": "1",
             "Result": [
               "10 cba"
             ]
