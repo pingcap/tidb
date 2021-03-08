@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -380,6 +381,21 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	for _, op := range opts {
 		op(options)
 	}
+	failpoint.Inject("assertStoreLabels", func(val failpoint.Value) {
+		if len(opts) > 0 {
+			value := val.(string)
+			v := ""
+			for _, label := range options.labels {
+				if label.Key == placement.DCLabelKey {
+					v = label.Value
+					break
+				}
+			}
+			if v != value {
+				panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", v, value))
+			}
+		}
+	})
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
 		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, options)

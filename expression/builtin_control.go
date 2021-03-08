@@ -176,6 +176,9 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	fieldTp := types.AggFieldType(fieldTps)
+	// Here we turn off NotNullFlag. Because if all when-clauses are false,
+	// the result of case-when expr is NULL.
+	types.SetTypeFlag(&fieldTp.Flag, mysql.NotNullFlag, false)
 	tp := fieldTp.EvalType()
 
 	if tp == types.ETInt {
