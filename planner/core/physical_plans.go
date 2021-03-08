@@ -72,25 +72,9 @@ type PhysicalTableReader struct {
 
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
-<<<<<<< HEAD
-=======
 
 	// BatchCop = true means the cop task in the physical table reader will be executed in batch mode(use in TiFlash only)
 	BatchCop bool
-
-	IsCommonHandle bool
-
-	// Used by partition table.
-	PartitionInfo PartitionInfo
-}
-
-// PartitionInfo indicates partition helper info in physical plan.
-type PartitionInfo struct {
-	PruningConds   []expression.Expression
-	PartitionNames []model.CIStr
-	Columns        []*expression.Column
-	ColumnNames    types.NameSlice
->>>>>>> b3d4458b2... planner: refine explain info for batch cop (#20360)
 }
 
 // GetTablePlan exports the tablePlan.
@@ -132,29 +116,6 @@ func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, st
 	return reader
 }
 
-<<<<<<< HEAD
-=======
-// Clone implements PhysicalPlan interface.
-func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
-	cloned := new(PhysicalTableReader)
-	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.physicalSchemaProducer = *base
-	cloned.StoreType = p.StoreType
-	cloned.BatchCop = p.BatchCop
-	cloned.IsCommonHandle = p.IsCommonHandle
-	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
-		return nil, err
-	}
-	if cloned.TablePlans, err = clonePhysicalPlan(p.TablePlans); err != nil {
-		return nil, err
-	}
-	return cloned, nil
-}
-
->>>>>>> b3d4458b2... planner: refine explain info for batch cop (#20360)
 // SetChildren overrides PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...PhysicalPlan) {
 	p.tablePlan = children[0]

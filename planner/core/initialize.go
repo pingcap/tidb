@@ -436,7 +436,7 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 			case 1:
 				for _, plan := range p.TablePlans {
 					switch plan.(type) {
-					case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
+					case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN, *PhysicalBroadCastJoin:
 						p.BatchCop = true
 					}
 				}
