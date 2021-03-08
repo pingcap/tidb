@@ -1228,6 +1228,67 @@ func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	tk.MustQuery(querySQL).Check(testkit.Rows("0"))
 }
 
+func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@tidb_analyze_version = 2;")
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30)
+	);`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	statistics.FeedbackProbability.Store(0)
+	tk.MustExec("insert into t values (1), (5), (6), (11), (15), (21), (25);")
+	tk.MustExec("analyze table t;")
+	result := tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 4)
+	c.Assert(result.Rows()[0][5], Equals, "7")
+	c.Assert(result.Rows()[1][5], Equals, "3")
+	c.Assert(result.Rows()[2][5], Equals, "2")
+	c.Assert(result.Rows()[3][5], Equals, "2")
+	statistics.FeedbackProbability.Store(1)
+	tk.MustExec("analyze table t;")
+	result = tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 4)
+	c.Assert(result.Rows()[0][5], Equals, "7")
+	c.Assert(result.Rows()[1][5], Equals, "3")
+	c.Assert(result.Rows()[2][5], Equals, "2")
+	c.Assert(result.Rows()[3][5], Equals, "2")
+
+	for i := 0; i < 200; i++ {
+		tk.MustExec("insert into t values (1),(12),(4),(22),(5)")
+	}
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	statsTblBefore := h.GetTableStats(tblInfo)
+	// trigger feedback
+	tk.MustExec("select * from t where t.a <= 5 order by a desc")
+	tk.MustExec("select a from t partition(p2) where t.a > 20;")
+
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+	err = h.DumpStatsFeedbackToKV()
+	c.Assert(err, IsNil)
+	err = h.HandleUpdateStats(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	statsTblAfter := h.GetTableStats(tblInfo)
+	// assert that statistics not changed
+	assertTableEqual(c, statsTblBefore, statsTblAfter)
+
+	result = tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 4)
+	c.Assert(result.Rows()[0][5], Equals, "7")
+	c.Assert(result.Rows()[1][5], Equals, "3")
+	c.Assert(result.Rows()[2][5], Equals, "2")
+	c.Assert(result.Rows()[3][5], Equals, "2")
+}
+
 func (s *testStatsSuite) TestExtendedStatsPartitionTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)

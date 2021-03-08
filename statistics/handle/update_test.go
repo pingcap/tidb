@@ -2050,6 +2050,7 @@ func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testkit.WithPruneMode(testKit, variable.DynamicOnly, func() {
 		testKit.MustExec("use test")
+		testKit.MustExec("set @@tidb_analyze_version = 2;")
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec(`create table t (a int, b varchar(10), index idx_ab(a, b))
 					partition by range (a) (
