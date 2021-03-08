@@ -2295,6 +2295,7 @@ func containsLimit(execs []*tipb.Executor) bool {
 	return false
 }
 
+<<<<<<< HEAD
 // When allow batch cop is 1, only agg / topN uses batch cop.
 // When allow batch cop is 2, every query uses batch cop.
 func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
@@ -2315,6 +2316,8 @@ func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
 	return
 }
 
+=======
+>>>>>>> b3d4458b2... planner: refine explain info for batch cop (#20360)
 func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
 	tablePlans := v.TablePlans
 	if v.StoreType == kv.TiFlash {
@@ -2349,8 +2352,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:          v.TablePlans,
 		tablePlan:      v.GetTablePlan(),
 		storeType:      v.StoreType,
+		batchCop:       v.BatchCop,
 	}
-	e.setBatchCop(v)
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
