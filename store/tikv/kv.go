@@ -175,12 +175,25 @@ func (s *KVStore) runSafePointChecker() {
 
 // Begin a global transaction.
 func (s *KVStore) Begin() (*KVTxn, error) {
-	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
+	return s.beginWithTxnScope(oracle.GlobalTxnScope)
 }
 
-// BeginWithTxnScope begins a transaction with the given txnScope (local or
-// global)
-func (s *KVStore) BeginWithTxnScope(txnScope string) (*KVTxn, error) {
+// BeginWithOption begins a transaction with given option
+func (s *KVStore) BeginWithOption(option kv.TransactionOption) (*KVTxn, error) {
+	txnScope := option.TxnScope
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
+	}
+	if option.StartTS != nil {
+		return s.beginWithStartTS(txnScope, *option.StartTS)
+	} else if option.PrevSec != nil {
+		return s.beginWithExactStaleness(txnScope, *option.PrevSec)
+	}
+	return s.beginWithTxnScope(txnScope)
+}
+
+// beginWithTxnScope begins a transaction with the given txnScope (local or global)
+func (s *KVStore) beginWithTxnScope(txnScope string) (*KVTxn, error) {
 	txn, err := newTiKVTxn(s, txnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -188,8 +201,8 @@ func (s *KVStore) BeginWithTxnScope(txnScope string) (*KVTxn, error) {
 	return txn, nil
 }
 
-// BeginWithStartTS begins a transaction with startTS.
-func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (*KVTxn, error) {
+// beginWithStartTS begins a transaction with startTS.
+func (s *KVStore) beginWithStartTS(txnScope string, startTS uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -197,8 +210,8 @@ func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (*KVTxn, err
 	return txn, nil
 }
 
-// BeginWithExactStaleness begins transaction with given staleness
-func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVTxn, error) {
+// beginWithExactStaleness begins transaction with given staleness
+func (s *KVStore) beginWithExactStaleness(txnScope string, prevSec uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
