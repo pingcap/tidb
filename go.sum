@@ -422,8 +422,6 @@ github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99 h1:/ogXgm4guJzow4U
 github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible h1:ceznmu/lLseGHP/jKyOa/3u/5H3wtLLLqkH2V3ssSjg=
 github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
-github.com/pingcap/tipb v0.0.0-20210224102429-71c2fd0fdbaa h1:PzSiVUgXERuAQHBCTnEPMN1OzZzoBU5e98wz1deG5nk=
-github.com/pingcap/tipb v0.0.0-20210224102429-71c2fd0fdbaa/go.mod h1:nsEhnMokcn7MRqd2J60yxpn/ac3ZH8A6GOJ9NslabUo=
 github.com/pingcap/tipb v0.0.0-20210308034246-066a76fd4e1b h1:AvGm1DqSEwbGgiiu3KVuTtwLl3MqhbwwnJpx82l6/7M=
 github.com/pingcap/tipb v0.0.0-20210308034246-066a76fd4e1b/go.mod h1:nsEhnMokcn7MRqd2J60yxpn/ac3ZH8A6GOJ9NslabUo=
 github.com/pkg/errors v0.8.0/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
