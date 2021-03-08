@@ -134,6 +134,9 @@ type mppIterator struct {
 
 func (m *mppIterator) run(ctx context.Context) {
 	for _, task := range m.tasks {
+		if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
+			break
+		}
 		m.wg.Add(1)
 		bo := tikv.NewBackoffer(ctx, copNextMaxBackoff)
 		go m.handleDispatchReq(ctx, bo, task)
