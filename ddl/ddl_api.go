@@ -5166,6 +5166,79 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 	return errors.Trace(err)
 }
 
+func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+
+	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	var isPK bool
+	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
+		// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
+		(indexInfo == nil || indexInfo.Primary) {
+		isPK = true
+	}
+	if isPK {
+		if !config.GetGlobalConfig().AlterPrimaryKey {
+			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
+
+		}
+		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
+		if indexInfo == nil && !t.Meta().PKIsHandle {
+			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
+		}
+		if t.Meta().PKIsHandle {
+			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
+		}
+		if t.Meta().IsCommonHandle {
+			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is using clustered index")
+		}
+	}
+	if indexInfo == nil {
+		err = ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+		if ifExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+
+	// Check for drop index on auto_increment column.
+	err = checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	jobTp := model.ActionDropIndex
+	if isPK {
+		jobTp = model.ActionDropPrimaryKey
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       jobTp,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{indexName},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	// index not exists, but if_exists flags is true, so we ignore this error.
+	if ErrCantDropFieldOrKey.Equal(err) && ifExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 func (d *ddl) getSchemaAndTable(ti ast.Ident) (*model.DBInfo, table.Table, error) {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
@@ -5217,44 +5290,6 @@ func checkIndexInfo(ctx sessionctx.Context, t table.Table, indexName model.CIStr
 		return isPK, shouldIgnore, errors.Trace(err)
 	}
 	return isPK, shouldIgnore, nil
-}
-
-func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
-	schema, t, err := d.getSchemaAndTable(ti)
-	if err != nil {
-		return err
-	}
-
-	isPK, shouldIgnore, err := checkIndexInfo(ctx, t, indexName, ifExists)
-	if err != nil {
-		return err
-	}
-	if shouldIgnore {
-		return nil
-	}
-
-	jobTp := model.ActionDropIndex
-	if isPK {
-		jobTp = model.ActionDropPrimaryKey
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		Type:       jobTp,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{indexName},
-	}
-
-	err = d.doDDLJob(ctx, job)
-	// index not exists, but if_exists flags is true, so we ignore this error.
-	if ErrCantDropFieldOrKey.Equal(err) && ifExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
 }
 
 func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
