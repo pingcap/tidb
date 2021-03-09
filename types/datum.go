@@ -1424,6 +1424,10 @@ func (d *Datum) convertToMysqlFloatYear(sc *stmtctx.StatementContext, target *Fi
 		y = float64(d.GetMysqlTime().Year())
 	case KindMysqlDuration:
 		y = float64(time.Now().Year())
+	case KindNull:
+		// if datum is NULL, we should keep it as it is, instead of setting it to zero or any other value.
+		ret = *d
+		return ret, nil
 	default:
 		ret, err = d.convertToFloat(sc, NewFieldType(mysql.TypeDouble))
 		if err != nil {
@@ -2108,14 +2112,10 @@ func GetMaxValue(ft *FieldType) (max Datum) {
 		max.SetFloat32(float32(GetMaxFloat(ft.Flen, ft.Decimal)))
 	case mysql.TypeDouble:
 		max.SetFloat64(GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMaxValue, to avoid import circle
 		bytes := []byte{250}
 		max.SetString(string(bytes), ft.Collate)
-	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		// codec.Encode KindMaxValue, to avoid import circle
-		bytes := []byte{250}
-		max.SetBytes(bytes)
 	case mysql.TypeNewDecimal:
 		max.SetMysqlDecimal(NewMaxOrMinDec(false, ft.Flen, ft.Decimal))
 	case mysql.TypeDuration:
@@ -2143,14 +2143,10 @@ func GetMinValue(ft *FieldType) (min Datum) {
 		min.SetFloat32(float32(-GetMaxFloat(ft.Flen, ft.Decimal)))
 	case mysql.TypeDouble:
 		min.SetFloat64(-GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMinNotNull, to avoid import circle
 		bytes := []byte{1}
 		min.SetString(string(bytes), ft.Collate)
-	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		// codec.Encode KindMinNotNull, to avoid import circle
-		bytes := []byte{1}
-		min.SetBytes(bytes)
 	case mysql.TypeNewDecimal:
 		min.SetMysqlDecimal(NewMaxOrMinDec(true, ft.Flen, ft.Decimal))
 	case mysql.TypeDuration:
