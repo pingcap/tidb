@@ -1665,7 +1665,7 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 	// the feedback can not work for the partition table in dynamic mode
 	assertTableEqual(c, statsTblBefore, statsTblAfter)
 
-	// Case 3: Feedback is still effective on version 1 and partition-level statistics.
+	// Case 3: Feedback is also not effective on version 1 and partition-level statistics.
 	testKit.MustExec("set tidb_analyze_version = 1")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	testKit.MustExec("create table t1 (a bigint(64), b bigint(64), index idx(b)) PARTITION BY HASH(a) PARTITIONS 2")
