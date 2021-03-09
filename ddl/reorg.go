@@ -319,8 +319,12 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	if !ok {
 		return statistics.PseudoRowCount
 	}
-	sql := fmt.Sprintf("select table_rows from information_schema.tables where tidb_table_id=%v;", tblInfo.ID)
-	rows, _, err := executor.ExecRestrictedSQL(sql)
+	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
+	stmt, err := executor.ParseWithParams(context.Background(), sql, tblInfo.ID)
+	if err != nil {
+		return statistics.PseudoRowCount
+	}
+	rows, _, err := executor.ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
