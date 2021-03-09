@@ -617,7 +617,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		hasRecordID = true
 	} else {
 		tblInfo := t.Meta()
-		txn.GetUnionStore().CacheTableInfo(t.physicalTableID, tblInfo)
+		txn.CacheTableInfo(t.physicalTableID, tblInfo)
 		if tblInfo.PKIsHandle {
 			recordID = kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64())
 			hasRecordID = true
@@ -847,7 +847,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
 		}
 		rsData := TryGetHandleRestoredDataWrapper(t, r, nil)
-		if dupHandle, err := v.Create(sctx, txn.GetUnionStore(), indexVals, recordID, rsData, opts...); err != nil {
+		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
 			}
@@ -1146,7 +1146,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 		opts = append(opts, table.IndexIsUntouched)
 	}
 	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil)
-	if _, err := idx.Create(ctx, txn.GetUnionStore(), vals, h, rsData, opts...); err != nil {
+	if _, err := idx.Create(ctx, txn, vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)

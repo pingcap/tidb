@@ -1831,7 +1831,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			d.SetBytes(meta.Encoded)
 		} else {
 			var err error
-			_, d, err = codec.DecodeOne(meta.Encoded)
+			if types.IsTypeTime(hists[0].Tp.Tp) {
+				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
+				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.Tp, sc.TimeZone)
+			} else {
+				_, d, err = codec.DecodeOne(meta.Encoded)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -1916,6 +1921,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize)
 	for _, bucket := range globalBuckets {
+		if !isIndex {
+			bucket.NDV = 0 // bucket.NDV is not maintained for column histograms
+		}
 		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
 	}
 	return globalHist, nil
