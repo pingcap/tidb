@@ -878,6 +878,18 @@ func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*tab
 	return v, nil
 }
 
+func supportReadColumnFromHandle(meta *model.TableInfo, col *table.Column) (containFullCol bool, idxInHandle int) {
+	pkIdx := FindPrimaryIndex(meta)
+	for i, idxCol := range pkIdx.Columns {
+		if meta.Columns[idxCol.Offset].ID == col.ID {
+			idxInHandle = i
+			containFullCol = idxCol.Length == types.UnspecifiedLength
+			return
+		}
+	}
+	panic("unreachable")
+}
+
 // DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
 func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle, cols []*table.Column,
 	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
@@ -897,20 +909,8 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			continue
 		}
 		if col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType) {
-			pkIdx := FindPrimaryIndex(meta)
-			var (
-				idxOfIdx     int
-				notPrefixCol bool
-			)
-			for i, idxCol := range pkIdx.Columns {
-				if meta.Columns[idxCol.Offset].ID == col.ID {
-					idxOfIdx = i
-					notPrefixCol = idxCol.Length == types.UnspecifiedLength
-					break
-				}
-			}
-			if notPrefixCol {
-				dtBytes := h.EncodedCol(idxOfIdx)
+			if containFullCol, idxInHandle := supportReadColumnFromHandle(meta, col); containFullCol {
+				dtBytes := h.EncodedCol(idxInHandle)
 				_, dt, err := codec.DecodeOne(dtBytes)
 				if err != nil {
 					return nil, nil, err
