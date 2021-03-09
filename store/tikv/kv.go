@@ -188,6 +188,10 @@ func (s *KVStore) BeginWithOption(option kv.TransactionOption) (*KVTxn, error) {
 		return s.beginWithStartTS(txnScope, *option.StartTS)
 	} else if option.PrevSec != nil {
 		return s.beginWithExactStaleness(txnScope, *option.PrevSec)
+	} else if option.MinStartTS != nil {
+		return s.beginWithMinStartTS(txnScope, *option.MinStartTS)
+	} else if option.MaxPrevSec != nil {
+		return s.beginWithMaxStaleness(txnScope, *option.MaxPrevSec)
 	}
 	return s.beginWithTxnScope(txnScope)
 }
@@ -219,22 +223,29 @@ func (s *KVStore) beginWithExactStaleness(txnScope string, prevSec uint64) (*KVT
 	return txn, nil
 }
 
-func (s *KVStore) BeginWithTimeBoundedStaleness(txnScope string, maxPrevSec uint64) (*KVTxn, error) {
+func (s *KVStore) beginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTxn, error) {
 	safeTS := s.getMinSafeTS(txnScope)
-	safePhysical := oracle.ExtractPhysical(safeTS)
+	startTS := minStartTS
+	if minStartTS < safeTS {
+		startTS = safeTS
+	}
+	return s.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetStartTs(startTS))
+}
+
+func (s *KVStore) beginWithMaxStaleness(txnScope string, maxPrevSec uint64) (*KVTxn, error) {
+	safeTS := s.getMinSafeTS(txnScope)
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-	curTS, err := s.getTimestampWithRetry(bo, txnScope)
+	maxStaleStartTS, err := s.getStalenessTimestamp(bo, txnScope, maxPrevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	physical := oracle.ExtractPhysical(curTS)
-	startTS := oracle.ComposeTS(physical-int64(maxPrevSec)*1000, 0)
-	// If the safeTS is larger then then currentTS - maxPrevSec, we will use safeTS as the startTS,
-	// otherwise we will directly use currentTS - maxPrevSec as startTS
-	if physical-int64(maxPrevSec)*1000 < safePhysical {
+	startTS := maxStaleStartTS
+	// If the safeTS is larger then then maxStaleTS, we will use safeTS as StartTS, otherwise we will use
+	// maxStaleStartTS directly.
+	if maxStaleStartTS < safeTS {
 		startTS = safeTS
 	}
-	return s.BeginWithStartTS(txnScope, startTS)
+	return s.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetStartTs(startTS))
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
@@ -387,8 +398,10 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
 }
 
-func (s *KVStore) GetSafeTSByStore() uint64 {
-	return 0
+func (s *KVStore) GetSafeTSByStore(storeID uint64) uint64 {
+	s.safeTSMu.RLock()
+	defer s.safeTSMu.RUnlock()
+	return s.safeTSMu.storeSafeTS[storeID]
 }
 
 func (s *KVStore) getMinSafeTS(txnScope string) uint64 {
@@ -434,7 +447,6 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 			s.safeTSMu.RLock()
 			s.safeTSMu.storeSafeTS[store.storeID] = safeTS
 			s.safeTSMu.RUnlock()
-			//log.Info("updateSafeTS", zap.Uint64("storeID", store.storeID))
 		}(ctx, wg, store)
 	}
 	wg.Wait()
