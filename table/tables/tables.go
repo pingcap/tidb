@@ -878,7 +878,7 @@ func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*tab
 	return v, nil
 }
 
-func supportReadColumnFromHandle(meta *model.TableInfo, col *table.Column) (containFullCol bool, idxInHandle int) {
+func containFullColInHandle(meta *model.TableInfo, col *table.Column) (containFullCol bool, idxInHandle int) {
 	pkIdx := FindPrimaryIndex(meta)
 	for i, idxCol := range pkIdx.Columns {
 		if meta.Columns[idxCol.Offset].ID == col.ID {
@@ -887,7 +887,7 @@ func supportReadColumnFromHandle(meta *model.TableInfo, col *table.Column) (cont
 			return
 		}
 	}
-	panic("unreachable")
+	return
 }
 
 // DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
@@ -909,7 +909,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			continue
 		}
 		if col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType) {
-			if containFullCol, idxInHandle := supportReadColumnFromHandle(meta, col); containFullCol {
+			if containFullCol, idxInHandle := containFullColInHandle(meta, col); containFullCol {
 				dtBytes := h.EncodedCol(idxInHandle)
 				_, dt, err := codec.DecodeOne(dtBytes)
 				if err != nil {
