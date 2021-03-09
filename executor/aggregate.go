@@ -789,7 +789,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		}
 	}()
 
-	// All workers maybe send error message to e.finalOutputCh when they panic.
+	// All workers may send error message to e.finalOutputCh when they panic.
 	// And e.finalOutputCh should be closed after all goroutines gone.
 	go e.waitAllWorkersAndCloseFinalOutputCh(fetchChildWorkerWaitGroup, partialWorkerWaitGroup, finalWorkerWaitGroup)
 }
