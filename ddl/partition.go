@@ -1335,15 +1335,6 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 		} else if len(pi.Columns) == 1 {
 			sql, paramList = buildCheckSQLForRangeColumnsPartition(pi, index, schemaName, tableName)
 		}
-<<<<<<< HEAD
-=======
-	case model.PartitionTypeList:
-		if len(pi.Columns) == 0 {
-			sql, paramList = buildCheckSQLForListPartition(pi, index, schemaName, tableName)
-		} else if len(pi.Columns) == 1 {
-			sql, paramList = buildCheckSQLForListColumnsPartition(pi, index, schemaName, tableName)
-		}
->>>>>>> dedaabb80... ddl: migrate part of ddl package code from Execute/ExecRestricted to safe API (2) (#22729)
 	default:
 		return errUnsupportedPartitionType.GenWithStackByArgs(pt.Name.O)
 	}
@@ -1417,42 +1408,6 @@ func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, s
 	}
 }
 
-<<<<<<< HEAD
-=======
-func buildCheckSQLForListPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
-	var buf strings.Builder
-	buf.WriteString("select 1 from %n.%n where ")
-	buf.WriteString(pi.Expr)
-	buf.WriteString(" not in (%?) limit 1")
-	inValues := getInValues(pi, index)
-
-	paramList := make([]interface{}, 0, 3)
-	paramList = append(paramList, schemaName.L, tableName.L, inValues)
-	return buf.String(), paramList
-}
-
-func buildCheckSQLForListColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
-	colName := pi.Columns[0].L
-	var buf strings.Builder
-	buf.WriteString("select 1 from %n.%n where %n not in (%?) limit 1")
-	inValues := getInValues(pi, index)
-
-	paramList := make([]interface{}, 0, 4)
-	paramList = append(paramList, schemaName.L, tableName.L, colName, inValues)
-	return buf.String(), paramList
-}
-
-func getInValues(pi *model.PartitionInfo, index int) []string {
-	inValues := make([]string, 0, len(pi.Definitions[index].InValues))
-	for _, inValue := range pi.Definitions[index].InValues {
-		for _, one := range inValue {
-			inValues = append(inValues, one)
-		}
-	}
-	return inValues
-}
-
->>>>>>> dedaabb80... ddl: migrate part of ddl package code from Execute/ExecRestricted to safe API (2) (#22729)
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	if piDefs > uint64(PartitionCountLimit) {
 		return errors.Trace(ErrTooManyPartitions)
