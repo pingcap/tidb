@@ -6280,6 +6280,11 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustQuery("select a from t_ci where a='A'").Check(testkit.Rows("a"))
 	tk.MustQuery("select a from t_ci where a='a   '").Check(testkit.Rows("a"))
 	tk.MustQuery("select a from t_ci where a='a                    '").Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c set('A', 'B') collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t values('a');")
+	tk.MustQuery("select c from t1  where c = 'a';").Check(testkit.Rows("A"))
 }
 
 func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
