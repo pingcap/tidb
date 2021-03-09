@@ -1062,10 +1062,10 @@ type StreamAggExec struct {
 	childResult        *chunk.Chunk
 
 	memTracker *memory.Tracker // track memory usage.
-	// initPartialResultMemoryUsage indicates the memory usage of all partial results after initialization.
+	// memUsageOfInitialPartialResult indicates the memory usage of all partial results after initialization.
 	// All partial results will be reset after processing one group data, and the memory usage should also be reset.
 	// We can't get memory delta from ResetPartialResult, so record the memory usage here.
-	initPartialResultMemoryUsage int64
+	memUsageOfInitialPartialResult int64
 }
 
 // Open implements the Executor Open interface.
@@ -1083,7 +1083,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	for _, aggFunc := range e.aggFuncs {
 		partialResult, memDelta := aggFunc.AllocPartialResult()
 		e.partialResults = append(e.partialResults, partialResult)
-		e.initPartialResultMemoryUsage += memDelta
+		e.memUsageOfInitialPartialResult += memDelta
 	}
 
 	// bytesLimit <= 0 means no limit, for now we just track the memory footprint
@@ -1091,13 +1091,13 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}
-	e.memTracker.Consume(e.childResult.MemoryUsage() + e.initPartialResultMemoryUsage)
+	e.memTracker.Consume(e.childResult.MemoryUsage() + e.memUsageOfInitialPartialResult)
 	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *StreamAggExec) Close() error {
-	e.memTracker.Consume(-e.childResult.MemoryUsage() - e.initPartialResultMemoryUsage)
+	e.memTracker.Consume(-e.childResult.MemoryUsage() - e.memUsageOfInitialPartialResult)
 	e.childResult = nil
 	e.groupChecker.reset()
 	return e.baseExecutor.Close()
@@ -1222,7 +1222,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 		aggFunc.ResetPartialResult(e.partialResults[i])
 	}
 	// All partial results have been reset, so reset the memory usage.
-	e.memTracker.ReplaceBytesUsed(e.childResult.MemoryUsage() + e.initPartialResultMemoryUsage)
+	e.memTracker.ReplaceBytesUsed(e.childResult.MemoryUsage() + e.memUsageOfInitialPartialResult)
 	if len(e.aggFuncs) == 0 {
 		chk.SetNumVirtualRows(chk.NumRows() + 1)
 	}
