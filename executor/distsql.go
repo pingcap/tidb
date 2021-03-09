@@ -1051,17 +1051,19 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
+			sctx := w.idxLookup.ctx.GetSessionVars().StmtCtx
 			for i, val := range vals {
 				col := w.idxTblCols[i]
 				tp := &col.FieldType
-				ret := chunk.Compare(idxRow, i, &val)
-				if ret != 0 {
-					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v", col.Name, handle, idxRow.GetDatum(i, tp), val)
+				idxVal := idxRow.GetDatum(i, tp)
+				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
+				if res, err := idxVal.CompareDatum(sctx, &val); err != nil || res != 0 {
+					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v, compare err:%#v", col.Name,
+						handle, idxRow.GetDatum(i, tp), val, err)
 				}
 			}
 		}
 	}
-
 	return nil
 }
 

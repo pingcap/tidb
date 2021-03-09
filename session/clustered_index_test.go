@@ -407,7 +407,7 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 		tk.MustQuery(showPKType).Check(testkit.Rows(pkType))
 	}
 
-	defer config.RestoreFunc()
+	defer config.RestoreFunc()()
 	for _, allowAlterPK := range []bool{true, false} {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.AlterPrimaryKey = allowAlterPK
@@ -435,4 +435,25 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 		assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", clustered)
 		assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] clustered */);", clustered)
 	}
+}
+
+// https://github.com/pingcap/tidb/issues/23178
+func (s *testClusteredSerialSuite) TestPrefixedClusteredIndexUniqueKeyWithNewCollation(c *C) {
+	defer collate.SetNewCollationEnabledForTest(false)
+	collate.SetNewCollationEnabledForTest(true)
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	tk.MustExec("use test;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.MustExec("create table t (a text collate utf8mb4_general_ci not null, b int(11) not null, " +
+		"primary key (a(10), b) clustered, key idx(a(2)) ) default charset=utf8mb4 collate=utf8mb4_bin;")
+	tk.MustExec("insert into t values ('aaa', 2);")
+	// Key-value content: sk = sortKey, p = prefixed
+	// row record:     sk(aaa), 2              -> aaa
+	// index record:   sk(p(aa)), {sk(aaa), 2} -> restore data(aaa)
+	tk.MustExec("admin check table t;")
+	tk.MustExec("drop table t;")
 }
