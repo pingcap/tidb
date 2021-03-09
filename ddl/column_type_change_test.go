@@ -14,10 +14,14 @@
 package ddl_test
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
+	errors2 "github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	parser_mysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -25,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -1717,4 +1723,58 @@ func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
 	tk.MustGetErrCode("alter table orders modify user_id bigint", mysql.ErrFKIncompatibleColumns)
 
 	tk.MustExec("drop table if exists orders, users")
+}
+
+// Close issue #23202
+func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	failpoint.Enable("github.com/pingcap/tidb/ddl/MockPanicInCancellingAddIndex", `return(true)`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/ddl/MockPanicInCancellingAddIndex")
+	}()
+
+	limit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(3)
+	defer variable.SetDDLErrorCountLimit(limit)
+
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("alter table t add index(b)")
+
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if jobID != 0 {
+			return
+		}
+		if "drop index" == job.Type.String() {
+			jobID = job.ID
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	// when it panics in write-reorg state, the job will be pulled up as a cancelling job. Since drop-index with
+	// write-reorg can't be cancelled, so it will be converted to running state and try again (dead loop).
+	_, err := tk.Exec("alter table t drop index b")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation, cancelled")
+	c.Assert(jobID > 0, Equals, true)
+
+	// Verification of the history job state.
+	var job *model.Job
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		job, err1 = t.GetHistoryDDLJob(jobID)
+		return errors2.Trace(err1)
+	})
+	c.Assert(err, IsNil)
+	fmt.Println(job)
+	c.Assert(job.ErrorCount, Equals, int64(4))
+	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation, cancelled")
 }
