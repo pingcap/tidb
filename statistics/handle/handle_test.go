@@ -1605,7 +1605,6 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set global tidb_analyze_version = 1")
 	testKit.MustExec("set @@tidb_analyze_version = 1")
 
 	oriProbability := statistics.FeedbackProbability.Load()
@@ -1619,7 +1618,7 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 		handle.MinLogErrorRate = oriErrorRate
 	}()
 	// Case 1: You can't set tidb_analyze_version to 2 if feedback is enabled.
-	// Note: if we want to set @@tidb_partition_prune_mode = 'dynamic'. We must set idb_analyze_version to 2 first.
+	// Note: if we want to set @@tidb_partition_prune_mode = 'dynamic'. We must set tidb_analyze_version to 2 first. We have already tested this.
 	statistics.FeedbackProbability.Store(1)
 	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
 	testKit.MustExec("set @@tidb_analyze_version = 2")
@@ -1651,8 +1650,10 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 		testKit.MustExec("insert into t values (3,4), (3,4), (3,4), (3,4), (3,4)")
 	}
 	// trigger feedback
-	testKit.MustExec("select * from t where t.a <= 5 order by a desc")
-	testKit.MustExec("select b from t use index(idx) where t.b <= 5")
+	testKit.MustExec("select * from t partition(p0) where t.a <= 3;")
+	testKit.MustExec("select * from t partition(p1) where t.a <= 3;")
+	testKit.MustExec("select * from t where t.b <= 3 order by a;")
+	testKit.MustExec("select * from t use index(idx) where t.b <= 3;")
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 	err = h.DumpStatsFeedbackToKV()
@@ -1681,7 +1682,10 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 	tblInfo = table.Meta()
 	statsTblBefore = h.GetTableStats(tblInfo)
 	// trigger feedback
-	testKit.MustExec("select b from t1 use index(idx) where t1.b <= 5")
+	testKit.MustExec("select * from t partition(p0) where t.a <= 3;")
+	testKit.MustExec("select * from t partition(p1) where t.a <= 3;")
+	testKit.MustExec("select * from t where t.b <= 3 order by a;")
+	testKit.MustExec("select * from t use index(idx) where t.b <= 3;")
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 	err = h.DumpStatsFeedbackToKV()
@@ -1689,8 +1693,9 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 	err = h.HandleUpdateStats(s.do.InfoSchema())
 	c.Assert(err, IsNil)
 	statsTblAfter = h.GetTableStats(tblInfo)
-	// assert that statistics changed(feedback worked)
-	c.Assert(statistics.HistogramEqual(&statsTblBefore.Indices[1].Histogram, &statsTblAfter.Indices[1].Histogram, false), IsFalse)
+	// assert that statistics not changed
+	// the feedback can not work for the partition table
+	assertTableEqual(c, statsTblBefore, statsTblAfter)
 }
 
 func (s *testStatsSuite) TestExtendedStatsPartitionTable(c *C) {
