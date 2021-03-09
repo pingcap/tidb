@@ -45,12 +45,17 @@ func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	return meta
 }
 
+//MppTaskStates denotes the state of mpp tasks
 type MppTaskStates uint8
 
 const (
+	// MppTaskReady means the task is ready
 	MppTaskReady MppTaskStates = iota
+	// MppTaskRunning means the task is running
 	MppTaskRunning
+	// MppTaskCancelled means the task is cancelled
 	MppTaskCancelled
+	// MppTaskDone means the task is done
 	MppTaskDone
 )
 
