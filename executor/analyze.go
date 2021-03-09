@@ -63,6 +63,7 @@ type AnalyzeExec struct {
 	baseExecutor
 	tasks []*analyzeTask
 	wg    *sync.WaitGroup
+	opts  map[ast.AnalyzeOptionType]uint64
 }
 
 var (
@@ -169,12 +170,11 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if needGlobalStats {
 		for globalStatsID, info := range globalStatsMap {
-			sc := e.ctx.GetSessionVars().StmtCtx
-			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(sc, infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(e.ctx, e.opts, infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
 			if err != nil {
 				if types.ErrBuildGlobalLevelStatsFailed.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
-					sc.AppendWarning(err)
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 					continue
 				}
 				return err
@@ -501,7 +501,8 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 	} else {
 		ranges = ranger.FullIntRange(false)
 	}
-	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, true)
+	collExtStats := colExec.ctx.GetSessionVars().EnableExtendedStats
+	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, collExtStats)
 	if err != nil {
 		return []analyzeResult{{Err: err, job: colExec.job}}
 	}
@@ -1392,6 +1393,11 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 	var statsVer = statistics.Version1
 	if idxExec.analyzePB.IdxReq.Version != nil {
 		statsVer = int(*idxExec.analyzePB.IdxReq.Version)
+	}
+	pruneMode := variable.PartitionPruneMode(idxExec.ctx.GetSessionVars().PartitionPruneMode.Load())
+	if idxExec.tableID.IsPartitionTable() && pruneMode == variable.Dynamic {
+		err := errors.Errorf("[stats]: global statistics for partitioned tables unavailable in ANALYZE INCREMENTAL")
+		return analyzeResult{Err: err, job: idxExec.job}
 	}
 	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
 	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns), nil, nil)
