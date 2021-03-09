@@ -2074,5 +2074,8 @@ func (s *testSuite) TestSPMWithoutUseDatabase(c *C) {
 
 	err := tk1.ExecToErr("select * from t")
 	c.Assert(err, ErrorMatches, "*No database selected")
+	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
 	c.Assert(tk1.MustUseIndex("select * from test.t", "a"), IsTrue)
+	tk1.MustExec("select * from test.t")
+	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
 }
