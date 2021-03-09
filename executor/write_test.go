@@ -2933,8 +2933,6 @@ func (s *testSerialSuite1) TestIssue20724(c *C) {
 	tk.MustExec("drop table t1")
 }
 
-<<<<<<< HEAD
-=======
 func (s *testSerialSuite) TestIssue20840(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -2991,7 +2989,6 @@ func (s *testSuite) TestEqualDatumsAsBinary(c *C) {
 	}
 }
 
->>>>>>> aa82a038f... types: fix the bug about the wrong query result for decimal type  (#22507)
 func (s *testSuite) TestIssue21232(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
