@@ -724,6 +724,7 @@ type PhysicalHashJoin struct {
 	// on which store the join executes.
 	storeTp          kv.StoreType
 	globalChildIndex int
+	mppShuffleJoin   bool
 }
 
 // Clone implements PhysicalPlan interface.

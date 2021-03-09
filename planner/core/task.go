@@ -557,11 +557,169 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	return task
 }
 
+func needDecimalConvert(tp *types.FieldType, dec int, l int) bool {
+	if tp.Decimal != dec {
+		return true
+	}
+	if tp.Flen >= 0 && tp.Flen <= 9 && l >= 0 && l <= 9 {
+		return false
+	}
+	if tp.Flen > 9 && tp.Flen <= 18 && l > 9 && l <= 18 {
+		return false
+	}
+	if tp.Flen > 18 && tp.Flen <= 38 && l > 18 && l <= 38 {
+		return false
+	}
+	if tp.Flen > 38 && tp.Flen <= 65 && l > 38 && l <= 65 {
+		return false
+	}
+	return true
+}
+
+func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool, bool) {
+	lExtend := 0
+	rExtend := 0
+	cDec := rType.Decimal
+	if lType.Decimal < rType.Decimal {
+		lExtend = rType.Decimal - lType.Decimal
+	} else if lType.Decimal > rType.Decimal {
+		rExtend = lType.Decimal - rType.Decimal
+		cDec = lType.Decimal
+	}
+	lLen, rLen := lType.Flen+lExtend, rType.Flen+rExtend
+	cLen := lLen
+	if rLen > cLen {
+		cLen = rLen
+	}
+	if cLen > 65 {
+		cLen = 65
+	}
+	cType := types.NewFieldType(mysql.TypeNewDecimal)
+	cType.Decimal = cDec
+	cType.Flen = cLen
+	return cType, needDecimalConvert(lType, cDec, cLen), needDecimalConvert(rType, cDec, cLen)
+}
+
+func getProj(ctx sessionctx.Context, p PhysicalPlan) *PhysicalProjection {
+	proj := PhysicalProjection{
+		Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
+	}.Init(ctx, p.statsInfo(), p.SelectBlockOffset())
+	for _, col := range p.Schema().Columns {
+		proj.Exprs = append(proj.Exprs, col)
+		proj.schema.Append(col)
+	}
+	proj.SetChildren(p)
+	return proj
+}
+
+func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.Column {
+	p.Exprs = append(p.Exprs, expr)
+
+	col := &expression.Column{
+		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  expr.GetType(),
+	}
+	col.SetCoercibility(expr.Coercibility())
+	p.schema.Append(col)
+	return col
+}
+
+func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppTask, *mppTask) {
+	lp := lTask.p
+	if _, ok := lp.(*PhysicalExchangeSender); ok {
+		lp = lp.Children()[0]
+	}
+	rp := rTask.p
+	if _, ok := rp.(*PhysicalExchangeSender); ok {
+		rp = rp.Children()[0]
+	}
+	lMask := make([]bool, len(p.EqualConditions))
+	rMask := make([]bool, len(p.EqualConditions))
+	cTypes := make([]*types.FieldType, len(p.EqualConditions))
+	lChanged := false
+	rChanged := false
+	for i, eqFunc := range p.EqualConditions {
+		lKey := eqFunc.GetArgs()[0].(*expression.Column)
+		rKey := eqFunc.GetArgs()[1].(*expression.Column)
+		if lKey.RetType.Tp == mysql.TypeNewDecimal && rKey.RetType.Tp == mysql.TypeNewDecimal {
+			cType, lConvert, rConvert := negotiateCommonType(lKey.RetType, rKey.RetType)
+			if lConvert {
+				lMask[i] = true
+				cTypes[i] = cType
+				lChanged = true
+			}
+			if rConvert {
+				rMask[i] = true
+				cTypes[i] = cType
+				rChanged = true
+			}
+		}
+	}
+	if !lChanged && !rChanged {
+		return lTask, rTask
+	}
+	var lProj, rProj *PhysicalProjection
+	if lChanged {
+		lProj = getProj(p.ctx, lp)
+		lp = lProj
+	}
+	if rChanged {
+		rProj = getProj(p.ctx, rp)
+		rp = rProj
+	}
+	lKeys := make([]*expression.Column, 0, len(p.EqualConditions))
+	rKeys := make([]*expression.Column, 0, len(p.EqualConditions))
+	for i, eqFunc := range p.EqualConditions {
+		lKey := eqFunc.GetArgs()[0].(*expression.Column)
+		rKey := eqFunc.GetArgs()[1].(*expression.Column)
+		if lMask[i] {
+			lCast := expression.BuildCastFunction(p.ctx, lKey, cTypes[i])
+			lKey = appendExpr(lProj, lCast)
+		}
+		if rMask[i] {
+			rCast := expression.BuildCastFunction(p.ctx, rKey, cTypes[i])
+			rKey = appendExpr(rProj, rCast)
+		}
+		if lMask[i] || rMask[i] {
+			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+			p.EqualConditions[i] = eqCond.(*expression.ScalarFunction)
+		}
+		lKeys = append(lKeys, lKey)
+		rKeys = append(rKeys, rKey)
+	}
+	if lChanged {
+		nlTask := lTask.copy().(*mppTask)
+		nlTask.p = lProj
+		nlTask.enforceExchangerImpl(&property.PhysicalProperty{
+			TaskTp:        property.MppTaskType,
+			PartitionTp:   property.HashType,
+			PartitionCols: lKeys,
+		})
+		nlTask.cst = lTask.cst
+		lTask = nlTask
+	}
+	if rChanged {
+		nrTask := rTask.copy().(*mppTask)
+		nrTask.p = rProj
+		nrTask.enforceExchangerImpl(&property.PhysicalProperty{
+			TaskTp:        property.MppTaskType,
+			PartitionTp:   property.HashType,
+			PartitionCols: rKeys,
+		})
+		nrTask.cst = rTask.cst
+		rTask = nrTask
+	}
+	return lTask, rTask
+}
+
 func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 	lTask, lok := tasks[0].(*mppTask)
 	rTask, rok := tasks[1].(*mppTask)
 	if !lok || !rok {
 		return invalidTask
+	}
+	if p.mppShuffleJoin {
+		lTask, rTask = p.convertDecimalKeyIfNeed(lTask, rTask)
 	}
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
