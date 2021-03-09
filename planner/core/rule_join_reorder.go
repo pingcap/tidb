@@ -30,7 +30,8 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	join, isJoin := p.(*LogicalJoin)
 	directedEdges = make([][]LogicalPlan, 0)
 	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
-		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) {
+		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
+		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
 		return []LogicalPlan{p}, nil, nil, directedEdges, nil
 	}
 
@@ -109,6 +110,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		for _, joinType := range joinTypes {
 			if joinType != InnerJoin {
 				isSupportDP = false
+				break
 			}
 		}
 		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP {
