@@ -2061,3 +2061,18 @@ func (s *testSuite) TestExplainTableStmts(c *C) {
 	tk.MustExec("explain table t")
 	tk.MustExec("desc table t")
 }
+
+func (s *testSuite) TestSPMWithoutUseDatabase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	s.cleanBindingEnv(tk1)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create global binding for select * from t using select * from t force index(a)")
+
+	err := tk1.ExecToErr("select * from t")
+	c.Assert(err, ErrorMatches, "*No database selected")
+	c.Assert(tk1.MustUseIndex("select * from test.t", "a"), IsTrue)
+}
