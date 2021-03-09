@@ -14,6 +14,8 @@
 package statistics
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -153,12 +155,15 @@ type topN4Test struct {
 	count int64
 }
 
-func genHist4Test(buckets []*bucket4Test, totColSize int64) *Histogram {
-	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), len(buckets), totColSize)
+func genHist4Test(c *C, buckets []*bucket4Test, totColSize int64) *Histogram {
+	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), len(buckets), totColSize)
 	for _, bucket := range buckets {
-		lower := types.NewIntDatum(bucket.lower)
-		upper := types.NewIntDatum(bucket.upper)
-		h.AppendBucketWithNDV(&lower, &upper, bucket.count, bucket.repeat, bucket.ndv)
+		lower, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.lower))
+		c.Assert(err, IsNil)
+		upper, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.upper))
+		c.Assert(err, IsNil)
+		di, du := types.NewBytesDatum(lower), types.NewBytesDatum(upper)
+		h.AppendBucketWithNDV(&di, &du, bucket.count, bucket.repeat, bucket.ndv)
 	}
 	return h
 }
@@ -371,7 +376,7 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 		var expTotColSize int64
 		hists := make([]*Histogram, 0, len(t.partitionHists))
 		for i := range t.partitionHists {
-			hists = append(hists, genHist4Test(t.partitionHists[i], t.totColSize[i]))
+			hists = append(hists, genHist4Test(c, t.partitionHists[i], t.totColSize[i]))
 			expTotColSize += t.totColSize[i]
 		}
 		ctx := mock.NewContext()
@@ -386,11 +391,15 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 			}
 			poped = append(poped, tmp)
 		}
-		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, t.expBucketNumber)
+		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, t.expBucketNumber, true)
 		c.Assert(err, IsNil)
 		for i, b := range t.expHist {
-			c.Assert(b.lower, Equals, globalHist.GetLower(i).GetInt64())
-			c.Assert(b.upper, Equals, globalHist.GetUpper(i).GetInt64())
+			lo, err := ValueToString(ctx.GetSessionVars(), globalHist.GetLower(i), 1, []byte{types.KindInt64})
+			c.Assert(err, IsNil)
+			up, err := ValueToString(ctx.GetSessionVars(), globalHist.GetUpper(i), 1, []byte{types.KindInt64})
+			c.Assert(err, IsNil)
+			c.Assert(fmt.Sprintf("%v", b.lower), Equals, lo)
+			c.Assert(fmt.Sprintf("%v", b.upper), Equals, up)
 			c.Assert(b.count, Equals, globalHist.Buckets[i].Count)
 			c.Assert(b.repeat, Equals, globalHist.Buckets[i].Repeat)
 			c.Assert(b.ndv, Equals, globalHist.Buckets[i].NDV)
