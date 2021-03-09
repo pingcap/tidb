@@ -808,7 +808,6 @@ const (
 var AutoAnalyzeMinCnt int64 = 1000
 
 // TableAnalyzed checks if the table is analyzed.
-// TODO: an analyzed empty table will let it return false, which is wrong; fix it later.
 func TableAnalyzed(tbl *statistics.Table) bool {
 	for _, col := range tbl.Columns {
 		if col.Count > 0 {
