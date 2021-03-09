@@ -737,6 +737,8 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		Table:        tbl,
 		Columns:      v.Columns,
 		GenExprs:     v.GenCols.Exprs,
+		isLoadData:   true,
+		txnInUse:     sync.Mutex{},
 	}
 	err := insertVal.initInsertColumns()
 	if err != nil {
