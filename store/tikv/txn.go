@@ -28,6 +28,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -412,7 +413,9 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput .
 			keys = append(keys, key)
 		} else if txn.IsPessimistic() {
 			if checkKeyExists && valueExist {
-				return txn.committer.extractKeyExistsErr(key)
+				alreadyExist := kvrpcpb.AlreadyExist{Key: key}
+				e := &ErrKeyExist{AlreadyExist: &alreadyExist}
+				return txn.committer.extractKeyExistsErr(e)
 			}
 		}
 		if lockCtx.ReturnValues && locked {

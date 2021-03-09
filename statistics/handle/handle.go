@@ -367,15 +367,27 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		if err != nil {
 			return
 		}
+		// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
+		if partitionStats == nil {
+			var errMsg string
+			if isIndex == 0 {
+				errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
+			} else {
+				indexName := ""
+				for _, idx := range tableInfo.Indices {
+					if idx.ID == idxID {
+						indexName = idx.Name.L
+					}
+				}
+				errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, indexName)
+			}
+			err = types.ErrBuildGlobalLevelStatsFailed.GenWithStackByArgs(errMsg)
+			return
+		}
 		statistics.CheckAnalyzeVerOnTable(partitionStats, &statsVer)
 		if statsVer != statistics.Version2 { // global-stats only support stats-ver2
 			return nil, fmt.Errorf("[stats]: global statistics for partitioned tables only available in statistics version2, please set tidb_analyze_version to 2")
 
-		}
-		// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
-		if partitionStats == nil {
-			err = types.ErrBuildGlobalLevelStatsFailed
-			return
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			ID := tableInfo.Columns[i].ID
@@ -441,6 +453,12 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 				globalStatsNDV += bucket.NDV
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
+
+			// hg.NDV still includes TopN although TopN is not included by hg.Buckets
+			// TODO: remove the line below after fixing the meaning of hg.NDV
+			if globalStats.TopN[i] != nil { // if analyze with 0 topN, topN is nil here
+				globalStats.Hg[i].NDV += int64(len(globalStats.TopN[i].TopN))
+			}
 		}
 	}
 	return
