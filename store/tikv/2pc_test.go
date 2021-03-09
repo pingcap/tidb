@@ -61,7 +61,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	spkv := NewMockSafePointKV()
-	store, err := NewKVStore("mocktikv-store", pdCli, spkv, client, nil)
+	store, err := NewKVStore("mocktikv-store", pdCli, spkv, client)
 	store.EnableTxnLocalLatches(1024000)
 	c.Assert(err, IsNil)
 
@@ -88,17 +88,17 @@ func (s *testCommitterSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testCommitterSuite) begin(c *C) *tikvTxn {
+func (s *testCommitterSuite) begin(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn
 }
 
-func (s *testCommitterSuite) beginAsyncCommit(c *C) *tikvTxn {
+func (s *testCommitterSuite) beginAsyncCommit(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 func (s *testCommitterSuite) checkValues(c *C, m map[string]string) {
@@ -423,7 +423,7 @@ func errMsgMustContain(c *C, err error, msg string) {
 	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
 }
 
-func newTwoPhaseCommitterWithInit(txn *tikvTxn, sessionID uint64) (*twoPhaseCommitter, error) {
+func newTwoPhaseCommitterWithInit(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, error) {
 	c, err := newTwoPhaseCommitter(txn, sessionID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -610,12 +610,12 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	// Use max.Uint64 to read the data and success.
 	// That means the final commitTS > startTS+2, it's not the one we provide.
 	// So we cover the rety commitTS logic.
-	txn1, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, committer.startTS+2)
+	txn1, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(oracle.GlobalTxnScope).SetStartTs(committer.startTS + 2))
 	c.Assert(err, IsNil)
 	_, err = txn1.Get(bo.ctx, []byte("x"))
 	c.Assert(kv.IsErrNotFound(err), IsTrue)
 
-	txn2, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, math.MaxUint64)
+	txn2, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(oracle.GlobalTxnScope).SetStartTs(math.MaxUint64))
 	c.Assert(err, IsNil)
 	val, err := txn2.Get(bo.ctx, []byte("x"))
 	c.Assert(err, IsNil)

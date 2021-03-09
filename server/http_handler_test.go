@@ -622,7 +622,6 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 
 	resp, err = ts.fetchStatus("/mvcc/key/tidb/pt(p0)/42?decode=true")
 	c.Assert(err, IsNil)
-	defer resp.Body.Close()
 	decoder = json.NewDecoder(resp.Body)
 	var data4 map[string]interface{}
 	err = decoder.Decode(&data4)
@@ -631,6 +630,25 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	c.Assert(data4["info"], NotNil)
 	c.Assert(data4["data"], NotNil)
 	c.Assert(data4["decode_error"], IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
+
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/t/42")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/t?a=1.1")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/t?a=1.1&b=111&decode=1")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	var data5 map[string]interface{}
+	err = decoder.Decode(&data5)
+	c.Assert(err, IsNil)
+	c.Assert(data4["key"], NotNil)
+	c.Assert(data4["info"], NotNil)
+	c.Assert(data4["data"], NotNil)
+	c.Assert(data4["decode_error"], IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
@@ -1086,9 +1104,14 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
+	se, err := session.CreateSession(ts.store.(kv.Storage))
+	c.Assert(err, IsNil)
+
 	form := make(url.Values)
 	form.Set("log_level", "error")
 	form.Set("tidb_general_log", "1")
+	form.Set("tidb_enable_async_commit", "1")
+	form.Set("tidb_enable_1pc", "1")
 	resp, err := ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -1096,9 +1119,18 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
 	c.Assert(variable.ProcessGeneralLog.Load(), IsTrue)
+	val, err := variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.BoolOn)
+	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.BoolOn)
+
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
 	form.Set("tidb_general_log", "0")
+	form.Set("tidb_enable_async_commit", "0")
+	form.Set("tidb_enable_1pc", "0")
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -1106,6 +1138,12 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(log.GetLevel(), Equals, log.FatalLevel)
 	c.Assert(zaplog.GetLevel(), Equals, zap.FatalLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
+	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.BoolOff)
+	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.BoolOff)
 	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold
