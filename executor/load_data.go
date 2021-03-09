@@ -512,7 +512,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if prevData == nil && len(curData) < startingLen {
 		return nil, curData, false
 	}
-    inquotor := e.isInQuoter(prevData)
+	inquotor := e.isInQuoter(prevData)
 	prevLen := len(prevData)
 	terminatedLen := len(e.LinesInfo.Terminated)
 	curStartIdx := 0
@@ -538,7 +538,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		if ignore {
 			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
 		} else {
-			endIdx = e.indexOfTerminator(curData[startingLen:],inquotor)
+			endIdx = e.indexOfTerminator(curData[startingLen:], inquotor)
 		}
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
