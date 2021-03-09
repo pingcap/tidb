@@ -2933,22 +2933,7 @@ func (s *testSerialSuite1) TestIssue20724(c *C) {
 	tk.MustExec("drop table t1")
 }
 
-func (s *testSerialSuite) TestIssue20840(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
-	tk.MustExec("create table t1 (i varchar(20) unique key) collate=utf8mb4_general_ci")
-	tk.MustExec("insert into t1 values ('a')")
-	tk.MustExec("replace into t1 values ('A')")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
-	tk.MustExec("drop table t1")
-}
-
-func (s *testSerialSuite) TestIssue22496(c *C) {
+func (s *testSuite) TestIssue22496(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t12")
@@ -2959,34 +2944,6 @@ func (s *testSerialSuite) TestIssue22496(c *C) {
 	tk.MustExec("insert into t12 values('1,999.00');")
 	tk.MustQuery("SELECT * FROM t12;").Check(testkit.Rows("1.00"))
 	tk.MustExec("drop table t12")
-}
-
-func (s *testSuite) TestEqualDatumsAsBinary(c *C) {
-	tests := []struct {
-		a    []interface{}
-		b    []interface{}
-		same bool
-	}{
-		// Positive cases
-		{[]interface{}{1}, []interface{}{1}, true},
-		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
-		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
-
-		// negative cases
-		{[]interface{}{1}, []interface{}{2}, false},
-		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
-		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
-
-		// Corner cases
-		{[]interface{}{}, []interface{}{}, true},
-		{[]interface{}{nil}, []interface{}{nil}, true},
-		{[]interface{}{}, []interface{}{1}, false},
-		{[]interface{}{1}, []interface{}{1, 1}, false},
-		{[]interface{}{nil}, []interface{}{1}, false},
-	}
-	for _, tt := range tests {
-		testEqualDatumsAsBinary(c, tt.a, tt.b, tt.same)
-	}
 }
 
 func (s *testSuite) TestIssue21232(c *C) {
