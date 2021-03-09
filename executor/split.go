@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"math/big"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -557,7 +558,12 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 		if upperRecordID <= lowerRecordID {
 			return 0, 0, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
 		}
-		step = (upperRecordID - lowerRecordID) / int64(e.num)
+		// Prevent int64 overflow. See https://github.com/pingcap/tidb/issues/23159.
+		bigUpper := big.NewInt(upperRecordID)
+		bigLower := big.NewInt(lowerRecordID)
+		bigStep := big.NewInt(0).Sub(bigUpper, bigLower)
+		bigStep.Div(bigStep, big.NewInt(int64(e.num)))
+		step = bigStep.Int64()
 		lowerValue = lowerRecordID
 	}
 	if step < minRegionStepValue {

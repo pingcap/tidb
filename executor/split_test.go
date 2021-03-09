@@ -366,6 +366,36 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 	}
 }
 
+func (s *testSplitIndex) TestCalculateIntBoundValue(c *C) {
+	tbInfo := &model.TableInfo{
+		Name: model.NewCIStr("t1"),
+		ID:   rand.Int63(),
+		Columns: []*model.ColumnInfo{
+			{
+				Name:         model.NewCIStr("c0"),
+				ID:           1,
+				Offset:       1,
+				DefaultValue: 0,
+				State:        model.StatePublic,
+				FieldType:    *types.NewFieldType(mysql.TypeLong),
+			},
+		},
+	}
+	ctx := mock.NewContext()
+	e := &SplitTableRegionExec{
+		baseExecutor: newBaseExecutor(ctx, nil, 0),
+		tableInfo:    tbInfo,
+		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
+		lower:        []types.Datum{types.NewDatum(-9223372036854775808)},
+		upper:        []types.Datum{types.NewDatum(9223372036854775807)},
+		num:          4,
+	}
+	lower, step, err := e.calculateIntBoundValue()
+	c.Assert(err, IsNil)
+	c.Assert(step, Equals, int64(4611686018427387903))
+	c.Assert(lower, Equals, int64(-9223372036854775808))
+}
+
 func (s *testSplitIndex) TestClusterIndexSplitTable(c *C) {
 	tbInfo := &model.TableInfo{
 		Name:                model.NewCIStr("t"),
