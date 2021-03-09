@@ -1274,32 +1274,35 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 // TruncateIndexValues truncates the index values created using only the leading part of column values.
 func TruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) {
 	for i := 0; i < len(indexedValues); i++ {
-		v := &indexedValues[i]
 		idxCol := idxInfo.Columns[i]
-		noPrefixIndex := idxCol.Length == types.UnspecifiedLength
-		if noPrefixIndex {
-			continue
-		}
-		notStringType := v.Kind() != types.KindString && v.Kind() != types.KindBytes
-		if notStringType {
-			continue
-		}
+		tblCol := tblInfo.Columns[idxCol.Offset]
+		TruncateIndexValue(&indexedValues[i], idxCol, tblCol)
+	}
+}
 
-		colInfo := tblInfo.Columns[idxCol.Offset]
-		isUTF8Charset := colInfo.Charset == charset.CharsetUTF8 || colInfo.Charset == charset.CharsetUTF8MB4
-		if isUTF8Charset && utf8.RuneCount(v.GetBytes()) > idxCol.Length {
-			rs := bytes.Runes(v.GetBytes())
-			truncateStr := string(rs[:idxCol.Length])
-			// truncate value and limit its length
-			v.SetString(truncateStr, colInfo.Collate)
-			if v.Kind() == types.KindBytes {
-				v.SetBytes(v.GetBytes())
-			}
-		} else if !isUTF8Charset && len(v.GetBytes()) > idxCol.Length {
-			v.SetBytes(v.GetBytes()[:idxCol.Length])
-			if v.Kind() == types.KindString {
-				v.SetString(v.GetString(), colInfo.Collate)
-			}
+// TruncateIndexValue truncate one value in the index.
+func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model.ColumnInfo) {
+	noPrefixIndex := idxCol.Length == types.UnspecifiedLength
+	if noPrefixIndex {
+		return
+	}
+	notStringType := v.Kind() != types.KindString && v.Kind() != types.KindBytes
+	if notStringType {
+		return
+	}
+	isUTF8Charset := tblCol.Charset == charset.CharsetUTF8 || tblCol.Charset == charset.CharsetUTF8MB4
+	if isUTF8Charset && utf8.RuneCount(v.GetBytes()) > idxCol.Length {
+		rs := bytes.Runes(v.GetBytes())
+		truncateStr := string(rs[:idxCol.Length])
+		// truncate value and limit its length
+		v.SetString(truncateStr, tblCol.Collate)
+		if v.Kind() == types.KindBytes {
+			v.SetBytes(v.GetBytes())
+		}
+	} else if !isUTF8Charset && len(v.GetBytes()) > idxCol.Length {
+		v.SetBytes(v.GetBytes()[:idxCol.Length])
+		if v.Kind() == types.KindString {
+			v.SetString(v.GetString(), tblCol.Collate)
 		}
 	}
 }
