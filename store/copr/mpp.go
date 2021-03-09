@@ -137,6 +137,7 @@ func (m *mppIterator) run(ctx context.Context) {
 		if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
 			break
 		}
+		task.State = kv.MppTaskRunning
 		m.wg.Add(1)
 		bo := tikv.NewBackoffer(ctx, copNextMaxBackoff)
 		go m.handleDispatchReq(ctx, bo, task)
@@ -245,8 +246,17 @@ func (m *mppIterator) cancelMppTasks(bo *tikv.Backoffer, meta *mpp.TaskMeta) {
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
 	wrappedReq.StoreTp = kv.TiFlash
 
-	// send cancel cmd to all TiFlash stores
-	for _, addr := range m.store.GetRegionCache().GetTiFlashStoreAddrs() {
+	usedStoreAddrs := make(map[string]bool)
+	for _, task := range m.tasks {
+		// get the store address of running tasks
+		if task.State != kv.MppTaskReady && !usedStoreAddrs[task.Meta.GetAddress()] {
+			usedStoreAddrs[task.Meta.GetAddress()] = true
+		}
+		task.State = kv.MppTaskCancelled
+	}
+
+	// send cancel cmd to all stores where tasks run
+	for addr := range usedStoreAddrs {
 		_, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), addr, wrappedReq, tikv.ReadTimeoutUltraLong)
 		logutil.BgLogger().Debug("cancel task ", zap.Uint64("query id ", meta.GetStartTs()), zap.String(" on addr ", addr))
 		if err != nil {
@@ -286,13 +296,6 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	}
 
 	for {
-		if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
-			m.cancelMppTasks(bo, taskMeta)
-			err = tikv.ErrQueryInterrupted
-			m.sendError(err)
-			return
-		}
-
 		err := m.handleMPPStreamResponse(bo, resp, req)
 		if err != nil {
 			m.cancelMppTasks(bo, taskMeta)

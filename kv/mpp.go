@@ -45,6 +45,15 @@ func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	return meta
 }
 
+type MppTaskStates uint8
+
+const (
+	MppTaskReady MppTaskStates = iota
+	MppTaskRunning
+	MppTaskCancelled
+	MppTaskDone
+)
+
 // MPPDispatchRequest stands for a dispatching task.
 type MPPDispatchRequest struct {
 	Data    []byte      // data encodes the dag coprocessor request.
@@ -55,6 +64,7 @@ type MPPDispatchRequest struct {
 	SchemaVar int64
 	StartTs   uint64
 	ID        int64 // identify a single task
+	State     MppTaskStates
 }
 
 // MPPClient accepts and processes mpp requests.

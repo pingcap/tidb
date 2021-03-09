@@ -86,3 +86,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/ngaut/unistore => github.com/fzhedu/unistore v0.0.0-20210309135726-19020bbc7eca

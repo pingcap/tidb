@@ -15,18 +15,23 @@ package executor_test
 
 import (
 	"fmt"
-
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 type tiflashTestSuite struct {
@@ -270,4 +275,36 @@ func (s *tiflashTestSuite) TestPartitionTable(c *C) {
 	tk.MustQuery("select count(*) from t, t3 where t3.a = t.a and t3.b > 10").Check(testkit.Rows("0"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkUseMPP")
+}
+
+func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
+	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("insert into t values(3,0)")
+	tk.MustExec("insert into t values(4,0)")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 0)
+	c.Assert(failpoint.Enable(hang, `return(true)`), IsNil)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := tk.QueryToErr("select count(*) from t as t1 , t where t1.a = t.a")
+		c.Assert(err, NotNil)
+		c.Assert(int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code), Equals, int(executor.ErrQueryInterrupted.Code()))
+	}()
+	time.Sleep(1 * time.Second)
+	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 1)
+	wg.Wait()
+	c.Assert(failpoint.Disable(hang), IsNil)
 }
