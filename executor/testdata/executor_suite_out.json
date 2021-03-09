@@ -577,10 +577,10 @@
       {
         "SQL": "select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
         "Plan": [
-          "StreamAgg_9 1.00 root  funcs:count(1)->Column#7",
-          "└─MergeJoin_10 0.00 root  left outer join, left key:test.t.c1, right key:test.t.c1",
-          "  ├─TableDual_25(Build) 0.00 root  rows:0",
-          "  └─TableDual_24(Probe) 0.00 root  rows:0"
+          "StreamAgg_10 1.00 root  funcs:count(1)->Column#7",
+          "└─MergeJoin_11 0.00 root  left outer join, left key:test.t.c1, right key:test.t.c1",
+          "  ├─TableDual_26(Build) 0.00 root  rows:0",
+          "  └─TableDual_25(Probe) 0.00 root  rows:0"
         ],
         "Res": [
           "0"
@@ -589,13 +589,13 @@
       {
         "SQL": "select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL",
         "Plan": [
-          "HashJoin_22 12487.50 root  left outer join, equal:[eq(test.t.c1, test.t.c1)]",
-          "├─TableReader_40(Build) 9990.00 root  data:Selection_39",
-          "│ └─Selection_39 9990.00 cop[tikv]  not(isnull(test.t.c1))",
-          "│   └─TableFullScan_38 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_34(Probe) 9990.00 root  data:Selection_33",
-          "  └─Selection_33 9990.00 cop[tikv]  not(isnull(test.t.c1))",
-          "    └─TableFullScan_32 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin_23 12487.50 root  left outer join, equal:[eq(test.t.c1, test.t.c1)]",
+          "├─TableReader_41(Build) 9990.00 root  data:Selection_39",
+          "│ └─Selection_40 9990.00 cop[tikv]  not(isnull(test.t.c1))",
+          "│   └─TableFullScan_39 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_35(Probe) 9990.00 root  data:Selection_33",
+          "  └─Selection_34 9990.00 cop[tikv]  not(isnull(test.t.c1))",
+          "    └─TableFullScan_33 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Res": [
           "2001 1 2001 1"
