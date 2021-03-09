@@ -290,7 +290,7 @@ func (s *testSuiteJoin2) TestJoin(c *C) {
 		(SELECT tmp_t2.* FROM ( t2 AS tmp_t1 RIGHT JOIN t1 AS tmp_t2 ON (tmp_t2.a = tmp_t1.a))) AS table2
 	  ON (table2.c = table1.c)
 	) `)
-	result.Check(testkit.Rows("<nil>"))
+	result.Check(testkit.Rows())
 
 	// test virtual rows are included (issue#5771)
 	result = tk.MustQuery(`SELECT 1 FROM (SELECT 1) t1, (SELECT 1) t2`)
