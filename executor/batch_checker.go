@@ -83,7 +83,7 @@ func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Tabl
 
 	var (
 		tblHandleCols []*table.Column
-		idxHandleCols []*model.IndexColumn
+		pkIdxInfo     *model.IndexInfo
 	)
 	// Get handle column if PK is handle.
 	if t.Meta().PKIsHandle {
@@ -94,16 +94,15 @@ func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Tabl
 			}
 		}
 	} else if t.Meta().IsCommonHandle {
-		pkIdx := tables.FindPrimaryIndex(t.Meta())
-		for _, idxCol := range pkIdx.Columns {
+		pkIdxInfo = tables.FindPrimaryIndex(t.Meta())
+		for _, idxCol := range pkIdxInfo.Columns {
 			tblHandleCols = append(tblHandleCols, t.Cols()[idxCol.Offset])
-			idxHandleCols = append(idxHandleCols, idxCol)
 		}
 	}
 
 	var err error
 	for _, row := range rows {
-		toBeCheckRows, err = getKeysNeedCheckOneRow(sctx, t, row, nUnique, tblHandleCols, idxHandleCols, toBeCheckRows)
+		toBeCheckRows, err = getKeysNeedCheckOneRow(sctx, t, row, nUnique, tblHandleCols, pkIdxInfo, toBeCheckRows)
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +111,7 @@ func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Tabl
 }
 
 func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.Datum, nUnique int, handleCols []*table.Column,
-	idxHandleCols []*model.IndexColumn, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
+	pkIdxInfo *model.IndexInfo, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
 	var err error
 	if p, ok := t.(table.PartitionedTable); ok {
 		t, err = p.GetPartitionByRow(ctx, row)
@@ -131,7 +130,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	var handle kv.Handle
 	if t.Meta().IsCommonHandle {
 		var err error
-		handle, err = buildHandleFromDatumRow(ctx.GetSessionVars().StmtCtx, row, handleCols, idxHandleCols)
+		handle, err = buildHandleFromDatumRow(ctx.GetSessionVars().StmtCtx, row, handleCols, pkIdxInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -219,12 +218,12 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	return result, nil
 }
 
-func buildHandleFromDatumRow(sctx *stmtctx.StatementContext, row []types.Datum, tblHandleCols []*table.Column, idxHandleCols []*model.IndexColumn) (kv.Handle, error) {
+func buildHandleFromDatumRow(sctx *stmtctx.StatementContext, row []types.Datum, tblHandleCols []*table.Column, pkIdxInfo *model.IndexInfo) (kv.Handle, error) {
 	pkDts := make([]types.Datum, 0, len(tblHandleCols))
 	for i, col := range tblHandleCols {
 		d := row[col.Offset]
-		if len(idxHandleCols) > 0 {
-			tablecodec.TruncateIndexValue(&d, idxHandleCols[i], col.ColumnInfo)
+		if pkIdxInfo != nil && len(pkIdxInfo.Columns) > 0 {
+			tablecodec.TruncateIndexValue(&d, pkIdxInfo.Columns[i], col.ColumnInfo)
 		}
 		pkDts = append(pkDts, d)
 	}
