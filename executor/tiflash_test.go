@@ -15,6 +15,10 @@ package executor_test
 
 import (
 	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,9 +33,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 type tiflashTestSuite struct {
