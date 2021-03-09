@@ -14,6 +14,7 @@
 package handle_test
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"testing"
@@ -53,6 +54,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_extended")
+	tk.MustExec("delete from mysql.stats_fm_sketch")
 	tk.MustExec("delete from mysql.schema_index_usage")
 	do.StatsHandle().Clear()
 }
@@ -785,6 +787,98 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	c.Assert(len(result.Rows()), Equals, 20)
 }
 
+func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit) {
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(` create table t (a int, key(a)) partition by range (a) ` +
+		`(partition p0 values less than (100000), partition p1 values less than (200000))`)
+	buf1 := bytes.NewBufferString("insert into t values (0)")
+	buf2 := bytes.NewBufferString("insert into t values (100000)")
+	for i := 0; i < 5000; i += 3 {
+		buf1.WriteString(fmt.Sprintf(", (%v)", i))
+		buf2.WriteString(fmt.Sprintf(", (%v)", 100000+i))
+	}
+	tk.MustExec(buf1.String())
+	tk.MustExec(buf2.String())
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+}
+
+func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, p string, topn, buckets int) {
+	delta := buckets/2 + 1
+	for _, isIdx := range []int{0, 1} {
+		c.Assert(len(tk.MustQuery(fmt.Sprintf("show stats_topn where partition_name='%v' and is_index=%v", p, isIdx)).Rows()), Equals, topn)
+		numBuckets := len(tk.MustQuery(fmt.Sprintf("show stats_buckets where partition_name='%v' and is_index=%v", p, isIdx)).Rows())
+		// since the hist-building algorithm doesn't stipulate the final bucket number to be equal to the expected number exactly,
+		// we have to check the results by a range here.
+		c.Assert(numBuckets >= buckets-delta, IsTrue)
+		c.Assert(numBuckets <= buckets+delta, IsTrue)
+	}
+}
+
+func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	s.prepareForGlobalStatsWithOpts(c, tk)
+
+	type opt struct {
+		topn    int
+		buckets int
+		err     bool
+	}
+
+	cases := []opt{
+		{1, 37, false},
+		{2, 47, false},
+		{10, 77, false},
+		{77, 219, false},
+		{-31, 222, true},
+		{10, -77, true},
+		{10000, 47, true},
+		{77, 47000, true},
+	}
+	for _, ca := range cases {
+		sql := fmt.Sprintf("analyze table t with %v topn, %v buckets", ca.topn, ca.buckets)
+		if !ca.err {
+			tk.MustExec(sql)
+			s.checkForGlobalStatsWithOpts(c, tk, "global", ca.topn, ca.buckets)
+			s.checkForGlobalStatsWithOpts(c, tk, "p0", ca.topn, ca.buckets)
+			s.checkForGlobalStatsWithOpts(c, tk, "p1", ca.topn, ca.buckets)
+		} else {
+			err := tk.ExecToErr(sql)
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
+func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	s.prepareForGlobalStatsWithOpts(c, tk)
+
+	tk.MustExec("analyze table t with 20 topn, 50 buckets")
+	s.checkForGlobalStatsWithOpts(c, tk, "global", 20, 50)
+	s.checkForGlobalStatsWithOpts(c, tk, "p0", 20, 50)
+	s.checkForGlobalStatsWithOpts(c, tk, "p1", 20, 50)
+
+	// analyze a partition to let its options be different with others'
+	tk.MustExec("analyze table t partition p0 with 10 topn, 20 buckets")
+	s.checkForGlobalStatsWithOpts(c, tk, "global", 10, 20) // use new options
+	s.checkForGlobalStatsWithOpts(c, tk, "p0", 10, 20)
+	s.checkForGlobalStatsWithOpts(c, tk, "p1", 20, 50)
+
+	tk.MustExec("analyze table t partition p1 with 100 topn, 200 buckets")
+	s.checkForGlobalStatsWithOpts(c, tk, "global", 100, 200)
+	s.checkForGlobalStatsWithOpts(c, tk, "p0", 10, 20)
+	s.checkForGlobalStatsWithOpts(c, tk, "p1", 100, 200)
+
+	tk.MustExec("analyze table t partition p0") // default options
+	s.checkForGlobalStatsWithOpts(c, tk, "global", 20, 256)
+	s.checkForGlobalStatsWithOpts(c, tk, "p0", 20, 256)
+	s.checkForGlobalStatsWithOpts(c, tk, "p1", 100, 200)
+}
+
 func (s *testStatsSuite) TestGlobalStatsData(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -1399,7 +1493,7 @@ func (s *testStatsSuite) TestAnalyzeWithDynamicPartitionPruneMode(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec(`create table t (a int, key(a)) partition by range(a) 
+	tk.MustExec(`create table t (a int, key(a)) partition by range(a)
 					(partition p0 values less than (10),
 					partition p1 values less than (22))`)
 	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
@@ -1475,6 +1569,25 @@ func (s *testStatsSuite) TestPartitionPruneModeSessionVariable(c *C) {
 		"TableReader 5.00 root partition:all data:TableFullScan",
 		"└─TableFullScan 5.00 cop[tikv] table:t keep order:false",
 	))
+}
+
+func (s *testStatsSuite) TestFMSWithAnalyzePartition(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec(`create table t (a int, key(a)) partition by range(a) 
+					(partition p0 values less than (10),
+					partition p1 values less than (22))`)
+	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
+	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
+		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
+	))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
 }
 
 var _ = SerialSuites(&statsSerialSuite{})

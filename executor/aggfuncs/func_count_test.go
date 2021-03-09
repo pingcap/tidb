@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/set"
 )
 
 func genApproxDistinctMergePartialResult(begin, end uint64) string {
@@ -120,21 +121,21 @@ func (s *testSuite) TestMemCount(c *C) {
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeDuration, 5,
 			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeLonglong, 5,
-			aggfuncs.DefPartialResult4CountDistinctIntSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountDistinctIntSize+set.DefInt64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeFloat, 5,
-			aggfuncs.DefPartialResult4CountDistinctRealSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountDistinctRealSize+set.DefFloat64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeDouble, 5,
-			aggfuncs.DefPartialResult4CountDistinctRealSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountDistinctRealSize+set.DefFloat64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeNewDecimal, 5,
-			aggfuncs.DefPartialResult4CountDistinctDecimalSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountDistinctDecimalSize+set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeString, 5,
-			aggfuncs.DefPartialResult4CountDistinctStringSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountDistinctStringSize+set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeDate, 5,
-			aggfuncs.DefPartialResult4CountWithDistinctSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountWithDistinctSize+set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeDuration, 5,
-			aggfuncs.DefPartialResult4CountDistinctDurationSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountDistinctDurationSize+set.DefInt64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeJSON, 5,
-			aggfuncs.DefPartialResult4CountWithDistinctSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountWithDistinctSize+set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4ApproxCountDistinctSize, approxCountDistinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeString, 5,
