@@ -278,6 +278,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, strin
 	case *ast.ExplainStmt:
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
+<<<<<<< HEAD
 			plannercore.EraseLastSemicolon(x)
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := int(0)
@@ -296,6 +297,10 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, strin
 				}
 			}
 			normalizeSQL := normalizeExplainSQL[idx:]
+=======
+			normalizeSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB))
+			normalizeSQL = plannercore.EraseLastSemicolonInSQL(normalizeSQL)
+>>>>>>> 1ca62a09f... planner: fixed a bug that prevented SPM from taking effect (#23197)
 			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt, normalizeSQL, hash
 		case *ast.SetOprStmt:
@@ -312,8 +317,21 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, strin
 		}
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		plannercore.EraseLastSemicolon(x)
+<<<<<<< HEAD
 		normalizedSQL, hash := parser.NormalizeDigest(x.Text())
 		return x, normalizedSQL, hash
+=======
+		// This function is only used to find bind record.
+		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
+		// but some of them do not want to obtain bind record.
+		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
+		// For these cases, we need return "" as normalize SQL and hash.
+		if len(x.Text()) == 0 {
+			return x, "", "", nil
+		}
+		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB))
+		return x, normalizedSQL, hash, nil
+>>>>>>> 1ca62a09f... planner: fixed a bug that prevented SPM from taking effect (#23197)
 	}
 	return nil, "", ""
 }
