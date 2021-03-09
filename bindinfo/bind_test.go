@@ -1843,3 +1843,21 @@ func (s *testSuite) TestCaptureWithZeroSlowLogThreshold(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from test . t")
 }
+
+func (s *testSuite) TestSPMWithoutUseDatabase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	s.cleanBindingEnv(tk1)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create global binding for select * from t using select * from t force index(a)")
+
+	err := tk1.ExecToErr("select * from t")
+	c.Assert(err, ErrorMatches, "*No database selected")
+	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
+	c.Assert(tk1.MustUseIndex("select * from test.t", "a"), IsTrue)
+	tk1.MustExec("select * from test.t")
+	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
+}
