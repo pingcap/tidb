@@ -61,10 +61,7 @@ type tikvSnapshot struct {
 	keyOnly         bool
 	vars            *kv.Variables
 	replicaReadSeed uint32
-	isStaleness     bool
-	// MatchStoreLabels indicates the labels the store should be matched
-	matchStoreLabels []*metapb.StoreLabel
-	resolvedLocks    *util.TSSet
+	resolvedLocks   *util.TSSet
 
 	// Cache the result of BatchGet.
 	// The invariance is that calling BatchGet multiple times using the same start ts,
@@ -81,6 +78,9 @@ type tikvSnapshot struct {
 		stats       *SnapshotRuntimeStats
 		replicaRead kv.ReplicaReadType
 		taskID      uint64
+		isStaleness bool
+		// MatchStoreLabels indicates the labels the store should be matched
+		matchStoreLabels []*metapb.StoreLabel
 	}
 	sampleStep uint32
 	txnScope   string
@@ -276,6 +276,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 	pending := batch.keys
 	for {
+		isStaleness := false
+		var matchStoreLabels []*metapb.StoreLabel
 		s.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
@@ -285,13 +287,15 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
+		isStaleness = s.mu.isStaleness
+		matchStoreLabels = s.mu.matchStoreLabels
 		s.mu.RUnlock()
 		var ops []StoreSelectorOption
-		if s.isStaleness {
+		if isStaleness {
 			req.EnableStaleRead()
 		}
-		if len(s.matchStoreLabels) > 0 {
-			ops = append(ops, WithMatchLabels(s.matchStoreLabels))
+		if len(matchStoreLabels) > 0 {
+			ops = append(ops, WithMatchLabels(matchStoreLabels))
 		}
 		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "", ops...)
 
@@ -423,6 +427,8 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 	}
 	failpoint.Inject("snapshotGetTSAsync", nil)
 
+	isStaleness := false
+	var matchStoreLabels []*metapb.StoreLabel
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -439,13 +445,15 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
+	isStaleness = s.mu.isStaleness
+	matchStoreLabels = s.mu.matchStoreLabels
 	s.mu.RUnlock()
 	var ops []StoreSelectorOption
-	if s.isStaleness {
+	if isStaleness {
 		req.EnableStaleRead()
 	}
-	if len(s.matchStoreLabels) > 0 {
-		ops = append(ops, WithMatchLabels(s.matchStoreLabels))
+	if len(matchStoreLabels) > 0 {
+		ops = append(ops, WithMatchLabels(matchStoreLabels))
 	}
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
@@ -574,10 +582,12 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.sampleStep = val.(uint32)
 	case kv.IsStalenessReadOnly:
 		s.mu.Lock()
-		s.isStaleness = val.(bool)
+		s.mu.isStaleness = val.(bool)
 		s.mu.Unlock()
 	case kv.MatchStoreLabels:
-		s.matchStoreLabels = val.([]*metapb.StoreLabel)
+		s.mu.Lock()
+		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
+		s.mu.Unlock()
 	case kv.TxnScope:
 		s.txnScope = val.(string)
 	}
