@@ -698,7 +698,7 @@ func (e *HashAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.parallelExec(ctx, req)
 }
 
-func (e *HashAggExec) fetchChildData(ctx context.Context) {
+func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGroup) {
 	var (
 		input *HashAggInput
 		chk   *chunk.Chunk
@@ -712,6 +712,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 		for i := range e.partialInputChs {
 			close(e.partialInputChs[i])
 		}
+		waitGroup.Done()
 	}()
 	for {
 		select {
@@ -751,13 +752,17 @@ func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGro
 	}
 }
 
+func (e *HashAggExec) waitAllWorkersAndCloseFinalOutputCh(waitGroups ...*sync.WaitGroup) {
+	for _, waitGroup := range waitGroups {
+		waitGroup.Wait()
+	}
+	close(e.finalOutputCh)
+}
+
 func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	fetchChildWorkerWaitGroup := &sync.WaitGroup{}
 	fetchChildWorkerWaitGroup.Add(1)
-	go func() {
-		e.fetchChildData(ctx)
-		fetchChildWorkerWaitGroup.Done()
-	}()
+	go e.fetchChildData(ctx, fetchChildWorkerWaitGroup)
 
 	partialWorkerWaitGroup := &sync.WaitGroup{}
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
@@ -784,14 +789,9 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		}
 	}()
 
-	go func() {
-		// All workers maybe send error message to e.finalOutputCh when they panic.
-		// And e.finalOutputCh should be closed after all goroutines gone.
-		fetchChildWorkerWaitGroup.Wait()
-		partialWorkerWaitGroup.Wait()
-		finalWorkerWaitGroup.Wait()
-		close(e.finalOutputCh)
-	}()
+	// All workers maybe send error message to e.finalOutputCh when they panic.
+	// And e.finalOutputCh should be closed after all goroutines gone.
+	go e.waitAllWorkersAndCloseFinalOutputCh(fetchChildWorkerWaitGroup, partialWorkerWaitGroup, finalWorkerWaitGroup)
 }
 
 // HashAggExec employs one input reader, M partial workers and N final workers to execute parallelly.
