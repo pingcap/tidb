@@ -132,7 +132,7 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		closed:          make(chan struct{}),
 		replicaReadSeed: rand.Uint32(),
 	}
-	store.safeTSMu.storeSafeTS = make(map[uint64]uint64, 0)
+	store.safeTSMu.storeSafeTS = make(map[uint64]uint64)
 	store.lockResolver = newLockResolver(store)
 	ctx := context.Background()
 	go store.runSafePointChecker()
@@ -398,12 +398,6 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
 }
 
-func (s *KVStore) GetSafeTSByStore(storeID uint64) uint64 {
-	s.safeTSMu.RLock()
-	defer s.safeTSMu.RUnlock()
-	return s.safeTSMu.storeSafeTS[storeID]
-}
-
 func (s *KVStore) getMinSafeTS(txnScope string) uint64 {
 	stores := s.regionCache.getStoresByType(TiKV)
 	minSafeTS := uint64(math.MaxUint64)
@@ -444,9 +438,9 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 			//return
 			//}
 			safeTS := uint64(0)
-			s.safeTSMu.RLock()
+			s.safeTSMu.Lock()
 			s.safeTSMu.storeSafeTS[store.storeID] = safeTS
-			s.safeTSMu.RUnlock()
+			s.safeTSMu.Unlock()
 		}(ctx, wg, store)
 	}
 	wg.Wait()
