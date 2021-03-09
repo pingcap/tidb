@@ -1215,9 +1215,12 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 		}
 	}
 	// update locally
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(`FLUSH PRIVILEGES`)
-	if err != nil {
-		logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	if stmt, err := exec.ParseWithParams(context.Background(), `FLUSH PRIVILEGES`); err == nil {
+		_, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
+		if err != nil {
+			logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
+		}
 	}
 }
 
