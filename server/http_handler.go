@@ -395,6 +395,7 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (*mvccKV,
 
 // settingsHandler is the handler for list tidb server settings.
 type settingsHandler struct {
+	*tikvHandlerTool
 }
 
 // binlogRecover is used to recover binlog service.
@@ -657,13 +658,6 @@ type FrameItem struct {
 	IndexValues []string `json:"index_values,omitempty"`
 }
 
-// RegionFrameRange contains a frame range info which the region covered.
-type RegionFrameRange struct {
-	first  *FrameItem        // start frame of the region
-	last   *FrameItem        // end frame of the region
-	region *tikv.KeyLocation // the region
-}
-
 func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
@@ -724,6 +718,52 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				variable.ProcessGeneralLog.Store(true)
 			default:
 				writeError(w, errors.New("illegal argument"))
+				return
+			}
+		}
+		if asyncCommit := req.Form.Get("tidb_enable_async_commit"); asyncCommit != "" {
+			s, err := session.CreateSession(h.Store.(kv.Storage))
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			if s != nil {
+				defer s.Close()
+			}
+			switch asyncCommit {
+			case "0":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOff)
+			case "1":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOn)
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+		}
+		if onePC := req.Form.Get("tidb_enable_1pc"); onePC != "" {
+			s, err := session.CreateSession(h.Store.(kv.Storage))
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			if s != nil {
+				defer s.Close()
+			}
+			switch onePC {
+			case "0":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOff)
+			case "1":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOn)
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+			if err != nil {
+				writeError(w, err)
 				return
 			}
 		}

@@ -1515,6 +1515,13 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 					cop.finishIndexPlan()
 					partialAgg.SetChildren(cop.tablePlan)
 					cop.tablePlan = partialAgg
+					// If doubleReadNeedProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
+					// the schema is the same as the original DataSource schema.
+					// However, we pushed down the agg here, the partial agg was placed on the top of tablePlan, and the final
+					// agg will be placed above the PhysicalIndexLookUpReader, and the schema will be set correctly for them.
+					// If we add the projection again, the projection will be between the PhysicalIndexLookUpReader and
+					// the partial agg, and the schema will be broken.
+					cop.doubleReadNeedProj = false
 				} else {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
@@ -1635,6 +1642,13 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 					cop.finishIndexPlan()
 					partialAgg.SetChildren(cop.tablePlan)
 					cop.tablePlan = partialAgg
+					// If doubleReadNeedProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
+					// the schema is the same as the original DataSource schema.
+					// However, we pushed down the agg here, the partial agg was placed on the top of tablePlan, and the final
+					// agg will be placed above the PhysicalIndexLookUpReader, and the schema will be set correctly for them.
+					// If we add the projection again, the projection will be between the PhysicalIndexLookUpReader and
+					// the partial agg, and the schema will be broken.
+					cop.doubleReadNeedProj = false
 				} else {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg

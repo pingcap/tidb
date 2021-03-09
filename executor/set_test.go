@@ -120,7 +120,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 
 	// Test session variable states.
 	vars := tk.Se.(sessionctx.Context).GetSessionVars()
-	tk.Se.CommitTxn(context.TODO())
+	err = tk.Se.CommitTxn(context.TODO())
+	c.Assert(err, IsNil)
 	tk.MustExec("set @@autocommit = 1")
 	c.Assert(vars.InTxn(), IsFalse)
 	c.Assert(vars.IsAutocommit(), IsTrue)
