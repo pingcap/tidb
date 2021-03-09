@@ -1555,7 +1555,6 @@ func (s *testStatsSuite) TestPartitionPruneModeSessionVariable(c *C) {
 		"  └─TableFullScan 2.00 cop[tikv] table:t, partition:p1 keep order:false",
 	))
 
-
 	tk1.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Static) + "'")
 	tk1.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
 		"PartitionUnion 5.00 root  ",
