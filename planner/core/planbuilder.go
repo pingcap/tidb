@@ -1662,7 +1662,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 		}
 		for _, idx := range idxInfo {
-			if idx.Primary && tbl.TableInfo.IsCommonHandle {
+			if idx.Primary && tbl.TableInfo.IsCommonHandle && !idx.HasPrefixIndex() {
 				commonHandleInfo = idx
 				continue
 			}
