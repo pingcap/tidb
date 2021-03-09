@@ -378,19 +378,29 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 	var fn *expression.ScalarFunction
 	switch raw := partExpr.(type) {
 	case *expression.ScalarFunction:
+		args := raw.GetArgs()
 		// Special handle for floor(unix_timestamp(ts)) as partition expression.
 		// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
 		if raw.FuncName.L == ast.Floor {
+<<<<<<< HEAD
 			if ut, ok := raw.GetArgs()[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
 				args := ut.GetArgs()
 				if len(args) == 1 {
 					if c, ok1 := args[0].(*expression.Column); ok1 {
 						return c, raw, nil
+=======
+			if ut, ok := args[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
+				args1 := ut.GetArgs()
+				if len(args1) == 1 {
+					if c, ok1 := args1[0].(*expression.Column); ok1 {
+						return c, raw, monotoneModeNonStrict, nil
+>>>>>>> 1e985673e... planner: fix query range partition table got wrong result and TiDB panic (#22953)
 					}
 				}
 			}
 		}
 
+<<<<<<< HEAD
 		if _, ok := monotoneIncFuncs[raw.FuncName.L]; ok {
 			fn = raw
 			args := fn.GetArgs()
@@ -399,6 +409,15 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 				if c, ok1 := arg0.(*expression.Column); ok1 {
 					col = c
 				}
+=======
+		fn = raw
+		monotonous = getMonotoneMode(raw.FuncName.L)
+		// Check the partitionExpr is in the form: fn(col, ...)
+		// There should be only one column argument, and it should be the first parameter.
+		if expression.ExtractColumnSet(args).Len() == 1 {
+			if col1, ok := args[0].(*expression.Column); ok {
+				col = col1
+>>>>>>> 1e985673e... planner: fix query range partition table got wrong result and TiDB panic (#22953)
 			}
 		}
 	case *expression.Column:
@@ -520,10 +539,39 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 	return result.simplify()
 }
 
+<<<<<<< HEAD
 // monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)
 var monotoneIncFuncs = map[string]struct{}{
 	ast.ToDays:        {},
 	ast.UnixTimestamp: {},
+=======
+type monotoneMode int
+
+const (
+	monotoneModeInvalid monotoneMode = iota
+	monotoneModeStrict
+	monotoneModeNonStrict
+)
+
+// monotoneIncFuncs are those functions that are monotone increasing.
+// For any x y, if x > y => f(x) > f(y), function f is strict monotone .
+// For any x y, if x > y => f(x) >= f(y), function f is non-strict monotone.
+var monotoneIncFuncs = map[string]monotoneMode{
+	ast.Year:          monotoneModeNonStrict,
+	ast.ToDays:        monotoneModeNonStrict,
+	ast.UnixTimestamp: monotoneModeStrict,
+	// Only when the function form is fn(column, const)
+	ast.Plus:  monotoneModeStrict,
+	ast.Minus: monotoneModeStrict,
+}
+
+func getMonotoneMode(fnName string) monotoneMode {
+	mode, ok := monotoneIncFuncs[fnName]
+	if !ok {
+		return monotoneModeInvalid
+	}
+	return mode
+>>>>>>> 1e985673e... planner: fix query range partition table got wrong result and TiDB panic (#22953)
 }
 
 // f(x) op const, op is > = <

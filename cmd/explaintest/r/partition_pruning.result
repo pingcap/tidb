@@ -3852,6 +3852,7 @@ partition p2 values less than (255)
 );
 insert into t1 values (0x20), (0x20), (0x41), (0x41), (0xFE), (0xFE);
 insert into t2 values (0x20), (0x20), (0x41), (0x41), (0xFE), (0xFE);
+<<<<<<< HEAD
 explain select * from t1 where a=0;
 id	estRows	task	access object	operator info
 TableReader_8	10.00	root		data:Selection_7
@@ -3956,6 +3957,68 @@ PartitionUnion_9	750.00	root
 └─TableReader_18	250.00	root		data:Selection_17
   └─Selection_17	250.00	cop[tikv]		ge(test.t2.a, 63), le(test.t2.a, 64)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t2, partition:p2	keep order:false, stats:pseudo
+=======
+explain format = 'brief' select * from t1 where a=0;
+id	estRows	task	access object	operator info
+TableReader	10.00	root	partition:p0	data:Selection
+└─Selection	10.00	cop[tikv]		eq(test.t1.a, 0)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select * from t2 where a=0;
+id	estRows	task	access object	operator info
+TableReader	10.00	root	partition:p0	data:Selection
+└─Selection	10.00	cop[tikv]		eq(test.t2.a, 0)
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a=0xFE;
+id	estRows	task	access object	operator info
+TableReader	10.00	root	partition:p2	data:Selection
+└─Selection	10.00	cop[tikv]		eq(test.t1.a, 254)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select * from t2 where a=0xFE;
+id	estRows	task	access object	operator info
+TableReader	10.00	root	partition:p2	data:Selection
+└─Selection	10.00	cop[tikv]		eq(test.t2.a, 254)
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a > 0xFE AND a <= 0xFF;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:dual	data:Selection
+└─Selection	250.00	cop[tikv]		gt(test.t1.a, 254), le(test.t1.a, 255)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select * from t2 where a > 0xFE AND a <= 0xFF;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:dual	data:Selection
+└─Selection	250.00	cop[tikv]		gt(test.t2.a, 254), le(test.t2.a, 255)
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a >= 0xFE AND a <= 0xFF;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p2	data:Selection
+└─Selection	250.00	cop[tikv]		ge(test.t1.a, 254), le(test.t1.a, 255)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select * from t2 where a >= 0xFE AND a <= 0xFF;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p2	data:Selection
+└─Selection	250.00	cop[tikv]		ge(test.t2.a, 254), le(test.t2.a, 255)
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a < 64 AND a >= 63;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p0	data:Selection
+└─Selection	250.00	cop[tikv]		ge(test.t1.a, 63), lt(test.t1.a, 64)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select * from t2 where a < 64 AND a >= 63;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p0	data:Selection
+└─Selection	250.00	cop[tikv]		ge(test.t2.a, 63), lt(test.t2.a, 64)
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a <= 64 AND a >= 63;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p0,p1	data:Selection
+└─Selection	250.00	cop[tikv]		ge(test.t1.a, 63), le(test.t1.a, 64)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select * from t2 where a <= 64 AND a >= 63;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p0,p1	data:Selection
+└─Selection	250.00	cop[tikv]		ge(test.t2.a, 63), le(test.t2.a, 64)
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+>>>>>>> 1e985673e... planner: fix query range partition table got wrong result and TiDB panic (#22953)
 drop table t1;
 drop table t2;
 create table t1(a bigint unsigned not null) partition by range(a+0) (
@@ -3969,6 +4032,7 @@ insert into t1 values (9),(19),(0xFFFF0000FFFF000-1), (0xFFFF0000FFFFFFF-1);
 explain select * from t1 where
 a >= 2305561538531885056-10 and a <= 2305561538531885056-8;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 PartitionUnion_10	1000.00	root		
 ├─TableReader_13	250.00	root		data:Selection_12
 │ └─Selection_12	250.00	cop[tikv]		ge(test.t1.a, 2305561538531885046), le(test.t1.a, 2305561538531885048)
@@ -4013,6 +4077,22 @@ PartitionUnion_10	13293.33	root
 └─TableReader_22	3323.33	root		data:Selection_21
   └─Selection_21	3323.33	cop[tikv]		le(test.t1.a, 18446744073709551615)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p4	keep order:false, stats:pseudo
+=======
+TableReader	250.00	root	partition:p3	data:Selection
+└─Selection	250.00	cop[tikv]		ge(test.t1.a, 2305561538531885046), le(test.t1.a, 2305561538531885048)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where
+a > 0xFFFFFFFFFFFFFFEC and a < 0xFFFFFFFFFFFFFFEE;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:dual	data:Selection
+└─Selection	250.00	cop[tikv]		gt(test.t1.a, 18446744073709551596), lt(test.t1.a, 18446744073709551598)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a>=0 and a <= 0xFFFFFFFFFFFFFFFF;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root	partition:all	data:Selection
+└─Selection	3323.33	cop[tikv]		le(test.t1.a, 18446744073709551615)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+>>>>>>> 1e985673e... planner: fix query range partition table got wrong result and TiDB panic (#22953)
 drop table t1;
 create table t1 (a bigint) partition by range(a+0) (
 partition p1 values less than (-1000),
@@ -4021,6 +4101,7 @@ partition p3 values less than (10),
 partition p4 values less than (1000)
 );
 insert into t1 values (-15),(-5),(5),(15),(-15),(-5),(5),(15);
+<<<<<<< HEAD
 explain select * from t1 where a>-2 and a <=0;
 id	estRows	task	access object	operator info
 PartitionUnion_10	1000.00	root		
@@ -4036,6 +4117,13 @@ PartitionUnion_10	1000.00	root
 └─TableReader_22	250.00	root		data:Selection_21
   └─Selection_21	250.00	cop[tikv]		gt(test.t1.a, -2), le(test.t1.a, 0)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p4	keep order:false, stats:pseudo
+=======
+explain format = 'brief' select * from t1 where a>-2 and a <=0;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p3	data:Selection
+└─Selection	250.00	cop[tikv]		gt(test.t1.a, -2), le(test.t1.a, 0)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+>>>>>>> 1e985673e... planner: fix query range partition table got wrong result and TiDB panic (#22953)
 drop table t1;
 CREATE TABLE t1 ( recdate  DATETIME NOT NULL )
 PARTITION BY RANGE( TO_DAYS(recdate) ) (
@@ -4084,6 +4172,7 @@ partition p1 values less than (128),
 partition p2 values less than (255)
 );
 insert into t1 select A.a + 10*B.a from t0 A, t0 B;
+<<<<<<< HEAD
 explain select * from t1 where a between 10 and 13;
 id	estRows	task	access object	operator info
 PartitionUnion_9	750.00	root		
@@ -4108,6 +4197,18 @@ PartitionUnion_9	750.00	root
 └─TableReader_18	250.00	root		data:Selection_17
   └─Selection_17	250.00	cop[tikv]		ge(test.t1.a, 10), le(test.t1.a, 43)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p2	keep order:false, stats:pseudo
+=======
+explain format = 'brief' select * from t1 where a between 10 and 13;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p0	data:Selection
+└─Selection	250.00	cop[tikv]		ge(test.t1.a, 10), le(test.t1.a, 13)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a between 10 and 10+33;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p0	data:Selection
+└─Selection	250.00	cop[tikv]		ge(test.t1.a, 10), le(test.t1.a, 43)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+>>>>>>> 1e985673e... planner: fix query range partition table got wrong result and TiDB panic (#22953)
 drop table t0, t1;
 drop table if exists t;
 create table t(a timestamp) partition by range(unix_timestamp(a)) (partition p0 values less than(unix_timestamp('2019-02-16 14:20:00')), partition p1 values less than (maxvalue));
