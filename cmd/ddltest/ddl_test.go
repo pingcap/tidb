@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/store"
 	tidbdriver "github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
@@ -604,7 +605,7 @@ func (s *TestDDLSuite) TestSimpleInsert(c *C) {
 
 	tbl := s.getTable(c, "test_insert")
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		c.Assert(data[0].GetValue(), Equals, data[1].GetValue())
 		return true, nil
@@ -655,7 +656,7 @@ func (s *TestDDLSuite) TestSimpleConflictInsert(c *C) {
 
 	tbl := s.getTable(c, tblName)
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 		c.Assert(data[0].GetValue(), Equals, data[1].GetValue())
@@ -708,7 +709,7 @@ func (s *TestDDLSuite) TestSimpleUpdate(c *C) {
 
 	tbl := s.getTable(c, tblName)
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		key := data[0].GetInt64()
 		c.Assert(data[1].GetValue(), Equals, keysMap[key])
@@ -781,7 +782,7 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 
 	tbl := s.getTable(c, tblName)
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 
@@ -831,7 +832,7 @@ func (s *TestDDLSuite) TestSimpleDelete(c *C) {
 
 	tbl := s.getTable(c, tblName)
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		return true, nil
 	})
@@ -901,7 +902,7 @@ func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
 
 	tbl := s.getTable(c, tblName)
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 		return true, nil
@@ -971,7 +972,7 @@ func (s *TestDDLSuite) TestSimpleMixed(c *C) {
 	tbl := s.getTable(c, tblName)
 	updateCount := int64(0)
 	insertCount := int64(0)
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) {
 			insertCount++
 		} else if reflect.DeepEqual(data[1].GetValue(), defaultValue) && data[0].GetInt64() < int64(rowCount) {
@@ -1041,7 +1042,7 @@ func (s *TestDDLSuite) TestSimpleInc(c *C) {
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_inc")
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if reflect.DeepEqual(data[0].GetValue(), int64(0)) {
 			if *enableRestart {
 				c.Assert(data[1].GetValue(), GreaterEqual, int64(rowCount))
