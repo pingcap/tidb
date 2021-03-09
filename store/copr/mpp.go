@@ -237,7 +237,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 }
 
 // NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution will stop after some minutes.
-func (m *mppIterator) cancelMppTask(bo *tikv.Backoffer, meta *mpp.TaskMeta) {
+func (m *mppIterator) cancelMppTasks(bo *tikv.Backoffer, meta *mpp.TaskMeta) {
 	killReq := &mpp.CancelTaskRequest{
 		Meta: meta,
 	}
@@ -272,7 +272,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
 
 	if err != nil {
-		m.cancelMppTask(bo, taskMeta)
+		m.cancelMppTasks(bo, taskMeta)
 		m.sendError(err)
 		return
 	}
@@ -286,15 +286,22 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	}
 
 	for {
+		if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
+			m.cancelMppTasks(bo, taskMeta)
+			err = tikv.ErrQueryInterrupted
+			m.sendError(err)
+			return
+		}
+
 		err := m.handleMPPStreamResponse(bo, resp, req)
 		if err != nil {
-			m.cancelMppTask(bo, taskMeta)
+			m.cancelMppTasks(bo, taskMeta)
 			m.sendError(err)
 			return
 		}
 
 		if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
-			m.cancelMppTask(bo, taskMeta)
+			m.cancelMppTasks(bo, taskMeta)
 			err = tikv.ErrQueryInterrupted
 			m.sendError(err)
 			return
@@ -317,7 +324,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 				err: tikv.ErrTiFlashServerTimeout,
 			})
 
-			m.cancelMppTask(bo, taskMeta)
+			m.cancelMppTasks(bo, taskMeta)
 			return
 		}
 	}
