@@ -374,6 +374,52 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a varchar(20))")
 
+<<<<<<< HEAD
+=======
+func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+
+	t := time.Now().Add(-1 * time.Minute)
+	h, m := t.Hour(), t.Minute()
+	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
+	s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema())
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, index idx(a))")
+	// to pass the stats.Pseudo check in autoAnalyzeTable
+	tk.MustExec("analyze table t")
+	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(handle.AutoAnalyzeMinCnt)))
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+
+	// test if it will be limited by the time range
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
+
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='00:00 +0000'"))
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='23:59 +0000'"))
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+}
+
+func (s *testSerialStatsSuite) TestAutoAnalyzeOnChangeAnalyzeVer(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("set @@global.tidb_analyze_version = 1")
+	do := s.do
+>>>>>>> 579cf90af... statistics: fix a case that auto-analyze is triggered outside its time range (#23214)
 	handle.AutoAnalyzeMinCnt = 0
 	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
 	defer func() {
