@@ -280,9 +280,10 @@ type topNRows struct {
 	currSize  uint64
 	limitSize uint64
 	sepSize   uint64
-	// If (separator, row) pair is poped from heap, we need to append separator in concat()
-	// In the following example, (sep2, str3) pair is poped, but partial sep2 need to be appended.
-	// eg: "str1 sep1 str2 sep2 str3" -> "str1 sep1 str2 se"
+	// If sep is truncated, we need to append part of sep to result.
+	// In the following example, session.group_concat_max_len is 10 and sep is '---'.
+	// ('---', 'ccc') should be poped from heap, so '-' should be appended to result.
+	// eg: 'aaa---bbb---ccc' -> 'aaa---bbb-'
 	isSepTruncated bool
 }
 
