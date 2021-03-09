@@ -955,17 +955,17 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Case, ast.If, ast.Ifnull, ast.Coalesce,
 
 		// string functions.
-		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, /*ast.Locate,*/ ast.Replace, ast.ASCII, ast.Hex,
-		ast.Reverse, ast.LTrim, ast.RTrim, /*ast.Left,*/ ast.Strcmp, ast.Space, ast.Elt, ast.Field,
+		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS /*ast.Locate,*/, ast.Replace, ast.ASCII, ast.Hex,
+		ast.Reverse, ast.LTrim, ast.RTrim /*ast.Left,*/, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
-		ast.JSONInsert, /*ast.JSONReplace,*/ ast.JSONRemove, ast.JSONLength,
+		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
 		// FIXME: JSONUnquote is incompatible with Coprocessor
 		// ast.JSONUnquote,
 
 		// date functions.
-		ast.DateFormat, ast.FromDays, /*ast.ToDays,*/ ast.DayOfYear, ast.DayOfMonth, ast.Year, ast.Month,
+		ast.DateFormat, ast.FromDays /*ast.ToDays,*/, ast.DayOfYear, ast.DayOfMonth, ast.Year, ast.Month,
 		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
 		// ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.DayName,
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
