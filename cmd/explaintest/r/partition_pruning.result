@@ -2276,7 +2276,7 @@ TableReader	250.00	root	partition:dual	data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t2 where a > 0xFE AND a <= 0xFF;
 id	estRows	task	access object	operator info
-TableReader	250.00	root	partition:all	data:Selection
+TableReader	250.00	root	partition:dual	data:Selection
 └─Selection	250.00	cop[tikv]		gt(test.t2.a, 254), le(test.t2.a, 255)
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where a >= 0xFE AND a <= 0xFF;
@@ -2286,7 +2286,7 @@ TableReader	250.00	root	partition:p2	data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t2 where a >= 0xFE AND a <= 0xFF;
 id	estRows	task	access object	operator info
-TableReader	250.00	root	partition:all	data:Selection
+TableReader	250.00	root	partition:p2	data:Selection
 └─Selection	250.00	cop[tikv]		ge(test.t2.a, 254), le(test.t2.a, 255)
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where a < 64 AND a >= 63;
@@ -2296,7 +2296,7 @@ TableReader	250.00	root	partition:p0	data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t2 where a < 64 AND a >= 63;
 id	estRows	task	access object	operator info
-TableReader	250.00	root	partition:all	data:Selection
+TableReader	250.00	root	partition:p0	data:Selection
 └─Selection	250.00	cop[tikv]		ge(test.t2.a, 63), lt(test.t2.a, 64)
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where a <= 64 AND a >= 63;
@@ -2306,7 +2306,7 @@ TableReader	250.00	root	partition:p0,p1	data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t2 where a <= 64 AND a >= 63;
 id	estRows	task	access object	operator info
-TableReader	250.00	root	partition:all	data:Selection
+TableReader	250.00	root	partition:p0,p1	data:Selection
 └─Selection	250.00	cop[tikv]		ge(test.t2.a, 63), le(test.t2.a, 64)
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table t1;
@@ -2322,13 +2322,13 @@ insert into t1 values (9),(19),(0xFFFF0000FFFF000-1), (0xFFFF0000FFFFFFF-1);
 explain format = 'brief' select * from t1 where
 a >= 2305561538531885056-10 and a <= 2305561538531885056-8;
 id	estRows	task	access object	operator info
-TableReader	250.00	root	partition:all	data:Selection
+TableReader	250.00	root	partition:p3	data:Selection
 └─Selection	250.00	cop[tikv]		ge(test.t1.a, 2305561538531885046), le(test.t1.a, 2305561538531885048)
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where
 a > 0xFFFFFFFFFFFFFFEC and a < 0xFFFFFFFFFFFFFFEE;
 id	estRows	task	access object	operator info
-TableReader	250.00	root	partition:all	data:Selection
+TableReader	250.00	root	partition:dual	data:Selection
 └─Selection	250.00	cop[tikv]		gt(test.t1.a, 18446744073709551596), lt(test.t1.a, 18446744073709551598)
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where a>=0 and a <= 0xFFFFFFFFFFFFFFFF;
@@ -2346,7 +2346,7 @@ partition p4 values less than (1000)
 insert into t1 values (-15),(-5),(5),(15),(-15),(-5),(5),(15);
 explain format = 'brief' select * from t1 where a>-2 and a <=0;
 id	estRows	task	access object	operator info
-TableReader	250.00	root	partition:all	data:Selection
+TableReader	250.00	root	partition:p3	data:Selection
 └─Selection	250.00	cop[tikv]		gt(test.t1.a, -2), le(test.t1.a, 0)
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table t1;
@@ -2391,12 +2391,12 @@ partition p2 values less than (255)
 insert into t1 select A.a + 10*B.a from t0 A, t0 B;
 explain format = 'brief' select * from t1 where a between 10 and 13;
 id	estRows	task	access object	operator info
-TableReader	250.00	root	partition:all	data:Selection
+TableReader	250.00	root	partition:p0	data:Selection
 └─Selection	250.00	cop[tikv]		ge(test.t1.a, 10), le(test.t1.a, 13)
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where a between 10 and 10+33;
 id	estRows	task	access object	operator info
-TableReader	250.00	root	partition:all	data:Selection
+TableReader	250.00	root	partition:p0	data:Selection
 └─Selection	250.00	cop[tikv]		ge(test.t1.a, 10), le(test.t1.a, 43)
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table t0, t1;

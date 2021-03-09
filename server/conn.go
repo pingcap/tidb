@@ -80,7 +80,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -682,13 +681,14 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, err := cc.PeerHost(hasPassword)
+	host, port, err := cc.PeerHost(hasPassword)
 	if err != nil {
 		return err
 	}
 	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
 		return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
+	cc.ctx.SetPort(port)
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
@@ -699,9 +699,9 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	return nil
 }
 
-func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
+func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
 	if len(cc.peerHost) > 0 {
-		return cc.peerHost, nil
+		return cc.peerHost, "", nil
 	}
 	host = variable.DefHostname
 	if cc.server.isUnixSocket() {
@@ -709,7 +709,6 @@ func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
 		return
 	}
 	addr := cc.bufReadConn.RemoteAddr().String()
-	var port string
 	host, port, err = net.SplitHostPort(addr)
 	if err != nil {
 		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
@@ -1778,6 +1777,11 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	}
 
 	for {
+		failpoint.Inject("secondNextErr", func(value failpoint.Value) {
+			if value.(bool) && !firstNext {
+				failpoint.Return(firstNext, tikv.ErrTiFlashServerTimeout)
+			}
+		})
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
 		if err != nil {
@@ -1895,30 +1899,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		cl.OnFetchReturned()
 	}
 	return cc.writeEOF(serverStatus)
-}
-
-func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {
-	for i, rs := range rss {
-		lastRs := i == len(rss)-1
-		if r, ok := rs.(*tidbResultSet).recordSet.(sqlexec.MultiQueryNoDelayResult); ok {
-			status := r.Status()
-			if !lastRs {
-				status |= mysql.ServerMoreResultsExists
-			}
-			if err := cc.writeOkWith(ctx, r.LastMessage(), r.AffectedRows(), r.LastInsertID(), status, r.WarnCount()); err != nil {
-				return err
-			}
-			continue
-		}
-		status := uint16(0)
-		if !lastRs {
-			status |= mysql.ServerMoreResultsExists
-		}
-		if _, err := cc.writeResultset(ctx, rs, binary, status, 0); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (cc *clientConn) setConn(conn net.Conn) {

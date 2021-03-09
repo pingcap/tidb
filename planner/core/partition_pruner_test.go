@@ -98,7 +98,7 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
 	tk.Se.GetSessionVars().EnableClusteredIndex = false
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table t1 (id int, a int, b int                 ) partition by list (    a    ) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t2 (a int, id int, b int) partition by list (a*3 + b - 2*a - b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t3 (b int, id int, a int) partition by list columns (a) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
@@ -162,10 +162,11 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 
 func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table t1 (id int, a int, b int) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
 	tk.MustExec("create table t2 (id int, a int, b int) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
 	tk.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
@@ -176,7 +177,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	tk1.MustExec("drop database if exists test_partition_1;")
 	tk1.MustExec("create database test_partition_1")
 	tk1.MustExec("use test_partition_1")
-	tk1.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk1.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk1.MustExec("create table t1 (id int, a int, b int, unique key (a,b,id)) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
 	tk1.MustExec("create table t2 (id int, a int, b int, unique key (a,b,id)) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
 	tk1.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
@@ -375,7 +376,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 		tk.MustExec("drop database if exists test_partition;")
 		tk.MustExec("create database test_partition")
 		tk.MustExec("use test_partition")
-		tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+		tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 		tk.MustExec(createSQL.String())
 
 		tk1 := testkit.NewTestKit(c, s.store)
@@ -446,4 +447,27 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 			tk.MustQuery(query.String()).Check(tk1.MustQuery(query.String()).Rows())
 		}
 	}
+}
+
+func (s *testPartitionPruneSuit) TestIssue22898(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS test;")
+	tk.MustExec("CREATE TABLE NT_RP3763 (COL1 TINYINT(8) SIGNED COMMENT \"NUMERIC NO INDEX\" DEFAULT 41,COL2 VARCHAR(20),COL3 DATETIME,COL4 BIGINT,COL5 FLOAT) PARTITION BY RANGE (COL1 * COL3) (PARTITION P0 VALUES LESS THAN (0),PARTITION P1 VALUES LESS THAN (10),PARTITION P2 VALUES LESS THAN (20),PARTITION P3 VALUES LESS THAN (30),PARTITION P4 VALUES LESS THAN (40),PARTITION P5 VALUES LESS THAN (50),PARTITION PMX VALUES LESS THAN MAXVALUE);")
+	tk.MustExec("insert into NT_RP3763 (COL1,COL2,COL3,COL4,COL5) values(-82,\"夐齏醕皆磹漋甓崘潮嵙燷渏艂朼洛炷鉢儝鱈肇\",\"5748\\-06\\-26\\ 20:48:49\",-3133527360541070260,-2.624880003397658e+38);")
+	tk.MustExec("insert into NT_RP3763 (COL1,COL2,COL3,COL4,COL5) values(48,\"簖鹩筈匹眜赖泽騈爷詵赺玡婙Ɇ郝鮙廛賙疼舢\",\"7228\\-12\\-13\\ 02:59:54\",-6181009269190017937,2.7731105531290494e+38);")
+	tk.MustQuery("select * from `NT_RP3763` where `COL1` in (10, 48, -82);").Check(testkit.Rows("-82 夐齏醕皆磹漋甓崘潮嵙燷渏艂朼洛炷鉢儝鱈肇 5748-06-26 20:48:49 -3133527360541070260 -262488000000000000000000000000000000000", "48 簖鹩筈匹眜赖泽騈爷詵赺玡婙Ɇ郝鮙廛賙疼舢 7228-12-13 02:59:54 -6181009269190017937 277311060000000000000000000000000000000"))
+	tk.MustQuery("select * from `NT_RP3763` where `COL1` in (48);").Check(testkit.Rows("48 簖鹩筈匹眜赖泽騈爷詵赺玡婙Ɇ郝鮙廛賙疼舢 7228-12-13 02:59:54 -6181009269190017937 277311060000000000000000000000000000000"))
+}
+
+func (s *testPartitionPruneSuit) Test22396(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS test;")
+	tk.MustExec("CREATE TABLE test(a INT, b INT, PRIMARY KEY(a, b)) PARTITION BY RANGE (a + b) (PARTITION p0 VALUES LESS THAN (20),PARTITION p1 VALUES LESS THAN MAXVALUE);")
+	tk.MustExec("INSERT INTO test(a, b) VALUES(1, 11),(2, 22),(3, 33),(10, 44),(9, 55);")
+	tk.MustQuery("SELECT * FROM test WHERE a = 1;")
+	tk.MustQuery("SELECT * FROM test WHERE b = 1;")
+	tk.MustQuery("SELECT * FROM test WHERE a = 1 AND b = 1;")
+	tk.MustQuery("SELECT * FROM test WHERE a + b = 2;")
 }
