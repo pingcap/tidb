@@ -1650,10 +1650,10 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 		testKit.MustExec("insert into t values (3,4), (3,4), (3,4), (3,4), (3,4)")
 	}
 	// trigger feedback
-	testKit.MustExec("select * from t partition(p0) where t.a <= 3;")
-	testKit.MustExec("select * from t partition(p1) where t.a <= 3;")
-	testKit.MustExec("select * from t where t.b <= 3 order by a;")
-	testKit.MustExec("select * from t use index(idx) where t.b <= 3;")
+	testKit.MustExec("select b from t partition(p0) use index(idx) where t.b <= 3;")
+	testKit.MustExec("select b from t partition(p1) use index(idx) where t.b <= 3;")
+	testKit.MustExec("select b from t use index(idx) where t.b <= 3 order by b;")
+	testKit.MustExec("select b from t use index(idx) where t.b <= 3;")
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 	err = h.DumpStatsFeedbackToKV()
@@ -1662,6 +1662,7 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 	c.Assert(err, IsNil)
 	statsTblAfter := h.GetTableStats(tblInfo)
 	// assert that statistics not changed
+	// the feedback can not work for the partition table in dynamic mode
 	assertTableEqual(c, statsTblBefore, statsTblAfter)
 
 	// Case 3: Feedback is still effective on version 1 and partition-level statistics.
@@ -1682,10 +1683,10 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 	tblInfo = table.Meta()
 	statsTblBefore = h.GetTableStats(tblInfo)
 	// trigger feedback
-	testKit.MustExec("select * from t partition(p0) where t.a <= 3;")
-	testKit.MustExec("select * from t partition(p1) where t.a <= 3;")
-	testKit.MustExec("select * from t where t.b <= 3 order by a;")
-	testKit.MustExec("select * from t use index(idx) where t.b <= 3;")
+	testKit.MustExec("select b from t partition(p0) use index(idx) where t.b <= 3;")
+	testKit.MustExec("select b from t partition(p1) use index(idx) where t.b <= 3;")
+	testKit.MustExec("select b from t use index(idx) where t.b <= 3 order by b;")
+	testKit.MustExec("select b from t use index(idx) where t.b <= 3;")
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 	err = h.DumpStatsFeedbackToKV()
@@ -1694,7 +1695,7 @@ func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
 	c.Assert(err, IsNil)
 	statsTblAfter = h.GetTableStats(tblInfo)
 	// assert that statistics not changed
-	// the feedback can not work for the partition table
+	// the feedback can not work for the partition table in static mode
 	assertTableEqual(c, statsTblBefore, statsTblAfter)
 }
 
