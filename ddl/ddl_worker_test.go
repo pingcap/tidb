@@ -102,6 +102,11 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 	)
 	defer d.Stop()
 	getFirstNotificationAfterStartDDL(d)
+	// Ensure that the notification is not handled by worker's "start".
+	d.cancel()
+	for _, worker := range d.workers {
+		worker.close()
+	}
 
 	job := &model.Job{
 		SchemaID:   1,
@@ -127,6 +132,7 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 	default:
 		c.Fatal("do not get the add index job notification")
 	}
+
 	// Test the notification mechanism that the owner and the server receiving the DDL request are not on the same TiDB.
 	// And the etcd client is nil.
 	d1 := testNewDDLAndStart(
@@ -135,8 +141,13 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	getFirstNotificationAfterStartDDL(d1)
 	defer d1.Stop()
+	getFirstNotificationAfterStartDDL(d1)
+	// Ensure that the notification is not handled by worker's "start".
+	d1.cancel()
+	for _, worker := range d1.workers {
+		worker.close()
+	}
 	d1.ownerManager.RetireOwner()
 	d1.asyncNotifyWorker(job)
 	job.Type = model.ActionCreateTable
