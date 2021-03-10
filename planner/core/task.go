@@ -558,7 +558,7 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 }
 
 // for different decimal scale and precision, tiflash uses different underlying type.
-// Here we check the scale and precision to decide whether convertion is a must.
+// Here we check the scale and precision to decide whether conversion is a must.
 func needDecimalConvert(tp *types.FieldType, dec int, l int) bool {
 	if tp.Decimal != dec {
 		return true
@@ -626,7 +626,7 @@ func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.C
 	return col
 }
 
-// If the join key's type are decimal and needs convertion, we will add a projection below the join or exchanger if exists.
+// If the join key's type are decimal and needs conversion, we will add a projection below the join or exchanger if exists.
 func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppTask, *mppTask) {
 	lp := lTask.p
 	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
