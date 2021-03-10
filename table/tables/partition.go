@@ -633,6 +633,7 @@ func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model
 		}
 		c.Index = idx
 	}
+	err = lp.buildListPartitionValueMap(ctx, tblInfo, schema, names, p)
 	if err != nil {
 		return err
 	}
