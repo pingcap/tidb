@@ -359,7 +359,11 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	case mysql.TypeEnum:
 		flag = compactBytesFlag
 		v := uint64(row.GetEnum(idx).ToNumber())
-		str := tp.Elems[v-1]
+		str := ""
+		if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
+			// str will be empty string if v out of definition of enum.
+			str = enum.Name
+		}
 		b = ConvertByCollation(hack.Slice(str), tp)
 	case mysql.TypeSet:
 		flag = compactBytesFlag
@@ -571,7 +575,11 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			} else {
 				buf[0] = compactBytesFlag
 				v := uint64(column.GetEnum(i).ToNumber())
-				str := tp.Elems[v-1]
+				str := ""
+				if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
+					// str will be empty string if v out of definition of enum.
+					str = enum.Name
+				}
 				b = ConvertByCollation(hack.Slice(str), tp)
 			}
 
