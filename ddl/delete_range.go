@@ -346,29 +346,6 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 	return nil
 }
 
-<<<<<<< HEAD
-=======
-func doBatchDeleteIndiceRange(s sqlexec.SQLExecutor, jobID, tableID int64, indexIDs []int64, ts uint64) error {
-	logutil.BgLogger().Info("[ddl] batch insert into delete-range indices", zap.Int64("jobID", jobID), zap.Int64s("elementIDs", indexIDs))
-	paramsList := make([]interface{}, 0, len(indexIDs)*5)
-	var buf strings.Builder
-	buf.WriteString(insertDeleteRangeSQLPrefix)
-	for i, indexID := range indexIDs {
-		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-		startKeyEncoded := hex.EncodeToString(startKey)
-		endKeyEncoded := hex.EncodeToString(endKey)
-		buf.WriteString(insertDeleteRangeSQLValue)
-		if i != len(indexIDs)-1 {
-			buf.WriteString(",")
-		}
-		paramsList = append(paramsList, jobID, indexID, startKeyEncoded, endKeyEncoded, ts)
-	}
-	_, err := s.ExecuteInternal(context.Background(), buf.String(), paramsList...)
-	return errors.Trace(err)
-}
-
->>>>>>> dedaabb80... ddl: migrate part of ddl package code from Execute/ExecRestricted to safe API (2) (#22729)
 func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts uint64) error {
 	logutil.BgLogger().Info("[ddl] insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64("elementID", elementID))
 	startKeyEncoded := hex.EncodeToString(startKey)
