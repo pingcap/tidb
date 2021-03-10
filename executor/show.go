@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/security"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -703,6 +704,9 @@ func (e *ShowExec) fetchShowStatus() error {
 	}
 	for status, v := range statusVars {
 		if e.GlobalScope && v.Scope == variable.ScopeSession {
+			continue
+		}
+		if security.IsInvisibleStatusVar(status) {
 			continue
 		}
 		switch v.Value.(type) {

@@ -73,6 +73,7 @@ const (
 	tidbProfileMemory     = "tidb_profile_memory"
 	tidbProfileMutex      = "tidb_profile_mutex"
 	tikvProfileCPU        = "tikv_profile_cpu"
+	tidbGCLeaderDesc      = "tidb_gc_leader_desc"
 )
 
 var secureVarsList = []string{
@@ -104,7 +105,7 @@ func Enable() {
 	for _, name := range secureVarsList {
 		variable.UnregisterSysVar(name)
 	}
-	config.GetGlobalConfig().EnableEnhancedSecurity = true
+	config.GetGlobalConfig().Experimental.EnableEnhancedSecurity = true
 }
 
 // Disable disables SEM. This is intended to be used by the test-suite.
@@ -116,12 +117,12 @@ func Disable() {
 	for _, name := range secureVarsList {
 		variable.RegisterSysVarFromDefaults(name)
 	}
-	config.GetGlobalConfig().EnableEnhancedSecurity = false
+	config.GetGlobalConfig().Experimental.EnableEnhancedSecurity = false
 }
 
 // IsEnabled checks if Security Enhanced Mode (SEM) is enabled
 func IsEnabled() bool {
-	return config.GetGlobalConfig().EnableEnhancedSecurity
+	return config.GetGlobalConfig().Experimental.EnableEnhancedSecurity
 }
 
 // IsReadOnlySystemTable returns true if SEM is enabled
@@ -177,4 +178,13 @@ func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
 		return true
 	}
 	return false
+}
+
+// IsInvisibleStatusVar returns true if SEM is enabled and the
+// status var needs to be hidden
+func IsInvisibleStatusVar(varName string) bool {
+	if !IsEnabled() {
+		return false
+	}
+	return varName == tidbGCLeaderDesc
 }

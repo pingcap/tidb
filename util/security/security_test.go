@@ -47,7 +47,6 @@ func (s *testSecurity) TestGetSetSysVars(c *C) {
 }
 
 func (s *testSecurity) TestIsReadOnlySystemTable(c *C) {
-
 	Enable()
 	tbls := []string{bindInfo, columnsPriv, db, defaultRoles, globalPriv, helpTopic,
 		roleEdges, schemaIndexUsage, statsBuckets, statsExtended, statsFeedback,
@@ -62,30 +61,22 @@ func (s *testSecurity) TestIsReadOnlySystemTable(c *C) {
 	for _, tbl := range tbls {
 		c.Assert(IsReadOnlySystemTable(tbl), IsFalse)
 	}
-
 }
 
 func (s *testSecurity) TestInvisibleSchema(c *C) {
-
 	Enable()
-
 	c.Assert(IsInvisibleSchema(metricsSchema), IsTrue)
 	c.Assert(IsInvisibleSchema("METRICS_ScHEma"), IsTrue)
 	c.Assert(IsInvisibleSchema("mysql"), IsFalse)
 	c.Assert(IsInvisibleSchema(informationSchema), IsFalse)
 	c.Assert(IsInvisibleSchema("Bogusname"), IsFalse)
-
 	Disable()
-
 	c.Assert(IsInvisibleSchema(metricsSchema), IsFalse)
 	c.Assert(IsInvisibleSchema("Bogusname"), IsFalse)
-
 }
 
 func (s *testSecurity) TestIsInvisibleTable(c *C) {
-
 	Enable()
-
 	mysqlTbls := []string{exprPushdownBlacklist, gcDeleteRange, gcDeleteRangeDone, optRuleBlacklist, tidb, globalVariables}
 	infoSchemaTbls := []string{clusterConfig, clusterHardware, clusterLoad, clusterLog, clusterSystemInfo, inspectionResult,
 		inspectionRules, inspectionSummary, metricsSummary, metricsSummaryByLabel, metricsTables, tidbHotRegions}
@@ -122,5 +113,17 @@ func (s *testSecurity) TestIsInvisibleTable(c *C) {
 	c.Assert(IsInvisibleTable(metricsSchema, "acdc"), IsFalse)
 	c.Assert(IsInvisibleTable(metricsSchema, "fdsgfd"), IsFalse)
 	c.Assert(IsInvisibleTable("test", "t1"), IsFalse)
+}
 
+func (s *testSecurity) TestIsInvisibleStatusVar(c *C) {
+	Enable()
+	c.Assert(IsInvisibleStatusVar(tidbGCLeaderDesc), IsTrue)
+	c.Assert(IsInvisibleStatusVar("server_id"), IsFalse)
+	c.Assert(IsInvisibleStatusVar("ddl_schema_version"), IsFalse)
+	c.Assert(IsInvisibleStatusVar("Ssl_version"), IsFalse)
+	Disable()
+	c.Assert(IsInvisibleStatusVar(tidbGCLeaderDesc), IsFalse)
+	c.Assert(IsInvisibleStatusVar("server_id"), IsFalse)
+	c.Assert(IsInvisibleStatusVar("ddl_schema_version"), IsFalse)
+	c.Assert(IsInvisibleStatusVar("Ssl_version"), IsFalse)
 }

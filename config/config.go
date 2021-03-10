@@ -176,8 +176,6 @@ type Config struct {
 	// EnableTCP4Only enables net.Listen("tcp4",...)
 	// Note that: it can make lvs with toa work and thus tidb can get real client ip.
 	EnableTCP4Only bool `toml:"enable-tcp4-only" json:"enable-tcp4-only"`
-	// EnableEnhancedSecurity prevents SUPER users from having full access.
-	EnableEnhancedSecurity bool `toml:"enable-enhanced-security" json:"enable-enhanced-security"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -531,6 +529,8 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
+	// EnableEnhancedSecurity prevents SUPER users from having full access.
+	EnableEnhancedSecurity bool `toml:"enable-enhanced-security" json:"enable-enhanced-security"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -650,8 +650,9 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowsExpressionIndex: false,
-		EnableGlobalKill:      false,
+		AllowsExpressionIndex:  false,
+		EnableGlobalKill:       false,
+		EnableEnhancedSecurity: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
@@ -663,7 +664,6 @@ var defaultConf = Config{
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
 	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
-	EnableEnhancedSecurity:       false,
 }
 
 var (

@@ -574,7 +574,7 @@ func setGlobalVars() {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
 
-	if cfg.EnableEnhancedSecurity {
+	if cfg.Experimental.EnableEnhancedSecurity {
 		security.Enable()
 	}
 
