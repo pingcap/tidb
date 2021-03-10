@@ -1660,6 +1660,14 @@
         ]
       },
       {
+        "SQL": "desc format = 'brief' select count(distinct value),id from t group by id",
+        "Plan": [
+          "HashAgg 8000.00 root  group by:test.t.id, funcs:count(distinct test.t.value)->Column#4, funcs:sum(distinct test.t.value)->Column#5, funcs:firstrow(test.t.id)->test.t.id",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "desc format = 'brief' select * from t join ( select count(distinct value), id from t group by id) as A on A.id = t.id",
         "Plan": [
           "TableReader 9990.00 root  data:ExchangeSender",
