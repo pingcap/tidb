@@ -45,19 +45,19 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		}
 	case model.ActionAddTablePartition, model.ActionTruncateTablePartition:
 		pruneMode := h.CurrentPruneMode()
-		if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+		if pruneMode == variable.Static {
 			for _, def := range t.PartInfo.Definitions {
 				if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
 					return err
 				}
 			}
 		}
-		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+		if pruneMode == variable.Dynamic {
 			// TODO: need trigger full analyze
 		}
 	case model.ActionDropTablePartition:
 		pruneMode := h.CurrentPruneMode()
-		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+		if pruneMode == variable.Dynamic {
 			// TODO: need trigger full analyze
 		}
 	}
@@ -70,13 +70,10 @@ func (h *Handle) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64) {
 		return []int64{tblInfo.ID}
 	}
 	ids = make([]int64, 0, len(pi.Definitions)+1)
-	pruneMode := h.CurrentPruneMode()
-	if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
-		for _, def := range pi.Definitions {
-			ids = append(ids, def.ID)
-		}
+	for _, def := range pi.Definitions {
+		ids = append(ids, def.ID)
 	}
-	if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+	if h.CurrentPruneMode() == variable.Dynamic {
 		ids = append(ids, tblInfo.ID)
 	}
 	return ids

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package session_test
 
 import (
 	. "github.com/pingcap/check"
@@ -20,16 +20,32 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
-type testClusteredSuiteBase struct{ baseTestSuite }
-type testClusteredSuite struct{ testClusteredSuiteBase }
+type testClusteredSuiteBase struct{ testSessionSuiteBase }
+type testClusteredSuite struct {
+	testClusteredSuiteBase
+	testData testutil.TestData
+}
 type testClusteredSerialSuite struct{ testClusteredSuiteBase }
 
 func (s *testClusteredSuiteBase) newTK(c *C) *testkit.TestKit {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	return tk
+}
+
+func (s *testClusteredSuite) SetUpSuite(c *C) {
+	s.testClusteredSuiteBase.SetUpSuite(c)
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "clustered_index_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testClusteredSuite) TearDownSuite(c *C) {
+	s.testClusteredSuiteBase.TearDownSuite(c)
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testClusteredSuite) TestClusteredUnionScan(c *C) {
@@ -49,6 +65,75 @@ func (s *testClusteredSuite) TestClusteredUnionScan(c *C) {
 	tk.MustExec("update t set c = 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
 	tk.MustExec("rollback")
+}
+
+func (s *testClusteredSuite) TestClusteredPrefixColumn(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(cb varchar(12), ci int, v int, primary key(cb(1)), key idx_1(cb))")
+	tk.MustExec("insert into t1 values('PvtYW2', 1, 1)")
+	tk.MustQuery("select cb from t1").Check(testkit.Rows("PvtYW2"))
+	tk.MustQuery("select * from t1").Check(testkit.Rows("PvtYW2 1 1"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100), c3 varchar(100), primary key (c1,c2), key idx1 (c2(1)))")
+	tk.MustExec("insert into t1 select 'a', 'cd', 'ef'")
+	tk.MustExec("create table t2(c1 varchar(100), c2 varchar(100), c3 varchar(100), primary key (c1,c2(1)), key idx1 (c1,c2))")
+	tk.MustExec("insert into t2 select 'a', 'cd', 'ef'")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
+
+	tk.MustExec("drop table if exists test1")
+	tk.MustExec("create table test1(c1 varchar(100) not null default 'xyza', c2 int, primary key(c1(3)) clustered)")
+	tk.MustExec("replace into test1(c2) values(1)")
+	tk.MustExec("replace into test1(c2) values(2)")
+	tk.MustQuery("select * from test1").Check(testkit.Rows("xyza 2"))
+
+	tk.MustExec("drop table if exists test3")
+	tk.MustExec("create table test3(c1 varchar(100), c2 int, primary key(c1(1)) clustered)")
+	tk.MustExec("insert into test3 values('ab', 1) on duplicate key update c2 = 100")
+	tk.MustExec("insert into test3 values('ab', 1) on duplicate key update c2 = 100")
+	tk.MustQuery("select * from test3").Check(testkit.Rows("ab 100"))
+	tk.MustExec("insert into test3 values('ab', 1) on duplicate key update c1 = 'cc', c2 = '200'")
+	tk.MustQuery("select * from test3").Check(testkit.Rows("cc 200"))
+
+	tk.MustExec("drop table if exists tbl_3")
+	tk.MustExec(`create table tbl_3 ( col_15 text(138) , col_16 varchar(37) default 'yGdboyZqIGDQhwRRc' not null , col_17 text(39) not null , col_18 char(58) default 'vBahOai' , col_19 varchar(470) , primary key idx_12 ( col_16(3),col_17(6),col_15(4)) clustered, key idx_13 ( col_19(2) ) , key idx_14 ( col_18(3),col_15(2) ) , unique key idx_15 ( col_16(4),col_18(6) ) , unique key idx_16 ( col_17(1) ) )`)
+	tk.MustExec("insert into tbl_3 values ( 'XJUDeSZplXx','TfZhIWnJPygn','HlZjQffSh','VDsepqNPkx','xqtMHHOqnLvcxDpL')")
+	tk.MustExec("insert into tbl_3 (col_15,col_17,col_19) values ( 'aeMrIjbfCxErg','HTZmtykzIkFMF','' ) on duplicate key update col_18 = values( col_18 )")
+	tk.MustQuery("select col_17 from tbl_3").Check(testkit.Rows("HlZjQffSh"))
+
+	tk.MustExec("drop table if exists tbl_1")
+	tk.MustExec("CREATE TABLE `tbl_1`(`col_5` char(84) NOT NULL DEFAULT 'BnHWZQY',   `col_6` char(138) DEFAULT NULL,   `col_7` tinytext NOT NULL,   `col_8` char(231) DEFAULT NULL,   `col_9` varchar(393) NOT NULL DEFAULT 'lizgVQd',   PRIMARY KEY (`col_5`(4),`col_7`(3)) clustered ,   KEY `idx_2` (`col_5`(6),`col_8`(5)),   UNIQUE KEY `idx_3` (`col_7`(2)),   UNIQUE KEY `idx_4` (`col_9`(6),`col_7`(4),`col_6`(3)),   UNIQUE KEY `idx_5` (`col_9`(3)) );")
+	tk.MustExec("insert into tbl_1 values('BsXhVuVvPRcSOlkzuM','QXIEA','IHeTDzJJyfOhIOY','ddxnmRcIjVfosRVC','lizgVQd')")
+	tk.MustExec("replace into tbl_1 (col_6,col_7,col_8) values ( 'WzdD','S','UrQhNEUZy' )")
+	tk.MustExec("admin check table tbl_1")
+
+	tk.MustExec("drop table if exists tbl_3")
+	tk.MustExec("create table tbl_3 ( col_15 char(167) not null , col_16 varchar(56) not null , col_17 text(25) not null , col_18 char , col_19 char(12) not null , primary key idx_21 ( col_16(5) ) clustered, key idx_22 ( col_19(2),col_16(4) ) , unique key idx_23 ( col_19(6),col_16(4) ) , unique key idx_24 ( col_19(1),col_18(1) ) , key idx_25 ( col_17(3),col_16(2),col_19(4) ) , key idx_26 ( col_18(1),col_17(3) ) , key idx_27 ( col_18(1) ) , unique key idx_28 ( col_16(4),col_15(3) ) , unique key idx_29 ( col_16(2) ) , key idx_30 ( col_18(1),col_16(2),col_19(4),col_17(6) ) , key idx_31 ( col_19(2) ) , key idx_32 ( col_16(6) ) , unique key idx_33 ( col_18(1) ) , unique key idx_34 ( col_15(4) ) , key idx_35 ( col_19(6) ) , key idx_36 ( col_19(4),col_17(4),col_18(1) ) )")
+	tk.MustExec("insert into tbl_3 values('auZELjkOUG','yhFUdsZphsWDFG','mNbCXHOWlIMQvXhY','        ','NpQwmX');")
+	tk.MustExec("insert into tbl_3 (col_15,col_16,col_17,col_18,col_19) values ( 'PboEJsnVPBknRhpEC','PwqzUThyDHhxhXAdJ','szolY','','pzZfZeOa' ) on duplicate key update col_16 = values( col_16 ) , col_19 = 'zgLlCUA'")
+	tk.MustExec("admin check table tbl_3")
+
+	tk.MustExec("create table t (c_int int, c_str varchar(40), primary key(c_str(8)) clustered, unique key(c_int), key(c_str))")
+	tk.MustExec("insert into t values (1, 'determined varahamihira')")
+	tk.MustExec("insert into t values (1, 'pensive mendeleev') on duplicate key update c_int=values(c_int), c_str=values(c_str)")
+	tk.MustExec("admin check table t")
 }
 
 func (s *testClusteredSuite) TestClusteredUnionScanIndexLookup(c *C) {
@@ -183,6 +268,24 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.MustExec("update ignore t set name = 'aaaaa' where name = 'bbb'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aaaaa' for key 'PRIMARY'"))
 	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1  (c_str varchar(40), c_decimal decimal(12, 6) , primary key(c_str(8)))")
+	tk.MustExec("create table t2  like t1")
+	tk.MustExec("insert into t1 values ('serene ramanujan', 6.383), ('frosty hodgkin', 3.504), ('stupefied spence', 5.869)")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 right join t2 on t1.c_str = t2.c_str").Check(testkit.Rows(
+		"frosty hodgkin 3.504000 frosty hodgkin 3.504000",
+		"serene ramanujan 6.383000 serene ramanujan 6.383000",
+		"stupefied spence 5.869000 stupefied spence 5.869000"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 right join t2 on t1.c_str = t2.c_str").Check(testkit.Rows(
+		"frosty hodgkin 3.504000 frosty hodgkin 3.504000",
+		"serene ramanujan 6.383000 serene ramanujan 6.383000",
+		"stupefied spence 5.869000 stupefied spence 5.869000"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 right join t2 on t1.c_str = t2.c_str").Check(testkit.Rows(
+		"frosty hodgkin 3.504000 frosty hodgkin 3.504000",
+		"serene ramanujan 6.383000 serene ramanujan 6.383000",
+		"stupefied spence 5.869000 stupefied spence 5.869000"))
 }
 
 // Test for union scan in prefixed clustered index table.
