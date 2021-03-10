@@ -2324,17 +2324,13 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if la.ctx.GetSessionVars().AllowBCJ {
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
-	if la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP() {
+	canPushDownToMPP := la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP()
+	if canPushDownToMPP {
 		taskTypes = append(taskTypes, property.MppTaskType)
 	}
 	if la.HasDistinct() {
-		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
-		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-		considerRootTask := !la.ctx.GetSessionVars().AllowDistinctAggPushDown
-		// If aggregation can be pushed down to MPP, we should not consider RootTask.
-		considerRootTask = considerRootTask && !(la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP())
-
-		if considerRootTask {
+		// TODO: remove after the cost estimation of distinct pushdown is implemented.
+		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown && !canPushDownToMPP {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
