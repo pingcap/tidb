@@ -606,8 +606,8 @@ func getProj(ctx sessionctx.Context, p PhysicalPlan) *PhysicalProjection {
 	}.Init(ctx, p.statsInfo(), p.SelectBlockOffset())
 	for _, col := range p.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
-		proj.schema.Append(col)
 	}
+	proj.SetSchema(p.Schema().Clone())
 	proj.SetChildren(p)
 	return proj
 }
@@ -626,12 +626,12 @@ func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.C
 
 func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppTask, *mppTask) {
 	lp := lTask.p
-	if _, ok := lp.(*PhysicalExchangeSender); ok {
-		lp = lp.Children()[0]
+	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
+		lp = lp.Children()[0].Children()[0]
 	}
 	rp := rTask.p
-	if _, ok := rp.(*PhysicalExchangeSender); ok {
-		rp = rp.Children()[0]
+	if _, ok := rp.(*PhysicalExchangeReceiver); ok {
+		rp = rp.Children()[0].Children()[0]
 	}
 	lMask := make([]bool, len(p.EqualConditions))
 	rMask := make([]bool, len(p.EqualConditions))
@@ -690,7 +690,7 @@ func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppT
 	if lChanged {
 		nlTask := lTask.copy().(*mppTask)
 		nlTask.p = lProj
-		nlTask.enforceExchangerImpl(&property.PhysicalProperty{
+		nlTask = nlTask.enforceExchangerImpl(&property.PhysicalProperty{
 			TaskTp:        property.MppTaskType,
 			PartitionTp:   property.HashType,
 			PartitionCols: lKeys,
@@ -701,7 +701,7 @@ func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppT
 	if rChanged {
 		nrTask := rTask.copy().(*mppTask)
 		nrTask.p = rProj
-		nrTask.enforceExchangerImpl(&property.PhysicalProperty{
+		nrTask = nrTask.enforceExchangerImpl(&property.PhysicalProperty{
 			TaskTp:        property.MppTaskType,
 			PartitionTp:   property.HashType,
 			PartitionCols: rKeys,
