@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -3567,4 +3568,47 @@ func (s *testSessionSuite2) TestRetryCommitWithSet(c *C) {
 	tk2.MustExec("admin check table t")
 	tk2.MustQuery("select * from t use index(k1)").Check(testkit.Rows("1 11 101"))
 	tk2.MustQuery("select * from t where pk = '1'").Check(testkit.Rows("1 11 101"))
+}
+
+func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	se := tk.Se
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+
+	// test compatibility with ExcuteInternal
+	origin := se.GetSessionVars().InRestrictedSQL
+	se.GetSessionVars().InRestrictedSQL = true
+	defer func() {
+		se.GetSessionVars().InRestrictedSQL = origin
+	}()
+	_, err := exec.ParseWithParams(context.Background(), "SELECT 4")
+	c.Assert(err, IsNil)
+
+	// test charset attack
+	stmt, err := exec.ParseWithParams(context.Background(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	c.Assert(err, IsNil)
+
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(format.RestoreStringDoubleQuotes, &sb)
+	err = stmt.Restore(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
+
+	// test invalid sql
+	_, err = exec.ParseWithParams(context.Background(), "SELECT")
+	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
+
+	// test invalid arguments to escape
+	_, err = exec.ParseWithParams(context.Background(), "SELECT %?")
+	c.Assert(err, ErrorMatches, "missing arguments.*")
+
+	// test noescape
+	stmt, err = exec.ParseWithParams(context.TODO(), "SELECT 3")
+	c.Assert(err, IsNil)
+
+	sb.Reset()
+	ctx = format.NewRestoreCtx(0, &sb)
+	err = stmt.Restore(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(sb.String(), Equals, "SELECT 3")
 }
