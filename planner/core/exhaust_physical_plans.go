@@ -2270,8 +2270,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	if prop.PartitionTp == property.BroadcastType {
 		return nil
 	}
-	partitionCols := la.GetGroupByCols()
-	if len(partitionCols) != 0 {
+	if len(la.GroupByItems) > 0 {
+		partitionCols := la.GetGroupByCols()
+		// trying to match the required parititions.
 		if prop.PartitionTp == property.HashType {
 			if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
 				partitionCols = chooseSubsetOfJoinKeys(partitionCols, matches)
@@ -2282,18 +2283,23 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		}
 		// TODO: permute various partition columns from group-by columns
 		// 1-phase agg
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
+		// If there are no available parititon cols, but still have group by items, that means group by items are all expressions or constants.
+		// To avoid mess, we don't do any one-phase aggregation in this case.
+		if len(partitionCols) != 0 {
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg.SetSchema(la.schema.Clone())
+			agg.MppRunMode = Mpp1Phase
+			hashAggs = append(hashAggs, agg)
+		}
+
+		// 2-phase agg
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
-		agg.MppRunMode = Mpp1Phase
-		hashAggs = append(hashAggs, agg)
-		// 2-phase agg
-		childProp = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType}
-		agg = NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
-		agg.MppPartitionCols = partitionCols
 		hashAggs = append(hashAggs, agg)
+
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
 			childProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64}
