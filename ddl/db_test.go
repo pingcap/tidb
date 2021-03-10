@@ -695,11 +695,11 @@ func (s *testDBSuite4) TestCancelDropPrimaryKey(c *C) {
 // 		}
 // 		t := testGetTableByName(c, ctx, "test_db", "t")
 
-// 		var indexesInfo []*model.IndexInfo
+// 		var indexInfos []*model.IndexInfo
 // 		for _, idxName := range indexesName {
 // 			indexInfo := t.Meta().FindIndexByName(idxName)
 // 			if indexInfo != nil {
-// 				indexesInfo = append(indexesInfo, indexInfo)
+// 				indexInfos = append(indexInfos, indexInfo)
 // 			}
 // 		}
 
@@ -707,14 +707,14 @@ func (s *testDBSuite4) TestCancelDropPrimaryKey(c *C) {
 // 			c.Assert(checkErr, IsNil)
 // 			c.Assert(err, NotNil)
 // 			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-// 			c.Assert(indexesInfo, NotNil)
-// 			c.Assert(indexesInfo[0].State, Equals, model.StatePublic)
+// 			c.Assert(indexInfos, NotNil)
+// 			c.Assert(indexInfos[0].State, Equals, model.StatePublic)
 // 		} else {
 // 			err1 := admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID)
 // 			c.Assert(err, IsNil)
 // 			c.Assert(checkErr, NotNil)
 // 			c.Assert(checkErr.Error(), Equals, err1.Error())
-// 			c.Assert(indexesInfo, IsNil)
+// 			c.Assert(indexInfos, IsNil)
 // 		}
 // 	}
 // 	d.(ddl.DDLForTest).SetHook(originalHook)

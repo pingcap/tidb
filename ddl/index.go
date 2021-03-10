@@ -789,16 +789,16 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.SchemaState = model.StateDeleteReorganization
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		indexesIDs := make([]int64, 0, len(idxInfos))
-		indexesLName := make(map[string]bool, len(idxInfos))
+		indexIDs := make([]int64, 0, len(idxInfos))
+		indexNames := make(map[string]bool, len(idxInfos))
 		for _, indexInfo := range idxInfos {
-			indexesLName[indexInfo.Name.L] = true
-			indexesIDs = append(indexesIDs, indexInfo.ID)
+			indexNames[indexInfo.Name.L] = true
+			indexIDs = append(indexIDs, indexInfo.ID)
 		}
 
 		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 		for _, idx := range tblInfo.Indices {
-			if _, ok := indexesLName[idx.Name.L]; !ok {
+			if _, ok := indexNames[idx.Name.L]; !ok {
 				newIndices = append(newIndices, idx)
 			}
 		}
@@ -819,12 +819,12 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			job.Args[0] = indexesIDs
+			job.Args[0] = indexIDs
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexesIDs, getPartitionIDs(tblInfo))
+			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 		}
 	default:
 		err = ErrInvalidDDLState.GenWithStackByArgs("index", idxInfos[0].State)
@@ -852,7 +852,7 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		ifExists = append(ifExists, false)
 	}
 
-	indexesInfo := make([]*model.IndexInfo, 0, len(indexNames))
+	indexInfos := make([]*model.IndexInfo, 0, len(indexNames))
 	droppedIndexes := make(map[string]bool, len(indexNames))
 	for i, indexName := range indexNames {
 		// Double check the index is exists
@@ -870,7 +870,7 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 			job.State = model.JobStateCancelled
 			return nil, nil, autoid.ErrWrongAutoKey
 		}
-		indexesInfo = append(indexesInfo, indexInfo)
+		indexInfos = append(indexInfos, indexInfo)
 		droppedIndexes[indexName.L] = true
 	}
 	// Check that drop primary index will not cause invisible implicit primary index.
@@ -887,7 +887,7 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		job.State = model.JobStateCancelled
 		return nil, nil, errors.Trace(err)
 	}
-	return tblInfo, indexesInfo, nil
+	return tblInfo, indexInfos, nil
 }
 
 func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {

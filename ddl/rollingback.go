@@ -286,12 +286,12 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 }
 
 func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, indexesInfo, err := checkDropIndexes(t, job)
+	tblInfo, indexInfos, err := checkDropIndexes(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := indexesInfo[0]
+	indexInfo := indexInfos[0]
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
@@ -301,7 +301,7 @@ func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, nil
 	case model.StatePublic:
 		job.State = model.JobStateRollbackDone
-		for _, indexInfo := range indexesInfo {
+		for _, indexInfo := range indexInfos {
 			indexInfo.State = model.StatePublic
 		}
 	default:
@@ -310,7 +310,7 @@ func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error)
 
 	job.SchemaState = indexInfo.State
 	var indexNames []model.CIStr
-	for _, indexInfo := range indexesInfo {
+	for _, indexInfo := range indexInfos {
 		indexNames = append(indexNames, indexInfo.Name)
 	}
 	job.Args = []interface{}{indexNames}
