@@ -2516,26 +2516,6 @@ func containsLimit(execs []*tipb.Executor) bool {
 	return false
 }
 
-// When allow batch cop is 1, only agg / topN uses batch cop.
-// When allow batch cop is 2, every query uses batch cop.
-func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
-	if e.storeType != kv.TiFlash || e.keepOrder {
-		return
-	}
-	switch e.ctx.GetSessionVars().AllowBatchCop {
-	case 1:
-		for _, p := range v.TablePlans {
-			switch p.(type) {
-			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN, *plannercore.PhysicalHashJoin:
-				e.batchCop = true
-			}
-		}
-	case 2:
-		e.batchCop = true
-	}
-	return
-}
-
 func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
 	tablePlans := v.TablePlans
 	if v.StoreType == kv.TiFlash {
@@ -2570,8 +2550,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:          v.TablePlans,
 		tablePlan:      v.GetTablePlan(),
 		storeType:      v.StoreType,
+		batchCop:       v.BatchCop,
 	}
-	e.setBatchCop(v)
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)

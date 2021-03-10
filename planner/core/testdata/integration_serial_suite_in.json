@@ -183,6 +183,7 @@
       "desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
       "desc format = 'brief' select count(*) from t",
       "desc format = 'brief' select count(*), id from t group by id",
+      "desc format = 'brief' select count(*), id + 1 from t group by id + 1",
       "desc format = 'brief' select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
       "desc format = 'brief' select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
       "desc format = 'brief' select avg(value) as b,id from t group by id",
