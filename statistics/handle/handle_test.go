@@ -879,6 +879,66 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
 	s.checkForGlobalStatsWithOpts(c, tk, "p1", 100, 200)
 }
 
+func (s *testStatsSuite) TestGlobalStatsHealthy(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`
+create table t (
+	a int,
+	key(a)
+)
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20)
+)`)
+
+	checkModifyAndCount := func(gModify, gCount, p0Modify, p0Count, p1Modify, p1Count int) {
+		rs := tk.MustQuery("show stats_meta").Rows()
+		c.Assert(rs[0][4].(string), Equals, fmt.Sprintf("%v", gModify))  // global.modify_count
+		c.Assert(rs[0][5].(string), Equals, fmt.Sprintf("%v", gCount))   // global.row_count
+		c.Assert(rs[1][4].(string), Equals, fmt.Sprintf("%v", p0Modify)) // p0.modify_count
+		c.Assert(rs[1][5].(string), Equals, fmt.Sprintf("%v", p0Count))  // p0.row_count
+		c.Assert(rs[2][4].(string), Equals, fmt.Sprintf("%v", p1Modify)) // p1.modify_count
+		c.Assert(rs[2][5].(string), Equals, fmt.Sprintf("%v", p1Count))  // p1.row_count
+	}
+	checkHealthy := func(gH, p0H, p1H int) {
+		tk.MustQuery("show stats_healthy").Check(testkit.Rows(
+			fmt.Sprintf("test t global %v", gH),
+			fmt.Sprintf("test t p0 %v", p0H),
+			fmt.Sprintf("test t p1 %v", p1H)))
+	}
+
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("analyze table t")
+	checkModifyAndCount(0, 0, 0, 0, 0, 0)
+	checkHealthy(100, 100, 100)
+
+	tk.MustExec("insert into t values (1), (2)") // update p0
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+	checkModifyAndCount(2, 2, 2, 2, 0, 0)
+	checkHealthy(0, 0, 100)
+
+	tk.MustExec("insert into t values (11), (12), (13), (14)") // update p1
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+	checkModifyAndCount(6, 6, 2, 2, 4, 4)
+	checkHealthy(0, 0, 0)
+
+	tk.MustExec("analyze table t")
+	checkModifyAndCount(0, 6, 0, 2, 0, 4)
+	checkHealthy(100, 100, 100)
+
+	tk.MustExec("insert into t values (4), (5), (15), (16)") // update p0 and p1 together
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+	checkModifyAndCount(4, 10, 2, 4, 2, 6)
+	checkHealthy(60, 50, 66)
+}
+
 func (s *testStatsSuite) TestGlobalStatsData(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -1513,13 +1573,70 @@ func (s *testStatsSuite) TestAnalyzeWithDynamicPartitionPruneMode(c *C) {
 	c.Assert(rows[1][6], Equals, "6")
 }
 
+func (s *testStatsSuite) TestPartitionPruneModeSessionVariable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
+	tk1.MustExec(`set @@tidb_analyze_version=2`)
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Static) + "'")
+	tk2.MustExec(`set @@tidb_analyze_version=2`)
+
+	tk1.MustExec(`create table t (a int, key(a)) partition by range(a) 
+					(partition p0 values less than (10),
+					partition p1 values less than (22))`)
+
+	tk1.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
+		"TableReader 10000.00 root partition:all data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+	tk2.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
+		"PartitionUnion 20000.00 root  ",
+		"├─TableReader 10000.00 root  data:TableFullScan",
+		"│ └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
+	))
+
+	tk1.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
+	tk1.MustExec(`analyze table t with 1 topn, 2 buckets`)
+	tk1.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
+		"TableReader 5.00 root partition:all data:TableFullScan",
+		"└─TableFullScan 5.00 cop[tikv] table:t keep order:false",
+	))
+	tk2.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
+		"PartitionUnion 5.00 root  ",
+		"├─TableReader 3.00 root  data:TableFullScan",
+		"│ └─TableFullScan 3.00 cop[tikv] table:t, partition:p0 keep order:false",
+		"└─TableReader 2.00 root  data:TableFullScan",
+		"  └─TableFullScan 2.00 cop[tikv] table:t, partition:p1 keep order:false",
+	))
+
+	tk1.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Static) + "'")
+	tk1.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
+		"PartitionUnion 5.00 root  ",
+		"├─TableReader 3.00 root  data:TableFullScan",
+		"│ └─TableFullScan 3.00 cop[tikv] table:t, partition:p0 keep order:false",
+		"└─TableReader 2.00 root  data:TableFullScan",
+		"  └─TableFullScan 2.00 cop[tikv] table:t, partition:p1 keep order:false",
+	))
+	tk2.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
+	tk2.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
+		"TableReader 5.00 root partition:all data:TableFullScan",
+		"└─TableFullScan 5.00 cop[tikv] table:t keep order:false",
+	))
+}
+
 func (s *testStatsSuite) TestFMSWithAnalyzePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec(`create table t (a int, key(a)) partition by range(a) 
+	tk.MustExec(`create table t (a int, key(a)) partition by range(a)
 					(partition p0 values less than (10),
 					partition p1 values less than (22))`)
 	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
