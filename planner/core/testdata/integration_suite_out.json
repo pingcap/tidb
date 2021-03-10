@@ -897,12 +897,12 @@
       {
         "SQL": "explain SELECT /*+ use_index_merge(t1)*/ COUNT(*) FROM t1 WHERE (key4=42 AND key6 IS NOT NULL) OR (key1=4 AND key3=6)",
         "Plan": [
-          "HashAgg_8 1.00 root  funcs:count(1)->Column#10",
-          "└─IndexMerge_15 16.00 root  ",
-          "  ├─IndexRangeScan_11(Build) 10.00 cop[tikv] table:t1, index:i4(key4) range:[42,42], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan_12(Build) 10.00 cop[tikv] table:t1, index:i1(key1) range:[4,4], keep order:false, stats:pseudo",
-          "  └─Selection_14(Probe) 16.00 cop[tikv]  or(and(eq(test.t1.key4, 42), not(isnull(test.t1.key6))), and(eq(test.t1.key1, 4), eq(test.t1.key3, 6)))",
-          "    └─TableRowIDScan_13 20.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "StreamAgg_10 1.00 root  funcs:count(1)->Column#10",
+          "└─IndexMerge_20 0.02 root  ",
+          "  ├─IndexRangeScan_16(Build) 10.00 cop[tikv] table:t1, index:i4(key4) range:[42,42], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan_17(Build) 10.00 cop[tikv] table:t1, index:i1(key1) range:[4,4], keep order:false, stats:pseudo",
+          "  └─Selection_19(Probe) 0.02 cop[tikv]  or(and(eq(test.t1.key4, 42), not(isnull(test.t1.key6))), and(eq(test.t1.key1, 4), eq(test.t1.key3, 6)))",
+          "    └─TableRowIDScan_18 20.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -911,7 +911,6 @@
     "Name": "TestReorderSimplifiedOuterJoins",
     "Cases": [
       {
-<<<<<<< HEAD
         "SQL": "EXPLAIN SELECT t1.pk FROM t1 INNER JOIN t2 ON t1.col1 = t2.pk INNER JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa'",
         "Plan": [
           "IndexJoin_18 13.81 root  inner join, inner:IndexLookUp_17, outer key:test.t1.col1, inner key:test.t2.pk, equal cond:eq(test.t1.col1, test.t2.pk)",
@@ -949,136 +948,6 @@
           "  │ └─IndexRangeScan_13 1.00 cop[tikv] table:t2, index:PRIMARY(pk) range: decided by [eq(test.t2.pk, test.t1.col1)], keep order:false, stats:pseudo",
           "  └─Selection_16(Probe) 1.00 cop[tikv]  in(test.t2.col1, \"a\", \"b\")",
           "    └─TableRowIDScan_14 1.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-=======
-        "SQL": "select * from pt where c > 10",
-        "Plan": [
-          "TableReader_7 3333.33 root partition:dual data:Selection_6",
-          "└─Selection_6 3333.33 cop[tikv]  gt(test.pt.c, 10)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from pt where c > 8",
-        "Plan": [
-          "TableReader_7 3333.33 root partition:p2 data:Selection_6",
-          "└─Selection_6 3333.33 cop[tikv]  gt(test.pt.c, 8)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from pt where c < 2 or c >= 9",
-        "Plan": [
-          "TableReader_7 6656.67 root partition:p0,p2 data:Selection_6",
-          "└─Selection_6 6656.67 cop[tikv]  or(lt(test.pt.c, 2), ge(test.pt.c, 9))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c from pt",
-        "Plan": [
-          "IndexReader_7 10000.00 root partition:all index:IndexFullScan_6",
-          "└─IndexFullScan_6 10000.00 cop[tikv] table:pt, index:i_c(c) keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c from pt where c > 10",
-        "Plan": [
-          "IndexReader_6 3333.33 root partition:dual index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 3333.33 cop[tikv] table:pt, index:i_c(c) range:(10,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c from pt where c > 8",
-        "Plan": [
-          "IndexReader_6 3333.33 root partition:p2 index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 3333.33 cop[tikv] table:pt, index:i_c(c) range:(8,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c from pt where c < 2 or c >= 9",
-        "Plan": [
-          "IndexReader_6 6656.67 root partition:p0,p2 index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 6656.67 cop[tikv] table:pt, index:i_c(c) range:[-inf,2), [9,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index(pt, i_id) */ * from pt",
-        "Plan": [
-          "IndexLookUp_6 10000.00 root partition:all ",
-          "├─IndexFullScan_4(Build) 10000.00 cop[tikv] table:pt, index:i_id(id) keep order:false, stats:pseudo",
-          "└─TableRowIDScan_5(Probe) 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index(pt, i_id) */ * from pt where id < 4 and c > 10",
-        "Plan": [
-          "IndexLookUp_8 1107.78 root partition:dual ",
-          "├─IndexRangeScan_5(Build) 3323.33 cop[tikv] table:pt, index:i_id(id) range:[-inf,4), keep order:false, stats:pseudo",
-          "└─Selection_7(Probe) 1107.78 cop[tikv]  gt(test.pt.c, 10)",
-          "  └─TableRowIDScan_6 3323.33 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c > 8",
-        "Plan": [
-          "IndexLookUp_8 1107.78 root partition:p2 ",
-          "├─IndexRangeScan_5(Build) 3323.33 cop[tikv] table:pt, index:i_id(id) range:[-inf,10), keep order:false, stats:pseudo",
-          "└─Selection_7(Probe) 1107.78 cop[tikv]  gt(test.pt.c, 8)",
-          "  └─TableRowIDScan_6 3323.33 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c < 2 or c >= 9",
-        "Plan": [
-          "IndexLookUp_8 5325.33 root partition:p0,p2 ",
-          "├─IndexFullScan_5(Build) 10000.00 cop[tikv] table:pt, index:i_id(id) keep order:false, stats:pseudo",
-          "└─Selection_7(Probe) 5325.33 cop[tikv]  or(and(lt(test.pt.id, 10), lt(test.pt.c, 2)), ge(test.pt.c, 9))",
-          "  └─TableRowIDScan_6 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from pt partition (p0) where c > 8",
-        "Plan": [
-          "TableReader_7 3333.33 root partition:dual data:Selection_6",
-          "└─Selection_6 3333.33 cop[tikv]  gt(test.pt.c, 8)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c from pt partition (p0, p2) where c > 8",
-        "Plan": [
-          "IndexReader_6 3333.33 root partition:p2 index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 3333.33 cop[tikv] table:pt, index:i_c(c) range:(8,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5",
-        "Plan": [
-          "IndexLookUp_8 3.32 root partition:dual ",
-          "├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:pt, index:i_id(id) range:[5,5], keep order:false, stats:pseudo",
-          "└─Selection_7(Probe) 3.32 cop[tikv]  lt(test.pt.c, 3)",
-          "  └─TableRowIDScan_6 10.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from pt where id = 4 or c < 7",
-        "Plan": [
-          "Projection_4 3330.01 root  test.pt.id, test.pt.c",
-          "└─IndexMerge_11 3333.33 root partition:all ",
-          "  ├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:pt, index:i_id(id) range:[4,4], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan_9(Build) 3323.33 cop[tikv] table:pt, index:i_c(c) range:[-inf,7), keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_10(Probe) 3333.33 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from pt where id > 4 or c = 7",
-        "Plan": [
-          "Projection_4 3340.00 root  test.pt.id, test.pt.c",
-          "└─IndexMerge_11 3343.33 root partition:all ",
-          "  ├─IndexRangeScan_8(Build) 3333.33 cop[tikv] table:pt, index:i_id(id) range:(4,+inf], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:pt, index:i_c(c) range:[7,7], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_10(Probe) 3343.33 cop[tikv] table:pt keep order:false, stats:pseudo"
->>>>>>> b78f4896f... statistics, util/ranger: improve selectivity calculation for DNF filters (#18741)
         ]
       }
     ]
