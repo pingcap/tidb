@@ -345,18 +345,12 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
 		} else {
-<<<<<<< HEAD
-			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo, true, false)
-			if types.ErrOverflow.Equal(err) {
-				return nil, false, kv.ErrNotExist
-=======
 			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
 			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.
-			idxVals[i], err = table.CastValue(ctx, idxVals[i], colInfo, true, false)
+			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo, true, false)
 			if types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) ||
 				types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
-				return nil, kv.ErrNotExist
->>>>>>> 284da110b... executor: fix cast function will ignore tht error for point-get key construction (#22869)
+				return nil, false, kv.ErrNotExist
 			}
 		}
 		if err != nil {
