@@ -1,7 +1,7 @@
 # Proposal:
 
 - Author(s):     [morgo](https://github.com/morgo)
-- Last updated:  Jan. 21, 2021
+- Last updated:  March 9, 2021
 - Discussion at: N/A
 
 ## Abstract
@@ -16,7 +16,7 @@ This document was created to discuss the design of Security Enhanced Mode. It co
 
 ## Background
 
-Currently the MySQL SUPER privilege encapsulates a very large set of system capabilities. It does not follow the best practices of allocating _fine grained access_ to users based only on their system-access requirements.
+Currently the MySQL `SUPER` privilege encapsulates a very large set of system capabilities. It does not follow the best practices of allocating _fine grained access_ to users based only on their system-access requirements.
 
 This is particularly problematic in a DBaaS scenario such as TiDB Cloud where the `SUPER` privilege has elements that are required by both end users (TiDB Cloud Customers) and system operations (PingCAP SREs).
 
@@ -25,13 +25,13 @@ The design of Security Enhanced Mode (SEM) takes the approach of:
 1. Restricting `SUPER` to a set of capabilities that are safe for end users.
 2. Implementation of dynamic privileges ([issue #22439](https://github.com/pingcap/tidb/issues/22439)).
 
-This approach was requested by product management based on the broad "in the wild" association of `SUPER` as "the MySQL admin privilege". Thus, proposals to create a new lesser-SUPER privilege have already been discussed and rejected.
+This approach was requested by product management based on the broad "in the wild" association of `SUPER` as "the MySQL admin privilege". Thus, proposals to create a new lesser-`SUPER` privilege have already been discussed and rejected.
 
 The design and name of "Security Enhanced" is inspired by prior art with SELinux and AppArmor.
 
 ## Proposal
 
-A boolean option called `EnableEnhancedSecurity` (default FALSE) will be added as a TiDB configuration option.  The following subheadings describe the behavior when `EnableEnhancedSecurity` is set to `TRUE`.
+A boolean option called `EnableEnhancedSecurity` (default `FALSE`) will be added as a TiDB configuration option.  The following subheadings describe the behavior when `EnableEnhancedSecurity` is set to `TRUE`.
 
 ### System Variables
 
@@ -60,6 +60,12 @@ The following system variables will be hidden:
 The following system variables will be reset to defaults:
 
 * variable.Hostname
+
+### Status Variables
+
+The following status variables will be hidden:
+
+* tidb_gc_leader_desc
 
 ### Information Schema Tables
 
@@ -133,7 +139,7 @@ Unit tests will be added to cover the enabling and disabling of sysvars, and tab
 
 Tests will need to check that invisible tables are both non-visible and non-grantable (it should work, since visibility can be plugged into the privilege manager directly).
 
-If the user with SUPER privilege grants privileges related to these tables to other users, for example, `GRANT SELECT, INSERT, UPDATE ON information_schema.cluster_config TO 'userA'@'%%';` -- it should fail.
+If the user with `SUPER` privilege grants privileges related to these tables to other users, for example, `GRANT SELECT, INSERT, UPDATE ON information_schema.cluster_config TO 'userA'@'%%';` -- it should fail.
 
 ### Integration testing
 
@@ -153,11 +159,11 @@ Supporting PRs will be required to modify both documentation and functionality s
 
 ### Impact & Risks
 
-The intention behind SEM is to reduce the impact on end users, who can continue to use “SUPER” as the defacto admin privilege (versus alternatives such as mentioned below).
+The impact of `SEM` only applies in the case that it is enabled, which it is only intended to be on DBaaS (although users of on-premises installations of TiDB may also consider enabling it).
 
-The larger impact will be on System Operators, who will need fine grained privileges to replace the super privilege.
+The intention behind SEM is to reduce the impact on end users, who can continue to use `SUPER` as the defacto "admin" privilege (versus alternatives such as mentioned below). The larger impact will be on System Operators, who will need fine grained privileges to replace the `SUPER` privilege.
 
-The largest risk is application/MySQL compatibility. There are a number of SEM behaviors which have been discussed, with the following outcomes:
+The largest risk with `SEM` enabled is application/MySQL compatibility. There are a number of SEM behaviors which have been discussed, with the following outcomes:
 
 | Suggestion | Observed Risk | Outcome |
 | --------------- | --------------- | --------------- |
@@ -167,7 +173,7 @@ The largest risk is application/MySQL compatibility. There are a number of SEM b
 
 Users will also be able to observe if the system they are using has enhanced security mode enabled via the system variable, `tidb_enable_enhanced_security` (read-only).
 
-We will need to consider the impact on tools. When SEM is disabled, they should have no impact. When SEM is enabled, it should be possible to make recommendations to the tools team so that they can still access meta data required to operate in DBaaS environment:
+We will need to consider the impact on tools. When SEM is disabled, no impact is expected. When SEM is enabled, it should be possible to make recommendations to the tools team so that they can still access meta data required to operate in DBaaS environment:
 
 * Lightning and BR will not work currently with SEM + https://github.com/pingcap/tidb/pull/21988
 * In 5.0 the recommended method for BR/Lightning to get TiKV GC stats should change.
@@ -177,7 +183,7 @@ We will need to consider the impact on tools. When SEM is disabled, they should 
 
 The alternative to SEM is to implement fine-grained privileges for end users. This idea has been discussed and rejected. See "Background" for context.
 
-Amazon RDS also uses the approach of not granting SUPER to users, and instead offering a set of custom stored procedures to support use-cases that would usually require SUPER. This idea has been rejected.
+Amazon RDS also uses the approach of not granting `SUPER` to users, and instead offering a set of custom stored procedures to support use-cases that would usually require `SUPER`. This idea has been rejected.
 
 ### Unresolved Questions
 
