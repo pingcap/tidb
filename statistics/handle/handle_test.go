@@ -1658,7 +1658,7 @@ func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	tk.MustQuery(querySQL).Check(testkit.Rows("0"))
 }
 
-func (s *testStatsSuite) TestFeedbackWithGlobalStats(c *C) {
+func (s *statsSerialSuite) TestFeedbackWithGlobalStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")

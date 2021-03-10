@@ -567,6 +567,10 @@ OUTER:
 			if !ok {
 				continue
 			}
+			if table.Meta().Partition != nil {
+				// If the table is partition table, the feedback will not work.
+				continue
+			}
 			tblStats := h.GetPartitionStats(table.Meta(), fb.PhysicalID)
 			newTblStats := tblStats.Copy()
 			if fb.Tp == statistics.IndexType {
