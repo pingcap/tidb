@@ -107,7 +107,6 @@ type partitionTable interface {
 
 func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, error) {
 	schema := expression.NewSchema(columns...)
-	fmt.Printf(">>>>>>>>>>>>>>>>>>>>>>>>> ParseSimpleExprsWithNames, pi.Expr: %v, schema: %v, names: %v \n", pi.Expr, schema.String(), names)
 	exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
 	if err != nil {
 		return nil, err
@@ -216,6 +215,16 @@ func (s *partitionProcessor) recoverTableColNames(ds *DataSource) ([]*types.Fiel
 	names := make([]*types.FieldName, 0, len(ds.TblCols))
 	colsInfo := ds.table.FullHiddenColsAndVisibleCols()
 	for _, colExpr := range ds.TblCols {
+		if colExpr.ID == model.ExtraHandleID {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.tableInfo.Name,
+				ColName:     model.ExtraHandleName,
+				OrigColName: model.ExtraHandleName,
+			})
+			continue
+		}
+
 		found := false
 		for _, colInfo := range colsInfo {
 			if colInfo.ID == colExpr.ID {
