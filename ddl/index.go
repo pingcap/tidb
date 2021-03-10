@@ -669,7 +669,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Set column index flag.
 		dropIndexColumnFlag(tblInfo, indexInfo)
 
-		failpoint.Inject("MockPanicInCancellingAddIndex", func(val failpoint.Value) {
+		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 			if val.(bool) {
 				panic("panic test in cancelling add index")
 			}

@@ -16,7 +16,6 @@ package ddl_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -1730,9 +1729,9 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	failpoint.Enable("github.com/pingcap/tidb/ddl/MockPanicInCancellingAddIndex", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`)
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/ddl/MockPanicInCancellingAddIndex")
+		failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit")
 	}()
 
 	limit := variable.GetDDLErrorCountLimit()
@@ -1774,7 +1773,6 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 		return errors2.Trace(err1)
 	})
 	c.Assert(err, IsNil)
-	fmt.Println(job)
 	c.Assert(job.ErrorCount, Equals, int64(4))
 	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation, cancelled")
 }

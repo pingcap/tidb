@@ -628,11 +628,19 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 			// If run DDL job panic, just cancel the DDL jobs.
 			job.State = model.JobStateCancelling
 			job.ErrorCount++
-			if job.ErrorCount > variable.GetDDLErrorCountLimit() {
-				job.Error = toTError(errors.New("panic in handling ddl logic and error count beyond the limitation, cancelled"))
-				job.State = model.JobStateCancelled
+
+			// Load global ddl variables.
+			if err1 := loadDDLVars(w); err1 != nil {
+				logutil.Logger(w.logCtx).Error("[ddl] load DDL global variable failed", zap.Error(err1))
 			}
 
+			errorCount := variable.GetDDLErrorCountLimit()
+			if job.ErrorCount > errorCount {
+				msg := fmt.Sprintf("panic in handling ddl logic and error count beyond the limitation %d, cancelled", errorCount)
+				logutil.Logger(w.logCtx).Warn(msg)
+				job.Error = toTError(errors.New(msg))
+				job.State = model.JobStateCancelled
+			}
 		}, false)
 
 	// Mock for run ddl job panic.
