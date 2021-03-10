@@ -817,6 +817,9 @@ type SessionVars struct {
 
 	// EnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
 	EnableTiFlashFallbackTiKV bool
+
+	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
+	EnableDynamicPrivileges bool
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -1751,6 +1754,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.TiDBEnableExchangePartition = TiDBOptOn(val)
 	case TiDBEnableTiFlashFallbackTiKV:
 		s.EnableTiFlashFallbackTiKV = TiDBOptOn(val)
+	case TiDBEnableDynamicPrivileges:
+		s.EnableDynamicPrivileges = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

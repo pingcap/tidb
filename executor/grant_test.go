@@ -399,7 +399,12 @@ func (s *testSuite3) TestIssue22721(c *C) {
 func (s *testSuite3) TestGrantDynamicPrivs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user dyn")
-	_, err := tk.Exec("GRANT BACKUP_ADMIN ON test.* TO dyn")
+	tk.MustExec("SET tidb_enable_dynamic_privileges=0")
+	_, err := tk.Exec("GRANT BACKUP_ADMIN ON *.* TO dyn")
+	c.Assert(err.Error(), Equals, "dynamic privileges is an experimental feature. Run 'SET tidb_enable_dynamic_privileges=1'")
+
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+	_, err = tk.Exec("GRANT BACKUP_ADMIN ON test.* TO dyn")
 	c.Assert(terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel), IsTrue)
 	_, err = tk.Exec("GRANT BOGUS_GRANT ON *.* TO dyn")
 	c.Assert(terror.ErrorEqual(err, executor.ErrDynamicPrivilegeNotRegistered), IsTrue)

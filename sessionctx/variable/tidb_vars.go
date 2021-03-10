@@ -528,6 +528,9 @@ const (
 
 	// TiDBEnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
 	TiDBEnableTiFlashFallbackTiKV = "tidb_enable_tiflash_fallback_tikv"
+
+	// TiDBEnableDynamicPrivileges enables MySQL 8.0 compatible dynamic privileges (experimental).
+	TiDBEnableDynamicPrivileges = "tidb_enable_dynamic_privileges"
 )
 
 // TiDB vars that have only global scope

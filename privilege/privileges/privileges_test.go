@@ -1202,9 +1202,11 @@ func (s *testPrivilegeSuite) TestDynamicPrivs(c *C) {
 	mustExec(c, rootSe, "CREATE USER notsuper")
 	mustExec(c, rootSe, "CREATE USER otheruser")
 	mustExec(c, rootSe, "CREATE ROLE anyrolename")
+	mustExec(c, rootSe, "SET tidb_enable_dynamic_privileges=1")
 
 	se := newSession(c, s.store, s.dbName)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "notsuper", Hostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "SET tidb_enable_dynamic_privileges=1")
 
 	// test SYSTEM_VARIABLES_ADMIN
 	_, err := se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86400")
@@ -1245,16 +1247,21 @@ func (s *testPrivilegeSuite) TestDynamicGrantOption(c *C) {
 	mustExec(c, rootSe, "CREATE USER varuser1")
 	mustExec(c, rootSe, "CREATE USER varuser2")
 	mustExec(c, rootSe, "CREATE USER varuser3")
+	mustExec(c, rootSe, "SET tidb_enable_dynamic_privileges=1")
 
 	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser1")
 	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser2 WITH GRANT OPTION")
 
 	se1 := newSession(c, s.store, s.dbName)
+	mustExec(c, se1, "SET tidb_enable_dynamic_privileges=1")
+
 	c.Assert(se1.Auth(&auth.UserIdentity{Username: "varuser1", Hostname: "%"}, nil, nil), IsTrue)
 	_, err := se1.ExecuteInternal(context.Background(), "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation")
 
 	se2 := newSession(c, s.store, s.dbName)
+	mustExec(c, se2, "SET tidb_enable_dynamic_privileges=1")
+
 	c.Assert(se2.Auth(&auth.UserIdentity{Username: "varuser2", Hostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se2, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
 }
