@@ -47,6 +47,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 )
 
 // MaxRecvMsgSize set max gRPC receive message size received from server. If any message size is larger than
@@ -69,6 +70,9 @@ const (
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
 )
+
+// redirectionMetaKey is the key of gRPC metadata which represents a redirection request.
+var redirectionMetaKey = "tikv_receiver_addr"
 
 // Client is a client that sends RPC.
 // It should not be used after calling Close().
@@ -354,6 +358,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		c.recycleMu.Unlock()
 	}
 
+	// enableBatch means TiDB can send BatchCommands to the connection. It doesn't mean TiDB must do it.
 	// TiDB will not send batch commands to TiFlash, to resolve the conflict with Batch Cop Request.
 	enableBatch := req.StoreTp != kv.TiDB && req.StoreTp != kv.TiFlash
 	c.recycleMu.RLock()
@@ -363,9 +368,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.Trace(err)
 	}
 
+	// TiDB uses [gRPC-metadata](https://github.com/grpc/grpc-go/blob/master/Documentation/grpc-metadata.md) to
+	// indicate a request needs redirection. gRPC doesn't support setting a metadata for each request in a stream,
+	// so we can't use BatchCommands for redirection.
+	canBatch := enableBatch && req.ReceiverAddr == ""
 	// TiDB RPC server supports batch RPC, but batch connection will send heart beat, It's not necessary since
 	// request to TiDB is not high frequency.
-	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
+	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && canBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
@@ -387,6 +396,10 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	client := tikvpb.NewTikvClient(clientConn)
 
+	// Set metadata for request redirection. Needn't redirect DebugReq.
+	if req.ReceiverAddr != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, redirectionMetaKey, req.ReceiverAddr)
+	}
 	switch req.Type {
 	case tikvrpc.CmdBatchCop:
 		return c.getBatchCopStreamResponse(ctx, client, req, timeout, connArray)

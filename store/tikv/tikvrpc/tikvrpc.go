@@ -170,9 +170,14 @@ type Request struct {
 	Type CmdType
 	Req  interface{}
 	kvrpcpb.Context
-	ReplicaReadType kv.ReplicaReadType // dirrerent from `kvrpcpb.Context.ReplicaRead`
+	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
 	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
 	StoreTp         kv.StoreType
+	// ReceiverAddr is the address of a store which will handle the request. It's different from
+	// the address the request sent to.
+	// If it's not empty, the store which receive the request will redirect it to
+	// the receiver address. It's useful when network partition occurs.
+	ReceiverAddr string
 }
 
 // NewRequest returns new kv rpc request.
@@ -197,6 +202,22 @@ func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.
 	req.ReplicaReadType = replicaReadType
 	req.ReplicaReadSeed = replicaReadSeed
 	return req
+}
+
+// EnableStaleRead enables stale read
+func (req *Request) EnableStaleRead() {
+	req.StaleRead = true
+	req.ReplicaReadType = kv.ReplicaReadMixed
+	req.ReplicaRead = false
+}
+
+// IsDebugReq check whether the req is debug req.
+func (req *Request) IsDebugReq() bool {
+	switch req.Type {
+	case CmdDebugGetRegionProperties:
+		return true
+	}
+	return false
 }
 
 // Get returns GetRequest in request.
@@ -389,13 +410,6 @@ func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
 }
 
-// EnableStaleRead enables stale read
-func (req *Request) EnableStaleRead() {
-	req.StaleRead = true
-	req.ReplicaReadType = kv.ReplicaReadMixed
-	req.ReplicaRead = false
-}
-
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
 func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Request {
 	switch req.Type {
@@ -453,15 +467,6 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_TxnHeartBeat{TxnHeartBeat: req.TxnHeartBeat()}}
 	}
 	return nil
-}
-
-// IsDebugReq check whether the req is debug req.
-func (req *Request) IsDebugReq() bool {
-	switch req.Type {
-	case CmdDebugGetRegionProperties:
-		return true
-	}
-	return false
 }
 
 // Response wraps all kv/coprocessor responses.

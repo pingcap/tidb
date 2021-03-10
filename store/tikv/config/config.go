@@ -117,6 +117,18 @@ func StoreGlobalConfig(config *Config) {
 	globalConf.Store(config)
 }
 
+// UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
+func UpdateGlobal(f func(conf *Config)) func() {
+	g := GetGlobalConfig()
+	restore := func() {
+		StoreGlobalConfig(g)
+	}
+	newConf := *g
+	f(&newConf)
+	StoreGlobalConfig(&newConf)
+	return restore
+}
+
 // ParsePath parses this path.
 // Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
 func ParsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
