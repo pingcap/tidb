@@ -389,8 +389,27 @@ func GetCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	if !isStr {
 		isAllStr = false
 	}
+<<<<<<< HEAD
 	if isTemporalWithDate {
 		datetimeFound = true
+=======
+
+	hasTemporal := false
+	if cmpTp == types.ETString {
+		if args[0].GetType().Tp == mysql.TypeDuration {
+			cmpTp = types.ETDuration
+		} else {
+			for _, arg := range args {
+				if types.IsTypeTemporal(arg.GetType().Tp) {
+					hasTemporal = true
+					break
+				}
+			}
+			if hasTemporal {
+				cmpTp = types.ETDatetime
+			}
+		}
+>>>>>>> 50d840f81... planner: fix incorrect duration between compare (#22830)
 	}
 	lft := args[0].GetType()
 	for i := range args {
