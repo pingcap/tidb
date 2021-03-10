@@ -114,6 +114,22 @@
             "Vars": [
               {
                 "Name": "v1",
+                "Value": "-200"
+              }
+            ],
+            "Plan": [
+              "Projection_4 10.00 root  test.t1.a",
+              "└─IndexReader_6 10.00 root  index:IndexRangeScan_5",
+              "  └─IndexRangeScan_5 10.00 cop[tikv] table:t1, index:b(b, a) range:[-200,-200], keep order:false, stats:pseudo"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": null
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
                 "Value": "\"abc\""
               }
             ],

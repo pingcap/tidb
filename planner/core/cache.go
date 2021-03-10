@@ -147,15 +147,18 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 type FieldSlice []types.FieldType
 
 // Equal compares FieldSlice with []*types.FieldType
+// Currently this is only used in plan cache to invalidate cache when types of variables are different.
 func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 	if len(s) != len(tps) {
 		return false
 	}
 	for i := range tps {
+		// We only use part of logic of `func (ft *FieldType) Equal(other *FieldType)` here because (1) only numeric and
+		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
 		tpEqual := (s[i].Tp == tps[i].Tp) ||
 			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
 			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar)
-		if !tpEqual {
+		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate {
 			return false
 		}
 	}
