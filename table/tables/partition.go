@@ -215,8 +215,6 @@ type ForListPruning struct {
 	PruneExprCols []*expression.Column
 	// valueMap is column value -> partition idx, uses to locate list partition.
 	valueMap map[int64]int
-	// partition is organized as sorted key to partition mapping, it is used to locate list partition in range.
-	sorted *btree.BTree
 	// nullPartitionIdx is the partition idx for null value.
 	nullPartitionIdx int
 
@@ -635,7 +633,6 @@ func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model
 		}
 		c.Index = idx
 	}
-	err = lp.buildListPartitionValueMapAndSorted(ctx, tblInfo, schema, names, p)
 	if err != nil {
 		return err
 	}
@@ -673,14 +670,13 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo
 	return nil
 }
 
-// buildListPartitionValueMapAndSorted builds list partition value map and sorted.
+// buildListPartitionValueMap builds list partition value map.
 // The map is column value -> partition index.
 // colIdx is the column index in the list columns.
-func (lp *ForListPruning) buildListPartitionValueMapAndSorted(ctx sessionctx.Context, tblInfo *model.TableInfo,
+func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
 	pi := tblInfo.GetPartitionInfo()
 	lp.valueMap = map[int64]int{}
-	lp.sorted = btree.New(btreeDegree)
 	lp.nullPartitionIdx = -1
 	for partitionIdx, def := range pi.Definitions {
 		for _, vs := range def.InValues {

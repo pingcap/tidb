@@ -27,11 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-// partitionTable is for those tables which implement partition.
-type partitionTable interface {
-	PartitionExpr() (*tables.PartitionExpr, error)
-}
-
 func (ts *testSuite) TestPartitionBasic(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
