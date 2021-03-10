@@ -2352,12 +2352,12 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			return errRunMultiSchemaChanges
 		}
 
-		if isDropIndexes(validSpecs) {
-			if err = d.DropIndexes(ctx, ident, validSpecs); err != nil {
-				return errors.Trace(err)
-			}
-			return nil
-		}
+		// if isDropIndexes(validSpecs) {
+		// 	if err = d.DropIndexes(ctx, ident, validSpecs); err != nil {
+		// 		return errors.Trace(err)
+		// 	}
+		// 	return nil
+		// }
 
 		if isSameTypeMultiSpecs(validSpecs) {
 			switch validSpecs[0].Tp {
