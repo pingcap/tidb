@@ -44,7 +44,7 @@ const bigTxnThreshold = 16
 
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
-	store Storage
+	store *KVStore
 	mu    struct {
 		sync.RWMutex
 		// resolved caches resolved txns (FIFO, txn id -> txnStatus).
@@ -56,7 +56,7 @@ type LockResolver struct {
 	}
 }
 
-func newLockResolver(store Storage) *LockResolver {
+func newLockResolver(store *KVStore) *LockResolver {
 	r := &LockResolver{
 		store: store,
 	}
@@ -93,7 +93,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.Cl
 		return nil, errors.Trace(err)
 	}
 
-	s, err := NewKVStore(uuid, &CodecPDClient{pdCli}, spkv, NewRPCClient(security), nil)
+	s, err := NewKVStore(uuid, &CodecPDClient{pdCli}, spkv, NewRPCClient(security))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

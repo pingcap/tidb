@@ -145,6 +145,7 @@ type Session interface {
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
+	SetPort(port string)
 }
 
 var (
@@ -440,7 +441,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	defer func() {
 		s.txn.changeToInvalid()
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 	}()
 	if s.txn.IsReadOnly() {
 		return nil
@@ -499,7 +500,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
 		// of any previously committed transactions.
 		s.txn.SetOption(kv.GuaranteeLinearizability,
-			!s.GetSessionVars().IsAutocommit() && s.GetSessionVars().GuaranteeLinearizability)
+			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
 
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
@@ -611,7 +612,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	}
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
-	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	s.sessionVars.SetInTxn(false)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -697,7 +698,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		s.sessionVars.RetryInfo.Retrying = false
 		// retryCnt only increments on retryable error, so +1 here.
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 		if err != nil {
 			s.RollbackTxn(ctx)
 		}
@@ -791,7 +792,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			zap.String("txn", s.txn.GoString()))
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 	}
 	return err
 }
@@ -810,120 +811,6 @@ type sessionPool interface {
 
 func (s *session) sysSessionPool() sessionPool {
 	return domain.GetDomain(s).SysSessionPool()
-}
-
-// ExecRestrictedSQL implements RestrictedSQLExecutor interface.
-// This is used for executing some restricted sql statements, usually executed during a normal statement execution.
-// Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
-// and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	return s.ExecRestrictedSQLWithContext(context.TODO(), sql)
-}
-
-// ExecRestrictedSQLWithContext implements RestrictedSQLExecutor interface.
-func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string, opts ...sqlexec.OptionFuncAlias) (
-	[]chunk.Row, []*ast.ResultField, error) {
-	var execOption sqlexec.ExecOption
-	for _, opt := range opts {
-		opt(&execOption)
-	}
-	// Use special session to execute the sql.
-	tmp, err := s.sysSessionPool().Get()
-	if err != nil {
-		return nil, nil, err
-	}
-	defer s.sysSessionPool().Put(tmp)
-	se := tmp.(*session)
-	// The special session will share the `InspectionTableCache` with current session
-	// if the current session in inspection mode.
-	if cache := s.sessionVars.InspectionTableCache; cache != nil {
-		se.sessionVars.InspectionTableCache = cache
-		defer func() { se.sessionVars.InspectionTableCache = nil }()
-	}
-	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
-		se.sessionVars.OptimizerUseInvisibleIndexes = true
-		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
-	}
-	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
-	defer func() {
-		if !execOption.IgnoreWarning {
-			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
-				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
-				s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
-			}
-		}
-		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
-	}()
-
-	if execOption.SnapshotTS != 0 {
-		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(execOption.SnapshotTS)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
-			return nil, nil, err
-		}
-		defer func() {
-			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
-			}
-			se.sessionVars.SnapshotInfoschema = nil
-		}()
-	}
-
-	if execOption.AnalyzeVer != 0 {
-		oldStatsVer := se.GetSessionVars().AnalyzeVersion
-		se.GetSessionVars().AnalyzeVersion = execOption.AnalyzeVer
-		defer func() {
-			se.GetSessionVars().AnalyzeVersion = oldStatsVer
-		}()
-	}
-
-	// for analyze stmt we need let worker session follow user session that executing stmt.
-	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
-	metrics.SessionRestrictedSQLCounter.Inc()
-
-	return execRestrictedSQL(ctx, se, sql)
-}
-
-// ExecRestrictedSQLWithSnapshot implements RestrictedSQLExecutor interface.
-// This is used for executing some restricted sql statements with snapshot.
-// If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
-// Otherwise, execute with the current transaction start timestamp if the transaction is valid.
-func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	var snapshot uint64
-	txn, err := s.Txn(false)
-	if err != nil {
-		return nil, nil, err
-	}
-	if txn.Valid() {
-		snapshot = s.txn.StartTS()
-	}
-	if s.sessionVars.SnapshotTS != 0 {
-		snapshot = s.sessionVars.SnapshotTS
-	}
-	return s.ExecRestrictedSQLWithContext(context.TODO(), sql, sqlexec.ExecOptionWithSnapshot(snapshot))
-}
-
-func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-	startTime := time.Now()
-	rs, err := se.ExecuteInternal(ctx, sql)
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
-	if err != nil || rs == nil {
-		return nil, nil, err
-	}
-
-	// Execute all recordset, take out the first one as result.
-	rows, err := drainRecordSet(ctx, se, rs)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
-	return rows, rs.Fields(), err
 }
 
 func createSessionFunc(store kv.Storage) pools.Factory {
@@ -1082,12 +969,6 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 			return err
 		}
 	}
-	if name == variable.TiDBPartitionPruneMode && value == string(variable.DynamicOnly) {
-		err := s.ensureFullGlobalStats()
-		if err != nil {
-			return err
-		}
-	}
 	var sVal string
 	var err error
 	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
@@ -1186,24 +1067,6 @@ func (s *session) getTiDBTableValue(name, val string) (string, error) {
 	return validatedVal, nil
 }
 
-func (s *session) ensureFullGlobalStats() error {
-	stmt, err := s.ParseWithParams(context.TODO(), `select count(1) from information_schema.tables t where t.create_options = 'partitioned'
-	and not exists (select 1 from mysql.stats_meta m where m.table_id = t.tidb_table_id)`)
-	if err != nil {
-		return err
-	}
-	rows, _, err := s.ExecRestrictedStmt(context.TODO(), stmt)
-	if err != nil {
-		return err
-	}
-	row := rows[0]
-	count := row.GetInt64(0)
-	if count > 0 {
-		return errors.New("need analyze all partition table in 'static-collect-dynamic' mode before switch to 'dynamic-only'")
-	}
-	return nil
-}
-
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
@@ -1232,6 +1095,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
+		Port:             s.sessionVars.Port,
 		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
 		Plan:             p,
@@ -1636,7 +1500,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
 		defer func() {
 			sessVars.LastQueryInfo = variable.QueryInfo{
-				TxnScope:    sessVars.TxnScope,
+				TxnScope:    sessVars.CheckAndGetTxnScope(),
 				StartTS:     sessVars.TxnCtx.StartTS,
 				ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
 			}
@@ -1902,7 +1766,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.txn.SetOption(kv.Pessimistic, true)
 		}
 		if !s.sessionVars.IsAutocommit() {
-			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+			s.sessionVars.SetInTxn(true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 		s.txn.SetVars(s.sessionVars.KVVars)
@@ -1965,7 +1829,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 			zap.String("txnScope", txnScope))
 	}
 
-	txn, err := s.store.BeginWithTxnScope(s.sessionVars.CheckAndGetTxnScope())
+	txn, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
 	if err != nil {
 		return err
 	}
@@ -2758,7 +2622,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithStartTS(s.GetSessionVars().CheckAndGetTxnScope(), startTS)
+	txn, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(s.GetSessionVars().CheckAndGetTxnScope()).SetStartTs(startTS))
 	if err != nil {
 		return err
 	}
@@ -2788,15 +2652,15 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	}
 	var txn kv.Transaction
 	var err error
-	txnScope := s.GetSessionVars().TxnScope
+	txnScope := s.GetSessionVars().CheckAndGetTxnScope()
 	switch option.Mode {
 	case ast.TimestampBoundReadTimestamp:
-		txn, err = s.store.BeginWithStartTS(txnScope, option.StartTS)
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetStartTs(option.StartTS))
 		if err != nil {
 			return err
 		}
 	case ast.TimestampBoundExactStaleness:
-		txn, err = s.store.BeginWithExactStaleness(txnScope, option.PrevSec)
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
 		if err != nil {
 			return err
 		}
@@ -2969,4 +2833,8 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 		}
 	}
 	return err
+}
+
+func (s *session) SetPort(port string) {
+	s.sessionVars.Port = port
 }

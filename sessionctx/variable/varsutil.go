@@ -177,6 +177,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return BoolToOnOff(s.PrevFoundInBinding), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
+	case TiDBTxnScope:
+		return s.TxnScope.GetVarValue(), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
