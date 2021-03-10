@@ -1216,7 +1216,7 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	pid := tblInfo.Partition.Definitions[0].ID
 	tbl := h.GetPartitionStats(tblInfo, pid)
 
-	// // Feedback will not take effect under partition table.
+	// Feedback will not take effect under partition table.
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
 		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n"+
 		"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0\n"+
