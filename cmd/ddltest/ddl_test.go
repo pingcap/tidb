@@ -32,6 +32,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -47,7 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	goctx "golang.org/x/net/context"
 )
 
@@ -162,7 +163,7 @@ func (s *TestDDLSuite) restartServerRegularly() {
 			if *enableRestart {
 				err = s.restartServerRand()
 				if err != nil {
-					log.Fatalf("restartServerRand failed, err %v", errors.ErrorStack(err))
+					log.Fatal("restartServerRand failed", zap.Error(err))
 				}
 			}
 		case <-s.quit:
@@ -183,7 +184,7 @@ func (s *TestDDLSuite) TearDownSuite(c *C) {
 		case <-time.After(100 * time.Second):
 			buf := make([]byte, 2<<20)
 			size := runtime.Stack(buf, true)
-			log.Errorf("%s", buf[:size])
+			log.Error("testing timeout", zap.ByteString("buf", buf[:size]))
 		case <-quitCh:
 		}
 	}()
@@ -223,12 +224,12 @@ func (s *TestDDLSuite) killServer(proc *os.Process) error {
 	// Make sure this tidb is killed, and it makes the next tidb that has the same port as this one start quickly.
 	err := proc.Kill()
 	if err != nil {
-		log.Errorf("kill server failed err %v", err)
+		log.Error("kill server failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	_, err = proc.Wait()
 	if err != nil {
-		log.Errorf("kill server, wait failed err %v", err)
+		log.Error("kill server, wait failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 
@@ -295,25 +296,29 @@ func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
 	for i := 0; i < s.retryCount; i++ {
 		db, err = sql.Open("mysql", fmt.Sprintf("root@(%s)/test_ddl", addr))
 		if err != nil {
-			log.Warnf("open addr %v failed, retry count %d err %v", addr, i, err)
+			log.Warn("open addr failed", zap.String("addr", addr), zap.Int("retry count", i), zap.Error(err))
 			continue
 		}
 		err = db.Ping()
 		if err == nil {
 			break
 		}
-		log.Warnf("ping addr %v failed, retry count %d err %v", addr, i, err)
+		log.Warn("ping addr failed", zap.String("addr", addr), zap.Int("retry count", i), zap.Error(err))
 
 		err = db.Close()
 		if err != nil {
-			log.Warnf("close db failed, retry count %d err %v", i, err)
+			log.Warn("close db failed", zap.Int("retry count", i), zap.Error(err))
 			break
 		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
 	}
 	if err != nil {
-		log.Errorf("restart server addr %v failed %v, take time %v", addr, err, time.Since(startTime))
+		log.Error("restart server addr failed",
+			zap.String("addr", addr),
+			zap.Duration("take time", time.Since(startTime)),
+			zap.Error(err),
+		)
 		return nil, errors.Trace(err)
 	}
 	db.SetMaxOpenConns(10)
@@ -323,7 +328,7 @@ func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
 		return nil, errors.Trace(err)
 	}
 
-	log.Infof("start server %s ok %v", addr, err)
+	log.Info("start server ok", zap.String("addr", addr), zap.Error(err))
 
 	return &server{
 		Cmd:   cmd,
@@ -345,7 +350,7 @@ func (s *TestDDLSuite) restartServerRand() error {
 
 	server := s.procs[i]
 	s.procs[i] = nil
-	log.Warnf("begin to restart %s", server.addr)
+	log.Warn("begin to restart", zap.String("addr", server.addr))
 	err := s.killServer(server.Process)
 	if err != nil {
 		return errors.Trace(err)
@@ -371,11 +376,11 @@ func isRetryError(err error) bool {
 
 	// TODO: Check the specific columns number.
 	if strings.Contains(err.Error(), "Column count doesn't match value count at row") {
-		log.Warnf("err is %v", err)
+		log.Warn("err", zap.Error(err))
 		return false
 	}
 
-	log.Errorf("err is %v, can not retry", err)
+	log.Error("can not retry", zap.Error(err))
 
 	return false
 }
@@ -385,7 +390,11 @@ func (s *TestDDLSuite) exec(query string, args ...interface{}) (sql.Result, erro
 		server := s.getServer()
 		r, err := server.db.Exec(query, args...)
 		if isRetryError(err) {
-			log.Errorf("exec %s in server %s err %v, retry", query, err, server.addr)
+			log.Error("exec in server, retry",
+				zap.String("query", query),
+				zap.String("addr", server.addr),
+				zap.Error(err),
+			)
 			continue
 		}
 
@@ -396,7 +405,11 @@ func (s *TestDDLSuite) exec(query string, args ...interface{}) (sql.Result, erro
 func (s *TestDDLSuite) mustExec(c *C, query string, args ...interface{}) sql.Result {
 	r, err := s.exec(query, args...)
 	if err != nil {
-		log.Fatalf("[mustExec fail]query - %v %v, error - %v", query, args, err)
+		log.Fatal("[mustExec fail]query",
+			zap.String("query", query),
+			zap.Any("args", args),
+			zap.Error(err),
+		)
 	}
 
 	return r
@@ -417,7 +430,11 @@ func (s *TestDDLSuite) execInsert(c *C, query string, args ...interface{}) sql.R
 			}
 		}
 
-		log.Fatalf("[execInsert fail]query - %v %v, error - %v", query, args, err)
+		log.Fatal("[execInsert fail]query",
+			zap.String("query", query),
+			zap.Any("args", args),
+			zap.Error(err),
+		)
 	}
 }
 
@@ -426,7 +443,11 @@ func (s *TestDDLSuite) query(query string, args ...interface{}) (*sql.Rows, erro
 		server := s.getServer()
 		r, err := server.db.Query(query, args...)
 		if isRetryError(err) {
-			log.Errorf("query %s in server %s err %v, retry", query, err, server.addr)
+			log.Error("query in server, retry",
+				zap.String("query", query),
+				zap.String("addr", server.addr),
+				zap.Error(err),
+			)
 			continue
 		}
 
@@ -446,7 +467,7 @@ func (s *TestDDLSuite) getServer() *server {
 		}
 	}
 
-	log.Fatalf("try to get server too many times")
+	log.Fatal("try to get server too many times")
 	return nil
 }
 
@@ -786,7 +807,7 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 
 		if !reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) && !reflect.DeepEqual(data[1].GetValue(), defaultValue) {
-			log.Fatalf("[TestSimpleConflictUpdate fail]Bad row: %v", data)
+			log.Fatal("[TestSimpleConflictUpdate fail]Bad row", zap.Any("row", data))
 		}
 
 		return true, nil
@@ -977,7 +998,7 @@ func (s *TestDDLSuite) TestSimpleMixed(c *C) {
 		} else if reflect.DeepEqual(data[1].GetValue(), defaultValue) && data[0].GetInt64() < int64(rowCount) {
 			updateCount++
 		} else {
-			log.Fatalf("[TestSimpleMixed fail]invalid row: %v", data)
+			log.Fatal("[TestSimpleMixed fail]invalid row", zap.Any("row", data))
 		}
 
 		return true, nil
