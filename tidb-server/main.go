@@ -589,6 +589,7 @@ func setGlobalVars() {
 
 	atomic.StoreUint64(&tikv.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
+	tikv.EnableRedirection = cfg.TiKVClient.EnableRedirection
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
 	c := config.GetGlobalConfig()

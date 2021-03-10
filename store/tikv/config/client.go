@@ -62,6 +62,8 @@ type TiKVClient struct {
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
 	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
+
+	EnableRedirection bool `toml:"enable-redirection" json:"enable-redirection"`
 }
 
 // AsyncCommit is the config for the async commit feature. The switch to enable it is a system variable.
@@ -124,6 +126,8 @@ func DefaultTiKVClient() TiKVClient {
 		StoreLivenessTimeout: DefStoreLivenessTimeout,
 
 		TTLRefreshedTxnSize: 32 * 1024 * 1024,
+
+		EnableRedirection: false,
 
 		CoprCache: CoprocessorCache{
 			Enable:                true,

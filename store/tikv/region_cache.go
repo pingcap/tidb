@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/log"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -49,6 +50,7 @@ const (
 
 // RegionCacheTTLSec is the max idle time for regions in the region cache.
 var RegionCacheTTLSec int64 = 600
+var EnableRedirection = false
 
 const (
 	updated  int32 = iota // region is updated and no need to reload.
@@ -70,6 +72,7 @@ type AccessIndex int
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
 	workTiKVIdx    AccessIndex          // point to current work peer in meta.Peers and work store in stores(same idx) for tikv peer
+	proxyTiKVIdx   int32                // point to the tikv peer that can forward requests to the leader. -1 means not using proxy
 	workTiFlashIdx int32                // point to current work peer in meta.Peers and work store in stores(same idx) for tiflash peer
 	stores         []*Store             // stores in this region
 	storeEpochs    []uint32             // snapshots of store's epoch, need reload when `storeEpochs[curr] != stores[cur].fail`
@@ -90,6 +93,7 @@ func (r *RegionStore) clone() *RegionStore {
 	storeEpochs := make([]uint32, len(r.stores))
 	rs := &RegionStore{
 		workTiFlashIdx: r.workTiFlashIdx,
+		proxyTiKVIdx:   r.proxyTiKVIdx,
 		workTiKVIdx:    r.workTiKVIdx,
 		stores:         r.stores,
 		storeEpochs:    storeEpochs,
@@ -151,6 +155,7 @@ func (r *Region) init(c *RegionCache) error {
 	// to avoid acquire storeMu in later access.
 	rs := &RegionStore{
 		workTiKVIdx:    0,
+		proxyTiKVIdx:   -1,
 		workTiFlashIdx: 0,
 		stores:         make([]*Store, 0, len(r.meta.Peers)),
 		storeEpochs:    make([]uint32, 0, len(r.meta.Peers)),
@@ -324,13 +329,16 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
-	Region     RegionVerID
-	Meta       *metapb.Region
-	Peer       *metapb.Peer
-	AccessIdx  AccessIndex
-	Store      *Store
-	Addr       string
-	AccessMode AccessMode
+	Region        RegionVerID
+	Meta          *metapb.Region
+	Peer          *metapb.Peer
+	AccessIdx     AccessIndex
+	Store         *Store
+	Addr          string
+	AccessMode    AccessMode
+	UseProxy      bool
+	ProxyStoreIdx int32
+	ProxyAddr     string
 }
 
 func (c *RPCContext) String() string {
@@ -429,14 +437,34 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		return nil, nil
 	}
 
+	var (
+		useProxy      bool
+		proxyStoreIdx int32
+		proxyAddr     string
+	)
+	if EnableRedirection {
+		if atomic.LoadInt32(&store.needForwarding) == 0 {
+			regionStore.unsetProxyStoreIfNeeded(cachedRegion)
+		} else {
+			proxyStoreIdx, proxyAddr, err = c.getProxyStoreAddr(cachedRegion, store, regionStore, storeIdx)
+			if err != nil {
+				return nil, err
+			}
+			useProxy = true
+		}
+	}
+
 	return &RPCContext{
-		Region:     id,
-		Meta:       cachedRegion.meta,
-		Peer:       peer,
-		AccessIdx:  accessIdx,
-		Store:      store,
-		Addr:       addr,
-		AccessMode: TiKVOnly,
+		Region:        id,
+		Meta:          cachedRegion.meta,
+		Peer:          peer,
+		AccessIdx:     accessIdx,
+		Store:         store,
+		Addr:          addr,
+		AccessMode:    TiKVOnly,
+		UseProxy:      useProxy,
+		ProxyStoreIdx: proxyStoreIdx,
+		ProxyAddr:     proxyAddr,
 	}, nil
 }
 
@@ -570,7 +598,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 }
 
 // OnSendFail handles send request fail logic.
-func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
+func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, isForwarding bool, err error) {
 	metrics.RegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
@@ -585,6 +613,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 			return
 		}
 		rs := r.getStore()
+		startForwarding := false
 		if err != nil {
 			storeIdx, s := rs.accessStore(ctx.AccessMode, ctx.AccessIdx)
 			followerRead := rs.workTiKVIdx != ctx.AccessIdx
@@ -595,20 +624,35 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				return
 			}
 
-			// invalidate regions in store.
-			epoch := rs.storeEpochs[storeIdx]
-			if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
-				logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
-				metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
-			}
+			if !isForwarding {
+				// invalidate regions in store.
+				epoch := rs.storeEpochs[storeIdx]
+				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
+					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+					metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+				}
 
-			// schedule a store addr resolve.
-			s.markNeedCheck(c.notifyCheckCh)
+				// schedule a store addr resolve.
+				s.markNeedCheck(c.notifyCheckCh)
+				// If the failing request is already being forwarded, do not start the loop
+				if EnableRedirection {
+					s.startHealthCheckLoopIfNeeded(c)
+					startForwarding = true
+				}
+			}
 		}
 
 		// try next peer to found new leader.
 		if ctx.AccessMode == TiKVOnly {
-			rs.switchNextTiKVPeer(r, ctx.AccessIdx)
+			if startForwarding || isForwarding {
+				var currentProxyIdx int32 = -1
+				if ctx.UseProxy {
+					currentProxyIdx = ctx.ProxyStoreIdx
+				}
+				rs.switchNextProxyStore(r, currentProxyIdx)
+			} else {
+				rs.switchNextTiKVPeer(r, ctx.AccessIdx)
+			}
 		} else {
 			rs.switchNextFlashPeer(r, ctx.AccessIdx)
 		}
@@ -1132,6 +1176,25 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 	}
 }
 
+func (c *RegionCache) getProxyStoreAddr(region *Region, store *Store, rs *RegionStore, storeIdx int) (proxyStoreIdx int32, addr string, err error) {
+	if !EnableRedirection || store.storeType != TiKV || atomic.LoadInt32(&store.needForwarding) == 0 {
+		return
+	}
+
+	if rs.proxyTiKVIdx >= 0 {
+		return rs.proxyTiKVIdx, rs.stores[proxyStoreIdx].addr, nil
+	}
+
+	for index, s := range rs.stores {
+		if index != storeIdx && s.storeType == TiKV || atomic.LoadInt32(&s.needForwarding) == 0 {
+			rs.setProxyStoreIdx(region, int32(index))
+			return int32(index), s.addr, nil
+		}
+	}
+
+	return -1, "", errors.New("the region leader is disconnected and no store is available ")
+}
+
 func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx int) (addr string) {
 	c.storeMu.RLock()
 	store = c.storeMu.stores[store.storeID]
@@ -1406,6 +1469,37 @@ func (r *RegionStore) switchNextTiKVPeer(rr *Region, currentPeerIdx AccessIndex)
 	rr.compareAndSwapStore(r, newRegionStore)
 }
 
+func (r *RegionStore) switchNextProxyStore(rr *Region, currentProxyIdx int32) {
+	// The default value of `currentProxyIdx` is -1 which means proxy won't be used. Calling this function with -1 will
+	// increase the proxy store index to 0.
+
+	if r.proxyTiKVIdx != currentProxyIdx {
+		return
+	}
+	nextIdx := (currentProxyIdx + 1) % int32(r.accessStoreNum(TiKVOnly))
+	// skips the current workTiKVIdx
+	if nextIdx == int32(r.workTiKVIdx) {
+		nextIdx = (currentProxyIdx + 1) % int32(r.accessStoreNum(TiKVOnly))
+	}
+	newRegionStore := r.clone()
+	newRegionStore.proxyTiKVIdx = nextIdx
+	rr.compareAndSwapStore(r, newRegionStore)
+}
+
+func (r *RegionStore) setProxyStoreIdx(rr *Region, idx int32) {
+	if r.proxyTiKVIdx == idx {
+		return
+	}
+
+	newRegionStore := r.clone()
+	newRegionStore.proxyTiKVIdx = idx
+	rr.compareAndSwapStore(r, newRegionStore)
+}
+
+func (r *RegionStore) unsetProxyStoreIfNeeded(rr *Region) {
+	r.setProxyStoreIdx(rr, -1)
+}
+
 func (r *Region) findElectableStoreID() uint64 {
 	if len(r.meta.Peers) == 0 {
 		return 0
@@ -1458,6 +1552,11 @@ type Store struct {
 	epoch        uint32               // store fail epoch, see RegionStore.storeEpochs
 	storeType    StoreType            // type of the store
 	tokenCount   atomic2.Int64        // used store token count
+
+	// whether the store is disconnected due to some reason, therefore requests to the store needs to be
+	// forwarded by other stores. this is also the flag that a checkUntilHealth goroutine is running for this store.
+	// this mechanism is currently only applicable for TiKV stores.
+	needForwarding int32
 }
 
 type resolveState uint64
@@ -1642,6 +1741,55 @@ const (
 	reachable
 	unreachable
 )
+
+func (s *Store) startHealthCheckLoopIfNeeded(c *RegionCache) {
+	// This mechanism doesn't support non-TiKV stores currently.
+	if s.storeType != TiKV {
+		return
+	}
+
+	// It may be already started by another thread.
+	if atomic.CompareAndSwapInt32(&s.needForwarding, 0, 1) {
+		go s.checkUntilHealth(c)
+	}
+}
+
+func (s *Store) checkUntilHealth(c *RegionCache) {
+	// TODO: Make the tick interval proper and configurable
+	ticker := time.NewTicker(time.Millisecond * 500)
+	lastCheckPDTime := time.Now()
+
+	// TODO: Set a more proper ctx here
+	ctx := context.Background()
+	for {
+		select {
+		case <-c.closeCh:
+			return
+		case <-ticker.C:
+			if time.Since(lastCheckPDTime) > time.Second*30 {
+				lastCheckPDTime = time.Now()
+
+				storeMeta, err := c.PDClient().GetStore(ctx, s.storeID)
+				if err != nil {
+					log.Warn("failed to check unhealthy store's meta from pd", zap.Error(err))
+				}
+				if storeMeta == nil || storeMeta.State == metapb.StoreState_Tombstone {
+					// TODO: What to do here?
+					return
+				}
+			}
+
+			bo := NewNoopBackoff(ctx)
+			l := s.requestLiveness(bo)
+			if l == reachable {
+				if !atomic.CompareAndSwapInt32(&s.needForwarding, 1, 0) {
+					log.Fatal("unreachable")
+				}
+				return
+			}
+		}
+	}
+}
 
 func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
 	if StoreLivenessTimeout == 0 {
