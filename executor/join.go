@@ -568,7 +568,7 @@ func (e *HashJoinExec) getJoinChkOrderChan(workerID uint) chan bool {
 		e.chkMutex.Unlock()
 		return c
 	}
-	e.joinChkOrderChs[workerID] = make(chan bool)
+	e.joinChkOrderChs[workerID] = make(chan bool, 1)
 	e.joinChkOrderChs[workerID] <- true
 	e.chkMutex.Unlock()
 	return e.joinChkOrderChs[workerID]
