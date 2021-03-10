@@ -278,7 +278,7 @@ func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues
 		hit = true
 	}
 	colInfos := BuildRowcodecColInfoForIndexColumns(c.idxInfo, c.tblInfo)
-	tps := BuildFieldTypesForIndexColumn(c.idxInfo, c.tblInfo)
+	tps := BuildFieldTypesForIndexColumns(c.idxInfo, c.tblInfo)
 	return &indexIter{it: it, idx: c, prefix: c.prefix, colInfos: colInfos, tps: tps}, hit, nil
 }
 
@@ -290,7 +290,7 @@ func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) 
 		return nil, err
 	}
 	colInfos := BuildRowcodecColInfoForIndexColumns(c.idxInfo, c.tblInfo)
-	tps := BuildFieldTypesForIndexColumn(c.idxInfo, c.tblInfo)
+	tps := BuildFieldTypesForIndexColumns(c.idxInfo, c.tblInfo)
 	return &indexIter{it: it, idx: c, prefix: c.prefix, colInfos: colInfos, tps: tps}, nil
 }
 
@@ -373,8 +373,8 @@ func BuildRowcodecColInfoForIndexColumns(idxInfo *model.IndexInfo, tblInfo *mode
 	return colInfo
 }
 
-// BuildFieldTypesForIndexColumn builds the index columns field types.
-func BuildFieldTypesForIndexColumn(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) []*types.FieldType {
+// BuildFieldTypesForIndexColumns builds the index columns field types.
+func BuildFieldTypesForIndexColumns(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) []*types.FieldType {
 	tps := make([]*types.FieldType, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
 		col := tblInfo.Columns[idxCol.Offset]

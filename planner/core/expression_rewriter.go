@@ -2004,7 +2004,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 			return "", errors.Trace(errors.Errorf("index not found when decoding index key: %X", key))
 		}
 		colInfos := tables.BuildRowcodecColInfoForIndexColumns(targetIndex, tblInfo)
-		tps := tables.BuildFieldTypesForIndexColumn(targetIndex, tblInfo)
+		tps := tables.BuildFieldTypesForIndexColumns(targetIndex, tblInfo)
 		values, err := tablecodec.DecodeIndexKV(key, []byte{0}, len(colInfos), tablecodec.HandleNotNeeded, colInfos)
 		if err != nil {
 			return "", errors.Trace(err)

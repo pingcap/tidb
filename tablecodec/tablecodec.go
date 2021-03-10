@@ -867,7 +867,7 @@ func getIndexVersion(value []byte) int {
 
 // DecodeIndexKV uses to decode index key values.
 //   `colsLen` is expected to be index columns count.
-//   `columns` is expected to be index columns ++ handle columns(if hdStatus is not HandleNoNeed).
+//   `columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
 func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
 	if len(value) <= MaxOldEncodeValueLen {
 		return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
