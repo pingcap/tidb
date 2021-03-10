@@ -1125,8 +1125,8 @@ func (s *testSuite5) TestInvisibleCoprCacheConfig(c *C) {
 	configValue := rows[0][1].(string)
 	coprCacheVal :=
 		"\t\t\"copr-cache\": {\n" +
-		"\t\t\t\"capacity-mb\": 1000\n" +
-		"\t\t},\n"
+			"\t\t\t\"capacity-mb\": 1000\n" +
+			"\t\t},\n"
 	c.Assert(strings.Contains(configValue, coprCacheVal), Equals, true)
 }
 
