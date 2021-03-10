@@ -514,7 +514,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("create table t4(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
 	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
 	err = tk.ExecToErr("analyze table t4;")
-	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
+	c.Assert(err.Error(), Equals, "[stats]: global statistics for partitioned tables only available in statistics version2, please set tidb_analyze_version to 2")
 }
 
 func (s *testSuite1) TestIssue15993(c *C) {
