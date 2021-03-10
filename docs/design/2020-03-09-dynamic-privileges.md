@@ -1,7 +1,7 @@
 # Proposal:
 
 - Author(s):     [morgo](https://github.com/morgo)
-- Last updated:  Jan. 21, 2021
+- Last updated:  March 09, 2021
 - Discussion at: N/A
 
 ## Abstract
@@ -22,7 +22,7 @@ Dynamic privileges are different from static privileges in the following ways:
 * The name of the privilege is “DYNAMIC”. A plugin registers it, and the server has no prior knowledge of its existence.
 * Privileges can only be global scoped.
 * Privileges are stored in the table `mysql.global_grants` and not `mysql.user`.
-* The GRANT OPTION is stored for each dynamic privilege (versus for the user as a whole).
+* The `GRANT OPTION` is stored for each dynamic privilege (versus for the user as a whole).
 
 We have the same requirement for fine grained privileges in TiDB, so it makes sense to adopt a similar implementation of dynamic privileges. This document describes both the implementation of the framework for dynamic privileges and an initial set of dynamic privileges that are required to be implemented.
 
@@ -44,7 +44,7 @@ CREATE TABLE `global_grants` (
 );
 ```
 
-There is an existing table called “global_priv” which provides similar functionality, except:
+There is an existing table called “global_priv” which initially looked like it provided similar functionality, except:
 * The priv is expected to be a JSON encoded string
 * There is no column named `WITH_GRANT_OPTION`.
 
@@ -57,7 +57,7 @@ This table will persist dynamic privileges. Similar to MySQL, the cache is read 
 Checking for existence of a Dynamic privilege needs a different function from normal privilege checks. I.e.
 
 ```
-// RequestVerification(activeRole []*auth.RoleIdentity, db, table, 
+// RequestVerification(activeRole []*auth.RoleIdentity, db, table,
 // column string, priv mysql.PrivilegeType) bool
 if pm.RequestVerification(activeRoles, "", "", "", mysql.ProcessPriv) {
 	// has processPrivilege
@@ -73,7 +73,7 @@ I propose the following:
 
 ```
 // RequestDynamicVerification(activeRole []*auth.RoleIdentity, priv string, grantable bool) bool
-if pm.RequestDynamicVerification(activeRoles, “BACKUP_ADMIN”, false) {
+if pm.RequestDynamicVerification(activeRoles, "BACKUP_ADMIN", false) {
 	// has backup admin privilege
 }
 ```
@@ -174,7 +174,7 @@ No change
 
 ### Parser Changes
 
-The parser already supports DYNAMIC privileges. This can be confirmed by the following patch to TiDB, where they are sent as the static type of “ExtendedPriv”:
+The parser already supports `DYNAMIC` privileges. This can be confirmed by the following patch to TiDB, where they are sent as the static type of `ExtendedPriv`:
 
 ```
 diff --git a/planner/core/planbuilder.go b/planner/core/planbuilder.go
@@ -203,7 +203,7 @@ ERROR 8121 (HY000): privilege check fail
 ### Attempting to set DYNAMIC privilege: acdc
 ```
 
-It might be possible that changes are still required if “ExtendedPriv” is not supported in all contexts (REVOKE, etc).
+It might be possible that changes are still required if `ExtendedPriv` is not supported in all contexts (REVOKE, etc).
 
 Note that creating a role with the same name as a DYNAMIC privilege is supported. A `GRANT` statement can be attributed to ROLES when it omits the ON *.* syntax. Thus:
 
@@ -253,9 +253,9 @@ There will also need to be documentation specific to DYNAMIC privileges to descr
 
 ## Impact & Risks
 
-For backwards compatibility, the MySQL-compatible dynamic privileges will also permit `SUPER`. This helps prevent upgrade issues, such a when TiDB was bootstrapped `GRANT ALL ON *.*` would not have granted all the dynamic privileges.
+In its initial release, dynamic privilege usage will be controlled by an experimental feature flag. The implementation will be via restricting GRANT and REVOKE statements from creating dynamic privileges (it is too invasive to conditionally modify the ast visitor functionaliy).
 
-There might be some impact on Upgrade/Downgrade story if eventually the `BACKUP_ADMIN` privilege is used instead of `SUPER`, but for the initial release I am planning to allow either. 
+For backwards compatibility, the MySQL-compatible dynamic privileges will also permit `SUPER`. This helps prevent upgrade issues, such a when TiDB was bootstrapped `GRANT ALL ON *.*` would not have granted all the dynamic privileges. There might be some impact on Upgrade/Downgrade story if eventually the `BACKUP_ADMIN` privilege is used instead of `SUPER`, but for the initial release I am planning to allow either.
 
 ## Alternatives
 
