@@ -237,7 +237,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	m.establishMPPConns(bo, req, taskMeta)
 }
 
-// NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution will stop after some minutes.
+// NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution on TiFlash will finally stop after some minutes.
 func (m *mppIterator) cancelMppTasks(bo *tikv.Backoffer, meta *mpp.TaskMeta) {
 	killReq := &mpp.CancelTaskRequest{
 		Meta: meta,
@@ -249,7 +249,7 @@ func (m *mppIterator) cancelMppTasks(bo *tikv.Backoffer, meta *mpp.TaskMeta) {
 	usedStoreAddrs := make(map[string]bool)
 	for _, task := range m.tasks {
 		// get the store address of running tasks
-		if task.State != kv.MppTaskReady && !usedStoreAddrs[task.Meta.GetAddress()] {
+		if task.State == kv.MppTaskRunning && !usedStoreAddrs[task.Meta.GetAddress()] {
 			usedStoreAddrs[task.Meta.GetAddress()] = true
 		}
 		task.State = kv.MppTaskCancelled
@@ -282,8 +282,8 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
 
 	if err != nil {
-		m.cancelMppTasks(bo, taskMeta)
 		m.sendError(err)
+		m.cancelMppTasks(bo, taskMeta)
 		return
 	}
 
@@ -298,15 +298,15 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	for {
 		err := m.handleMPPStreamResponse(bo, resp, req)
 		if err != nil {
-			m.cancelMppTasks(bo, taskMeta)
 			m.sendError(err)
+			m.cancelMppTasks(bo, taskMeta)
 			return
 		}
 
 		if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
-			m.cancelMppTasks(bo, taskMeta)
 			err = tikv.ErrQueryInterrupted
 			m.sendError(err)
+			m.cancelMppTasks(bo, taskMeta)
 			return
 		}
 
