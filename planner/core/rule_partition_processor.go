@@ -211,7 +211,10 @@ func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl tabl
 	return used, nil
 }
 
-func (s *partitionProcessor) recoverTableColNames(ds *DataSource) ([]*types.FieldName, error) {
+// reconstructTableColNames reconstructs FieldsNames according to ds.TblCols.
+// ds.names may not match ds.TblCols since ds.names is pruned while ds.TblCols contains all original columns.
+// please see https://github.com/pingcap/tidb/issues/22635 for more details.
+func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.FieldName, error) {
 	names := make([]*types.FieldName, 0, len(ds.TblCols))
 	colsInfo := ds.table.FullHiddenColsAndVisibleCols()
 	for _, colExpr := range ds.TblCols {
@@ -248,7 +251,7 @@ func (s *partitionProcessor) recoverTableColNames(ds *DataSource) ([]*types.Fiel
 }
 
 func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	names, err := s.recoverTableColNames(ds)
+	names, err := s.reconstructTableColNames(ds)
 	if err != nil {
 		return nil, err
 	}
