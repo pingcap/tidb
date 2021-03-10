@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -1999,28 +1998,18 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 			return "", errors.Trace(errors.Errorf("invalid record/index key: %X", key))
 		}
 		tblInfo := tbl.Meta()
-		var colInfos []rowcodec.ColInfo
-		var tps []*types.FieldType
 		var targetIndex *model.IndexInfo
 		for _, idx := range tblInfo.Indices {
 			if idx.ID == indexID {
 				targetIndex = idx
-				colInfos = make([]rowcodec.ColInfo, 0, len(idx.Columns))
-				tps = make([]*types.FieldType, 0, len(idx.Columns))
-				for _, idxCol := range idx.Columns {
-					col := tblInfo.Columns[idxCol.Offset]
-					colInfos = append(colInfos, rowcodec.ColInfo{
-						ID: col.ID,
-						Ft: rowcodec.FieldTypeFromModelColumn(col),
-					})
-					tps = append(tps, rowcodec.FieldTypeFromModelColumn(col))
-				}
 				break
 			}
 		}
-		if len(colInfos) == 0 || len(tps) == 0 || targetIndex == nil {
+		if targetIndex == nil {
 			return "", errors.Trace(errors.Errorf("index not found when decoding index key: %X", key))
 		}
+		colInfos := tables.BuildRowcodecColInfoForIndexColumns(targetIndex, tblInfo)
+		tps := tables.BuildFieldTypesForIndexColumns(targetIndex, tblInfo)
 		values, err := tablecodec.DecodeIndexKV(key, []byte{0}, len(colInfos), tablecodec.HandleNotNeeded, colInfos)
 		if err != nil {
 			return "", errors.Trace(err)
