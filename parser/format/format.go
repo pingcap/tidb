@@ -219,6 +219,7 @@ const (
 
 	RestoreSpacesAroundBinaryOperation
 
+	RestoreStringWithoutCharset
 	RestoreStringWithoutDefaultCharset
 )
 
@@ -282,6 +283,10 @@ func (rf RestoreFlags) HasSpacesAroundBinaryOperationFlag() bool {
 
 func (rf RestoreFlags) HasStringWithoutDefaultCharset() bool {
 	return rf.has(RestoreStringWithoutDefaultCharset)
+}
+
+func (rf RestoreFlags) HasStringWithoutCharset() bool {
+	return rf.has(RestoreStringWithoutCharset)
 }
 
 // RestoreCtx is `Restore` context to hold flags and writer.
