@@ -2497,7 +2497,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBTrackAggregateMemoryUsage,
 	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableExchangePartition,
-	variable.TiDBEnableTiFlashFallbackTiKV,
+	variable.TiDBAllowFallbackToTiKV,
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
