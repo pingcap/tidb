@@ -1755,7 +1755,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		for _, engine := range strings.Split(val, ",") {
 			switch engine {
 			case kv.TiFlash.Name():
-				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
 			}
 		}
 	}
