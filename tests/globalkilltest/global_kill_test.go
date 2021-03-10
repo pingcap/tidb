@@ -271,7 +271,7 @@ func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uin
 	startTS := time.Now()
 	sql := fmt.Sprintf("SELECT SLEEP(%d);", sleepTime)
 	if connID > 0 {
-		log.Info("exec sql", zap.String("sql", sql), zap.String("on connID", `0x`+strconv.FormatUint(connID, 16)))
+		log.Info("exec sql", zap.String("sql", sql), zap.String("on connID", "0x"+strconv.FormatUint(connID, 16)))
 	} else {
 		log.Info("exec sql", zap.String("sql", sql))
 	}
@@ -302,7 +302,7 @@ func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB
 	var connID1 uint64
 	err = conn1.QueryRowContext(ctx, "SELECT CONNECTION_ID();").Scan(&connID1)
 	c.Assert(err, IsNil)
-	log.Info("connID1", zap.String("connID1", `0x`+strconv.FormatUint(connID1, 16)))
+	log.Info("connID1", zap.String("connID1", "0x"+strconv.FormatUint(connID1, 16)))
 
 	ch := make(chan sleepResult)
 	go sleepRoutine(ctx, sleepTime, conn1, connID1, ch)
@@ -315,12 +315,12 @@ func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB
 	var connID2 uint64
 	err = conn2.QueryRowContext(ctx, "SELECT CONNECTION_ID();").Scan(&connID2)
 	c.Assert(err, IsNil)
-	log.Info("connID2", zap.String("connID2", `0x`+strconv.FormatUint(connID2, 16)))
+	log.Info("connID2", zap.String("connID2", "0x"+strconv.FormatUint(connID2, 16)))
 
 	log.Info("exec: KILL QUERY",
 		zap.Uint64("connID1 value", connID1),
-		zap.String("connID1", `0x`+strconv.FormatUint(connID1, 16)),
-		zap.String("on connID2", `0x`+strconv.FormatUint(connID2, 16)),
+		zap.String("connID1", "0x"+strconv.FormatUint(connID1, 16)),
+		zap.String("on connID2", "0x"+strconv.FormatUint(connID2, 16)),
 	)
 	_, err = conn2.ExecContext(ctx, fmt.Sprintf("KILL QUERY %v", connID1))
 	c.Assert(err, IsNil)
