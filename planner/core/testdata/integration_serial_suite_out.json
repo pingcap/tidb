@@ -1660,7 +1660,7 @@
         ]
       },
       {
-        "SQL": "desc format = 'brief' select count(distinct value),id from t group by id",
+        "SQL": "desc format = 'brief' select count(distinct value),sum(distinct value),id from t group by id",
         "Plan": [
           "HashAgg 8000.00 root  group by:test.t.id, funcs:count(distinct test.t.value)->Column#4, funcs:sum(distinct test.t.value)->Column#5, funcs:firstrow(test.t.id)->test.t.id",
           "└─TableReader 10000.00 root  data:TableFullScan",
