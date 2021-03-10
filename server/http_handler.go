@@ -395,6 +395,7 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (*mvccKV,
 
 // settingsHandler is the handler for list tidb server settings.
 type settingsHandler struct {
+	*tikvHandlerTool
 }
 
 // binlogRecover is used to recover binlog service.
@@ -717,6 +718,52 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				variable.ProcessGeneralLog.Store(true)
 			default:
 				writeError(w, errors.New("illegal argument"))
+				return
+			}
+		}
+		if asyncCommit := req.Form.Get("tidb_enable_async_commit"); asyncCommit != "" {
+			s, err := session.CreateSession(h.Store.(kv.Storage))
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			if s != nil {
+				defer s.Close()
+			}
+			switch asyncCommit {
+			case "0":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOff)
+			case "1":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOn)
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+		}
+		if onePC := req.Form.Get("tidb_enable_1pc"); onePC != "" {
+			s, err := session.CreateSession(h.Store.(kv.Storage))
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			if s != nil {
+				defer s.Close()
+			}
+			switch onePC {
+			case "0":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOff)
+			case "1":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOn)
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+			if err != nil {
+				writeError(w, err)
 				return
 			}
 		}
