@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -41,7 +42,7 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 		Name: model.NewCIStr("test_index_change"),
 		ID:   1,
 	}
-	err := kv.RunInNewTxn(s.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), s.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return errors.Trace(t.CreateDatabase(s.dbInfo))
 	})
@@ -59,7 +60,10 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 	// create table t (c1 int primary key, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
 	tblInfo.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
@@ -328,11 +332,14 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, wr
 	}
 
 	var rows [][]types.Datum
-	publicTbl.IterRecords(ctx, publicTbl.FirstKey(), publicTbl.Cols(),
+	err = tables.IterRecords(publicTbl, ctx, publicTbl.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			rows = append(rows, data)
 			return true, nil
 		})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if len(rows) == 0 {
 		return errors.New("table is empty")
 	}

@@ -124,9 +124,6 @@ enable-telemetry = true
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
 deprecate-integer-display-length = false
 
-# txn-scope indicates the default value for the `txn_scope` session variable.
-txn-scope = "global"
-
 # enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
 # According to MySQL 8.0 Refman:
 # The maximum supported length of an individual SET element is M <= 255 and (M x w) <= 1020,
@@ -420,28 +417,9 @@ store-liveness-timeout = "5s"
 # If the size(in byte) of a transaction is large than `ttl-refreshed-txn-size`, it update the lock TTL during the 2PC.
 ttl-refreshed-txn-size = 33554432
 
-[tikv-client.async-commit]
-# The maximum allowed keys in an async commit transaction. Transactions with more keys than the limit
-# will be committed with normal 2PC way.
-keys-limit = 256
-# The maximum length total of keys in bytes. Transactions will be committed with the normal 2PC way
-# if the limit is exceeded.
-total-key-size-limit = 4096
-
 [tikv-client.copr-cache]
-# Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
-# reuses the result when corresponding data in TiKV is unchanged, on a region basis.
-enable = true
-
-# The capacity in MB of the cache.
+# The capacity in MB of the cache. Zero means disable coprocessor cache.
 capacity-mb = 1000.0
-
-# Only cache small requests. Zero means no limits for requests.
-admission-max-ranges = 500
-# Only cache requests whose result set is small.
-admission-max-result-mb = 10.0
-# Only cache requests takes notable time to process.
-admission-min-process-ms = 5
 
 [binlog]
 # enable to write binlog.

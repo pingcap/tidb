@@ -55,7 +55,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
 	datums := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(c, datums, `%`, "root", []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, datums, `%`, "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
@@ -160,7 +160,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	c.Assert(req.NumRows() == 0, IsFalse)
 	row := req.GetRow(0)
 	datums := statistics.RowToDatums(row, r.Fields())
-	match(c, datums, `%`, "root", []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, datums, `%`, "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	c.Assert(r.Close(), IsNil)
 
 	mustExecSQL(c, se, "USE test;")
@@ -521,7 +521,7 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 			originText:   "select * from t where a > ?",
 			bindText:     "select /*+ use_index(t, idxb) */ * from t where a > 1",
 			db:           "test",
-			originWithDB: "select * from test . t where a > ?",
+			originWithDB: "select * from `test` . `t` where `a` > ?",
 			bindWithDB:   "SELECT /*+ use_index(t idxb)*/ * FROM test.t WHERE a > 1",
 			deleteText:   "select * from test.t where a > 1",
 		},
@@ -529,7 +529,7 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 			originText:   "select count ( ? ), max ( a ) from t group by b",
 			bindText:     "select /*+ use_index(t, idx) */ count(1), max(a) from t group by b",
 			db:           "test",
-			originWithDB: "select count ( ? ) , max ( a ) from test . t group by b",
+			originWithDB: "select count ( ? ) , max ( `a` ) from `test` . `t` group by `b`",
 			bindWithDB:   "SELECT /*+ use_index(t idx)*/ count(1),max(a) FROM test.t GROUP BY b",
 			deleteText:   "select count(1), max(a) from test.t group by b",
 		},
@@ -581,19 +581,20 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	// The latest one.
-	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test.t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 
 	upgradeToVer61(se, version60)
 
-	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
+	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin'`)
 	req := r.NewChunk()
 	c.Assert(r.Next(ctx, req), IsNil)
 	c.Assert(req.NumRows(), Equals, 1)
 	row := req.GetRow(0)
-	c.Assert(row.GetString(0), Equals, "select * from test . t")
+	c.Assert(row.GetString(0), Equals, "select * from `test` . `t`")
 	c.Assert(row.GetString(1), Equals, "SELECT /*+ use_index(t idx_b)*/ * FROM test.t")
 	c.Assert(row.GetString(2), Equals, "")
 	c.Assert(row.GetString(3), Equals, "using")
+	c.Assert(row.GetTime(4).String(), Equals, "2021-01-04 14:50:58.257")
 	c.Assert(r.Close(), IsNil)
 	mustExecSQL(c, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
 }
