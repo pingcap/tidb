@@ -30,6 +30,9 @@ func (s *testSQLDigestSuite) TestNormalize(c *C) {
 	}{
 		{"select _utf8mb4'123'", "select (_charset) ?"},
 		{"SELECT 1", "select ?"},
+		{"select null", "select ?"},
+		{"select \\N", "select ?"},
+		{"SELECT `null`", "select `null`"},
 		{"select * from b where id = 1", "select * from `b` where `id` = ?"},
 		{"select 1 from b where id in (1, 3, '3', 1, 2, 3, 4)", "select ? from `b` where `id` in ( ... )"},
 		{"select 1 from b where id in (1, a, 4)", "select ? from `b` where `id` in ( ? , `a` , ? )"},
