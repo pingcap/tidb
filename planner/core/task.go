@@ -557,6 +557,8 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	return task
 }
 
+// for different decimal scale and precision, tiflash uses different underlying type.
+// Here we check the scale and precision to decide whether convertion is a must.
 func needDecimalConvert(tp *types.FieldType, dec int, l int) bool {
 	if tp.Decimal != dec {
 		return true
@@ -624,6 +626,7 @@ func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.C
 	return col
 }
 
+// If the join key's type are decimal and needs convertion, we will add a projection below the join or exchanger if exists.
 func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppTask, *mppTask) {
 	lp := lTask.p
 	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
@@ -633,6 +636,7 @@ func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppT
 	if _, ok := rp.(*PhysicalExchangeReceiver); ok {
 		rp = rp.Children()[0].Children()[0]
 	}
+	// to mark if any equal cond needs to convert
 	lMask := make([]bool, len(p.EqualConditions))
 	rMask := make([]bool, len(p.EqualConditions))
 	cTypes := make([]*types.FieldType, len(p.EqualConditions))
@@ -687,6 +691,7 @@ func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppT
 		lKeys = append(lKeys, lKey)
 		rKeys = append(rKeys, rKey)
 	}
+	// if left or right child changes, we need to add enforcer.
 	if lChanged {
 		nlTask := lTask.copy().(*mppTask)
 		nlTask.p = lProj
