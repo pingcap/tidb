@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
@@ -190,8 +191,8 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 	return nil
 }
 
-// collectModifyColAmendOps is used to check if there is column change from nullable to not null by now.
-// TODO allow column change from nullable to not null, and generate keys check operation.
+// collectModifyColAmendOps is used to check if there is only column size increasing change.Other column type changes
+// such as column change from nullable to not null or column type change are not supported by now.
 func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
 	for _, colAtCommit := range tblAtCommit.Cols() {
 		colAtStart := findColByID(tblAtStart, colAtCommit.ID)
@@ -200,6 +201,13 @@ func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			// If the column could not be found in the original schema, it could not be decided if this column
+			// is newly added or modified from an original column.Report error to solve the issue
+			// https://github.com/pingcap/tidb/issues/21470. This change will make amend fail for adding column
+			// and modifying columns at the same time.
+			return nil, errors.Errorf("column=%v id=%v is not found for table=%v checking column modify",
+				colAtCommit.Name, colAtCommit.ID, tblAtCommit.Meta().Name.String())
 		}
 	}
 	return nil, nil
@@ -399,6 +407,19 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 	return nil
 }
 
+func getCommonHandleDatum(tbl table.Table, row chunk.Row) []types.Datum {
+	if !tbl.Meta().IsCommonHandle {
+		return nil
+	}
+	datumBuf := make([]types.Datum, 0, 4)
+	for _, col := range tbl.Cols() {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			datumBuf = append(datumBuf, row.GetDatum(col.Offset, &col.FieldType))
+		}
+	}
+	return datumBuf
+}
+
 func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx sessionctx.Context, kvMap map[string][]byte,
 	key []byte, kvHandle kv.Handle, keyOnly bool) ([]byte, []byte, error) {
 	chk := a.chk
@@ -421,6 +442,8 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 		idxVals = append(idxVals, chk.GetRow(0).GetDatum(oldCol.Offset, &oldCol.FieldType))
 	}
 
+	rsData := tables.TryGetHandleRestoredDataWrapper(a.tblInfoAtCommit, getCommonHandleDatum(a.tblInfoAtCommit, chk.GetRow(0)), nil)
+
 	// Generate index key buf.
 	newIdxKey, distinct, err := tablecodec.GenIndexKey(sctx.GetSessionVars().StmtCtx,
 		a.tblInfoAtCommit.Meta(), a.indexInfoAtCommit.Meta(), a.tblInfoAtCommit.Meta().ID, idxVals, kvHandle, nil)
@@ -433,9 +456,8 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 	}
 
 	// Generate index value buf.
-	containsNonBinaryString := tables.ContainsNonBinaryString(a.indexInfoAtCommit.Meta().Columns, a.tblInfoAtCommit.Meta().Columns)
-	newIdxVal, err := tablecodec.GenIndexValue(sctx.GetSessionVars().StmtCtx, a.tblInfoAtCommit.Meta(),
-		a.indexInfoAtCommit.Meta(), containsNonBinaryString, distinct, false, idxVals, kvHandle)
+	needRsData := tables.NeedRestoredData(a.indexInfoAtCommit.Meta().Columns, a.tblInfoAtCommit.Meta().Columns)
+	newIdxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, a.tblInfoAtCommit.Meta(), a.indexInfoAtCommit.Meta(), needRsData, distinct, false, idxVals, kvHandle, 0, rsData)
 	if err != nil {
 		logutil.Logger(ctx).Warn("amend generate index values failed", zap.Error(err))
 		return nil, nil, errors.Trace(err)

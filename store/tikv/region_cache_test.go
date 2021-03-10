@@ -53,7 +53,7 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.store2 = storeIDs[1]
 	s.peer1 = peerIDs[0]
 	s.peer2 = peerIDs[1]
-	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
@@ -781,7 +781,7 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 
 func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 	// Create a separated region cache to do this test.
-	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(s.cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
@@ -948,6 +948,33 @@ func (s *testRegionCacheSuite) TestReplaceNewAddrAndOldOfflineImmediately(c *C) 
 	getVal, err := client.Get(testKey)
 	c.Assert(err, IsNil)
 	c.Assert(getVal, BytesEquals, testValue)
+}
+
+func (s *testRegionCacheSuite) TestReplaceStore(c *C) {
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+
+	client := &RawKVClient{
+		clusterID:   0,
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+	}
+	defer client.Close()
+	testKey := []byte("test_key")
+	testValue := []byte("test_value")
+	err := client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
+
+	s.cluster.MarkTombstone(s.store1)
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(s.store1))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.RemovePeer(s.region1, s.peer1)
+	s.cluster.ChangeLeader(s.region1, peer3)
+
+	err = client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
 }
 
 func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
@@ -1337,7 +1364,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 				AccessIdx:  accessIdx,
 				Peer:       peer,
 				Store:      store,
-				AccessMode: TiKvOnly,
+				AccessMode: TiKVOnly,
 			}
 			r := cache.getCachedRegionWithRLock(rpcCtx.Region)
 			if r != nil {

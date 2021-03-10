@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"sync/atomic"
@@ -40,10 +39,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -821,6 +818,7 @@ type indexRecord struct {
 	handle kv.Handle
 	key    []byte        // It's used to lock a record. Record it to reduce the encoding time.
 	vals   []types.Datum // It's the index values.
+	rsData []types.Datum // It's the restored data for handle.
 	skip   bool          // skip indicates that the index key is already exists, we should not add it.
 }
 
@@ -922,7 +920,9 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 		}
 		idxVal[j] = idxColumnVal
 	}
-	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal}
+
+	rsData := tables.TryGetHandleRestoredDataWrapper(w.table, nil, w.rowMap)
+	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal, rsData: rsData}
 	return idxRecord, nil
 }
 
@@ -937,7 +937,8 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		lastHandle := w.idxRecords[len(w.idxRecords)-1].handle
-		return w.table.RecordKey(lastHandle).Next()
+		recordKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), lastHandle)
+		return recordKey.Next()
 	}
 	return taskRange.endKey.Next()
 }
@@ -1022,60 +1023,26 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.Handle) error {
 	idxInfo := w.index.Meta()
 	tblInfo := w.table.Meta()
-	name := w.index.Meta().Name.String()
-
-	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
-	for _, idxCol := range idxInfo.Columns {
-		col := tblInfo.Columns[idxCol.Offset]
-		colInfo = append(colInfo, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
+	idxColLen := len(idxInfo.Columns)
+	h, err := tablecodec.DecodeIndexHandle(key, value, idxColLen)
+	if err != nil {
+		return errors.Trace(err)
 	}
-
-	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleDefault, colInfo)
+	hasBeenBackFilled := h.Equal(handle)
+	if hasBeenBackFilled {
+		return nil
+	}
+	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
+	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
 	if err != nil {
 		return err
 	}
-
-	if !w.table.Meta().IsCommonHandle {
-		_, d, err := codec.DecodeOne(values[len(colInfo)])
+	indexName := w.index.Meta().Name.String()
+	valueStr := make([]string, 0, idxColLen)
+	for i, val := range values[:idxColLen] {
+		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
 		if err != nil {
-			return errors.Trace(err)
-		}
-		if d.GetInt64() == handle.IntValue() {
-			return nil
-		}
-	} else {
-		// We expect the two handle have the same number of columns, because they come from a same table.
-		// But we still need to check it explicitly, otherwise we will encounter undesired index out of range panic,
-		// or undefined behavior if someone change the format of the value returned by tablecodec.DecodeIndexKV.
-		colsOfHandle := len(values) - len(colInfo)
-		if w.index.Meta().Global {
-			colsOfHandle--
-		}
-		if colsOfHandle != handle.NumCols() {
-			// We can claim these two handle are different, because they have different length.
-			// But we'd better report an error at here to detect compatibility problem introduced in other package during tests.
-			return errors.New("number of columns in two handle is different")
-		}
-
-		for i := 0; i < handle.NumCols(); i++ {
-			if bytes.Equal(values[i+len(colInfo)], handle.EncodedCol(i)) {
-				colsOfHandle--
-			}
-		}
-		if colsOfHandle == 0 {
-			return nil
-		}
-	}
-
-	valueStr := make([]string, 0, len(colInfo))
-	for i, val := range values[:len(colInfo)] {
-		d, err := tablecodec.DecodeColumnValue(val, colInfo[i].Ft, time.Local)
-		if err != nil {
-			return kv.ErrKeyExists.FastGenByArgs(key.String(), name)
+			return kv.ErrKeyExists.FastGenByArgs(key.String(), indexName)
 		}
 		str, err := d.ToString()
 		if err != nil {
@@ -1083,7 +1050,7 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 		}
 		valueStr = append(valueStr, str)
 	}
-	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), name)
+	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
 }
 
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
@@ -1127,7 +1094,8 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 		} else if w.distinctCheckFlags[i] {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
-			val, err := w.index.GenIndexValue(stmtCtx, idxRecords[i].vals, w.distinctCheckFlags[i], false, idxRecords[i].handle)
+			needRsData := tables.NeedRestoredData(w.index.Meta().Columns, w.table.Meta().Columns)
+			val, err := tablecodec.GenIndexValuePortal(stmtCtx, w.table.Meta(), w.index.Meta(), needRsData, w.distinctCheckFlags[i], false, idxRecords[i].vals, idxRecords[i].handle, 0, idxRecords[i].rsData)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1151,7 +1119,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	})
 
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
@@ -1184,7 +1152,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle)
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.
@@ -1363,7 +1331,7 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	})
 
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)

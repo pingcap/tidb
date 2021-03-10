@@ -75,6 +75,9 @@ type PhysicalTableReader struct {
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
 
+	// BatchCop = true means the cop task in the physical table reader will be executed in batch mode(use in TiFlash only)
+	BatchCop bool
+
 	IsCommonHandle bool
 
 	// Used by partition table.
@@ -143,6 +146,7 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.StoreType = p.StoreType
+	cloned.BatchCop = p.BatchCop
 	cloned.IsCommonHandle = p.IsCommonHandle
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
@@ -787,8 +791,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
-	outerSchema *expression.Schema
-	innerTask   task
+	innerTask task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges []*ranger.Range
@@ -856,9 +859,11 @@ type PhysicalExchangeReceiver struct {
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
 
-	Tasks        []*kv.MPPTask
+	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
 	HashCols     []*expression.Column
+	// Tasks is the mpp task for current PhysicalExchangeSender
+	Tasks []*kv.MPPTask
 
 	Fragment *Fragment
 }
@@ -913,11 +918,35 @@ type PhysicalUnionAll struct {
 	physicalSchemaProducer
 }
 
+// AggMppRunMode defines the running mode of aggregation in MPP
+type AggMppRunMode int
+
+const (
+	// NoMpp means the default value which does not run in MPP
+	NoMpp AggMppRunMode = iota
+	// Mpp1Phase runs only 1 phase but requires its child's partition property
+	Mpp1Phase
+	// Mpp2Phase runs partial agg + final agg with hash partition
+	Mpp2Phase
+	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)
+	MppTiDB
+)
+
 type basePhysicalAgg struct {
 	physicalSchemaProducer
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
+	MppRunMode   AggMppRunMode
+}
+
+func (p *basePhysicalAgg) isFinalAgg() bool {
+	if len(p.AggFuncs) > 0 {
+		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg, error) {

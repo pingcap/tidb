@@ -693,8 +693,10 @@ func (s *exprStack) len() int {
 }
 
 // DatumToConstant generates a Constant expression from a Datum.
-func DatumToConstant(d types.Datum, tp byte) *Constant {
-	return &Constant{Value: d, RetType: types.NewFieldType(tp)}
+func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
+	t := types.NewFieldType(tp)
+	t.Flag |= flag
+	return &Constant{Value: d, RetType: t}
 }
 
 // ParamMarkerExpression generate a getparam function expression.

@@ -59,6 +59,9 @@ func (p *PhysicalLock) ExplainInfo() string {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.TP()
+		}
 		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
 }
@@ -172,6 +175,9 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.TP()
+		}
 		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
 }
@@ -863,6 +869,16 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 	case tipb.ExchangeType_Hash:
 		fmt.Fprintf(buffer, "HashPartition")
 		fmt.Fprintf(buffer, ", Hash Cols: %s", expression.ExplainColumnList(p.HashCols))
+	}
+	if len(p.Tasks) > 0 {
+		fmt.Fprintf(buffer, ", tasks: [")
+		for idx, task := range p.Tasks {
+			if idx != 0 {
+				fmt.Fprintf(buffer, ", ")
+			}
+			fmt.Fprintf(buffer, "%v", task.ID)
+		}
+		fmt.Fprintf(buffer, "]")
 	}
 	return buffer.String()
 }
