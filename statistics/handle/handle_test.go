@@ -1682,6 +1682,21 @@ func (s *statsSerialSuite) TestFeedbackWithGlobalStats(c *C) {
 	testKit.MustQuery("show warnings").Check(testkit.Rows(`Error 1105 variable tidb_analyze_version not updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback`))
 	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
 
+	h := s.do.StatsHandle()
+	var err error
+	// checkFeedbackOnPartitionTable is used to check whether the statistics are the same as before.
+	checkFeedbackOnPartitionTable := func(statsBefore *statistics.Table, tblInfo *model.TableInfo) {
+		h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+		err = h.DumpStatsFeedbackToKV()
+		c.Assert(err, IsNil)
+		err = h.HandleUpdateStats(s.do.InfoSchema())
+		c.Assert(err, IsNil)
+		statsTblAfter := h.GetTableStats(tblInfo)
+		// assert that statistics not changed
+		// the feedback can not work for the partition table in both static and dynamic mode
+		assertTableEqual(c, statsBefore, statsTblAfter)
+	}
+
 	// Case 2: Feedback wouldn't be applied on version 2 and global-level statistics.
 	statistics.FeedbackProbability.Store(0)
 	testKit.MustExec("set @@tidb_analyze_version = 2")
@@ -1692,7 +1707,6 @@ func (s *statsSerialSuite) TestFeedbackWithGlobalStats(c *C) {
 		testKit.MustExec("insert into t values (1,2),(2,2),(4,5),(2,3),(3,4)")
 	}
 	testKit.MustExec("analyze table t with 0 topn")
-	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -1711,16 +1725,7 @@ func (s *statsSerialSuite) TestFeedbackWithGlobalStats(c *C) {
 	testKit.MustExec("select b from t partition(p1) use index(idx) where t.b <= 3;")
 	testKit.MustExec("select b from t use index(idx) where t.b <= 3 order by b;")
 	testKit.MustExec("select b from t use index(idx) where t.b <= 3;")
-
-	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
-	err = h.DumpStatsFeedbackToKV()
-	c.Assert(err, IsNil)
-	err = h.HandleUpdateStats(s.do.InfoSchema())
-	c.Assert(err, IsNil)
-	statsTblAfter := h.GetTableStats(tblInfo)
-	// assert that statistics not changed
-	// the feedback can not work for the partition table in dynamic mode
-	assertTableEqual(c, statsTblBefore, statsTblAfter)
+	checkFeedbackOnPartitionTable(statsTblBefore, tblInfo)
 
 	// Case 3: Feedback is also not effective on version 1 and partition-level statistics.
 	testKit.MustExec("set tidb_analyze_version = 1")
@@ -1744,16 +1749,7 @@ func (s *statsSerialSuite) TestFeedbackWithGlobalStats(c *C) {
 	testKit.MustExec("select b from t1 partition(p1) use index(idx) where t1.b <= 3;")
 	testKit.MustExec("select b from t1 use index(idx) where t1.b <= 3 order by b;")
 	testKit.MustExec("select b from t1 use index(idx) where t1.b <= 3;")
-
-	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
-	err = h.DumpStatsFeedbackToKV()
-	c.Assert(err, IsNil)
-	err = h.HandleUpdateStats(s.do.InfoSchema())
-	c.Assert(err, IsNil)
-	statsTblAfter = h.GetTableStats(tblInfo)
-	// assert that statistics not changed
-	// the feedback can not work for the partition table in static mode
-	assertTableEqual(c, statsTblBefore, statsTblAfter)
+	checkFeedbackOnPartitionTable(statsTblBefore, tblInfo)
 }
 
 func (s *testStatsSuite) TestExtendedStatsPartitionTable(c *C) {
