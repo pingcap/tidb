@@ -95,7 +95,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err := e.ctx.NewTxn(ctx); err != nil {
 		return err
 	}
-	defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()
+	defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()
 
 	// Create internal session to start internal transaction.
 	isCommit := false
@@ -447,7 +447,7 @@ func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, intern
 
 // grantGlobalLevel manipulates mysql.user table.
 func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	if priv.Priv == 0 {
+	if priv.Priv == 0 || priv.Priv == mysql.UsagePriv {
 		return nil
 	}
 
@@ -465,6 +465,9 @@ func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 
 // grantDBLevel manipulates mysql.db table.
 func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
+	if priv.Priv == mysql.UsagePriv {
+		return nil
+	}
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
@@ -484,6 +487,9 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 
 // grantTableLevel manipulates mysql.tables_priv table.
 func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
+	if priv.Priv == mysql.UsagePriv {
+		return nil
+	}
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB

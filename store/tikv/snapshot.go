@@ -29,10 +29,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
@@ -58,7 +61,7 @@ type tikvSnapshot struct {
 	keyOnly         bool
 	vars            *kv.Variables
 	replicaReadSeed uint32
-	minCommitTSPushed
+	resolvedLocks   *util.TSSet
 
 	// Cache the result of BatchGet.
 	// The invariance is that calling BatchGet multiple times using the same start ts,
@@ -75,8 +78,12 @@ type tikvSnapshot struct {
 		stats       *SnapshotRuntimeStats
 		replicaRead kv.ReplicaReadType
 		taskID      uint64
+		isStaleness bool
+		// MatchStoreLabels indicates the labels the store should be matched
+		matchStoreLabels []*metapb.StoreLabel
 	}
 	sampleStep uint32
+	txnScope   string
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -92,9 +99,7 @@ func newTiKVSnapshot(store *KVStore, ver kv.Version, replicaReadSeed uint32) *ti
 		priority:        pb.CommandPri_Normal,
 		vars:            kv.DefaultVars,
 		replicaReadSeed: replicaReadSeed,
-		minCommitTSPushed: minCommitTSPushed{
-			data: make(map[uint64]struct{}, 5),
-		},
+		resolvedLocks:   util.NewTSSet(5),
 	}
 }
 
@@ -110,7 +115,7 @@ func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
 	s.mu.cached = nil
 	s.mu.Unlock()
 	// And also the minCommitTS pushed information.
-	s.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
+	s.resolvedLocks = util.NewTSSet(5)
 }
 
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
@@ -259,12 +264,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 }
 
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
-	cli := clientHelper{
-		LockResolver:      s.store.lockResolver,
-		RegionCache:       s.store.regionCache,
-		minCommitTSPushed: &s.minCommitTSPushed,
-		Client:            s.store.client,
-	}
+	cli := NewClientHelper(s.store, s.resolvedLocks)
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -276,6 +276,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 	pending := batch.keys
 	for {
+		isStaleness := false
+		var matchStoreLabels []*metapb.StoreLabel
 		s.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
@@ -285,9 +287,17 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
+		isStaleness = s.mu.isStaleness
+		matchStoreLabels = s.mu.matchStoreLabels
 		s.mu.RUnlock()
-
-		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "")
+		var ops []StoreSelectorOption
+		if isStaleness {
+			req.EnableStaleRead()
+		}
+		if len(matchStoreLabels) > 0 {
+			ops = append(ops, WithMatchLabels(matchStoreLabels))
+		}
+		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "", ops...)
 
 		if err != nil {
 			return errors.Trace(err)
@@ -407,13 +417,18 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		}
 	})
 
-	cli := clientHelper{
-		LockResolver:      s.store.lockResolver,
-		RegionCache:       s.store.regionCache,
-		minCommitTSPushed: &s.minCommitTSPushed,
-		Client:            s.store.client,
-		resolveLite:       true,
+	cli := NewClientHelper(s.store, s.resolvedLocks)
+
+	// Secondary locks or async commit locks cannot be ignored when getting using the max version.
+	// So we concurrently get a TS from PD and use it in retries to avoid unnecessary blocking.
+	var tsFuture oracle.Future
+	if s.version == kv.MaxVersion {
+		tsFuture = s.store.oracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.txnScope})
 	}
+	failpoint.Inject("snapshotGetTSAsync", nil)
+
+	isStaleness := false
+	var matchStoreLabels []*metapb.StoreLabel
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -430,13 +445,22 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
+	isStaleness = s.mu.isStaleness
+	matchStoreLabels = s.mu.matchStoreLabels
 	s.mu.RUnlock()
+	var ops []StoreSelectorOption
+	if isStaleness {
+		req.EnableStaleRead()
+	}
+	if len(matchStoreLabels) > 0 {
+		ops = append(ops, WithMatchLabels(matchStoreLabels))
+	}
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "")
+		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "", ops...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -464,7 +488,25 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
+
+			snapVer := s.version.Ver
+			if s.version == kv.MaxVersion {
+				newTS, err := tsFuture.Wait()
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				s.version = kv.NewVersion(newTS)
+				req.Req.(*pb.GetRequest).Version = newTS
+				// skip lock resolving and backoff if the lock does not block the read
+				if newTS < lock.TxnID || newTS < lock.MinCommitTS {
+					continue
+				}
+			}
+
+			// Use the original snapshot version to resolve locks so we can use MaxUint64
+			// as the callerStartTS if it's an auto-commit point get. This could save us
+			// one write at TiKV by not pushing forward the minCommitTS.
+			msBeforeExpired, err := cli.ResolveLocks(bo, snapVer, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -515,7 +557,7 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	case kv.IsolationLevel:
 		s.isolationLevel = val.(kv.IsoLevel)
 	case kv.Priority:
-		s.priority = kvPriorityToCommandPri(val.(int))
+		s.priority = PriorityToPB(val.(int))
 	case kv.NotFillCache:
 		s.notFillCache = val.(bool)
 	case kv.SyncLog:
@@ -538,6 +580,16 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.mu.Unlock()
 	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
+	case kv.IsStalenessReadOnly:
+		s.mu.Lock()
+		s.mu.isStaleness = val.(bool)
+		s.mu.Unlock()
+	case kv.MatchStoreLabels:
+		s.mu.Lock()
+		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
+		s.mu.Unlock()
+	case kv.TxnScope:
+		s.txnScope = val.(string)
 	}
 }
 

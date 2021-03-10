@@ -99,15 +99,6 @@ var (
 	tiKVGCAutoConcurrency = "tikv_gc_auto_concurrency"
 )
 
-var gcVariableComments = map[string]string{
-	variable.TiDBGCRunInterval:  "GC run interval, at least 10m, in Go format.",
-	variable.TiDBGCLifetime:     "All versions within life time will not be collected by GC, at least 10m, in Go format.",
-	variable.TiDBGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
-	variable.TiDBGCEnable:       "Current GC enable status",
-	tiKVGCAutoConcurrency:       "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
-	variable.TiDBGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
-}
-
 var gcVariableMap = map[string]string{
 	variable.TiDBGCRunInterval:  "tikv_gc_run_interval",
 	variable.TiDBGCLifetime:     "tikv_gc_life_time",
@@ -154,6 +145,7 @@ type Session interface {
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
+	SetPort(port string)
 }
 
 var (
@@ -449,7 +441,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	defer func() {
 		s.txn.changeToInvalid()
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 	}()
 	if s.txn.IsReadOnly() {
 		return nil
@@ -502,7 +494,13 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
 	if s.txn.GetOption(kv.GuaranteeLinearizability) == nil {
-		s.txn.SetOption(kv.GuaranteeLinearizability, s.GetSessionVars().GuaranteeLinearizability)
+		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
+		// because the property is naturally holds:
+		// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
+		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
+		// of any previously committed transactions.
+		s.txn.SetOption(kv.GuaranteeLinearizability,
+			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
 
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
@@ -614,7 +612,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	}
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
-	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	s.sessionVars.SetInTxn(false)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -700,7 +698,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		s.sessionVars.RetryInfo.Retrying = false
 		// retryCnt only increments on retryable error, so +1 here.
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 		if err != nil {
 			s.RollbackTxn(ctx)
 		}
@@ -794,7 +792,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			zap.String("txn", s.txn.GoString()))
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 	}
 	return err
 }
@@ -813,120 +811,6 @@ type sessionPool interface {
 
 func (s *session) sysSessionPool() sessionPool {
 	return domain.GetDomain(s).SysSessionPool()
-}
-
-// ExecRestrictedSQL implements RestrictedSQLExecutor interface.
-// This is used for executing some restricted sql statements, usually executed during a normal statement execution.
-// Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
-// and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	return s.ExecRestrictedSQLWithContext(context.TODO(), sql)
-}
-
-// ExecRestrictedSQLWithContext implements RestrictedSQLExecutor interface.
-func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string, opts ...sqlexec.OptionFuncAlias) (
-	[]chunk.Row, []*ast.ResultField, error) {
-	var execOption sqlexec.ExecOption
-	for _, opt := range opts {
-		opt(&execOption)
-	}
-	// Use special session to execute the sql.
-	tmp, err := s.sysSessionPool().Get()
-	if err != nil {
-		return nil, nil, err
-	}
-	defer s.sysSessionPool().Put(tmp)
-	se := tmp.(*session)
-	// The special session will share the `InspectionTableCache` with current session
-	// if the current session in inspection mode.
-	if cache := s.sessionVars.InspectionTableCache; cache != nil {
-		se.sessionVars.InspectionTableCache = cache
-		defer func() { se.sessionVars.InspectionTableCache = nil }()
-	}
-	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
-		se.sessionVars.OptimizerUseInvisibleIndexes = true
-		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
-	}
-	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
-	defer func() {
-		if !execOption.IgnoreWarning {
-			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
-				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
-				s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
-			}
-		}
-		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
-	}()
-
-	if execOption.SnapshotTS != 0 {
-		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(execOption.SnapshotTS)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
-			return nil, nil, err
-		}
-		defer func() {
-			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
-			}
-			se.sessionVars.SnapshotInfoschema = nil
-		}()
-	}
-
-	if execOption.AnalyzeVer != 0 {
-		oldStatsVer := se.GetSessionVars().AnalyzeVersion
-		se.GetSessionVars().AnalyzeVersion = execOption.AnalyzeVer
-		defer func() {
-			se.GetSessionVars().AnalyzeVersion = oldStatsVer
-		}()
-	}
-
-	// for analyze stmt we need let worker session follow user session that executing stmt.
-	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
-	metrics.SessionRestrictedSQLCounter.Inc()
-
-	return execRestrictedSQL(ctx, se, sql)
-}
-
-// ExecRestrictedSQLWithSnapshot implements RestrictedSQLExecutor interface.
-// This is used for executing some restricted sql statements with snapshot.
-// If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
-// Otherwise, execute with the current transaction start timestamp if the transaction is valid.
-func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	var snapshot uint64
-	txn, err := s.Txn(false)
-	if err != nil {
-		return nil, nil, err
-	}
-	if txn.Valid() {
-		snapshot = s.txn.StartTS()
-	}
-	if s.sessionVars.SnapshotTS != 0 {
-		snapshot = s.sessionVars.SnapshotTS
-	}
-	return s.ExecRestrictedSQLWithContext(context.TODO(), sql, sqlexec.ExecOptionWithSnapshot(snapshot))
-}
-
-func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-	startTime := time.Now()
-	rs, err := se.ExecuteInternal(ctx, sql)
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
-	if err != nil || rs == nil {
-		return nil, nil, err
-	}
-
-	// Execute all recordset, take out the first one as result.
-	rows, err := drainRecordSet(ctx, se, rs)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
-	return rows, rs.Fields(), err
 }
 
 func createSessionFunc(store kv.Storage) pools.Factory {
@@ -989,15 +873,19 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]c
 	}
 }
 
-// getExecRet executes restricted sql and the result is one column.
+// getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
-func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error) {
-	rows, fields, err := s.ExecRestrictedSQL(sql)
+func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
+	stmt, err := s.ParseWithParams(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
+	if err != nil {
+		return "", err
+	}
+	rows, fields, err := s.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return "", err
 	}
 	if len(rows) == 0 {
-		return "", executor.ErrResultIsEmpty
+		return "", errResultIsEmpty
 	}
 	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
 	value, err := d.ToString()
@@ -1005,6 +893,34 @@ func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error)
 		return "", err
 	}
 	return value, nil
+}
+
+var gcVariableComments = map[string]string{
+	variable.TiDBGCRunInterval:  "GC run interval, at least 10m, in Go format.",
+	variable.TiDBGCLifetime:     "All versions within life time will not be collected by GC, at least 10m, in Go format.",
+	variable.TiDBGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
+	variable.TiDBGCEnable:       "Current GC enable status",
+	tiKVGCAutoConcurrency:       "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
+	variable.TiDBGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
+}
+
+// replaceTableValue executes restricted sql updates the variable value
+func (s *session) replaceTableValue(ctx context.Context, tblName string, varName, val string) error {
+	if tblName == mysql.TiDBTable { // maintain comment metadata
+		comment := gcVariableComments[varName]
+		stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, mysql.SystemDB, tblName, varName, val, comment)
+		if err != nil {
+			return err
+		}
+		_, _, err = s.ExecRestrictedStmt(ctx, stmt)
+		return err
+	}
+	stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, tblName, varName, val)
+	if err != nil {
+		return err
+	}
+	_, _, err = s.ExecRestrictedStmt(ctx, stmt)
+	return err
 }
 
 func (s *session) varFromTiDBTable(name string) bool {
@@ -1024,11 +940,9 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name)
-	sysVar, err := s.getExecRet(s, sql)
+	sysVar, err := s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
 	if err != nil {
-		if executor.ErrResultIsEmpty.Equal(err) {
+		if errResultIsEmpty.Equal(err) {
 			sv := variable.GetSysVar(name)
 			if sv != nil {
 				return sv.Value, nil
@@ -1055,12 +969,6 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 			return err
 		}
 	}
-	if name == variable.TiDBPartitionPruneMode && value == string(variable.DynamicOnly) {
-		err := s.ensureFullGlobalStats()
-		if err != nil {
-			return err
-		}
-	}
 	var sVal string
 	var err error
 	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
@@ -1075,16 +983,12 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		}
 	}
 	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
-	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name, escapeUserString(sVal))
-	_, _, err = s.ExecRestrictedSQL(sql)
+	stmt, err := s.ParseWithParams(context.TODO(), "REPLACE %n.%n VALUES (%?, %?)", mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+	if err != nil {
+		return err
+	}
+	_, _, err = s.ExecRestrictedStmt(context.TODO(), stmt)
 	return err
-}
-
-// escape user supplied string for internal SQL. Not safe for all cases, since it doesn't
-// handle quote-type, sql-mode, character set breakout.
-func escapeUserString(str string) string {
-	return strings.ReplaceAll(str, `'`, `\'`)
 }
 
 // setTiDBTableValue handles tikv_* sysvars which need to update mysql.tidb
@@ -1095,17 +999,13 @@ func (s *session) setTiDBTableValue(name, val string) error {
 		if val == "-1" {
 			autoConcurrency = "true"
 		}
-		sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%[1]s', '%[2]s', '%[3]s')
-			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, tiKVGCAutoConcurrency, autoConcurrency, gcVariableComments[name])
-		_, _, err := s.ExecRestrictedSQL(sql)
+		err := s.replaceTableValue(context.TODO(), mysql.TiDBTable, tiKVGCAutoConcurrency, autoConcurrency)
 		if err != nil {
 			return err
 		}
 	}
 	val = onOffToTrueFalse(val)
-	sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%[1]s', '%[2]s', '%[3]s')
-			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, gcVariableMap[name], escapeUserString(val), gcVariableComments[name])
-	_, _, err := s.ExecRestrictedSQL(sql)
+	err := s.replaceTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name], val)
 	return err
 }
 
@@ -1136,14 +1036,12 @@ func onOffToTrueFalse(str string) string {
 func (s *session) getTiDBTableValue(name, val string) (string, error) {
 	if name == variable.TiDBGCConcurrency {
 		// Check if autoconcurrency is set
-		sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, tiKVGCAutoConcurrency)
-		autoConcurrencyVal, err := s.getExecRet(s, sql)
+		autoConcurrencyVal, err := s.getTableValue(context.TODO(), mysql.TiDBTable, tiKVGCAutoConcurrency)
 		if err == nil && strings.EqualFold(autoConcurrencyVal, "true") {
 			return "-1", nil // convention for "AUTO"
 		}
 	}
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, gcVariableMap[name])
-	tblValue, err := s.getExecRet(s, sql)
+	tblValue, err := s.getTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name])
 	if err != nil {
 		return val, nil // mysql.tidb value does not exist.
 	}
@@ -1158,33 +1056,15 @@ func (s *session) getTiDBTableValue(name, val string) (string, error) {
 			zap.String("tblName", gcVariableMap[name]),
 			zap.String("tblValue", tblValue),
 			zap.String("restoredValue", val))
-		sql := fmt.Sprintf(`REPLACE INTO mysql.tidb (variable_name, variable_value, comment)
-			VALUES ('%s', '%s', '%s')`, gcVariableMap[name], escapeUserString(val), gcVariableComments[name])
-		_, _, err = s.ExecRestrictedSQL(sql)
+		err = s.replaceTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name], val)
 		return val, err
 	}
 	if validatedVal != val {
 		// The sysvar value is out of sync.
-		sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-			mysql.SystemDB, mysql.GlobalVariablesTable, gcVariableMap[name], escapeUserString(validatedVal))
-		_, _, err = s.ExecRestrictedSQL(sql)
+		err = s.replaceTableValue(context.TODO(), mysql.GlobalVariablesTable, gcVariableMap[name], validatedVal)
 		return validatedVal, err
 	}
 	return validatedVal, nil
-}
-
-func (s *session) ensureFullGlobalStats() error {
-	rows, _, err := s.ExecRestrictedSQL(`select count(1) from information_schema.tables t where t.create_options = 'partitioned'
-		and not exists (select 1 from mysql.stats_meta m where m.table_id = t.tidb_table_id)`)
-	if err != nil {
-		return err
-	}
-	row := rows[0]
-	count := row.GetInt64(0)
-	if count > 0 {
-		return errors.New("need analyze all partition table in 'static-collect-dynamic' mode before switch to 'dynamic-only'")
-	}
-	return nil
 }
 
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
@@ -1215,6 +1095,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
+		Port:             s.sessionVars.Port,
 		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
 		Plan:             p,
@@ -1619,7 +1500,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
 		defer func() {
 			sessVars.LastQueryInfo = variable.QueryInfo{
-				TxnScope:    sessVars.TxnScope,
+				TxnScope:    sessVars.CheckAndGetTxnScope(),
 				StartTS:     sessVars.TxnCtx.StartTS,
 				ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
 			}
@@ -1885,7 +1766,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.txn.SetOption(kv.Pessimistic, true)
 		}
 		if !s.sessionVars.IsAutocommit() {
-			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+			s.sessionVars.SetInTxn(true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 		s.txn.SetVars(s.sessionVars.KVVars)
@@ -1948,7 +1829,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 			zap.String("txnScope", txnScope))
 	}
 
-	txn, err := s.store.BeginWithTxnScope(s.sessionVars.CheckAndGetTxnScope())
+	txn, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
 	if err != nil {
 		return err
 	}
@@ -2169,11 +2050,6 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	return s, nil
 }
 
-// loadSystemTZ loads systemTZ from mysql.tidb
-func loadSystemTZ(se *session) (string, error) {
-	return loadParameter(se, "system_tz")
-}
-
 // loadCollationParameter loads collation parameter from mysql.tidb
 func loadCollationParameter(se *session) (bool, error) {
 	para, err := loadParameter(se, tidbNewCollationEnabled)
@@ -2229,25 +2105,7 @@ var (
 
 // loadParameter loads read-only parameter from mysql.tidb
 func loadParameter(se *session, name string) (string, error) {
-	sql := "select variable_value from mysql.tidb where variable_name = '" + name + "'"
-	rs, errLoad := se.ExecuteInternal(context.Background(), sql)
-	if errLoad != nil {
-		return "", errLoad
-	}
-	// the record of mysql.tidb under where condition: variable_name = $name should shall only be one.
-	defer func() {
-		if err := rs.Close(); err != nil {
-			logutil.BgLogger().Error("close result set error", zap.Error(err))
-		}
-	}()
-	req := rs.NewChunk()
-	if err := rs.Next(context.Background(), req); err != nil {
-		return "", err
-	}
-	if req.NumRows() == 0 {
-		return "", errResultIsEmpty
-	}
-	return req.GetRow(0).GetString(0), nil
+	return se.getTableValue(context.TODO(), mysql.TiDBTable, name)
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
@@ -2264,8 +2122,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
-	initLoadCommonGlobalVarsSQL()
-
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -2277,8 +2133,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	// get system tz from mysql.tidb
-	tz, err := loadSystemTZ(se)
+	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
 	if err != nil {
 		return nil, err
 	}
@@ -2643,24 +2500,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableTiFlashFallbackTiKV,
 }
 
-var (
-	loadCommonGlobalVarsSQLOnce sync.Once
-	loadCommonGlobalVarsSQL     string
-)
-
-func initLoadCommonGlobalVarsSQL() {
-	loadCommonGlobalVarsSQLOnce.Do(func() {
-		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
-		if len(variable.PluginVarNames) > 0 {
-			vars = append(vars, variable.PluginVarNames...)
-		}
-		loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(vars, quoteCommaQuote) + "')"
-	})
-}
-
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
-	initLoadCommonGlobalVarsSQL()
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {
 		return nil
@@ -2675,7 +2516,17 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
 	gvc := domain.GetDomain(s).GetGlobalVarsCache()
 	loadFunc := func() ([]chunk.Row, []*ast.ResultField, error) {
-		return s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
+		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
+		if len(variable.PluginVarNames) > 0 {
+			vars = append(vars, variable.PluginVarNames...)
+		}
+
+		stmt, err := s.ParseWithParams(context.TODO(), "select HIGH_PRIORITY * from mysql.global_variables where variable_name in (%?)", vars)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+
+		return s.ExecRestrictedStmt(context.TODO(), stmt)
 	}
 	rows, fields, err := gvc.LoadGlobalVariables(loadFunc)
 	if err != nil {
@@ -2771,7 +2622,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithStartTS(s.GetSessionVars().CheckAndGetTxnScope(), startTS)
+	txn, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(s.GetSessionVars().CheckAndGetTxnScope()).SetStartTs(startTS))
 	if err != nil {
 		return err
 	}
@@ -2801,15 +2652,15 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	}
 	var txn kv.Transaction
 	var err error
-	txnScope := s.GetSessionVars().TxnScope
+	txnScope := s.GetSessionVars().CheckAndGetTxnScope()
 	switch option.Mode {
 	case ast.TimestampBoundReadTimestamp:
-		txn, err = s.store.BeginWithStartTS(txnScope, option.StartTS)
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetStartTs(option.StartTS))
 		if err != nil {
 			return err
 		}
 	case ast.TimestampBoundExactStaleness:
-		txn, err = s.store.BeginWithExactStaleness(txnScope, option.PrevSec)
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
 		if err != nil {
 			return err
 		}
@@ -2982,4 +2833,8 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 		}
 	}
 	return err
+}
+
+func (s *session) SetPort(port string) {
+	s.sessionVars.Port = port
 }

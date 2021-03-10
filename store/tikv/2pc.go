@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"fmt"
 	"math"
 	"math/rand"
 	"strings"
@@ -29,22 +28,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	zap "go.uber.org/zap"
 )
@@ -63,7 +56,7 @@ var (
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
 	store               *KVStore
-	txn                 *tikvTxn
+	txn                 *KVTxn
 	startTS             uint64
 	mutations           *memBufferMutations
 	lockTTL             uint64
@@ -108,6 +101,8 @@ type twoPhaseCommitter struct {
 
 	// doingAmend means the amend prewrite is ongoing.
 	doingAmend bool
+
+	binlog BinlogExecutor
 }
 
 type memBufferMutations struct {
@@ -293,7 +288,7 @@ func (c *PlainMutations) AppendMutation(mutation PlainMutation) {
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
-func newTwoPhaseCommitter(txn *tikvTxn, sessionID uint64) (*twoPhaseCommitter, error) {
+func newTwoPhaseCommitter(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, error) {
 	return &twoPhaseCommitter{
 		store:         txn.store,
 		txn:           txn,
@@ -304,142 +299,17 @@ func newTwoPhaseCommitter(txn *tikvTxn, sessionID uint64) (*twoPhaseCommitter, e
 			ch: make(chan struct{}),
 		},
 		isPessimistic: txn.IsPessimistic(),
+		binlog: &binlogExecutor{
+			txn: txn,
+		},
 	}, nil
 }
 
-func (c *twoPhaseCommitter) extractKeyExistsErr(key kv.Key) error {
-	if !c.txn.us.HasPresumeKeyNotExists(key) {
-		return errors.Errorf("session %d, existErr for key:%s should not be nil", c.sessionID, key)
+func (c *twoPhaseCommitter) extractKeyExistsErr(err *ErrKeyExist) error {
+	if !c.txn.us.HasPresumeKeyNotExists(err.GetKey()) {
+		return errors.Errorf("session %d, existErr for key:%s should not be nil", c.sessionID, err.GetKey())
 	}
-
-	tableID, indexID, isRecord, err := tablecodec.DecodeKeyHead(key)
-	if err != nil {
-		return c.genKeyExistsError("UNKNOWN", key.String(), err)
-	}
-
-	tblInfo := c.txn.us.GetTableInfo(tableID)
-	if tblInfo == nil {
-		return c.genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
-	}
-
-	value, err := c.txn.us.GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
-	if err != nil {
-		return c.genKeyExistsError("UNKNOWN", key.String(), err)
-	}
-
-	if isRecord {
-		return c.extractKeyExistsErrFromHandle(key, value, tblInfo)
-	}
-	return c.extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
-}
-
-func (c *twoPhaseCommitter) extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.TableInfo, indexID int64) error {
-	var idxInfo *model.IndexInfo
-	for _, index := range tblInfo.Indices {
-		if index.ID == indexID {
-			idxInfo = index
-		}
-	}
-	if idxInfo == nil {
-		return c.genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find index info"))
-	}
-	name := idxInfo.Name.String()
-
-	if len(value) == 0 {
-		return c.genKeyExistsError(name, key.String(), errors.New("missing value"))
-	}
-
-	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
-	for _, idxCol := range idxInfo.Columns {
-		col := tblInfo.Columns[idxCol.Offset]
-		colInfo = append(colInfo, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
-	}
-
-	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleNotNeeded, colInfo)
-	if err != nil {
-		return c.genKeyExistsError(name, key.String(), err)
-	}
-	valueStr := make([]string, 0, len(values))
-	for i, val := range values {
-		d, err := tablecodec.DecodeColumnValue(val, colInfo[i].Ft, time.Local)
-		if err != nil {
-			return c.genKeyExistsError(name, key.String(), err)
-		}
-		str, err := d.ToString()
-		if err != nil {
-			return c.genKeyExistsError(name, key.String(), err)
-		}
-		valueStr = append(valueStr, str)
-	}
-	return c.genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
-}
-
-func (c *twoPhaseCommitter) extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.TableInfo) error {
-	const name = "PRIMARY"
-	_, handle, err := tablecodec.DecodeRecordKey(key)
-	if err != nil {
-		return c.genKeyExistsError(name, key.String(), err)
-	}
-
-	if handle.IsInt() {
-		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
-			if mysql.HasUnsignedFlag(pkInfo.Flag) {
-				handleStr := fmt.Sprintf("%d", uint64(handle.IntValue()))
-				return c.genKeyExistsError(name, handleStr, nil)
-			}
-		}
-		return c.genKeyExistsError(name, handle.String(), nil)
-	}
-
-	if len(value) == 0 {
-		return c.genKeyExistsError(name, handle.String(), errors.New("missing value"))
-	}
-
-	idxInfo := tables.FindPrimaryIndex(tblInfo)
-	if idxInfo == nil {
-		return c.genKeyExistsError(name, handle.String(), errors.New("cannot find index info"))
-	}
-
-	cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
-	for _, col := range tblInfo.Columns {
-		cols[col.ID] = &col.FieldType
-	}
-	handleColIDs := make([]int64, 0, len(idxInfo.Columns))
-	for _, col := range idxInfo.Columns {
-		handleColIDs = append(handleColIDs, tblInfo.Columns[col.Offset].ID)
-	}
-
-	row, err := tablecodec.DecodeRowToDatumMap(value, cols, time.Local)
-	if err != nil {
-		return c.genKeyExistsError(name, handle.String(), err)
-	}
-
-	data, err := tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, cols, time.Local, row)
-	if err != nil {
-		return c.genKeyExistsError(name, handle.String(), err)
-	}
-
-	valueStr := make([]string, 0, len(data))
-	for _, col := range idxInfo.Columns {
-		d := data[tblInfo.Columns[col.Offset].ID]
-		str, err := d.ToString()
-		if err != nil {
-			return c.genKeyExistsError(name, key.String(), err)
-		}
-		valueStr = append(valueStr, str)
-	}
-	return c.genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
-}
-
-func (c *twoPhaseCommitter) genKeyExistsError(name string, value string, err error) error {
-	if err != nil {
-		logutil.BgLogger().Info("extractKeyExistsErr meets error", zap.Error(err))
-	}
-	return kv.ErrKeyExists.FastGenByArgs(value, name)
+	return errors.Trace(err)
 }
 
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
@@ -1075,13 +945,16 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			}
 			c.txn.commitTS = c.commitTS
 			if binlogSkipped {
-				binloginfo.RemoveOneSkippedCommitter()
+				c.binlog.Skip()
+				return
+			}
+			if !c.shouldWriteBinlog() {
+				return
+			}
+			if err != nil {
+				c.binlog.Commit(ctx, 0)
 			} else {
-				if err != nil {
-					c.writeFinishBinlog(ctx, binlog.BinlogType_Rollback, 0)
-				} else {
-					c.writeFinishBinlog(ctx, binlog.BinlogType_Commit, int64(c.commitTS))
-				}
+				c.binlog.Commit(ctx, int64(c.commitTS))
 			}
 		}
 	}()
@@ -1102,6 +975,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// than the snapshot TS of all existent readers. So we get a new timestamp
 	// from PD as our MinCommitTS.
 	if commitTSMayBeCalculated && c.needLinearizability() {
+		failpoint.Inject("getMinCommitTSFromTSO", nil)
 		minCommitTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
@@ -1121,7 +995,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	failpoint.Inject("beforePrewrite", nil)
 
 	c.prewriteStarted = true
-	binlogChan := c.prewriteBinlog(ctx)
+	var binlogChan <-chan BinlogWriteResult
+	if c.shouldWriteBinlog() {
+		binlogChan = c.binlog.Prewrite(ctx, c.primary())
+	}
 	prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 	start := time.Now()
 	err = c.prewriteMutations(prewriteBo, c.mutations)
@@ -1178,7 +1055,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 		c.commitTS = c.onePCCommitTS
 		c.txn.commitTS = c.commitTS
-		logutil.Logger(ctx).Info("1PC protocol is used to commit this txn",
+		logutil.Logger(ctx).Debug("1PC protocol is used to commit this txn",
 			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
 			zap.Uint64("session", c.sessionID))
 		return nil
@@ -1249,7 +1126,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			}
 		}
 	}
-	c.commitTS = commitTS
+	atomic.StoreUint64(&c.commitTS, commitTS)
 
 	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) {
 		err = errors.Errorf("session %d txn takes too much time, txnStartTS: %d, comm: %d",
@@ -1552,65 +1429,6 @@ func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 	return nil
 }
 
-func (c *twoPhaseCommitter) prewriteBinlog(ctx context.Context) chan *binloginfo.WriteResult {
-	if !c.shouldWriteBinlog() {
-		return nil
-	}
-	ch := make(chan *binloginfo.WriteResult, 1)
-	go func() {
-		logutil.Eventf(ctx, "start prewrite binlog")
-		binInfo := c.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
-		bin := binInfo.Data
-		bin.StartTs = int64(c.startTS)
-		if bin.Tp == binlog.BinlogType_Prewrite {
-			bin.PrewriteKey = c.primary()
-		}
-		wr := binInfo.WriteBinlog(c.store.clusterID)
-		if wr.Skipped() {
-			binInfo.Data.PrewriteValue = nil
-			binloginfo.AddOneSkippedCommitter()
-		}
-		logutil.Eventf(ctx, "finish prewrite binlog")
-		ch <- wr
-	}()
-	return ch
-}
-
-func (c *twoPhaseCommitter) writeFinishBinlog(ctx context.Context, tp binlog.BinlogType, commitTS int64) {
-	if !c.shouldWriteBinlog() {
-		return
-	}
-	binInfo := c.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
-	binInfo.Data.Tp = tp
-	binInfo.Data.CommitTs = commitTS
-	binInfo.Data.PrewriteValue = nil
-
-	wg := sync.WaitGroup{}
-	mock := false
-	failpoint.Inject("mockSyncBinlogCommit", func(val failpoint.Value) {
-		if val.(bool) {
-			wg.Add(1)
-			mock = true
-		}
-	})
-	go func() {
-		logutil.Eventf(ctx, "start write finish binlog")
-		binlogWriteResult := binInfo.WriteBinlog(c.store.clusterID)
-		err := binlogWriteResult.GetError()
-		if err != nil {
-			logutil.BgLogger().Error("failed to write binlog",
-				zap.Error(err))
-		}
-		logutil.Eventf(ctx, "finish write finish binlog")
-		if mock {
-			wg.Done()
-		}
-	}()
-	if mock {
-		wg.Wait()
-	}
-}
-
 func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
 	return c.txn.us.GetOption(kv.BinlogInfo) != nil
 }
@@ -1697,7 +1515,7 @@ func (b *batched) forgetPrimary() {
 // batchExecutor is txn controller providing rate control like utils
 type batchExecutor struct {
 	rateLim           int                  // concurrent worker numbers
-	rateLimiter       *rateLimit           // rate limiter for concurrency control, maybe more strategies
+	rateLimiter       *util.RateLimit      // rate limiter for concurrency control, maybe more strategies
 	committer         *twoPhaseCommitter   // here maybe more different type committer in the future
 	action            twoPhaseCommitAction // the work action type
 	backoffer         *Backoffer           // Backoffer
@@ -1714,7 +1532,7 @@ func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
 // initUtils do initialize batchExecutor related policies like rateLimit util
 func (batchExe *batchExecutor) initUtils() error {
 	// init rateLimiter by injected rate limit number
-	batchExe.rateLimiter = newRateLimit(batchExe.rateLim)
+	batchExe.rateLimiter = util.NewRateLimit(batchExe.rateLim)
 	return nil
 }
 
@@ -1722,11 +1540,11 @@ func (batchExe *batchExecutor) initUtils() error {
 func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, batches []batchMutations) {
 	for idx, batch1 := range batches {
 		waitStart := time.Now()
-		if exit := batchExe.rateLimiter.getToken(exitCh); !exit {
+		if exit := batchExe.rateLimiter.GetToken(exitCh); !exit {
 			batchExe.tokenWaitDuration += time.Since(waitStart)
 			batch := batch1
 			go func() {
-				defer batchExe.rateLimiter.putToken()
+				defer batchExe.rateLimiter.PutToken()
 				var singleBatchBackoffer *Backoffer
 				if _, ok := batchExe.action.(actionCommit); ok {
 					// Because the secondary batches of the commit actions are implemented to be
@@ -1809,21 +1627,22 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	return err
 }
 
-func getTxnPriority(txn *tikvTxn) pb.CommandPri {
+func getTxnPriority(txn *KVTxn) pb.CommandPri {
 	if pri := txn.us.GetOption(kv.Priority); pri != nil {
-		return kvPriorityToCommandPri(pri.(int))
+		return PriorityToPB(pri.(int))
 	}
 	return pb.CommandPri_Normal
 }
 
-func getTxnSyncLog(txn *tikvTxn) bool {
+func getTxnSyncLog(txn *KVTxn) bool {
 	if syncOption := txn.us.GetOption(kv.SyncLog); syncOption != nil {
 		return syncOption.(bool)
 	}
 	return false
 }
 
-func kvPriorityToCommandPri(pri int) pb.CommandPri {
+// PriorityToPB converts priority type to wire type.
+func PriorityToPB(pri int) pb.CommandPri {
 	switch pri {
 	case kv.PriorityLow:
 		return pb.CommandPri_Low

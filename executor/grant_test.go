@@ -385,6 +385,17 @@ func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSuite3) TestIssue22721(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists xx (id int)")
+	tk.MustExec("CREATE USER 'sync_ci_data'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';")
+	tk.MustExec("GRANT USAGE ON *.* TO 'sync_ci_data'@'%';")
+	tk.MustExec("GRANT USAGE ON sync_ci_data.* TO 'sync_ci_data'@'%';")
+	tk.MustExec("GRANT USAGE ON test.* TO 'sync_ci_data'@'%';")
+	tk.MustExec("GRANT USAGE ON test.xx TO 'sync_ci_data'@'%';")
+}
+
 func (s *testSuite3) TestGrantDynamicPrivs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user dyn")

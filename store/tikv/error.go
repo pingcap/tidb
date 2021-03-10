@@ -77,3 +77,12 @@ type PDError struct {
 func (d *PDError) Error() string {
 	return d.Err.String()
 }
+
+// ErrKeyExist wraps *pdpb.AlreadyExist to implement the error interface.
+type ErrKeyExist struct {
+	*kvrpcpb.AlreadyExist
+}
+
+func (k *ErrKeyExist) Error() string {
+	return k.AlreadyExist.String()
+}
