@@ -940,8 +940,8 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 	tk.MustExec("analyze table tint with 2 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(testkit.Rows(
-		"0 20", // global: g.count = p0.count + p1.count
-		"0 9",  // p0
+		"0 20",  // global: g.count = p0.count + p1.count
+		"0 9",   // p0
 		"0 11")) // p1
 
 	tk.MustQuery("show stats_topn where table_name='tint' and is_index=0").Check(testkit.Rows(
@@ -971,7 +971,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("select distinct_count, null_count, tot_col_size from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("12 1 19", // global, g = p0 + p1
-			"5 1 8", // p0
+			"5 1 8",   // p0
 			"7 0 11")) // p1
 
 	tk.MustQuery("show stats_buckets where is_index=1").Check(testkit.Rows(
@@ -985,7 +985,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("select distinct_count, null_count from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
 		testkit.Rows("12 1", // global, g = p0 + p1
-			"5 1", // p0
+			"5 1",  // p0
 			"7 0")) // p1
 
 	// double + (column + index with 1 column)
@@ -1266,45 +1266,24 @@ partition by range (a) (
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
-	tk.MustExec("analyze table t")
-	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 2) // p0 + p1
+	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("analyze table t") // both p0 and p1 are in ver1
+	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 2)
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@tidb_analyze_version=1")
-	err := tk.ExecToErr("analyze table t")
+	err := tk.ExecToErr("analyze table t") // try to build global-stats on ver1
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[stats]: global statistics for partitioned tables only available in statistics version2, please set tidb_analyze_version to 2")
-
-	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("analyze table t")
-	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 3) // p0 + p1 + global
-}
-
-func (s *testStatsSuite) TestGlobalStatsVer1AndVer2(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`
-create table t (
-	a int
-)
-partition by range (a) (
-	partition p0 values less than (10),
-	partition p1 values less than (20)
-)`)
-	tk.MustExec("set @@tidb_partition_prune_mode='static'")
-	tk.MustExec("set @@tidb_analyze_version=1")
-	tk.MustExec("analyze table t")
-
-	tk.MustExec("insert into t values (1), (11)")
-	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	tk.MustExec("analyze table t") // p0 and p1 are in stats1
+	c.Assert(err.Error(), Equals, "[stats]: some partition level statistics are not in statistics version 2, please set tidb_analyze_version to 2 and analyze the this table")
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("analyze table t partition p1") // let p1 in stats2
-	tk.MustQuery("show warnings").Check(testkit.Rows("xxx"))
+	err = tk.ExecToErr("analyze table t partition p1") // only analyze p1 to let it in ver2 while p0 is in ver1
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[stats]: some partition level statistics are not in statistics version 2, please set tidb_analyze_version to 2 and analyze the this table")
+
+	tk.MustExec("analyze table t") // both p0 and p1 are in ver2
+	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 3)
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
