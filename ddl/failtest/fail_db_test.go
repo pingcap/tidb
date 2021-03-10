@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -46,7 +46,10 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -160,6 +163,8 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("insert into pt values(1), (3), (5)")
 	tk.MustExec("create table nt(a int)")
 	tk.MustExec("insert into nt values(7)")
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	_, err = tk.Exec("alter table pt exchange partition p1 with table nt")
 	c.Assert(err, NotNil)
 
@@ -349,7 +354,7 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists test_add_index")
 	if s.IsCommonHandle {
-		tk.MustExec("set @@tidb_enable_clustered_index = 1")
+		tk.Se.GetSessionVars().EnableClusteredIndex = true
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
 	} else {
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
@@ -483,7 +488,7 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
 		"  `a` int(11) NOT NULL DEFAULT '1',\n" +
 		"  `c` int(11) NOT NULL DEFAULT '0',\n" +
-		"  PRIMARY KEY (`c`),\n" +
+		"  PRIMARY KEY (`c`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `idx` (`bb`),\n" +
 		"  KEY `idx1` (`a`),\n" +
 		"  KEY `idx2` (`bb`,`c`)\n" +
@@ -497,7 +502,7 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
 		"  `c` int(11) NOT NULL DEFAULT '0',\n" +
 		"  `aa` mediumint(9) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`c`),\n" +
+		"  PRIMARY KEY (`c`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `idx` (`bb`),\n" +
 		"  KEY `idx1` (`aa`),\n" +
 		"  KEY `idx2` (`bb`,`c`)\n" +
