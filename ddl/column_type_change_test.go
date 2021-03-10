@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -1729,18 +1728,15 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("alter table t add index(b)")
+
 	failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`)
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit")
 	}()
-
-	limit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(3)
-	defer variable.SetDDLErrorCountLimit(limit)
-
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,1),(2,2)")
-	tk.MustExec("alter table t add index(b)")
 
 	originalHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -1761,7 +1757,7 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	// write-reorg can't be cancelled, so it will be converted to running state and try again (dead loop).
 	_, err := tk.Exec("alter table t drop index b")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation, cancelled")
+	c.Assert(err.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation 512, cancelled")
 	c.Assert(jobID > 0, Equals, true)
 
 	// Verification of the history job state.
@@ -1773,6 +1769,6 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 		return errors2.Trace(err1)
 	})
 	c.Assert(err, IsNil)
-	c.Assert(job.ErrorCount, Equals, int64(4))
-	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation, cancelled")
+	c.Assert(job.ErrorCount, Equals, int64(513))
+	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation 512, cancelled")
 }
