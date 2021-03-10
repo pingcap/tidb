@@ -742,13 +742,14 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 	var fn *expression.ScalarFunction
 	switch raw := partExpr.(type) {
 	case *expression.ScalarFunction:
+		args := raw.GetArgs()
 		// Special handle for floor(unix_timestamp(ts)) as partition expression.
 		// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
 		if raw.FuncName.L == ast.Floor {
-			if ut, ok := raw.GetArgs()[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
-				args := ut.GetArgs()
-				if len(args) == 1 {
-					if c, ok1 := args[0].(*expression.Column); ok1 {
+			if ut, ok := args[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
+				args1 := ut.GetArgs()
+				if len(args1) == 1 {
+					if c, ok1 := args1[0].(*expression.Column); ok1 {
 						return c, raw, monotoneModeNonStrict, nil
 					}
 				}
@@ -756,14 +757,14 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		}
 
 		fn = raw
-		args := fn.GetArgs()
-		if len(args) > 0 {
-			arg0 := args[0]
-			if c, ok1 := arg0.(*expression.Column); ok1 {
-				col = c
+		monotonous = getMonotoneMode(raw.FuncName.L)
+		// Check the partitionExpr is in the form: fn(col, ...)
+		// There should be only one column argument, and it should be the first parameter.
+		if expression.ExtractColumnSet(args).Len() == 1 {
+			if col1, ok := args[0].(*expression.Column); ok {
+				col = col1
 			}
 		}
-		monotonous = getMonotoneMode(raw.FuncName.L)
 	case *expression.Column:
 		col = raw
 	}
@@ -875,7 +876,16 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 		default:
 			return pruner.fullRange()
 		}
-		val, err := constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
+
+		var val int64
+		var err error
+		if pruner.partFn != nil {
+			// replace fn(col) to fn(const)
+			partFnConst := replaceColumnWithConst(pruner.partFn, constExpr)
+			val, _, err = partFnConst.EvalInt(sctx, chunk.Row{})
+		} else {
+			val, err = constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
+		}
 		if err != nil {
 			return pruner.fullRange()
 		}
@@ -901,6 +911,9 @@ var monotoneIncFuncs = map[string]monotoneMode{
 	ast.Year:          monotoneModeNonStrict,
 	ast.ToDays:        monotoneModeNonStrict,
 	ast.UnixTimestamp: monotoneModeStrict,
+	// Only when the function form is fn(column, const)
+	ast.Plus:  monotoneModeStrict,
+	ast.Minus: monotoneModeStrict,
 }
 
 func getMonotoneMode(fnName string) monotoneMode {
@@ -977,6 +990,13 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	} else {
 		// If the partition expression is col, use constExpr.
 		constExpr = con
+	}
+	// If the partition expression is related with more than one columns such as 'a + b' or 'a * b' or something else,
+	// the constExpr may not a really constant when coming here.
+	// Suppose the partition expression is 'a + b' and we have a condition 'a = 2',
+	// the constExpr is '2 + b' after the replacement which we can't evaluate.
+	if !constExpr.ConstItem(sctx.GetSessionVars().StmtCtx) {
+		return ret, false
 	}
 	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
 	if err == nil && !isNull {

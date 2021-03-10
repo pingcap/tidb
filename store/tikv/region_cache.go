@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -380,6 +381,21 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	for _, op := range opts {
 		op(options)
 	}
+	failpoint.Inject("assertStoreLabels", func(val failpoint.Value) {
+		if len(opts) > 0 {
+			value := val.(string)
+			v := ""
+			for _, label := range options.labels {
+				if label.Key == placement.DCLabelKey {
+					v = label.Value
+					break
+				}
+			}
+			if v != value {
+				panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", v, value))
+			}
+		}
+	})
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
 		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, options)
@@ -1516,7 +1532,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
 		return
 	}
-	if store == nil {
+	if store == nil || store.State == metapb.StoreState_Tombstone {
 		// store has be removed in PD, we should invalidate all regions using those store.
 		logutil.BgLogger().Info("invalidate regions in removed store",
 			zap.Uint64("store", s.storeID), zap.String("add", s.addr))

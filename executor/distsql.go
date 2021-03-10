@@ -915,9 +915,8 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			// original value(the primary key) here.
 			// We use a trick to avoid encoding the "sortKey" again by changing the charset
 			// collation to `binary`.
-			// TODO: Add the restore value to the secondary index to remove this trick.
 			rtp := e.handleCols[i].RetType
-			if collate.NewCollationEnabled() && rtp.EvalType() == types.ETString &&
+			if collate.NewCollationEnabled() && e.table.Meta().CommonHandleVersion == 0 && rtp.EvalType() == types.ETString &&
 				!mysql.HasBinaryFlag(rtp.Flag) && tp == getHandleFromIndex {
 				rtp = rtp.Clone()
 				rtp.Collate = charset.CollationBin
