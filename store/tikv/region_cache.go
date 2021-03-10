@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/log"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -598,7 +597,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 }
 
 // OnSendFail handles send request fail logic.
-func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, isForwarding bool, err error) {
+func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
 	metrics.RegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
@@ -624,7 +623,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				return
 			}
 
-			if !isForwarding {
+			if !ctx.UseProxy {
 				// invalidate regions in store.
 				epoch := rs.storeEpochs[storeIdx]
 				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
@@ -644,7 +643,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 
 		// try next peer to found new leader.
 		if ctx.AccessMode == TiKVOnly {
-			if startForwarding || isForwarding {
+			if startForwarding || ctx.UseProxy {
 				var currentProxyIdx int32 = -1
 				if ctx.UseProxy {
 					currentProxyIdx = ctx.ProxyStoreIdx
@@ -1771,7 +1770,7 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 
 				storeMeta, err := c.PDClient().GetStore(ctx, s.storeID)
 				if err != nil {
-					log.Warn("failed to check unhealthy store's meta from pd", zap.Error(err))
+					logutil.BgLogger().Warn("failed to check unhealthy store's meta from pd", zap.Error(err))
 				}
 				if storeMeta == nil || storeMeta.State == metapb.StoreState_Tombstone {
 					// TODO: What to do here?
@@ -1783,7 +1782,7 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 			l := s.requestLiveness(bo)
 			if l == reachable {
 				if !atomic.CompareAndSwapInt32(&s.needForwarding, 1, 0) {
-					log.Fatal("unreachable")
+					logutil.BgLogger().Panic("unreachable")
 				}
 				return
 			}
