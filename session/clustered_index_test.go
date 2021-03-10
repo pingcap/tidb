@@ -268,6 +268,24 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.MustExec("update ignore t set name = 'aaaaa' where name = 'bbb'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aaaaa' for key 'PRIMARY'"))
 	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1  (c_str varchar(40), c_decimal decimal(12, 6) , primary key(c_str(8)))")
+	tk.MustExec("create table t2  like t1")
+	tk.MustExec("insert into t1 values ('serene ramanujan', 6.383), ('frosty hodgkin', 3.504), ('stupefied spence', 5.869)")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 right join t2 on t1.c_str = t2.c_str").Check(testkit.Rows(
+		"frosty hodgkin 3.504000 frosty hodgkin 3.504000",
+		"serene ramanujan 6.383000 serene ramanujan 6.383000",
+		"stupefied spence 5.869000 stupefied spence 5.869000"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 right join t2 on t1.c_str = t2.c_str").Check(testkit.Rows(
+		"frosty hodgkin 3.504000 frosty hodgkin 3.504000",
+		"serene ramanujan 6.383000 serene ramanujan 6.383000",
+		"stupefied spence 5.869000 stupefied spence 5.869000"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 right join t2 on t1.c_str = t2.c_str").Check(testkit.Rows(
+		"frosty hodgkin 3.504000 frosty hodgkin 3.504000",
+		"serene ramanujan 6.383000 serene ramanujan 6.383000",
+		"stupefied spence 5.869000 stupefied spence 5.869000"))
 }
 
 // Test for union scan in prefixed clustered index table.
