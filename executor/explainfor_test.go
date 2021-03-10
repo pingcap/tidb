@@ -316,9 +316,9 @@ func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
 	rows := tk.MustQuery("select connection_id()").Rows()
 	c.Assert(len(rows), Equals, 1)
 	connID := rows[0][0].(string)
-	tk.MustQuery("explain select 1").Check(testkit.Rows(
-		"Projection_3 1.00 root  1->Column#1",
-		"└─TableDual_4 1.00 root  rows:1",
+	tk.MustQuery("explain format = 'brief' select 1").Check(testkit.Rows(
+		"Projection 1.00 root  1->Column#1",
+		"└─TableDual 1.00 root  rows:1",
 	))
 
 	tkProcess := tk.Se.ShowProcess()
@@ -445,7 +445,7 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (a BIGINT, b VARCHAR(40), PRIMARY KEY (a, b))")
 	tk.MustExec("INSERT INTO t1 VALUES (1,'3'),(2,'4')")
