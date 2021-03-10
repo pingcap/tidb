@@ -367,6 +367,22 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 }
 
 func (s *testSplitIndex) TestCalculateIntBoundValue(c *C) {
+	cases := []struct {
+		num        int
+		step       int64
+		upper      int64
+		lower      int64
+		lowerValue int64
+	}{
+		{1, 0, 9223372036854775807, -9223372036854775808, 0},
+		{1, 0, 9223372036854775807, -1, 0},
+		{1, 0, 0, -9223372036854775808, 0},
+		{1, 9223372036854775807, -1, -9223372036854775808, -9223372036854775808},
+		{1, 9223372036854775807, 9223372036854775807, 0, 0},
+		{2, 9223372036854775807, 9223372036854775807, -9223372036854775808, -9223372036854775808},
+		{3, 6148914691236517205, 9223372036854775807, -9223372036854775808, -9223372036854775808},
+		{4, 4611686018427387903, 9223372036854775807, -9223372036854775808, -9223372036854775808},
+	}
 	tbInfo := &model.TableInfo{
 		Name: model.NewCIStr("t1"),
 		ID:   rand.Int63(),
@@ -382,18 +398,22 @@ func (s *testSplitIndex) TestCalculateIntBoundValue(c *C) {
 		},
 	}
 	ctx := mock.NewContext()
-	e := &SplitTableRegionExec{
-		baseExecutor: newBaseExecutor(ctx, nil, 0),
-		tableInfo:    tbInfo,
-		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
-		lower:        []types.Datum{types.NewDatum(-9223372036854775808)},
-		upper:        []types.Datum{types.NewDatum(9223372036854775807)},
-		num:          4,
+	for _, ca := range cases {
+		e := &SplitTableRegionExec{
+			baseExecutor: newBaseExecutor(ctx, nil, 0),
+			tableInfo:    tbInfo,
+			handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
+			lower:        []types.Datum{types.NewDatum(ca.lower)},
+			upper:        []types.Datum{types.NewDatum(ca.upper)},
+			num:          ca.num,
+		}
+		lowerValue, step, err := e.calculateIntBoundValue()
+		if ca.step > 0 {
+			c.Assert(err, IsNil)
+		}
+		c.Assert(step, Equals, ca.step)
+		c.Assert(lowerValue, Equals, ca.lowerValue)
 	}
-	lower, step, err := e.calculateIntBoundValue()
-	c.Assert(err, IsNil)
-	c.Assert(step, Equals, int64(4611686018427387903))
-	c.Assert(lower, Equals, int64(-9223372036854775808))
 }
 
 func (s *testSplitIndex) TestClusterIndexSplitTable(c *C) {
