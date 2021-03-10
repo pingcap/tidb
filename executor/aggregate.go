@@ -283,6 +283,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.bInMap = 0
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(defBucketMemoryUsage*(1<<e.bInMap) + setSize)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
@@ -294,7 +295,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	finalConcurrency := sessionVars.HashAggFinalConcurrency()
 	partialConcurrency := sessionVars.HashAggPartialConcurrency()
 	e.isChildReturnEmpty = true
-	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency)
+	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency+partialConcurrency+1)
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)
 	e.finishCh = make(chan struct{}, 1)
 
@@ -325,6 +326,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupKey:          make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
@@ -440,6 +442,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, finalConcurrency int) (err error) {
 	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = getGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKey) - memSize)
 	if err != nil {
 		return err
@@ -546,6 +549,7 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 			w.BInMap++
 		}
 	}
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(allMemDelta)
 	return partialResults
 }
@@ -592,6 +596,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			for i := 0; i < groupKeysLen; i++ {
 				w.groupKeys = append(w.groupKeys, []byte(groupKeys[i]))
 			}
+			failpoint.Inject("ConsumeRandomPanic", nil)
 			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
 			finalPartialResults := w.getPartialResult(sc, w.groupKeys, w.partialResultMap)
 			allMemDelta := int64(0)
@@ -632,6 +637,7 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 	for groupKey := range w.groupSet.StringSet {
 		w.groupKeys = append(w.groupKeys, []byte(groupKey))
 	}
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
 	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
 	for i := 0; i < len(w.groupSet.StringSet); i++ {
@@ -692,7 +698,7 @@ func (e *HashAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.parallelExec(ctx, req)
 }
 
-func (e *HashAggExec) fetchChildData(ctx context.Context) {
+func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGroup) {
 	var (
 		input *HashAggInput
 		chk   *chunk.Chunk
@@ -706,6 +712,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 		for i := range e.partialInputChs {
 			close(e.partialInputChs[i])
 		}
+		waitGroup.Done()
 	}()
 	for {
 		select {
@@ -728,6 +735,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 			e.memTracker.Consume(-mSize)
 			return
 		}
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(chk.MemoryUsage() - mSize)
 		input.giveBackCh <- chk
 	}
@@ -744,13 +752,17 @@ func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGro
 	}
 }
 
-func (e *HashAggExec) waitFinalWorkerAndCloseFinalOutput(waitGroup *sync.WaitGroup) {
-	waitGroup.Wait()
+func (e *HashAggExec) waitAllWorkersAndCloseFinalOutputCh(waitGroups ...*sync.WaitGroup) {
+	for _, waitGroup := range waitGroups {
+		waitGroup.Wait()
+	}
 	close(e.finalOutputCh)
 }
 
 func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
-	go e.fetchChildData(ctx)
+	fetchChildWorkerWaitGroup := &sync.WaitGroup{}
+	fetchChildWorkerWaitGroup.Add(1)
+	go e.fetchChildData(ctx, fetchChildWorkerWaitGroup)
 
 	partialWorkerWaitGroup := &sync.WaitGroup{}
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
@@ -771,11 +783,15 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
 	}
 	go func() {
-		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
+		finalWorkerWaitGroup.Wait()
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.FinalWallTime, int64(time.Since(finalStart)))
 		}
 	}()
+
+	// All workers may send error message to e.finalOutputCh when they panic.
+	// And e.finalOutputCh should be closed after all goroutines gone.
+	go e.waitAllWorkersAndCloseFinalOutputCh(fetchChildWorkerWaitGroup, partialWorkerWaitGroup, finalWorkerWaitGroup)
 }
 
 // HashAggExec employs one input reader, M partial workers and N final workers to execute parallelly.
@@ -865,6 +881,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	for {
 		mSize := e.childResult.MemoryUsage()
 		err := Next(ctx, e.children[0], e.childResult)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 		if err != nil {
 			return err
@@ -902,6 +919,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 				allMemDelta += memDelta
 			}
 		}
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(allMemDelta)
 	}
 }
@@ -924,6 +942,7 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 			e.bInMap++
 		}
 	}
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(allMemDelta)
 	return partialResults
 }
@@ -1088,6 +1107,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() + e.memUsageOfInitialPartialResult)
 	return nil
 }
@@ -1173,6 +1193,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 		}
 		allMemDelta += memDelta
 	}
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(allMemDelta)
 	e.groupRows = e.groupRows[:0]
 	return nil
@@ -1187,6 +1208,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 
 	mSize := e.childResult.MemoryUsage()
 	err = Next(ctx, e.children[0], e.childResult)
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	if err != nil {
 		return err
@@ -1218,6 +1240,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 		}
 		aggFunc.ResetPartialResult(e.partialResults[i])
 	}
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	// All partial results have been reset, so reset the memory usage.
 	e.memTracker.ReplaceBytesUsed(e.childResult.MemoryUsage() + e.memUsageOfInitialPartialResult)
 	if len(e.aggFuncs) == 0 {
