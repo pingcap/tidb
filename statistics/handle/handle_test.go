@@ -1740,10 +1740,10 @@ func (s *statsSerialSuite) TestFeedbackWithGlobalStats(c *C) {
 	tblInfo = table.Meta()
 	statsTblBefore = h.GetTableStats(tblInfo)
 	// trigger feedback
-	testKit.MustExec("select b from t partition(p0) use index(idx) where t.b <= 3;")
-	testKit.MustExec("select b from t partition(p1) use index(idx) where t.b <= 3;")
-	testKit.MustExec("select b from t use index(idx) where t.b <= 3 order by b;")
-	testKit.MustExec("select b from t use index(idx) where t.b <= 3;")
+	testKit.MustExec("select b from t1 partition(p0) use index(idx) where t1.b <= 3;")
+	testKit.MustExec("select b from t1 partition(p1) use index(idx) where t1.b <= 3;")
+	testKit.MustExec("select b from t1 use index(idx) where t1.b <= 3 order by b;")
+	testKit.MustExec("select b from t1 use index(idx) where t1.b <= 3;")
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 	err = h.DumpStatsFeedbackToKV()
