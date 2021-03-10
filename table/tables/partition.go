@@ -224,29 +224,7 @@ type ForListPruning struct {
 	ColPrunes []*ForListColumnPruning
 }
 
-// btreeItem is BTree's Item that uses int64 to compare.
-type btreeItem struct {
-	key          int64
-	partitionIdx int
-}
-
-func newBtreeItem(key int64, partitionIdx int) *btreeItem {
-	return &btreeItem{
-		key:          key,
-		partitionIdx: partitionIdx,
-	}
-}
-
-func newBtreeSearchItem(key int64) *btreeItem {
-	return &btreeItem{
-		key: key,
-	}
-}
-
-func (item *btreeItem) Less(other btree.Item) bool {
-	return item.key < other.(*btreeItem).key
-}
-
+// btreeListColumnItem is BTree's Item that uses string to compare.
 type btreeListColumnItem struct {
 	key      string
 	location ListPartitionLocation
@@ -697,7 +675,6 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo
 
 // buildListPartitionValueMapAndSorted builds list partition value map and sorted.
 // The map is column value -> partition index.
-// The sorted is a btree whose node is column value and partition index.
 // colIdx is the column index in the list columns.
 func (lp *ForListPruning) buildListPartitionValueMapAndSorted(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
@@ -720,7 +697,6 @@ func (lp *ForListPruning) buildListPartitionValueMapAndSorted(ctx sessionctx.Con
 				continue
 			}
 			lp.valueMap[v] = partitionIdx
-			lp.sorted.ReplaceOrInsert(newBtreeItem(v, partitionIdx))
 		}
 	}
 	return nil
@@ -770,42 +746,6 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
 	}
 	return location[0].PartIdx, nil
-}
-
-// LocateRange locates partition range by the column range
-func (lp *ForListPruning) LocateRange(ctx sessionctx.Context, r *ranger.Range) ([]int, error) {
-	if r.LowVal[0].Kind() == types.KindMinNotNull {
-		r.LowVal[0] = types.GetMinValue(lp.PruneExpr.GetType())
-	}
-	if r.HighVal[0].Kind() == types.KindMaxValue {
-		r.HighVal[0] = types.GetMaxValue(lp.PruneExpr.GetType())
-	}
-	lowVal, isLowNull, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
-	if err != nil {
-		return nil, err
-	}
-	highVal, isHighNull, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
-	if err != nil {
-		return nil, err
-	}
-	if r.LowExclude {
-		lowVal++
-	}
-	if !r.HighExclude {
-		highVal++
-	}
-	partitionIdxes := make([]int, 0, lp.sorted.Len())
-	if isLowNull {
-		partitionIdxes = append(partitionIdxes, lp.nullPartitionIdx)
-	}
-	if isHighNull {
-		partitionIdxes = append(partitionIdxes, lp.nullPartitionIdx)
-	}
-	lp.sorted.AscendRange(newBtreeSearchItem(lowVal), newBtreeSearchItem(highVal), func(item btree.Item) bool {
-		partitionIdxes = append(partitionIdxes, item.(*btreeItem).partitionIdx)
-		return true
-	})
-	return partitionIdxes, nil
 }
 
 // buildListPartitionValueMapAndSorted builds list columns partition value map for the specified column.

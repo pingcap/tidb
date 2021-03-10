@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -535,52 +534,4 @@ func (ts *testSuite) TestIssue21574(c *C) {
 	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`) (partition p0 values in (10));")
 	tk.MustExec("drop table t_21574")
 	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`table`) (partition p0 values in ((1,1)));")
-}
-
-func (ts *testSuite) TestListPartitionRangePrune(c *C) {
-	tk := testkit.NewTestKitWithInit(c, ts.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop tables if exists t1")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-	tk.MustExec(`create table t1 (id int, a int, b int) partition by list ( a ) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10), partition p2 values in (null));`)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	partExpr, err := tb.(partitionTable).PartitionExpr()
-	c.Assert(err, IsNil)
-	cases := []struct {
-		r      ranger.Range
-		result []int
-	}{
-		{
-			r:      ranger.Range{LowVal: types.MakeDatums(0), HighVal: types.MakeDatums(1)},
-			result: []int{0},
-		},
-		{
-			r:      ranger.Range{LowVal: types.MakeDatums(0), HighVal: types.MakeDatums(6)},
-			result: []int{0, 0, 0, 0, 0, 1}, // need deduplicate the result, the expect should be {0,1}
-		},
-		{
-			r:      ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}},
-			result: []int{0, 0, 0, 0, 0, 1, 1, 1, 1, 1}, // need deduplicate the result, the expect should be {0,1}
-		},
-		{
-			r:      ranger.Range{LowVal: types.MakeDatums(nil), HighVal: []types.Datum{types.MaxValueDatum()}},
-			result: []int{2, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1}, // need deduplicate the result, the expect should be {0,1,2}
-		},
-		{
-			r:      ranger.Range{LowVal: types.MakeDatums(nil), HighVal: []types.Datum{types.MaxValueDatum()}},
-			result: []int{2, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1}, // need deduplicate the result, the expect should be {0,1,2}
-		},
-		{
-			r:      ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil)},
-			result: []int{2, 2}, // need deduplicate the result, the expect should be {2}
-		},
-		// TODO: add more test case
-	}
-
-	for _, ca := range cases {
-		ret, err := partExpr.ForListPruning.LocateRange(tk.Se, &ca.r)
-		c.Assert(err, IsNil)
-		c.Assert(ret, DeepEquals, ca.result)
-	}
 }

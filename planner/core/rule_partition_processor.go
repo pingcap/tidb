@@ -464,16 +464,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 			}
 			used[partitionIdx] = struct{}{}
 		} else {
-			if len(r.HighVal) != len(exprCols) || r.IsFullRange() {
-				return l.fullRange, nil
-			}
-			partitionIdxes, err := l.listPrune.LocateRange(l.ctx, r)
-			if err != nil {
-				return nil, err
-			}
-			for _, partitionIdx := range partitionIdxes {
-				used[partitionIdx] = struct{}{}
-			}
+			return l.fullRange, nil
 		}
 	}
 	return used, nil
