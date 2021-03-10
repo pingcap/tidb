@@ -176,12 +176,26 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(*) from t1 , t, t2 where t1.a = t.a and t2.a = t.a").Check(testkit.Rows("3"))
 
+	// test agg by expression
 	tk.MustExec("insert into t1 values(4,0)")
 	tk.MustQuery("select count(*) k, t2.b from t1 left join t2 on t1.a = t2.a group by t2.b order by k").Check(testkit.Rows("1 <nil>", "3 0"))
 	tk.MustQuery("select count(*) k, t2.b+1 from t1 left join t2 on t1.a = t2.a group by t2.b+1 order by k").Check(testkit.Rows("1 <nil>", "3 1"))
 	tk.MustQuery("select count(*) k, t2.b * t2.a from t2 group by t2.b * t2.a").Check(testkit.Rows("3 0"))
 	tk.MustQuery("select count(*) k, t2.a/2 m from t2 group by t2.a / 2 order by m").Check(testkit.Rows("1 0.5000", "1 1.0000", "1 1.5000"))
 	tk.MustQuery("select count(*) k, t2.a div 2 from t2 group by t2.a div 2 order by k").Check(testkit.Rows("1 0", "2 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 decimal(8, 5), c2 decimal(9, 5), c3 decimal(9, 4), c4 decimal(8, 4))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "t")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1.00000,1.00000,1.0000,1.0000)")
+	tk.MustExec("insert into t values(1.00010,1.00010,1.0001,1.0001)")
+	tk.MustExec("insert into t values(1.00001,1.00001,1.0000,1.0002)")
+	tk.MustQuery("select t1.c1 from t t1 join t t2 on t1.c1 = t2.c1").Check(testkit.Rows("1.00000", "1.00010", "1.00001"))
+	tk.MustQuery("select t1.c1 from t t1 join t t2 on t1.c1 = t2.c3").Check(testkit.Rows("1.00000", "1.00010", "1.00000"))
+	tk.MustQuery("select t1.c4 from t t1 join t t2 on t1.c4 = t2.c3").Check(testkit.Rows("1.0000", "1.0001", "1.0000"))
 }
 
 func (s *tiflashTestSuite) TestPartitionTable(c *C) {

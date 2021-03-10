@@ -732,16 +732,11 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 	rCost := rTask.cost()
 
 	outerTask := tasks[1-p.InnerChildIdx].(*mppTask)
-	receivers := make([]*PhysicalExchangeReceiver, 0)
-	receivers = append(receivers, lTask.receivers...)
-	receivers = append(receivers, rTask.receivers...)
 	task := &mppTask{
-		cst:       lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
-		p:         p,
-		partTp:    outerTask.partTp,
-		hashCols:  outerTask.hashCols,
-		ts:        outerTask.ts,
-		receivers: receivers,
+		cst:      lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
+		p:        p,
+		partTp:   outerTask.partTp,
+		hashCols: outerTask.hashCols,
 	}
 	return task
 }
@@ -1890,9 +1885,6 @@ type mppTask struct {
 
 	partTp   property.PartitionType
 	hashCols []*expression.Column
-
-	ts        *PhysicalTableScan
-	receivers []*PhysicalExchangeReceiver
 }
 
 func (t *mppTask) count() float64 {
@@ -1929,7 +1921,6 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}.Init(ctx, t.p.statsInfo())
 	sender.SetChildren(t.p)
-	sender.Fragment = &Fragment{ExchangeReceivers: t.receivers, ExchangeSender: sender, TableScan: t.ts}
 
 	p := PhysicalTableReader{
 		tablePlan: sender,
@@ -1982,18 +1973,13 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		HashCols:     prop.PartitionCols,
 	}.Init(ctx, t.p.statsInfo())
 	sender.SetChildren(t.p)
-	f := &Fragment{ExchangeSender: sender, TableScan: t.ts, ExchangeReceivers: t.receivers}
-	sender.Fragment = f
-	receiver := PhysicalExchangeReceiver{
-		ChildPf: f,
-	}.Init(ctx, t.p.statsInfo())
+	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
 	cst := t.cst + t.count()*ctx.GetSessionVars().NetworkFactor
 	return &mppTask{
-		p:         receiver,
-		cst:       cst,
-		partTp:    prop.PartitionTp,
-		hashCols:  prop.PartitionCols,
-		receivers: []*PhysicalExchangeReceiver{receiver},
+		p:        receiver,
+		cst:      cst,
+		partTp:   prop.PartitionTp,
+		hashCols: prop.PartitionCols,
 	}
 }

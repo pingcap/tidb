@@ -86,7 +86,7 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 		e.mppReqs = append(e.mppReqs, req)
 	}
 	for _, r := range pf.ExchangeReceivers {
-		err = e.appendMPPDispatchReq(r.ChildPf, r.Tasks, false)
+		err = e.appendMPPDispatchReq(r.GetExchangeSender().Fragment, r.Tasks, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
