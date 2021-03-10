@@ -1057,9 +1057,14 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				tp := &col.FieldType
 				idxVal := idxRow.GetDatum(i, tp)
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				if res, err := idxVal.CompareDatum(sctx, &val); err != nil || res != 0 {
+				cmpRes, err := idxVal.CompareDatum(sctx, &val)
+				if err != nil {
 					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v, compare err:%#v", col.Name,
 						handle, idxRow.GetDatum(i, tp), val, err)
+				}
+				if cmpRes != 0 {
+					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v", col.Name,
+						handle, idxRow.GetDatum(i, tp), val)
 				}
 			}
 		}
