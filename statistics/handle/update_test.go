@@ -2130,8 +2130,8 @@ func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
 		c.Assert(h.Update(is), IsNil)
 		globalStats = h.GetTableStats(tableInfo)
 		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-		c.Assert(globalStats.Count, Equals, int64(6))
-		c.Assert(globalStats.ModifyCount, Equals, int64(0))
+		c.Assert(globalStats.Count, Equals, int64(7))
+		c.Assert(globalStats.ModifyCount, Equals, int64(1))
 		c.Assert(partitionStats.Count, Equals, int64(3))
 		c.Assert(partitionStats.ModifyCount, Equals, int64(1))
 
