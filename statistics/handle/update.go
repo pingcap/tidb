@@ -751,6 +751,8 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 				sql := fmt.Sprintf("analyze table %s", tblName)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
+					// analyze one table at a time to let it get the freshest parameters.
+					// others will be analyzed next round which is just 3s later.
 					return true
 				}
 				continue

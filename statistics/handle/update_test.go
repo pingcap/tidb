@@ -396,7 +396,6 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 
 	handle.AutoAnalyzeMinCnt = 0
 	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
-
 	defer func() {
 		handle.AutoAnalyzeMinCnt = 1000
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
