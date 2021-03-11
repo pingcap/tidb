@@ -630,6 +630,14 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 			"create database clustered_test",
 			"create database clustered_test",
 		},
+		{
+			"create database clustered",
+			"create database clustered",
+		},
+		{
+			"create table clustered (id int)",
+			"create table clustered (id int)",
+		},
 	}
 	for _, ca := range testCase {
 		re := binloginfo.AddSpecialComment(ca.input)
