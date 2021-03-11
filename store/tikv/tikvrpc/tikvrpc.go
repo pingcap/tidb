@@ -334,7 +334,7 @@ func (req *Request) DispatchMPPTask() *mpp.DispatchTaskRequest {
 	return req.Req.(*mpp.DispatchTaskRequest)
 }
 
-// EstablishMPPConn returns stablishMPPConnectionRequest in request.
+// EstablishMPPConn returns EstablishMPPConnectionRequest in request.
 func (req *Request) EstablishMPPConn() *mpp.EstablishMPPConnectionRequest {
 	return req.Req.(*mpp.EstablishMPPConnectionRequest)
 }
@@ -531,7 +531,7 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) (*Res
 	panic("unreachable")
 }
 
-// CopStreamResponse combinates tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.
+// CopStreamResponse combines tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.
 // In streaming API, get grpc stream client may not involve any network packet, then region error have
 // to be handled in Recv() function. This struct facilitates the error handling.
 type CopStreamResponse struct {
@@ -803,7 +803,7 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 }
 
 // CallRPC launches a rpc call.
-// ch is needed to implement timeout for coprocessor streaing, the stream object's
+// ch is needed to implement timeout for coprocessor streaming, the stream object's
 // cancel function will be sent to the channel, together with a lease checked by a background goroutine.
 func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Response, error) {
 	resp := &Response{}
@@ -988,7 +988,7 @@ func (resp *MPPStreamResponse) Close() {
 	}
 }
 
-// CheckStreamTimeoutLoop runs periodically to check is there any stream request timeouted.
+// CheckStreamTimeoutLoop runs periodically to check is there any stream request timed out.
 // Lease is an object to track stream requests, call this function with "go CheckStreamTimeoutLoop()"
 // It is not guaranteed to call every Lease.Cancel() putting into channel when exits.
 // If grpc-go supports SetDeadline(https://github.com/grpc/grpc-go/issues/2917), we can stop using this method.
