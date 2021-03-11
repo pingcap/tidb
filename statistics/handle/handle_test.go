@@ -1326,18 +1326,18 @@ partition by range (a) (
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
-	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("set @@session.tidb_analyze_version=1")
 	tk.MustExec("analyze table t") // both p0 and p1 are in ver1
 	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 2)
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("set @@session.tidb_analyze_version=1")
 	err := tk.ExecToErr("analyze table t") // try to build global-stats on ver1
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[stats]: some partition level statistics are not in statistics version 2, please set tidb_analyze_version to 2 and analyze the this table")
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
 	err = tk.ExecToErr("analyze table t partition p1") // only analyze p1 to let it in ver2 while p0 is in ver1
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[stats]: some partition level statistics are not in statistics version 2, please set tidb_analyze_version to 2 and analyze the this table")
@@ -1345,11 +1345,18 @@ partition by range (a) (
 	tk.MustExec("analyze table t") // both p0 and p1 are in ver2
 	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 3)
 
+	// If we already have global-stats, we can get the latest global-stats by analyzing the newly added partition.
 	tk.MustExec("alter table t add partition (partition p2 values less than (30))")
 	tk.MustExec("insert t values (13), (14)")
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	tk.MustExec("analyze table t partition p2")                      // it will success since p0 and p1 are both in ver2
-	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 4) // p0, p1, p2 and global
+	tk.MustExec("analyze table t partition p2") // it will success since p0 and p1 are both in ver2
+	result := tk.MustQuery("show stats_meta").Rows()
+	c.Assert(len(result), Equals, 4) // p0, p1, p2 and global
+
+	tk.MustExec("alter table t drop partition p2;")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	result = tk.MustQuery("show stats_meta").Rows()
+	c.Assert(len(result), Equals, 3) // p0, p1 and global
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
