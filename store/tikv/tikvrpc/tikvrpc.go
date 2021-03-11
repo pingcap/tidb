@@ -389,6 +389,13 @@ func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
 }
 
+// EnableStaleRead enables stale read
+func (req *Request) EnableStaleRead() {
+	req.StaleRead = true
+	req.ReplicaReadType = kv.ReplicaReadMixed
+	req.ReplicaRead = false
+}
+
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
 func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Request {
 	switch req.Type {
@@ -1025,4 +1032,34 @@ func keepOnlyActive(array []*Lease, now int64) []*Lease {
 		}
 	}
 	return array[:idx]
+}
+
+// IsGreenGCRequest checks if the request is used by Green GC's protocol. This is used for failpoints to inject errors
+// to specified RPC requests.
+func (req *Request) IsGreenGCRequest() bool {
+	if req.Type == CmdCheckLockObserver ||
+		req.Type == CmdRegisterLockObserver ||
+		req.Type == CmdRemoveLockObserver ||
+		req.Type == CmdPhysicalScanLock {
+		return true
+	}
+	return false
+}
+
+// IsTxnWriteRequest checks if the request is a transactional write request. This is used for failpoints to inject
+// errors to specified RPC requests.
+func (req *Request) IsTxnWriteRequest() bool {
+	if req.Type == CmdPessimisticLock ||
+		req.Type == CmdPrewrite ||
+		req.Type == CmdCommit ||
+		req.Type == CmdBatchRollback ||
+		req.Type == CmdPessimisticRollback ||
+		req.Type == CmdCheckTxnStatus ||
+		req.Type == CmdCheckSecondaryLocks ||
+		req.Type == CmdCleanup ||
+		req.Type == CmdTxnHeartBeat ||
+		req.Type == CmdResolveLock {
+		return true
+	}
+	return false
 }

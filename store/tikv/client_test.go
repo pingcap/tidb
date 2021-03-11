@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -47,16 +47,16 @@ var _ = SerialSuites(&testClientFailSuite{})
 var _ = SerialSuites(&testClientSerialSuite{})
 
 func setMaxBatchSize(size uint) {
-	newConf := config.NewConfig()
+	newConf := config.DefaultConfig()
 	newConf.TiKVClient.MaxBatchSize = size
-	config.StoreGlobalConfig(newConf)
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testClientSerialSuite) TestConn(c *C) {
 	maxBatchSize := config.GetGlobalConfig().TiKVClient.MaxBatchSize
 	setMaxBatchSize(0)
 
-	client := newRPCClient(config.Security{})
+	client := NewRPCClient(config.Security{})
 
 	addr := "127.0.0.1:6379"
 	conn1, err := client.getConnArray(addr, true)
@@ -114,7 +114,7 @@ func (s *testClientSuite) TestSendWhenReconnect(c *C) {
 	server, port := startMockTikvService()
 	c.Assert(port > 0, IsTrue)
 
-	rpcClient := newRPCClient(config.Security{})
+	rpcClient := NewRPCClient(config.Security{})
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
 	conn, err := rpcClient.getConnArray(addr, true)
 	c.Assert(err, IsNil)

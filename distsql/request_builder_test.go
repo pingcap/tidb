@@ -43,7 +43,10 @@ var _ = Suite(&testSuite{})
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	TestingT(t)
 }
 
@@ -278,7 +281,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		},
 	}
 
-	actual, err := (&RequestBuilder{}).SetTableRanges(12, ranges, nil).
+	actual, err := (&RequestBuilder{}).SetHandleRanges(nil, 12, false, ranges, nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).

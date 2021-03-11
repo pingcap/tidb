@@ -16,6 +16,7 @@ package kv
 import (
 	"context"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -133,6 +134,14 @@ func (t *mockTxn) GetVars() *Variables {
 	return nil
 }
 
+func (t *mockTxn) CacheTableInfo(id int64, info *model.TableInfo) {
+
+}
+
+func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
+	return nil
+}
+
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{
@@ -149,13 +158,12 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
-func (*mockTxn) IsPessimistic() bool {
-	return false
+func (s *mockStorage) BeginWithOption(option TransactionOption) (Transaction, error) {
+	return newMockTxn(), nil
 }
 
-// BeginWithStartTS begins a transaction with startTS.
-func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
-	return s.Begin()
+func (*mockTxn) IsPessimistic() bool {
+	return false
 }
 
 func (s *mockStorage) GetSnapshot(ver Version) Snapshot {
@@ -173,7 +181,7 @@ func (s *mockStorage) UUID() string {
 }
 
 // CurrentVersion returns current max committed version.
-func (s *mockStorage) CurrentVersion() (Version, error) {
+func (s *mockStorage) CurrentVersion(txnScope string) (Version, error) {
 	return NewVersion(1), nil
 }
 
@@ -203,6 +211,10 @@ func (s *mockStorage) Describe() string {
 
 func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
 	return nil, nil
+}
+
+func (s *mockStorage) GetMemCache() MemManager {
+	return nil
 }
 
 // newMockStorage creates a new mockStorage.

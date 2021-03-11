@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -172,7 +171,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	logutil.BgLogger().Debug("compiling", zap.String("source", src))
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
-	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
+	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
 	stmts, warns, err := p.Parse(src, charset, collation)
 	for _, warn := range warns {
@@ -197,6 +196,22 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	sessVars := se.sessionVars
+	if !sql.IsReadOnly(sessVars) {
+		// All the history should be added here.
+		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
+			GetHistory(se).Add(sql, sessVars.StmtCtx)
+		}
+
+		// Handle the stmt commit/rollback.
+		if se.txn.Valid() {
+			if meetsErr != nil {
+				se.StmtRollback()
+			} else {
+				se.StmtCommit()
+			}
+		}
+	}
 	err := autoCommitAfterStmt(ctx, se, meetsErr, sql)
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
@@ -259,7 +274,7 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 		// The last history could not be "commit"/"rollback" statement.
 		// It means it is impossible to start a new transaction at the end of the transaction.
 		// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
-		sessVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+		sessVars.SetInTxn(true)
 	}
 	return err
 }

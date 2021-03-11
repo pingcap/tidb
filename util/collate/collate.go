@@ -175,10 +175,10 @@ func CollationID2Name(id int32) string {
 	collation, err := charset.GetCollationByID(int(id))
 	if err != nil {
 		// TODO(bb7133): fix repeating logs when the following code is uncommented.
-		//logutil.BgLogger().Warn(
-		//	"Unable to get collation name from ID, use default collation instead.",
-		//	zap.Int32("ID", id),
-		//	zap.Stack("stack"))
+		// logutil.BgLogger().Warn(
+		// 	"Unable to get collation name from ID, use default collation instead.",
+		// 	zap.Int32("ID", id),
+		// 	zap.Stack("stack"))
 		return mysql.DefaultCollationName
 	}
 	return collation.Name
@@ -276,6 +276,12 @@ func decodeRune(s string, si int) (r rune, newIndex int) {
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
+}
+
+// IsBinCollation returns if the collation is 'xx_bin'
+func IsBinCollation(collate string) bool {
+	return collate == "ascii_bin" || collate == "latin1_bin" ||
+		collate == "utf8_bin" || collate == "utf8mb4_bin"
 }
 
 func init() {

@@ -47,13 +47,13 @@ type partialResult4SumDecimal struct {
 type partialResult4SumDistinctFloat64 struct {
 	val    float64
 	isNull bool
-	valSet set.Float64Set
+	valSet set.Float64SetWithMemoryUsage
 }
 
 type partialResult4SumDistinctDecimal struct {
 	val    types.MyDecimal
 	isNull bool
-	valSet set.StringSet
+	valSet set.StringSetWithMemoryUsage
 }
 
 type baseSumAggFunc struct {
@@ -166,6 +166,10 @@ func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
+	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
+	if err != nil {
+		return err
+	}
 	chk.AppendMyDecimal(e.ordinal, &p.val)
 	return nil
 }
@@ -259,16 +263,17 @@ type sum4DistinctFloat64 struct {
 }
 
 func (e *sum4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	setSize := int64(0)
 	p := new(partialResult4SumDistinctFloat64)
 	p.isNull = true
-	p.valSet = set.NewFloat64Set()
-	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size
+	p.valSet, setSize = set.NewFloat64SetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size + setSize
 }
 
 func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctFloat64)(pr)
 	p.isNull = true
-	p.valSet = set.NewFloat64Set()
+	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
 func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -281,8 +286,7 @@ func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if isNull || p.valSet.Exist(input) {
 			continue
 		}
-		p.valSet.Insert(input)
-		memDelta += DefFloat64Size
+		memDelta += p.valSet.Insert(input)
 		if p.isNull {
 			p.val = input
 			p.isNull = false
@@ -310,14 +314,15 @@ type sum4DistinctDecimal struct {
 func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
-	p.valSet = set.NewStringSet()
-	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize
+	setSize := int64(0)
+	p.valSet, setSize = set.NewStringSetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize + setSize
 }
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	p.isNull = true
-	p.valSet = set.NewStringSet()
+	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
 
 func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -338,8 +343,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if p.valSet.Exist(decStr) {
 			continue
 		}
-		p.valSet.Insert(decStr)
-		memDelta += int64(len(decStr))
+		memDelta += p.valSet.Insert(decStr)
 		if p.isNull {
 			p.val = *input
 			p.isNull = false

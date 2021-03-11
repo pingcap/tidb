@@ -32,10 +32,10 @@ var ErrSyntax = errors.New("invalid syntax")
 // or character literal represented by the string s.
 // It returns four values:
 //
-//1) value, the decoded Unicode code point or byte value;
-//2) multibyte, a boolean indicating whether the decoded character requires a multibyte UTF-8 representation;
-//3) tail, the remainder of the string after the character; and
-//4) an error that will be nil if the character is syntactically valid.
+// 1) value, the decoded Unicode code point or byte value;
+// 2) multibyte, a boolean indicating whether the decoded character requires a multibyte UTF-8 representation;
+// 3) tail, the remainder of the string after the character; and
+// 4) an error that will be nil if the character is syntactically valid.
 //
 // The second argument, quote, specifies the type of literal being parsed
 // and therefore which escaped quote character is permitted.
@@ -365,4 +365,13 @@ func BuildStringFromLabels(labels map[string]string) string {
 	}
 	returned := r.String()
 	return returned[:len(returned)-1]
+}
+
+// GetTailSpaceCount returns the number of tailed spaces.
+func GetTailSpaceCount(str string) int64 {
+	length := len(str)
+	for length > 0 && str[length-1] == ' ' {
+		length--
+	}
+	return int64(len(str) - length)
 }

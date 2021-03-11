@@ -35,7 +35,7 @@ import (
 var _ = Suite(&testClusterSuite{})
 
 type testClusterSuite struct {
-	store kv.Storage
+	store tikv.Storage
 }
 
 func (s *testClusterSuite) TestClusterSplit(c *C) {

@@ -24,8 +24,8 @@ import (
 var (
 	// ErrBodyMissing response body is missing error
 	ErrBodyMissing = errors.New("response body is missing")
-	// When TiDB is closing and send request to tikv fail, do not retry, return this error.
-	errTiDBShuttingDown = errors.New("tidb server shutting down")
+	// ErrTiDBShuttingDown is returned when TiDB is closing and send request to tikv fail, do not retry.
+	ErrTiDBShuttingDown = errors.New("tidb server shutting down")
 )
 
 // mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
@@ -34,10 +34,12 @@ const mismatchClusterID = "mismatch cluster id"
 // MySQL error instances.
 var (
 	ErrTiKVServerTimeout           = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVServerTimeout)
+	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(mysql.ErrTiFlashServerTimeout)
 	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(mysql.ErrResolveLockTimeout)
 	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(mysql.ErrPDServerTimeout)
 	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(mysql.ErrRegionUnavailable)
 	ErrTiKVServerBusy              = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVServerBusy)
+	ErrTiFlashServerBusy           = dbterror.ClassTiKV.NewStd(mysql.ErrTiFlashServerBusy)
 	ErrTiKVStaleCommand            = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVStaleCommand)
 	ErrTiKVMaxTimestampNotSynced   = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVMaxTimestampNotSynced)
 	ErrGCTooEarly                  = dbterror.ClassTiKV.NewStd(mysql.ErrGCTooEarly)
@@ -74,4 +76,13 @@ type PDError struct {
 
 func (d *PDError) Error() string {
 	return d.Err.String()
+}
+
+// ErrKeyExist wraps *pdpb.AlreadyExist to implement the error interface.
+type ErrKeyExist struct {
+	*kvrpcpb.AlreadyExist
+}
+
+func (k *ErrKeyExist) Error() string {
+	return k.AlreadyExist.String()
 }

@@ -693,8 +693,10 @@ func (s *exprStack) len() int {
 }
 
 // DatumToConstant generates a Constant expression from a Datum.
-func DatumToConstant(d types.Datum, tp byte) *Constant {
-	return &Constant{Value: d, RetType: types.NewFieldType(tp)}
+func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
+	t := types.NewFieldType(tp)
+	t.Flag |= flag
+	return &Constant{Value: d, RetType: t}
 }
 
 // ParamMarkerExpression generate a getparam function expression.
@@ -890,6 +892,21 @@ func ContainVirtualColumn(exprs []Expression) bool {
 			}
 		case *ScalarFunction:
 			if ContainVirtualColumn(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ContainCorrelatedColumn checks if the expressions contain a correlated column
+func ContainCorrelatedColumn(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *CorrelatedColumn:
+			return true
+		case *ScalarFunction:
+			if ContainCorrelatedColumn(v.GetArgs()) {
 				return true
 			}
 		}

@@ -66,7 +66,6 @@ type pstmtPlanCacheKey struct {
 	database             string
 	connID               uint64
 	pstmtID              uint32
-	snapshot             uint64
 	schemaVersion        int64
 	sqlMode              mysql.SQLMode
 	timezoneOffset       int
@@ -89,7 +88,6 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
-		key.hash = codec.EncodeInt(key.hash, int64(key.snapshot))
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
@@ -133,7 +131,6 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 		database:             sessionVars.CurrentDB,
 		connID:               sessionVars.ConnectionID,
 		pstmtID:              pstmtID,
-		snapshot:             sessionVars.SnapshotTS,
 		schemaVersion:        schemaVersion,
 		sqlMode:              sessionVars.SQLMode,
 		timezoneOffset:       timezoneOffset,
@@ -146,23 +143,45 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 	return key
 }
 
+// FieldSlice is the slice of the types.FieldType
+type FieldSlice []types.FieldType
+
+// Equal compares FieldSlice with []*types.FieldType
+func (s FieldSlice) Equal(tps []*types.FieldType) bool {
+	if len(s) != len(tps) {
+		return false
+	}
+	for i := range tps {
+		if !s[i].Equal(tps[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // PSTMTPlanCacheValue stores the cached Statement and StmtNode.
 type PSTMTPlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
+	UserVarTypes      FieldSlice
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
-func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool) *PSTMTPlanCacheValue {
+func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType) *PSTMTPlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
+	}
+	userVarTypes := make([]types.FieldType, len(userVarTps))
+	for i, tp := range userVarTps {
+		userVarTypes[i] = *tp
 	}
 	return &PSTMTPlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
+		UserVarTypes:      userVarTypes,
 	}
 }
 

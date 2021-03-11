@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -29,8 +30,6 @@ import (
 // restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
 // It only starts the original workers.
 func (d *ddl) restartWorkers(ctx context.Context) {
-	d.cancel()
-	d.wg.Wait()
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	d.wg.Add(1)
@@ -51,7 +50,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 }
 
 // runInterruptedJob should be called concurrently with restartWorkers
-func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan struct{}) {
+func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan error) {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
 
@@ -60,19 +59,28 @@ func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan struct{}) {
 		err     error
 	)
 
-	_ = d.doDDLJob(ctx, job)
-
-	for history == nil {
-		history, err = d.getHistoryDDLJob(job.ID)
-		c.Assert(err, IsNil)
-		time.Sleep(10 * testLease)
+	err = d.doDDLJob(ctx, job)
+	if errors.Is(err, context.Canceled) {
+		endlessLoopTime := time.Now().Add(time.Minute)
+		for history == nil {
+			// imitate doDDLJob's logic, quit only find history
+			history, _ = d.getHistoryDDLJob(job.ID)
+			if history != nil {
+				err = history.Error
+			}
+			time.Sleep(10 * testLease)
+			if time.Now().After(endlessLoopTime) {
+				err = errors.New("runInterruptedJob may enter endless loop")
+				break
+			}
+		}
 	}
-	c.Assert(history.Error, IsNil)
-	doneCh <- struct{}{}
+
+	doneCh <- err
 }
 
 func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
-	done := make(chan struct{}, 1)
+	done := make(chan error, 1)
 	go runInterruptedJob(c, d, job, done)
 
 	ticker := time.NewTicker(d.lease * 1)
@@ -81,10 +89,12 @@ LOOP:
 	for {
 		select {
 		case <-ticker.C:
-			d.Stop()
+			err := d.Stop()
+			c.Assert(err, IsNil)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
-		case <-done:
+		case err := <-done:
+			c.Assert(err, IsNil)
 			break LOOP
 		}
 	}
@@ -92,7 +102,10 @@ LOOP:
 
 func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	store := testCreateStore(c, "test_schema_resume")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	d1 := testNewDDLAndStart(
 		context.Background(),
@@ -100,7 +113,10 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d1.Stop()
+	defer func() {
+		err := d1.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	testCheckOwner(c, d1, true)
 
@@ -125,7 +141,10 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 
 func (s *testStatSuite) TestStat(c *C) {
 	store := testCreateStore(c, "test_stat")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	d := testNewDDLAndStart(
 		context.Background(),
@@ -133,7 +152,10 @@ func (s *testStatSuite) TestStat(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
@@ -150,7 +172,7 @@ func (s *testStatSuite) TestStat(c *C) {
 		Args:       []interface{}{dbInfo.Name},
 	}
 
-	done := make(chan struct{}, 1)
+	done := make(chan error, 1)
 	go runInterruptedJob(c, d, job, done)
 
 	ticker := time.NewTicker(d.lease * 1)
@@ -160,14 +182,15 @@ LOOP:
 	for {
 		select {
 		case <-ticker.C:
-			d.Stop()
+			err := d.Stop()
+			c.Assert(err, IsNil)
 			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
-		case <-done:
+		case err := <-done:
 			// TODO: Get this information from etcd.
 			// m, err := d.Stats(nil)
-			// c.Assert(err, IsNil)
+			c.Assert(err, IsNil)
 			break LOOP
 		}
 	}

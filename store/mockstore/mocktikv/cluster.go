@@ -24,10 +24,8 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	pd "github.com/tikv/pd/client"
-	"go.uber.org/atomic"
 )
 
 // Cluster simulates a TiKV cluster. It focuses on management and the change of
@@ -152,7 +150,7 @@ func (c *Cluster) CancelStore(storeID uint64) {
 	c.Lock()
 	defer c.Unlock()
 
-	//A store returns context.Cancelled Error when cancel is true.
+	// A store returns context.Cancelled Error when cancel is true.
 	if store := c.stores[storeID]; store != nil {
 		store.cancel = true
 	}
@@ -182,27 +180,28 @@ func (c *Cluster) GetStoreByAddr(addr string) *metapb.Store {
 }
 
 // GetAndCheckStoreByAddr checks and returns a Store's meta by an addr
-func (c *Cluster) GetAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
+func (c *Cluster) GetAndCheckStoreByAddr(addr string) (ss []*metapb.Store, err error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	for _, s := range c.stores {
 		if s.cancel {
-			return nil, context.Canceled
+			err = context.Canceled
+			return
 		}
 		if s.meta.GetAddress() == addr {
-			return proto.Clone(s.meta).(*metapb.Store), nil
+			ss = append(ss, proto.Clone(s.meta).(*metapb.Store))
 		}
 	}
-	return nil, nil
+	return
 }
 
 // AddStore add a new Store to the cluster.
-func (c *Cluster) AddStore(storeID uint64, addr string) {
+func (c *Cluster) AddStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) {
 	c.Lock()
 	defer c.Unlock()
 
-	c.stores[storeID] = newStore(storeID, addr)
+	c.stores[storeID] = newStore(storeID, addr, labels...)
 }
 
 // RemoveStore removes a Store from the cluster.
@@ -211,6 +210,15 @@ func (c *Cluster) RemoveStore(storeID uint64) {
 	defer c.Unlock()
 
 	delete(c.stores, storeID)
+}
+
+// MarkTombstone marks store as tombstone.
+func (c *Cluster) MarkTombstone(storeID uint64) {
+	c.Lock()
+	defer c.Unlock()
+	nm := *c.stores[storeID].meta
+	nm.State = metapb.StoreState_Tombstone
+	c.stores[storeID].meta = &nm
 }
 
 // UpdateStoreAddr updates store address for cluster.
@@ -420,7 +428,7 @@ func (c *Cluster) SplitIndex(tableID, indexID int64, count int) {
 
 // SplitKeys evenly splits the start, end key into "count" regions.
 // Only works for single store.
-func (c *Cluster) SplitKeys(start, end kv.Key, count int) {
+func (c *Cluster) SplitKeys(start, end []byte, count int) {
 	c.splitRange(c.mvccStore, NewMvccKey(start), NewMvccKey(end), count)
 }
 
@@ -429,6 +437,13 @@ func (c *Cluster) ScheduleDelay(startTS, regionID uint64, dur time.Duration) {
 	c.delayMu.Lock()
 	c.delayEvents[delayKey{startTS: startTS, regionID: regionID}] = dur
 	c.delayMu.Unlock()
+}
+
+// UpdateStoreLabels merge the target and owned labels together
+func (c *Cluster) UpdateStoreLabels(storeID uint64, labels []*metapb.StoreLabel) {
+	c.Lock()
+	defer c.Unlock()
+	c.stores[storeID].mergeLabels(labels)
 }
 
 func (c *Cluster) handleDelay(startTS, regionID uint64) {
@@ -651,9 +666,8 @@ func (r *Region) incVersion() {
 
 // Store is the Store's meta data.
 type Store struct {
-	meta       *metapb.Store
-	cancel     bool // return context.Cancelled error when cancel is true.
-	tokenCount atomic.Int64
+	meta   *metapb.Store
+	cancel bool // return context.Cancelled error when cancel is true.
 }
 
 func newStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) *Store {
@@ -664,4 +678,26 @@ func newStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) *Store 
 			Labels:  labels,
 		},
 	}
+}
+
+func (s *Store) mergeLabels(labels []*metapb.StoreLabel) {
+	if len(s.meta.Labels) < 1 {
+		s.meta.Labels = labels
+		return
+	}
+	kv := make(map[string]string, len(s.meta.Labels))
+	for _, label := range s.meta.Labels {
+		kv[label.Key] = label.Value
+	}
+	for _, label := range labels {
+		kv[label.Key] = label.Value
+	}
+	mergedLabels := make([]*metapb.StoreLabel, 0, len(kv))
+	for k, v := range kv {
+		mergedLabels = append(mergedLabels, &metapb.StoreLabel{
+			Key:   k,
+			Value: v,
+		})
+	}
+	s.meta.Labels = mergedLabels
 }

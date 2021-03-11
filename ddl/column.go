@@ -15,8 +15,8 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"fmt"
-	"math"
 	"math/bits"
 	"strings"
 	"sync/atomic"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -688,7 +689,13 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
 	needTruncationOrToggleSign := func() bool {
-		return newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned
+		return (newCol.Flen > 0 && newCol.Flen < oldCol.Flen) || (toUnsigned != originUnsigned)
+	}
+	// Ignore the potential max display length represented by integer's flen, use default flen instead.
+	oldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.Tp)
+	newColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.Tp)
+	needTruncationOrToggleSignForInteger := func() bool {
+		return (newColFlen > 0 && newColFlen < oldColFlen) || (toUnsigned != originUnsigned)
 	}
 
 	// Deal with the same type.
@@ -700,6 +707,8 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 			return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || toUnsigned != originUnsigned
 		case mysql.TypeEnum, mysql.TypeSet:
 			return isElemsChangedToModifyColumn(oldCol.Elems, newCol.Elems)
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			return toUnsigned != originUnsigned
 		}
 
 		return needTruncationOrToggleSign()
@@ -715,7 +724,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch newCol.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return needTruncationOrToggleSign()
+			return needTruncationOrToggleSignForInteger()
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
 		switch newCol.Tp {
@@ -849,11 +858,26 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return ver, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
-		// TODO: Check whether we need to check OriginDefaultValue.
+
 		jobParam.changingCol = jobParam.newCol.Clone()
 		jobParam.changingCol.Name = newColName
 		jobParam.changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
-		_, _, _, err := createColumnInfo(tblInfo, jobParam.changingCol, changingColPos)
+
+		// Since column type change is implemented as adding a new column then substituting the old one.
+		// Case exists when update-where statement fetch a NULL for not-null column without any default data,
+		// it will errors.
+		// So we set zero original default value here to prevent this error. besides, in insert & update records,
+		// we have already implement using the casted value of relative column to insert rather than the origin
+		// default value.
+		originDefVal, err := generateOriginDefaultValue(jobParam.newCol)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err = jobParam.changingCol.SetOriginDefaultValue(originDefVal); err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		_, _, _, err = createColumnInfo(tblInfo, jobParam.changingCol, changingColPos)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -937,7 +961,12 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				defer w.sessPool.put(ctx)
 
-				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(valStr)
+				stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), valStr)
+				if err != nil {
+					job.State = model.JobStateCancelled
+					failpoint.Return(ver, err)
+				}
+				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					failpoint.Return(ver, err)
@@ -951,6 +980,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(0)
 		job.Args = append(job.Args, changingCol, changingIdxs)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
@@ -1074,7 +1104,8 @@ func (w *worker) doModifyColumnTypeWithData(
 func needRollbackData(err error) bool {
 	return kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) ||
 		types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) || types.ErrTruncated.Equal(err) ||
-		json.ErrInvalidJSONText.Equal(err) || types.ErrBadNumber.Equal(err) || types.ErrWrongValue.Equal(err)
+		json.ErrInvalidJSONText.Equal(err) || types.ErrBadNumber.Equal(err) || types.ErrInvalidYear.Equal(err) ||
+		types.ErrWrongValue.Equal(err)
 }
 
 // BuildElements is exported for testing.
@@ -1129,15 +1160,22 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
 		if i == startElementOffsetToResetHandle+1 {
-			reorgInfo.StartHandle, reorgInfo.EndHandle = originalStartHandle, originalEndHandle
+			reorgInfo.StartKey, reorgInfo.EndKey = originalStartHandle, originalEndHandle
 		}
 
+		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
+		w.reorgCtx.setCurrentElement(reorgInfo.elements[i+1])
+
+		// Update the element in the reorgInfo for updating the reorg meta below.
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
-		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartHandle)
-		logutil.BgLogger().Info("[ddl] update column and indexes", zap.Int64("jobID", reorgInfo.Job.ID),
-			zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
-			zap.String("startHandle", toString(reorgInfo.StartHandle)), zap.String("endHandle", toString(reorgInfo.EndHandle)))
+		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey)
+		logutil.BgLogger().Info("[ddl] update column and indexes",
+			zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.String("startHandle", tryDecodeToHandleString(reorgInfo.StartKey)),
+			zap.String("endHandle", tryDecodeToHandleString(reorgInfo.EndKey)))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1188,43 +1226,32 @@ type rowRecord struct {
 	warning *terror.Error // It's used to record the cast warning of a record.
 }
 
-// getNextHandle gets next handle of entry that we are going to process.
-func (w *updateColumnWorker) getNextHandle(taskRange reorgBackfillTask, taskDone bool, lastAccessedHandle kv.Handle) (nextHandle kv.Handle) {
+// getNextKey gets next handle of entry that we are going to process.
+func (w *updateColumnWorker) getNextKey(taskRange reorgBackfillTask,
+	taskDone bool, lastAccessedHandle kv.Key) (nextHandle kv.Key) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		return lastAccessedHandle.Next()
 	}
 
-	// The task is done. So we need to choose a handle outside this range.
-	// Some corner cases should be considered:
-	// - The end of task range is MaxInt64.
-	// - The end of the task is excluded in the range.
-	if (taskRange.endHandle.IsInt() && taskRange.endHandle.IntValue() == math.MaxInt64) || !taskRange.endIncluded {
-		return taskRange.endHandle
-	}
-
-	return taskRange.endHandle.Next()
+	return taskRange.endKey.Next()
 }
 
-func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*rowRecord, kv.Handle, bool, error) {
+func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*rowRecord, kv.Key, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
 	startTime := time.Now()
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
-	var lastAccessedHandle kv.Handle
+	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle, taskRange.endHandle, taskRange.endIncluded,
+	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startKey, taskRange.endKey,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in updateColumnWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			if !taskRange.endIncluded {
-				taskDone = handle.Compare(taskRange.endHandle) >= 0
-			} else {
-				taskDone = handle.Compare(taskRange.endHandle) > 0
-			}
+			taskDone = recordKey.Cmp(taskRange.endKey) > 0
 
 			if taskDone || len(w.rowRecords) >= w.batchCnt {
 				return false, nil
@@ -1233,8 +1260,8 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 			if err1 := w.getRowRecord(handle, recordKey, rawRow); err1 != nil {
 				return false, errors.Trace(err1)
 			}
-			lastAccessedHandle = handle
-			if handle.Equal(taskRange.endHandle) {
+			lastAccessedHandle = recordKey
+			if recordKey.Cmp(taskRange.endKey) == 0 {
 				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle.
 				taskDone = true
 				return false, nil
@@ -1247,7 +1274,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	}
 
 	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
-	return w.rowRecords, w.getNextHandle(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
+	return w.rowRecords, w.getNextKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
 func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, rawRow []byte) error {
@@ -1312,6 +1339,10 @@ func (w *updateColumnWorker) reformatErrors(err error) error {
 	if types.ErrTruncated.Equal(err) {
 		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
 	}
+
+	if types.ErrInvalidYear.Equal(err) {
+		err = types.ErrInvalidYear.GenWithStack("Invalid year value for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+	}
 	return err
 }
 
@@ -1324,16 +1355,16 @@ func (w *updateColumnWorker) cleanRowMap() {
 // BackfillDataInTxn will backfill the table record in a transaction, lock corresponding rowKey, if the value of rowKey is changed.
 func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
 
-		rowRecords, nextHandle, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		taskCtx.nextHandle = nextHandle
+		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
 		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
@@ -1500,7 +1531,7 @@ func adjustColumnInfoInModifyColumn(
 func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo,
 	newCol *model.ColumnInfo, oldCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	schemaID := job.SchemaID
-	newLayout := autoid.NewAutoRandomIDLayout(&newCol.FieldType, newAutoRandBits)
+	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
 
 	// GenAutoRandomID first to prevent concurrent update.
 	_, err := t.GenAutoRandomID(schemaID, tblInfo.ID, 1)
@@ -1536,16 +1567,25 @@ func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model
 // checkForNullValue ensure there are no null values of the column of this table.
 // `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
 func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, newCol model.CIStr, oldCols ...*model.ColumnInfo) error {
-	colsStr := ""
+	var buf strings.Builder
+	buf.WriteString("select 1 from %n.%n where ")
+	paramsList := make([]interface{}, 0, 2+len(oldCols))
+	paramsList = append(paramsList, schema.L, table.L)
 	for i, col := range oldCols {
 		if i == 0 {
-			colsStr += "`" + col.Name.L + "` is null"
+			buf.WriteString("%n is null")
+			paramsList = append(paramsList, col.Name.L)
 		} else {
-			colsStr += " or `" + col.Name.L + "` is null"
+			buf.WriteString(" or %n is null")
+			paramsList = append(paramsList, col.Name.L)
 		}
 	}
-	sql := fmt.Sprintf("select 1 from `%s`.`%s` where %s limit 1;", schema.L, table.L, colsStr)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	buf.WriteString(" limit 1")
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), buf.String(), paramsList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1635,7 +1675,7 @@ func allocateColumnID(tblInfo *model.TableInfo) int64 {
 }
 
 func checkAddColumnTooManyColumns(colNum int) error {
-	if uint32(colNum) > atomic.LoadUint32(&TableColumnCountLimit) {
+	if uint32(colNum) > atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil
@@ -1697,10 +1737,21 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	var err error
 	odValue := col.GetDefaultValue()
 	if odValue == nil && mysql.HasNotNullFlag(col.Flag) {
-		zeroVal := table.GetZeroValue(col)
-		odValue, err = zeroVal.ToString()
-		if err != nil {
-			return nil, errors.Trace(err)
+		switch col.Tp {
+		// Just use enum field's first element for OriginDefaultValue.
+		case mysql.TypeEnum:
+			defEnum, verr := types.ParseEnumValue(col.FieldType.Elems, 1)
+			if verr != nil {
+				return nil, errors.Trace(verr)
+			}
+			defVal := types.NewCollateMysqlEnumDatum(defEnum, col.Collate)
+			return defVal.ToString()
+		default:
+			zeroVal := table.GetZeroValue(col)
+			odValue, err = zeroVal.ToString()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 

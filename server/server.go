@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
@@ -68,7 +69,6 @@ import (
 )
 
 var (
-	baseConnID  uint32
 	serverPID   int
 	osUser      string
 	osVersion   string
@@ -98,7 +98,7 @@ var (
 	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
 	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
-	errMultiStatementDisabled  = dbterror.ClassServer.NewStdErr(errno.ErrUnknown, mysql.Message("client has multi-statement capability disabled", nil)) // MySQL returns a parse error
+	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -141,6 +141,7 @@ func (s *Server) ConnectionCount() int {
 func (s *Server) getToken() *Token {
 	start := time.Now()
 	tok := s.concurrentLimiter.Get()
+	metrics.TokenGauge.Inc()
 	// Note that data smaller than one microsecond is ignored, because that case can be viewed as non-block.
 	metrics.GetTokenDurationHistogram.Observe(float64(time.Since(start).Nanoseconds() / 1e3))
 	return tok
@@ -148,6 +149,7 @@ func (s *Server) getToken() *Token {
 
 func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
+	metrics.TokenGauge.Dec()
 }
 
 // SetDomain use to set the server domain.
@@ -167,11 +169,9 @@ func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := newClientConn(s)
-	if s.cfg.Performance.TCPKeepAlive {
-		if tcpConn, ok := conn.(*net.TCPConn); ok {
-			if err := tcpConn.SetKeepAlive(true); err != nil {
-				logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
-			}
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		if err := tcpConn.SetKeepAlive(s.cfg.Performance.TCPKeepAlive); err != nil {
+			logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
 		}
 	}
 	cc.setConn(conn)
@@ -192,10 +192,8 @@ func (s *Server) forwardUnixSocketToTCP() {
 		if uconn, err := s.socket.Accept(); err == nil {
 			logutil.BgLogger().Info("server socket forwarding", zap.String("from", s.cfg.Socket), zap.String("to", addr))
 			go s.handleForwardedConnection(uconn, addr)
-		} else {
-			if s.listener != nil {
-				logutil.BgLogger().Error("server failed to forward", zap.String("from", s.cfg.Socket), zap.String("to", addr), zap.Error(err))
-			}
+		} else if s.listener != nil {
+			logutil.BgLogger().Error("server failed to forward", zap.String("from", s.cfg.Socket), zap.String("to", addr), zap.Error(err))
 		}
 	}
 }
@@ -225,7 +223,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
 	}
-
+	setTxnScope()
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	if err != nil {
 		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
@@ -247,7 +245,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || runInGoTest) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-		if s.listener, err = net.Listen("tcp", addr); err == nil {
+		tcpProto := "tcp"
+		if s.cfg.EnableTCP4Only {
+			tcpProto = "tcp4"
+		}
+		if s.listener, err = net.Listen(tcpProto, addr); err == nil {
 			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
 			if cfg.Socket != "" {
 				if s.socket, err = net.Listen("unix", s.cfg.Socket); err == nil {
@@ -298,9 +300,26 @@ func setSSLVariable(ca, key, cert string) {
 	variable.SetSysVar("ssl_ca", ca)
 }
 
+func setTxnScope() {
+	variable.SetSysVar("txn_scope", func() string {
+		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
+			return oracle.GlobalTxnScope
+		}
+		return oracle.LocalTxnScope
+	}())
+}
+
+// Export config-related metrics
+func (s *Server) reportConfig() {
+	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
+	metrics.ConfigStatus.WithLabelValues("mem-quota-query").Set(float64(s.cfg.MemQuotaQuery))
+	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
+}
+
 // Run runs the server.
 func (s *Server) Run() error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
+	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
@@ -330,7 +349,7 @@ func (s *Server) Run() error {
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if authPlugin.OnConnectionEvent != nil {
-				host, err := clientConn.PeerHost("")
+				host, _, err := clientConn.PeerHost("")
 				if err != nil {
 					logutil.BgLogger().Error("get peer host failed", zap.Error(err))
 					terror.Log(clientConn.Close())
@@ -520,9 +539,6 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
-		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
-			continue
-		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
@@ -535,7 +551,7 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	s.rwlock.RLock()
 	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
-	if !ok || atomic.LoadInt32(&conn.status) == connStatusWaitShutdown {
+	if !ok {
 		return &util.ProcessInfo{}, false
 	}
 	return conn.ctx.ShowProcess(), ok
@@ -554,7 +570,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	}
 
 	if !query {
-		// Mark the client connection status as WaitShutdown, when the goroutine detect
+		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
 		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}
@@ -682,10 +698,3 @@ func setSystemTimeZoneVariable() {
 		variable.SetSysVar("system_time_zone", tz)
 	})
 }
-
-// Server error codes.
-const (
-	codeUnknownFieldType = 1
-	codeInvalidSequence  = 3
-	codeInvalidType      = 4
-)

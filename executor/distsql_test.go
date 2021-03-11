@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -37,14 +37,17 @@ import (
 func checkGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)
 	profile := pprof.Lookup("goroutine")
-	profile.WriteTo(buf, 1)
+	err := profile.WriteTo(buf, 1)
+	if err != nil {
+		panic(err)
+	}
 	str := buf.String()
 	return strings.Contains(str, keyword)
 }
 
 func (s *testSuite3) TestCopClientSend(c *C) {
 	c.Skip("not stable")
-	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
+	if _, ok := s.store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
 		return
 	}
@@ -77,7 +80,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(500))
@@ -92,7 +95,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 
 	// Check there is no goroutine leak.
 	rs, err = tk.Exec("select * from copclient order by id")
@@ -100,7 +103,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	req = rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	keyword := "(*copIterator).work"
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 }
@@ -218,7 +221,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		_, err = idxOp.Create(ctx, txn.GetUnionStore(), types.MakeDatums(i+10), kv.IntHandle(100+i))
+		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i), nil)
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -259,13 +262,27 @@ func (s *testSuite3) TestPushLimitDownIndexLookUpReader(c *C) {
 
 func (s *testSuite3) TestIndexLookUpStats(c *C) {
 	stats := &executor.IndexLookUpRunTimeStats{
-		IndexScan:    int64(2 * time.Second),
-		TableRowScan: int64(2 * time.Second),
-		TableTaskNum: 2,
-		Concurrency:  1,
+		FetchHandleTotal: int64(5 * time.Second),
+		FetchHandle:      int64(2 * time.Second),
+		TaskWait:         int64(2 * time.Second),
+		TableRowScan:     int64(2 * time.Second),
+		TableTaskNum:     2,
+		Concurrency:      1,
 	}
-	c.Assert(stats.String(), Equals, "index_task:2s, table_task:{num:2, concurrency:1, time:2s}")
+	c.Assert(stats.String(), Equals, "index_task: {total_time: 5s, fetch_handle: 2s, build: 1s, wait: 2s}, table_task: {total_time: 2s, num: 2, concurrency: 1}")
 	c.Assert(stats.String(), Equals, stats.Clone().String())
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "index_task:4s, table_task:{num:4, concurrency:2, time:4s}")
+	c.Assert(stats.String(), Equals, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}, table_task: {total_time: 4s, num: 4, concurrency: 2}")
+}
+
+func (s *testSuite3) TestIndexLookUpGetResultChunk(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl")
+	tk.MustExec("create table tbl(a int, b int, c int, key idx_a(a))")
+	for i := 0; i < 101; i++ {
+		tk.MustExec(fmt.Sprintf("insert into tbl values(%d,%d,%d)", i, i, i))
+	}
+	tk.MustQuery("select * from tbl use index(idx_a) where a > 99 order by a asc limit 1").Check(testkit.Rows("100 100 100"))
+	tk.MustQuery("select * from tbl use index(idx_a) where a > 10 order by a asc limit 4,1").Check(testkit.Rows("15 15 15"))
 }
