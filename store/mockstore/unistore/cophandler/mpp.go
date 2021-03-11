@@ -15,6 +15,7 @@ package cophandler
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -23,10 +24,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/uber-go/atomic"
@@ -152,6 +155,25 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if pb.JoinType == tipb.JoinType_TypeLeftOuterJoin {
+		for _, tp := range rightCh.getFieldTypes() {
+			tp.Flag &= ^mysql.NotNullFlag
+		}
+		defaultInner := chunk.MutRowFromTypes(rightCh.getFieldTypes())
+		for i := range rightCh.getFieldTypes() {
+			defaultInner.SetDatum(i, types.NewDatum(nil))
+		}
+		e.defaultInner = defaultInner.ToRow()
+	} else if pb.JoinType == tipb.JoinType_TypeRightOuterJoin {
+		for _, tp := range leftCh.getFieldTypes() {
+			tp.Flag &= ^mysql.NotNullFlag
+		}
+		defaultInner := chunk.MutRowFromTypes(leftCh.getFieldTypes())
+		for i := range leftCh.getFieldTypes() {
+			defaultInner.SetDatum(i, types.NewDatum(nil))
+		}
+		e.defaultInner = defaultInner.ToRow()
+	}
 	// because the field type is immutable, so this kind of appending is safe.
 	e.fieldTypes = append(leftCh.getFieldTypes(), rightCh.getFieldTypes()...)
 	if pb.InnerIdx == 1 {
@@ -253,6 +275,7 @@ func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 	for _, gby := range agg.GroupBy {
 		ft := expression.PbTypeToFieldType(gby.FieldType)
 		e.fieldTypes = append(e.fieldTypes, ft)
+		e.groupByTypes = append(e.groupByTypes, ft)
 		gbyExpr, err := expression.PBToExpr(gby, chExec.getFieldTypes(), b.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -305,15 +328,15 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 	}
 	mppExec, err := builder.buildMPPExecutor(dagReq.RootExecutor)
 	if err != nil {
-		return &coprocessor.Response{OtherError: err.Error()}
+		panic("build error: " + err.Error())
 	}
 	err = mppExec.open()
 	if err != nil {
-		return &coprocessor.Response{OtherError: err.Error()}
+		panic("open phase find error: " + err.Error())
 	}
 	_, err = mppExec.next()
 	if err != nil {
-		return &coprocessor.Response{OtherError: err.Error()}
+		panic("running phase find error: " + err.Error())
 	}
 	return &coprocessor.Response{}
 }
@@ -378,6 +401,10 @@ type ExchangerTunnel struct {
 
 	connectedCh chan struct{}
 	ErrCh       chan error
+}
+
+func (tunnel *ExchangerTunnel) debugString() string {
+	return fmt.Sprintf("(%d->%d)", tunnel.sourceTask.TaskId, tunnel.targetTask.TaskId)
 }
 
 // RecvChunk recive tipb chunk

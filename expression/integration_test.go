@@ -2961,6 +2961,16 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> 4"))
 	result = tk.MustQuery("select * from t where b = case when a is null then 4 when  a = 'str5' then 7 else 9 end")
 	result.Check(testkit.Rows("<nil> 4"))
+
+	// return type of case when expr should not include NotNullFlag. issue-23036
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int not null)")
+	tk.MustExec("insert into t1 values(1)")
+	result = tk.MustQuery("select (case when null then c1 end) is null from t1")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (case when null then c1 end) is not null from t1")
+	result.Check(testkit.Rows("0"))
+
 	// test warnings
 	tk.MustQuery("select case when b=0 then 1 else 1/b end from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -3794,6 +3804,17 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
 	result.Check(testkit.Rows("0"))
+}
+
+// #23157: make sure if Nullif expr is correct combined with IsNull expr.
+func (s *testIntegrationSuite) TestNullifWithIsNull(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null);")
+	tk.MustExec("insert into t values(1),(2);")
+	rows := tk.MustQuery("select * from t where nullif(a,a) is null;")
+	rows.Check(testkit.Rows("1", "2"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {

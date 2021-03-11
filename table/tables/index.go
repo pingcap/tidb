@@ -16,24 +16,28 @@ package tables
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 // indexIter is for KV store index iterator.
 type indexIter struct {
-	it     kv.Iterator
-	idx    *index
-	prefix kv.Key
+	it       kv.Iterator
+	idx      *index
+	prefix   kv.Key
+	colInfos []rowcodec.ColInfo
+	tps      []*types.FieldType
 }
 
 // Close does the clean up works when KV store index iterator is closed.
@@ -45,36 +49,34 @@ func (c *indexIter) Close() {
 }
 
 // Next returns current key and moves iterator to the next step.
-func (c *indexIter) Next() (val []types.Datum, h kv.Handle, err error) {
+func (c *indexIter) Next() (indexData []types.Datum, h kv.Handle, err error) {
 	if !c.it.Valid() {
 		return nil, nil, errors.Trace(io.EOF)
 	}
 	if !c.it.Key().HasPrefix(c.prefix) {
 		return nil, nil, errors.Trace(io.EOF)
 	}
-	// get indexedValues
-	buf := c.it.Key()[len(c.prefix):]
-	vv, err := codec.Decode(buf, len(c.idx.idxInfo.Columns))
+	vals, err := tablecodec.DecodeIndexKV(c.it.Key(), c.it.Value(), len(c.colInfos), tablecodec.HandleNotNeeded, c.colInfos)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.Trace(err)
 	}
-	if len(vv) > len(c.idx.idxInfo.Columns) {
-		h = kv.IntHandle(vv[len(vv)-1].GetInt64())
-		val = vv[0 : len(vv)-1]
-	} else {
-		// If the index is unique and the value isn't nil, the handle is in value.
-		h, err = tablecodec.DecodeHandleInUniqueIndexValue(c.it.Value(), c.idx.tblInfo.IsCommonHandle)
+	handle, err := tablecodec.DecodeIndexHandle(c.it.Key(), c.it.Value(), len(c.colInfos))
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	for i, v := range vals {
+		d, err := tablecodec.DecodeColumnValue(v, c.tps[i], time.Local)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, errors.Trace(err)
 		}
-		val = vv
+		indexData = append(indexData, d)
 	}
 	// update new iter to next
 	err = c.it.Next()
 	if err != nil {
 		return nil, nil, err
 	}
-	return
+	return indexData, handle, nil
 }
 
 // index is the data structure for index data in the KV store.
@@ -140,9 +142,9 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	if c.Meta().Unique {
-		us.CacheTableInfo(c.phyTblID, c.tblInfo)
+		txn.CacheTableInfo(c.phyTblID, c.tblInfo)
 	}
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
@@ -178,6 +180,7 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 		return nil, err
 	}
 
+	us := txn.GetUnionStore()
 	if !distinct || skipCheck || opt.Untouched {
 		err = us.GetMemBuffer().Set(key, idxVal)
 		return nil, err
@@ -274,7 +277,9 @@ func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues
 	if it.Valid() && it.Key().Cmp(key) == 0 {
 		hit = true
 	}
-	return &indexIter{it: it, idx: c, prefix: c.prefix}, hit, nil
+	colInfos := BuildRowcodecColInfoForIndexColumns(c.idxInfo, c.tblInfo)
+	tps := BuildFieldTypesForIndexColumns(c.idxInfo, c.tblInfo)
+	return &indexIter{it: it, idx: c, prefix: c.prefix, colInfos: colInfos, tps: tps}, hit, nil
 }
 
 // SeekFirst returns an iterator which points to the first entry of the KV index.
@@ -284,7 +289,9 @@ func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) 
 	if err != nil {
 		return nil, err
 	}
-	return &indexIter{it: it, idx: c, prefix: c.prefix}, nil
+	colInfos := BuildRowcodecColInfoForIndexColumns(c.idxInfo, c.tblInfo)
+	tps := BuildFieldTypesForIndexColumns(c.idxInfo, c.tblInfo)
+	return &indexIter{it: it, idx: c, prefix: c.prefix, colInfos: colInfos, tps: tps}, nil
 }
 
 func (c *index) Exist(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
@@ -349,4 +356,46 @@ func IsIndexWritable(idx table.Index) bool {
 		return true
 	}
 	return false
+}
+
+// BuildRowcodecColInfoForIndexColumns builds []rowcodec.ColInfo for the given index.
+// The result can be used for decoding index key-values.
+func BuildRowcodecColInfoForIndexColumns(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) []rowcodec.ColInfo {
+	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
+	for _, idxCol := range idxInfo.Columns {
+		col := tblInfo.Columns[idxCol.Offset]
+		colInfo = append(colInfo, rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+		})
+	}
+	return colInfo
+}
+
+// BuildFieldTypesForIndexColumns builds the index columns field types.
+func BuildFieldTypesForIndexColumns(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) []*types.FieldType {
+	tps := make([]*types.FieldType, 0, len(idxInfo.Columns))
+	for _, idxCol := range idxInfo.Columns {
+		col := tblInfo.Columns[idxCol.Offset]
+		tps = append(tps, rowcodec.FieldTypeFromModelColumn(col))
+	}
+	return tps
+}
+
+// TryAppendCommonHandleRowcodecColInfos tries to append common handle columns to `colInfo`.
+func TryAppendCommonHandleRowcodecColInfos(colInfo []rowcodec.ColInfo, tblInfo *model.TableInfo) []rowcodec.ColInfo {
+	if !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
+		return colInfo
+	}
+	if pkIdx := FindPrimaryIndex(tblInfo); pkIdx != nil {
+		for _, idxCol := range pkIdx.Columns {
+			col := tblInfo.Columns[idxCol.Offset]
+			colInfo = append(colInfo, rowcodec.ColInfo{
+				ID: col.ID,
+				Ft: rowcodec.FieldTypeFromModelColumn(col),
+			})
+		}
+	}
+	return colInfo
 }

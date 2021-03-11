@@ -2689,7 +2689,7 @@ func (s *testSuite7) TestReplaceLog(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1), nil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), kv.IntHandle(1), nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -3899,6 +3899,19 @@ func (s *testSerialSuite) TestIssue20840(c *C) {
 	tk.MustExec("replace into t1 values ('A')")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
 	tk.MustExec("drop table t1")
+}
+
+func (s *testSerialSuite) TestIssue22496(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t12")
+	tk.MustExec("create table t12(d decimal(15,2));")
+	_, err := tk.Exec("insert into t12 values('1,9999.00')")
+	c.Assert(err, NotNil)
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("insert into t12 values('1,999.00');")
+	tk.MustQuery("SELECT * FROM t12;").Check(testkit.Rows("1.00"))
+	tk.MustExec("drop table t12")
 }
 
 func (s *testSuite) TestEqualDatumsAsBinary(c *C) {

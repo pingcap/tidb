@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"sync/atomic"
@@ -40,10 +39,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -1026,60 +1023,26 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.Handle) error {
 	idxInfo := w.index.Meta()
 	tblInfo := w.table.Meta()
-	name := w.index.Meta().Name.String()
-
-	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
-	for _, idxCol := range idxInfo.Columns {
-		col := tblInfo.Columns[idxCol.Offset]
-		colInfo = append(colInfo, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
+	idxColLen := len(idxInfo.Columns)
+	h, err := tablecodec.DecodeIndexHandle(key, value, idxColLen)
+	if err != nil {
+		return errors.Trace(err)
 	}
-
-	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleDefault, colInfo)
+	hasBeenBackFilled := h.Equal(handle)
+	if hasBeenBackFilled {
+		return nil
+	}
+	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
+	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
 	if err != nil {
 		return err
 	}
-
-	if !w.table.Meta().IsCommonHandle {
-		_, d, err := codec.DecodeOne(values[len(colInfo)])
+	indexName := w.index.Meta().Name.String()
+	valueStr := make([]string, 0, idxColLen)
+	for i, val := range values[:idxColLen] {
+		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
 		if err != nil {
-			return errors.Trace(err)
-		}
-		if d.GetInt64() == handle.IntValue() {
-			return nil
-		}
-	} else {
-		// We expect the two handle have the same number of columns, because they come from a same table.
-		// But we still need to check it explicitly, otherwise we will encounter undesired index out of range panic,
-		// or undefined behavior if someone change the format of the value returned by tablecodec.DecodeIndexKV.
-		colsOfHandle := len(values) - len(colInfo)
-		if w.index.Meta().Global {
-			colsOfHandle--
-		}
-		if colsOfHandle != handle.NumCols() {
-			// We can claim these two handle are different, because they have different length.
-			// But we'd better report an error at here to detect compatibility problem introduced in other package during tests.
-			return errors.New("number of columns in two handle is different")
-		}
-
-		for i := 0; i < handle.NumCols(); i++ {
-			if bytes.Equal(values[i+len(colInfo)], handle.EncodedCol(i)) {
-				colsOfHandle--
-			}
-		}
-		if colsOfHandle == 0 {
-			return nil
-		}
-	}
-
-	valueStr := make([]string, 0, len(colInfo))
-	for i, val := range values[:len(colInfo)] {
-		d, err := tablecodec.DecodeColumnValue(val, colInfo[i].Ft, time.Local)
-		if err != nil {
-			return kv.ErrKeyExists.FastGenByArgs(key.String(), name)
+			return kv.ErrKeyExists.FastGenByArgs(key.String(), indexName)
 		}
 		str, err := d.ToString()
 		if err != nil {
@@ -1087,7 +1050,7 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 		}
 		valueStr = append(valueStr, str)
 	}
-	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), name)
+	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
 }
 
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
@@ -1189,7 +1152,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle, idxRecord.rsData)
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.
