@@ -1481,10 +1481,10 @@ func (r *RegionStore) switchNextTiKVPeer(rr *Region, currentPeerIdx AccessIndex)
 	rr.compareAndSwapStore(r, newRegionStore)
 }
 
+// switchNextProxyStore switches the index of the peer that will forward requests to the leader to the next peer.
+// If proxy is currently not used on this region, the value of `currentProxyIdx` should be -1, and it will be moved to
+// the first peer that can be the proxy.
 func (r *RegionStore) switchNextProxyStore(rr *Region, currentProxyIdx AccessIndex) {
-	// The default value of `currentProxyIdx` is -1 which means proxy won't be used. Calling this function with -1 will
-	// increase the proxy store index to 0.
-
 	if r.proxyTiKVIdx != currentProxyIdx {
 		return
 	}
@@ -1767,11 +1767,10 @@ func (s *Store) startHealthCheckLoopIfNeeded(c *RegionCache) {
 }
 
 func (s *Store) checkUntilHealth(c *RegionCache) {
-	// TODO: Make the tick interval proper and configurable
 	ticker := time.NewTicker(time.Millisecond * 500)
 	lastCheckPDTime := time.Now()
 
-	// TODO: Set a more proper ctx here
+	// TODO: Set a more proper ctx here so that it can be interrupted immediately when the region cache is shutdown.
 	ctx := context.Background()
 	for {
 		select {
