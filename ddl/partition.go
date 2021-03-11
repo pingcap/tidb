@@ -1309,6 +1309,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, index int, schemaName, tableName model.CIStr) error {
 	var sql string
+	var paramList []interface{}
 
 	pi := pt.Partition
 
@@ -1317,7 +1318,12 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 		if pi.Num == 1 {
 			return nil
 		}
-		sql = fmt.Sprintf("select 1 from `%s`.`%s` where mod(%s, %d) != %d limit 1", schemaName.L, tableName.L, pi.Expr, pi.Num, index)
+		var buf strings.Builder
+		buf.WriteString("select 1 from %n.%n where mod(")
+		buf.WriteString(pi.Expr)
+		buf.WriteString(", %?) != %? limit 1")
+		sql = buf.String()
+		paramList = append(paramList, schemaName.L, tableName.L, pi.Num, index)
 	case model.PartitionTypeRange:
 		// Table has only one partition and has the maximum value
 		if len(pi.Definitions) == 1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
@@ -1325,9 +1331,9 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 		}
 		// For range expression and range columns
 		if len(pi.Columns) == 0 {
-			sql = buildCheckSQLForRangeExprPartition(pi, index, schemaName, tableName)
+			sql, paramList = buildCheckSQLForRangeExprPartition(pi, index, schemaName, tableName)
 		} else if len(pi.Columns) == 1 {
-			sql = buildCheckSQLForRangeColumnsPartition(pi, index, schemaName, tableName)
+			sql, paramList = buildCheckSQLForRangeColumnsPartition(pi, index, schemaName, tableName)
 		}
 	default:
 		return errUnsupportedPartitionType.GenWithStackByArgs(pt.Name.O)
@@ -1340,7 +1346,11 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), sql, paramList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1351,24 +1361,50 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	return nil
 }
 
-func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) string {
+func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
+	var buf strings.Builder
+	paramList := make([]interface{}, 0, 4)
+	// Since the pi.Expr string may contain the identifier, which couldn't be escaped in our ParseWithParams(...)
+	// So we write it to the origin sql string here.
 	if index == 0 {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where %s >= %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index].LessThan[0])
+		buf.WriteString("select 1 from %n.%n where ")
+		buf.WriteString(pi.Expr)
+		buf.WriteString(" >= %? limit 1")
+		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index].LessThan[0]))
+		return buf.String(), paramList
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where %s < %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index-1].LessThan[0])
+		buf.WriteString("select 1 from %n.%n where ")
+		buf.WriteString(pi.Expr)
+		buf.WriteString(" < %? limit 1")
+		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index-1].LessThan[0]))
+		return buf.String(), paramList
 	} else {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where %s < %s or %s >= %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index-1].LessThan[0], pi.Expr, pi.Definitions[index].LessThan[0])
+		buf.WriteString("select 1 from %n.%n where ")
+		buf.WriteString(pi.Expr)
+		buf.WriteString(" < %? or ")
+		buf.WriteString(pi.Expr)
+		buf.WriteString(" >= %? limit 1")
+		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index-1].LessThan[0]), trimQuotation(pi.Definitions[index].LessThan[0]))
+		return buf.String(), paramList
 	}
 }
 
-func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) string {
+func trimQuotation(str string) string {
+	return strings.Trim(str, "\"")
+}
+
+func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
+	paramList := make([]interface{}, 0, 6)
 	colName := pi.Columns[0].L
 	if index == 0 {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` >= %s limit 1", schemaName.L, tableName.L, colName, pi.Definitions[index].LessThan[0])
+		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index].LessThan[0]))
+		return "select 1 from %n.%n where %n >= %? limit 1", paramList
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` < %s limit 1", schemaName.L, tableName.L, colName, pi.Definitions[index-1].LessThan[0])
+		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index-1].LessThan[0]))
+		return "select 1 from %n.%n where %n < %? limit 1", paramList
 	} else {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` < %s or `%s` >= %s limit 1", schemaName.L, tableName.L, colName, pi.Definitions[index-1].LessThan[0], colName, pi.Definitions[index].LessThan[0])
+		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index-1].LessThan[0]), colName, trimQuotation(pi.Definitions[index].LessThan[0]))
+		return "select 1 from %n.%n where %n < %? or %n >= %? limit 1", paramList
 	}
 }
 
