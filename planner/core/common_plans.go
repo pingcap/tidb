@@ -189,12 +189,13 @@ type Execute struct {
 
 // Check if result of GetVar expr is BinaryLiteral
 // Because GetVar use String to represent BinaryLiteral, here we need to convert string back to BinaryLiteral.
-func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) bool {
-	res := false
+func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) (res bool) {
 	scalarFunc, ok := expr.(*expression.ScalarFunction)
 	if ok && scalarFunc.FuncName.L == ast.GetVar {
-		name := scalarFunc.GetArgs()[0].String()
-		if dt, ok2 := sctx.GetSessionVars().Users[name]; ok2 {
+		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
+		if err != nil || isNull {
+			res = false
+		} else if dt, ok2 := sctx.GetSessionVars().Users[name]; ok2 {
 			res = (dt.Kind() == types.KindBinaryLiteral)
 		}
 	}

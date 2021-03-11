@@ -2786,14 +2786,14 @@ func (s *testIntegrationSuite) TestGetVarExprWithHexLiteral(c *C) {
 	tk.MustExec("insert into t2_idx values(1, 0x3135);")
 	tk.MustExec("insert into t2_idx values(2, 0x0f);")
 
-	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit = ?';")
+	tk.MustExec("prepare stmt from 'select id from t2_idx where col_bit = ?';")
 	tk.MustExec("set @a = 0x3135;")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 	tk.MustExec("set @a = 0x0F;")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
 
 	// same test, but use IN expr
-	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit in (?)';")
+	tk.MustExec("prepare stmt from 'select id from t2_idx where col_bit in (?)';")
 	tk.MustExec("set @a = 0x3135;")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 	tk.MustExec("set @a = 0x0F;")
