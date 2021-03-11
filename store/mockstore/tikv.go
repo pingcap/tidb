@@ -33,5 +33,5 @@ func newMockTikvStore(opt *mockOptions) (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &mockStorage{KVStore: kvstore}, nil
+	return NewMockStorage(kvstore), nil
 }

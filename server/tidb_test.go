@@ -162,6 +162,12 @@ func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
 	ts.runTestLoadDataForListColumnPartition2(c)
 }
 
+// Fix issue#22540. Change tidb_dml_batch_size,
+// then check if load data into table with auto random column works properly.
+func (ts *tidbTestSerialSuite) TestLoadDataAutoRandom(c *C) {
+	ts.runTestLoadDataAutoRandom(c)
+}
+
 func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
 	ts.runTestExplainForConn(c)
 }
@@ -190,6 +196,7 @@ func (ts *tidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	ts.runTestIssue3662(c)
 	ts.runTestIssue3680(c)
+	ts.runTestIssue22646(c)
 }
 
 func (ts *tidbTestSuite) TestDBNameEscape(c *C) {
@@ -936,6 +943,10 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 	cols = rs.Columns()
 	c.Assert(cols[0].OrgName, Equals, "c_bit")
 	c.Assert(cols[0].Name, Equals, columnAsName)
+}
+
+func (ts *tidbTestSuite) TestClientErrors(c *C) {
+	ts.runTestInfoschemaClientErrors(c)
 }
 
 func (ts *tidbTestSuite) TestSumAvg(c *C) {

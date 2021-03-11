@@ -39,9 +39,6 @@ type actionPessimisticRollback struct{}
 var (
 	_ twoPhaseCommitAction = actionPessimisticLock{}
 	_ twoPhaseCommitAction = actionPessimisticRollback{}
-
-	tiKVTxnRegionsNumHistogramPessimisticLock     = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("pessimistic_lock"))
-	tiKVTxnRegionsNumHistogramPessimisticRollback = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("pessimistic_rollback"))
 )
 
 func (actionPessimisticLock) String() string {
@@ -49,7 +46,7 @@ func (actionPessimisticLock) String() string {
 }
 
 func (actionPessimisticLock) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramPessimisticLock
+	return metrics.TxnRegionsNumHistogramPessimisticLock
 }
 
 func (actionPessimisticRollback) String() string {
@@ -57,7 +54,7 @@ func (actionPessimisticRollback) String() string {
 }
 
 func (actionPessimisticRollback) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramPessimisticRollback
+	return metrics.TxnRegionsNumHistogramPessimisticRollback
 }
 
 func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
@@ -150,8 +147,8 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		for _, keyErr := range keyErrs {
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
-				key := alreadyExist.GetKey()
-				return c.extractKeyExistsErr(key)
+				e := &ErrKeyExist{AlreadyExist: alreadyExist}
+				return c.extractKeyExistsErr(e)
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
 				return &ErrDeadlock{Deadlock: deadlock}

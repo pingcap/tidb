@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -69,7 +69,7 @@ func (s *testAsyncCommitCommon) putKV(c *C, key, value []byte, enableAsyncCommit
 	return txn.StartTS(), txn.commitTS
 }
 
-func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn kv.Transaction, key, expectedValue []byte) {
+func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn *KVTxn, key, expectedValue []byte) {
 	v, err := txn.Get(context.Background(), key)
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, expectedValue)
@@ -115,23 +115,23 @@ func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, ke
 	c.Assert(errors.Cause(err), Equals, kv.ErrNotExist)
 }
 
-func (s *testAsyncCommitCommon) beginAsyncCommitWithExternalConsistency(c *C) *tikvTxn {
+func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) *KVTxn {
 	txn := s.beginAsyncCommit(c)
-	txn.SetOption(kv.GuaranteeExternalConsistency, true)
+	txn.SetOption(kv.GuaranteeLinearizability, true)
 	return txn
 }
 
-func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) *tikvTxn {
+func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
-	return txn.(*tikvTxn)
+	return txn
 }
 
-func (s *testAsyncCommitCommon) begin(c *C) *tikvTxn {
+func (s *testAsyncCommitCommon) begin(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 type testAsyncCommitSuite struct {
@@ -366,11 +366,11 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 	test(true)
 }
 
-// It's just a simple validation of external consistency.
+// It's just a simple validation of linearizability.
 // Extra tests are needed to test this feature with the control of the TiKV cluster.
-func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
-	t1 := s.beginAsyncCommitWithExternalConsistency(c)
-	t2 := s.beginAsyncCommitWithExternalConsistency(c)
+func (s *testAsyncCommitSuite) TestAsyncCommitLinearizability(c *C) {
+	t1 := s.beginAsyncCommitWithLinearizability(c)
+	t2 := s.beginAsyncCommitWithLinearizability(c)
 	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
 	err = t2.Set([]byte("b"), []byte("b1"))

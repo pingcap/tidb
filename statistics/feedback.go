@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -143,6 +144,13 @@ var (
 	// FeedbackProbability is the probability to collect the feedback.
 	FeedbackProbability = atomic.NewFloat64(0)
 )
+
+func init() {
+	// This is for solving import cycle.
+	// We need to read the value of FeedbackProbability when setting the variable tidb_analyze_version in sessionctx/variable package
+	// but we have imported sessionctx/variable in statistics package here.
+	variable.FeedbackProbability = FeedbackProbability
+}
 
 // CalcErrorRate calculates the error rate the current QueryFeedback.
 func (q *QueryFeedback) CalcErrorRate() float64 {

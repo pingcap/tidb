@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/tidb/store/tikv/util"
 )
 
-func (s *testAsyncCommitCommon) begin1PC(c *C) *tikvTxn {
+func (s *testAsyncCommitCommon) begin1PC(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.Enable1PC, true)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 type testOnePCSuite struct {
@@ -224,9 +224,9 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 	}
 }
 
-// It's just a simple validation of external consistency.
+// It's just a simple validation of linearizability.
 // Extra tests are needed to test this feature with the control of the TiKV cluster.
-func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
+func (s *testOnePCSuite) Test1PCLinearizability(c *C) {
 	t1, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t2, err := s.store.Begin()
@@ -241,8 +241,8 @@ func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
 	c.Assert(err, IsNil)
 	err = t1.Commit(ctx)
 	c.Assert(err, IsNil)
-	commitTS1 := t1.(*tikvTxn).committer.commitTS
-	commitTS2 := t2.(*tikvTxn).committer.commitTS
+	commitTS1 := t1.committer.commitTS
+	commitTS2 := t2.committer.commitTS
 	c.Assert(commitTS2, Less, commitTS1)
 }
 

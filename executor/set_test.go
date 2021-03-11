@@ -120,7 +120,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 
 	// Test session variable states.
 	vars := tk.Se.(sessionctx.Context).GetSessionVars()
-	tk.Se.CommitTxn(context.TODO())
+	err = tk.Se.CommitTxn(context.TODO())
+	c.Assert(err, IsNil)
 	tk.MustExec("set @@autocommit = 1")
 	c.Assert(vars.InTxn(), IsFalse)
 	c.Assert(vars.IsAutocommit(), IsTrue)
@@ -516,6 +517,17 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
 	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
 	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
+
+	tk.MustExec("SET SESSION tidb_enable_tiflash_fallback_tikv = on")
+	tk.MustQuery("select @@session.tidb_enable_tiflash_fallback_tikv").Check(testkit.Rows("1"))
+	tk.MustExec("SET SESSION tidb_enable_tiflash_fallback_tikv = off")
+	tk.MustQuery("select @@session.tidb_enable_tiflash_fallback_tikv").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_enable_tiflash_fallback_tikv = on")
+	tk.MustQuery("select @@global.tidb_enable_tiflash_fallback_tikv").Check(testkit.Rows("1"))
+	tk.MustExec("SET GLOBAL tidb_enable_tiflash_fallback_tikv = off")
+	tk.MustQuery("select @@global.tidb_enable_tiflash_fallback_tikv").Check(testkit.Rows("0"))
+	c.Assert(tk.ExecToErr("SET SESSION tidb_enable_tiflash_fallback_tikv = 123"), NotNil)
+	c.Assert(tk.ExecToErr("SET GLOBAL tidb_enable_tiflash_fallback_tikv = 321"), NotNil)
 
 	// Test issue #22145
 	tk.MustExec(`set global sync_relay_log = "'"`)
