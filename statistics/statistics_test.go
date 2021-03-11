@@ -25,8 +25,12 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -35,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -46,6 +51,39 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&testStatisticsSuite{})
+var _ = SerialSuites(&testSerialStatisticsSuite{})
+
+type testSerialStatisticsSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+}
+
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
+	store, err := mockstore.NewMockStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	session.SetSchemaLease(0)
+	session.DisableStats4Test()
+	domain.RunAutoAnalyze = false
+	do, err := session.BootstrapSession(store)
+	do.SetStatsUpdating(true)
+	return store, do, errors.Trace(err)
+}
+
+func (s *testSerialStatisticsSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSerialStatisticsSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
 
 type testStatisticsSuite struct {
 	count   int

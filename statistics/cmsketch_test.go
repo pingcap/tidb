@@ -305,7 +305,7 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 	DecodeCMSketchAndTopN([]byte{}, rows)
 }
 
-func (s *testStatisticsSuite) TestMergeTopN(c *C) {
+func (s *testSerialStatisticsSuite) TestMergeTopN(c *C) {
 	tests := []struct {
 		topnNum    int
 		n          int
