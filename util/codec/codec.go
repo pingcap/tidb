@@ -364,7 +364,11 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		} else {
 			flag = compactBytesFlag
 			v := uint64(row.GetEnum(idx).ToNumber())
-			str := tp.Elems[v-1]
+			str := ""
+			if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
+				// str will be empty string if v out of definition of enum.
+				str = enum.Name
+			}
 			b = ConvertByCollation(hack.Slice(str), tp)
 		}
 	case mysql.TypeSet:
@@ -581,7 +585,11 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			} else {
 				buf[0] = compactBytesFlag
 				v := uint64(column.GetEnum(i).ToNumber())
-				str := tp.Elems[v-1]
+				str := ""
+				if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
+					// str will be empty string if v out of definition of enum.
+					str = enum.Name
+				}
 				b = ConvertByCollation(hack.Slice(str), tp)
 			}
 
@@ -758,7 +766,8 @@ func DecodeRange(b []byte, size int, idxColumnTypes []byte, loc *time.Location) 
 			if i >= len(idxColumnTypes) {
 				return values, b, errors.New("invalid length of index's columns")
 			}
-			if idxColumnTypes[i] == mysql.TypeDatetime || idxColumnTypes[i] == mysql.TypeTimestamp || idxColumnTypes[i] == mysql.TypeDate {
+			if types.IsTypeTime(idxColumnTypes[i]) {
+				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
 				b, d, err = DecodeAsDateTime(b, idxColumnTypes[i], loc)
 			} else {
 				b, d, err = DecodeOne(b)
