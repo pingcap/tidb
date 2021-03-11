@@ -474,6 +474,16 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		})
 	}
 
+	if rpcCtx.ProxyStore != nil {
+		fromStore := strconv.FormatUint(rpcCtx.ProxyStore.storeID, 10)
+		toStore := strconv.FormatUint(rpcCtx.Store.storeID, 10)
+		result := "ok"
+		if err != nil {
+			result = "fail"
+		}
+		metrics.TiKVForwardRequestCounter.WithLabelValues(fromStore, toStore, result).Inc()
+	}
+
 	if err != nil {
 		s.rpcError = err
 
