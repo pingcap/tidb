@@ -1425,9 +1425,8 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			isIntPK := isSingleIntPK(constr, lastCol)
-			if ShouldBuildClusteredIndex(ctx, constr.Option, isIntPK) {
-				if isIntPK {
+			if ShouldBuildClusteredIndex(ctx, constr.Option) {
+				if isSingleIntPK(constr, lastCol) {
 					tbInfo.PKIsHandle = true
 				} else {
 					tbInfo.IsCommonHandle = true
@@ -1508,18 +1507,12 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 }
 
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
-func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption, isIntPK bool) bool {
+func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption) bool {
 	if opt == nil || opt.PrimaryKeyTp == model.PrimaryKeyTypeDefault {
-		if isIntPK {
-			return true
-		}
 		return ctx.GetSessionVars().EnableClusteredIndex
 	}
 	switch opt.PrimaryKeyTp {
 	case model.PrimaryKeyTypeClustered:
-		if isIntPK {
-			return true
-		}
 		hasBinlog := ctx.GetSessionVars().BinlogClient != nil
 		if hasBinlog {
 			errMsg := "cannot build clustered index table because the binlog is ON"
