@@ -478,7 +478,7 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 			if id != hid {
 				continue
 			}
-			if types.CommonHandleNeedRestoredData(ft) {
+			if types.NeedRestoredData(ft) {
 				continue
 			}
 			d, err := decodeHandleToDatum(handle, ft, idx)
