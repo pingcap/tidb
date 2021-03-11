@@ -2559,6 +2559,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		e.feedback = statistics.NewQueryFeedback(getFeedbackStatsTableID(e.ctx, tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
+	// Do not collect the feedback when the table is the partition table.
+	if collect && tbl.Meta().Partition != nil {
+		collect = false
+	}
 	if !collect {
 		e.feedback.Invalidate()
 	}
@@ -2830,6 +2834,10 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		e.feedback = statistics.NewQueryFeedback(tblID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
+	// Do not collect the feedback when the table is the partition table.
+	if collect && tbl.Meta().Partition != nil {
+		collect = false
+	}
 	if !collect {
 		e.feedback.Invalidate()
 	}
@@ -2968,6 +2976,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
 	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
+	// Do not collect the feedback when the table is the partition table.
+	if collectIndex && tbl.Meta().Partition != nil {
+		collectIndex = false
+	}
 	if !collectIndex {
 		e.feedback.Invalidate()
 	}
