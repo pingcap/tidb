@@ -1447,6 +1447,11 @@ func buildTableInfo(
 					}
 				}
 			case model.PrimaryKeyTypeDefault:
+				// AlterPrimaryKey = true ----> all pk must be nonclustered
+				// AlterPrimaryKey = false + EnableClusteredIndex = true + noBinlog ---> all pk must be clustered
+				// AlterPrimaryKey = false + EnableClusteredIndex = true + HasBinlog ---> int pk must be clustered, other must be nonclustered
+				// AlterPrimaryKey = false + EnableClusteredIndex = false + IntPrimaryKeyDefaultAsClustered = true --> int pk must be clustered
+				// AlterPrimaryKey = false + EnableClusteredIndex = false + IntPrimaryKeyDefaultAsClustered = false --> all pk must be nonclustered [Default]
 				alterPKConf := config.GetGlobalConfig().AlterPrimaryKey
 				clustered := !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex
 				if isSingleIntPK(constr, lastCol) {
