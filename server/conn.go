@@ -1777,6 +1777,11 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	}
 
 	for {
+		failpoint.Inject("secondNextErr", func(value failpoint.Value) {
+			if value.(bool) && !firstNext {
+				failpoint.Return(firstNext, tikv.ErrTiFlashServerTimeout)
+			}
+		})
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
 		if err != nil {

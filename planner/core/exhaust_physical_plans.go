@@ -765,18 +765,22 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			innerTask2 = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 	}
+	var path *util.AccessPath
+	if helper != nil {
+		path = helper.chosenPath
+	}
 	joins = make([]PhysicalPlan, 0, 3)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil))
+			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, nil))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
+	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, nil)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
-	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
+	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, nil)...)
 	if innerTask2 != nil {
-		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, ranges, keyOff2IdxOff, nil, nil)...)
+		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, ranges, keyOff2IdxOff, path, nil)...)
 	}
 	return joins
 }
@@ -2264,8 +2268,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	if prop.PartitionTp == property.BroadcastType {
 		return nil
 	}
-	partitionCols := la.GetGroupByCols()
-	if len(partitionCols) != 0 {
+	if len(la.GroupByItems) > 0 {
+		partitionCols := la.GetGroupByCols()
+		// trying to match the required parititions.
 		if prop.PartitionTp == property.HashType {
 			if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
 				partitionCols = chooseSubsetOfJoinKeys(partitionCols, matches)
@@ -2276,18 +2281,23 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		}
 		// TODO: permute various partition columns from group-by columns
 		// 1-phase agg
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
+		// If there are no available parititon cols, but still have group by items, that means group by items are all expressions or constants.
+		// To avoid mess, we don't do any one-phase aggregation in this case.
+		if len(partitionCols) != 0 {
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg.SetSchema(la.schema.Clone())
+			agg.MppRunMode = Mpp1Phase
+			hashAggs = append(hashAggs, agg)
+		}
+
+		// 2-phase agg
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
-		agg.MppRunMode = Mpp1Phase
-		hashAggs = append(hashAggs, agg)
-		// 2-phase agg
-		childProp = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType}
-		agg = NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
-		agg.MppPartitionCols = partitionCols
 		hashAggs = append(hashAggs, agg)
+
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
 			childProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64}
