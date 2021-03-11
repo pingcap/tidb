@@ -619,7 +619,7 @@ var defaultConf = Config{
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:          true,
+		Enabled:          false,
 		Capacity:         100,
 		MemoryGuardRatio: 0.1,
 	},
