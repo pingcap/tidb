@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -86,6 +87,10 @@ func (c CommitterProbe) GetCommitTS() uint64 {
 
 // PrewriteMutations performs the first phase of commit.
 func (c CommitterProbe) PrewriteMutations(ctx context.Context) error {
+	if c.mutations == nil {
+		panic("fuck")
+	}
+	fmt.Println("len=", c.mutations.Len())
 	return c.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), c.mutations)
 }
 
@@ -115,16 +120,16 @@ func (c CommitterProbe) GetOnePCCommitTS() uint64 {
 	return c.onePCCommitTS
 }
 
-// IsTTLUninitialized  returns if the TTL manager is uninitialized.
-func (c CommitterProbe) IsTTLUninitialized() bool {
-	return c.ttlManager.state == stateUninitialized
+// IsTTLUninititlized returns if the TTL manager is uninitialized.
+func (s CommitterProbe) IsTTLUninitialized() bool {
+	return s.ttlManager.state == stateUninitialized
 }
 
 // GetUndeterminedErr returns the encountered undetermined error (if any).
-func (c CommitterProbe) GetUndeterminedErr() error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.mu.undeterminedErr
+func (s CommitterProbe) GetUndeterminedErr() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.mu.undeterminedErr
 }
 
 // LockProbe exposes some lock utilities for testing purpose.
