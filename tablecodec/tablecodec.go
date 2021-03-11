@@ -724,7 +724,7 @@ func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 }
 
 // reEncodeHandleConsiderNewCollation encodes the handle as a Datum so it can be properly decoded later.
-func reEncodeHandleConsiderNewCollation(handle kv.Handle, columns []rowcodec.ColInfo, restoreData []byte, unsigned bool) ([][]byte, error) {
+func reEncodeHandleConsiderNewCollation(handle kv.Handle, columns []rowcodec.ColInfo, restoreData []byte) ([][]byte, error) {
 	handleColLen := handle.NumCols()
 	cHandleBytes := make([][]byte, 0, handleColLen)
 	for i := 0; i < handleColLen; i++ {
@@ -755,71 +755,71 @@ func decodeRestoredValues(columns []rowcodec.ColInfo, restoredVal []byte) ([][]b
 // 1. If the index is a composed index, only the non-binary string column's value need to write to value, not all.
 // 2. If a string column's collation is _bin, then we only write the number of the truncated spaces to value.
 // 3. If a string column is char, not varchar, then we use the sortKey directly.
-func decodeRestoredValuesV5(columns []rowcodec.ColInfo, keyVal [][]byte, restoredVal []byte) ([][]byte, error) {
-	colIDs := make(map[int64]int, len(columns))
-	result := make([][]byte, len(columns))
-	// restoredData2All is the slice from the offset in restoredColumns to the offset in columns.
-	restoredData2All := make([]int, len(columns))
-	restoredColumns := make([]rowcodec.ColInfo, 0, len(columns))
-	j := 0
-
-	// Collect some information, restoredColumns means the columns whose value need to restore from the index value.
-	for i, col := range columns {
-		if types.NeedRestoredData(col.Ft) {
-			colIDs[col.ID] = j
-			restoredData2All[j] = i
-			j++
-			copyColInfo := rowcodec.ColInfo{
-				ID: col.ID,
-				Ft: columns[i].Ft,
-			}
-			if collate.IsBinCollation(col.Ft.Collate) {
-				// Change the fieldType from string to uint since we store the number of the truncated spaces.
-				copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
-			}
-			restoredColumns = append(restoredColumns, copyColInfo)
-		} else {
-			// Use the value in index key directly.
-			result[i] = keyVal[i]
-		}
-	}
-
-	// We don't need to decode handle here, and colIDs >= 0 always.
-	rd := rowcodec.NewByteDecoder(restoredColumns, []int64{-1}, nil, nil)
-	restoredValues, err := rd.DecodeToBytesNoHandle(colIDs, restoredVal)
+func decodeRestoredValuesV5(columns []rowcodec.ColInfo, results [][]byte, restoredVal []byte) ([][]byte, error) {
+	colIDOffsets := buildColumnIDOffsets(columns)
+	colInfosNeedRestore := buildRestoredColumn(columns)
+	rd := rowcodec.NewByteDecoder(colInfosNeedRestore, nil, nil, nil)
+	newResults, err := rd.DecodeToBytesNoHandle(colIDOffsets, restoredVal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	// Restore value. If it is the _bin collation, we use the sortKey and restore value together to get the original value.
-	// Otherwise, use the restore value directly.
-	for _, offset := range colIDs {
-		rv := restoredValues[offset]
-		allOffset := restoredData2All[offset]
-		if collate.IsBinCollation(columns[allOffset].Ft.Collate) {
-			noPaddingStr, err := DecodeColumnValue(keyVal[allOffset], columns[allOffset].Ft, nil)
+	for i := range newResults {
+		noRestoreData := len(newResults[i]) == 0
+		if noRestoreData {
+			newResults[i] = results[i]
+			continue
+		}
+		if collate.IsBinCollation(columns[i].Ft.Collate) {
+			noPaddingDatum, err := DecodeColumnValue(results[i], columns[i].Ft, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			paddingCount, err := DecodeColumnValue(restoredValues[offset], types.NewFieldType(mysql.TypeLonglong), nil)
+			paddingCountDatum, err := DecodeColumnValue(newResults[i], types.NewFieldType(mysql.TypeLonglong), nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			noPaddingStr, paddingCount := noPaddingDatum.GetString(), int(paddingCountDatum.GetInt64())
 			// Skip if padding count is 0.
-			if paddingCount.GetInt64() == 0 {
-				result[allOffset] = keyVal[allOffset]
+			if paddingCount == 0 {
+				newResults[i] = results[i]
 				continue
 			}
-			noPaddingStr.SetString(noPaddingStr.GetString()+strings.Repeat(" ", int(paddingCount.GetInt64())), noPaddingStr.Collation())
-			result[allOffset] = result[allOffset][:0]
-			result[allOffset] = append(result[allOffset], rowcodec.BytesFlag)
-			result[allOffset] = codec.EncodeBytes(result[allOffset], noPaddingStr.GetBytes())
-		} else {
-			result[allOffset] = rv
+			newDatum := &noPaddingDatum
+			newDatum.SetString(noPaddingStr+strings.Repeat(" ", paddingCount), newDatum.Collation())
+			newResults[i] = newResults[i][:0]
+			newResults[i] = append(newResults[i], rowcodec.BytesFlag)
+			newResults[i] = codec.EncodeBytes(newResults[i], newDatum.GetBytes())
 		}
 	}
+	return newResults, nil
+}
 
-	return result, nil
+func buildColumnIDOffsets(allCols []rowcodec.ColInfo) map[int64]int {
+	colIDOffsets := make(map[int64]int, len(allCols))
+	for i, col := range allCols {
+		colIDOffsets[col.ID] = i
+	}
+	return colIDOffsets
+}
+
+func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
+	restoredColumns := make([]rowcodec.ColInfo, 0, len(allCols))
+	for i, col := range allCols {
+		if !types.NeedRestoredData(col.Ft) {
+			continue
+		}
+		copyColInfo := rowcodec.ColInfo{
+			ID: col.ID,
+		}
+		if collate.IsBinCollation(col.Ft.Collate) {
+			// Change the fieldType from string to uint since we store the number of the truncated spaces.
+			copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
+		} else {
+			copyColInfo.Ft = allCols[i].Ft
+		}
+		restoredColumns = append(restoredColumns, copyColInfo)
+	}
+	return restoredColumns
 }
 
 func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleStatus) ([][]byte, error) {
@@ -866,6 +866,8 @@ func getIndexVersion(value []byte) int {
 }
 
 // DecodeIndexKV uses to decode index key values.
+//   `colsLen` is expected to be index columns count.
+//   `columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
 func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
 	if len(value) <= MaxOldEncodeValueLen {
 		return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
@@ -1446,7 +1448,7 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 	if err != nil {
 		return nil, err
 	}
-	handleBytes, err := reEncodeHandleConsiderNewCollation(handle, columns[colsLen:], segs.RestoredValues, hdStatus == HandleIsUnsigned)
+	handleBytes, err := reEncodeHandleConsiderNewCollation(handle, columns[colsLen:], segs.RestoredValues)
 	if err != nil {
 		return nil, err
 	}
