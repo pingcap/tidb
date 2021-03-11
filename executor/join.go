@@ -119,7 +119,8 @@ type HashJoinExec struct {
 	joiners []joiner
 
 	probeChkResourceCh chan *probeChkResource
-	probeResultChs     []chan *chunk.Chunk
+	probeResultChs     chan *chunk.Chunk
+	probeOrderKeeper    *workerOrderKeeper
 	joinChkResourceCh  chan *chunk.Chunk
 	joinOrderKeeper    *workerOrderKeeper
 	joinResultCh       chan *hashjoinWorkerResult
@@ -146,6 +147,8 @@ type HashJoinExec struct {
 type probeChkResource struct {
 	chk  *chunk.Chunk
 	dest chan<- *chunk.Chunk
+
+	workerID uint
 }
 
 // hashjoinWorkerResult stores the result of join workers,
@@ -177,8 +180,9 @@ func (e *HashJoinExec) Close() error {
 			for range e.probeChkResourceCh {
 			}
 		}
-		for i := range e.probeResultChs {
-			for range e.probeResultChs[i] {
+		if e.probeResultChs != nil {
+			close(e.probeResultChs)
+			for range e.probeResultChs {
 			}
 		}
 		if e.joinChkResourceCh != nil {
@@ -186,6 +190,7 @@ func (e *HashJoinExec) Close() error {
 			for range e.joinChkResourceCh {
 			}
 		}
+		e.probeOrderKeeper.Close()
 		e.joinOrderKeeper.Close()
 		e.probeChkResourceCh = nil
 		e.joinChkResourceCh = nil
@@ -284,7 +289,8 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			return
 		}
 
-		probeSideResource.dest <- probeSideResult
+		e.probeResultChs <- probeSideResult
+		e.probeOrderKeeper.getChan(probeSideResource.workerID) <- true
 	}
 }
 
@@ -336,18 +342,16 @@ func (e *HashJoinExec) initializeForProbe() {
 	// e.probeResultChs is for transmitting the chunks which store the data of
 	// probeSideExec, it'll be written by probe side worker goroutine, and read by join
 	// workers.
-	e.probeResultChs = make([]chan *chunk.Chunk, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
-		e.probeResultChs[i] = make(chan *chunk.Chunk, 1)
-	}
+	e.probeResultChs = make(chan *chunk.Chunk, e.concurrency)
+	e.probeOrderKeeper = newWorkerOrderKeeper(false)
 
 	// e.probeChkResourceCh is for transmitting the used probeSideExec chunks from
 	// join workers to probeSideExec worker.
 	e.probeChkResourceCh = make(chan *probeChkResource, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.probeChkResourceCh <- &probeChkResource{
-			chk:  newFirstChunk(e.probeSideExec),
-			dest: e.probeResultChs[i],
+			chk:      newFirstChunk(e.probeSideExec),
+			workerID: i,
 		}
 	}
 
@@ -391,9 +395,7 @@ func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
 }
 
 func (e *HashJoinExec) handleProbeSideFetcherPanic(r interface{}) {
-	for i := range e.probeResultChs {
-		close(e.probeResultChs[i])
-	}
+	close(e.probeResultChs)
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
@@ -480,7 +482,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 
 	// Read and filter probeSideResult, and join the probeSideResult with the build side rows.
 	emptyProbeSideResult := &probeChkResource{
-		dest: e.probeResultChs[workerID],
+		workerID: workerID,
 	}
 	hCtx := &hashContext{
 		allTypes:  e.probeTypes,
@@ -493,7 +495,12 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		select {
 		case <-e.closeCh:
 			return
-		case probeSideResult, ok = <-e.probeResultChs[workerID]:
+		case <-e.probeOrderKeeper.getChan(workerID):
+			select {
+			case <-e.closeCh:
+				return
+			case probeSideResult, ok = <-e.probeResultChs:
+			}
 		}
 		if !ok {
 			break
