@@ -1327,9 +1327,9 @@ func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32, op *sto
 		store, peer, accessIdx, storeIdx = r.getKvStorePeer(rs, rs.kvPeer(followerStoreSeed, op))
 		if peer.Role == metapb.PeerRole_Learner {
 			followerStoreSeed++
-		} else {
-			return
+			continue
 		}
+		return
 	}
 	return
 }
