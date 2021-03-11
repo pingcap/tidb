@@ -1749,7 +1749,6 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 					}
 					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
 				}
-				continue
 			}
 		}
 		idx := tblInfo.FindIndexByName(idxName.L)
