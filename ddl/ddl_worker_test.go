@@ -102,7 +102,7 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 	)
 	defer d.Stop()
 	getFirstNotificationAfterStartDDL(d)
-	// Ensure that the notification is not handled by worker's "start".
+	// Ensure that the notification is not handled in workers `start` function.
 	d.cancel()
 	for _, worker := range d.workers {
 		worker.close()
