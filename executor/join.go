@@ -90,14 +90,6 @@ func (k *workerOrderKeeper) Close() {
 	}
 }
 
-func (k *workerOrderKeeper) CheckIn(v uint) {
-	k.getChan(v) <- true
-}
-
-func (k *workerOrderKeeper) CheckOut(v uint) {
-	<-k.getChan(v)
-}
-
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
 	baseExecutor
@@ -607,18 +599,22 @@ func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerRes
 		workID: workerID,
 	}
 	ok := true
-	e.joinOrderKeeper.CheckOut(workerID)
 	select {
 	case <-e.closeCh:
 		ok = false
-	case joinResult.chk, ok = <-e.joinChkResourceCh:
+	case <-e.joinOrderKeeper.getChan(workerID):
+		select {
+		case <-e.closeCh:
+			ok = false
+		case joinResult.chk, ok = <-e.joinChkResourceCh:
+		}
 	}
 	return ok, joinResult
 }
 
 func (e *HashJoinExec) putOldJoinResult(result *hashjoinWorkerResult) {
 	e.joinChkResourceCh <- result.chk
-	e.joinOrderKeeper.CheckIn(result.workID)
+	e.joinOrderKeeper.getChan(result.workID) <- true
 }
 
 func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult,
