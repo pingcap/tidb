@@ -329,7 +329,7 @@ func (s *tiflashTestSuite) TestMppGoroutinesExitFromErrors(c *C) {
 	tk.MustExec("insert into t values(1,0)")
 	tk.MustExec("insert into t values(2,0)")
 	tk.MustExec("insert into t values(3,0)")
-
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t1 set tiflash replica 1")
 	tb = testGetTableByName(c, tk.Se, "test", "t1")
