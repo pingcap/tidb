@@ -580,16 +580,11 @@ func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle
 	s.se.GetSessionVars().EnableChangeColumnType = true
 	defer func() {
 		s.se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		config.RestoreFunc()()
 	}()
-
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = false
-	})
 
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), `create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a), index idx2(a, c))`)
+	_, err = s.se.Execute(context.Background(), `create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a) clustered, index idx2(a, c))`)
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values(-1, -11)")
 	c.Assert(err, IsNil)
@@ -1018,12 +1013,7 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
-func (s *serialTestStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = true
-	})
-
+func (s *testStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
 	_, err := s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 1")
 	c.Assert(err, IsNil)
 	defer func() {
@@ -1032,7 +1022,7 @@ func (s *serialTestStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C)
 	}()
 	domain.GetDomain(s.se).GetGlobalVarsCache().Disable()
 
-	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b);"
+	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b) NONCLUSTERED;"
 	sql2 := "ALTER TABLE t MODIFY COLUMN b tinyint;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)

@@ -1425,36 +1425,13 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			pkTp := model.PrimaryKeyTypeDefault
-			if constr.Option != nil {
-				pkTp = constr.Option.PrimaryKeyTp
-			}
-			noBinlog := ctx.GetSessionVars().BinlogClient == nil
-			switch pkTp {
-			case model.PrimaryKeyTypeNonClustered:
-				break
-			case model.PrimaryKeyTypeClustered:
-				if isSingleIntPK(constr, lastCol) {
+			isIntPK := isSingleIntPK(constr, lastCol)
+			if ShouldBuildClusteredIndex(ctx, constr.Option, isIntPK) {
+				if isIntPK {
 					tbInfo.PKIsHandle = true
 				} else {
-					tbInfo.IsCommonHandle = noBinlog
-					if tbInfo.IsCommonHandle {
-						tbInfo.CommonHandleVersion = 1
-					}
-					if !noBinlog {
-						errMsg := "cannot build clustered index table because the binlog is ON"
-						ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf(errMsg))
-					}
-				}
-			case model.PrimaryKeyTypeDefault:
-				alterPKConf := config.GetGlobalConfig().AlterPrimaryKey
-				if isSingleIntPK(constr, lastCol) {
-					tbInfo.PKIsHandle = !alterPKConf
-				} else {
-					tbInfo.IsCommonHandle = !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex && noBinlog
-					if tbInfo.IsCommonHandle {
-						tbInfo.CommonHandleVersion = 1
-					}
+					tbInfo.IsCommonHandle = true
+					tbInfo.CommonHandleVersion = 1
 				}
 			}
 			if tbInfo.PKIsHandle || tbInfo.IsCommonHandle {
@@ -1528,6 +1505,34 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 		return true
 	}
 	return false
+}
+
+// ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
+func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption, isIntPK bool) bool {
+	if opt == nil || opt.PrimaryKeyTp == model.PrimaryKeyTypeDefault {
+		if isIntPK {
+			return true
+		}
+		return ctx.GetSessionVars().EnableClusteredIndex
+	}
+	switch opt.PrimaryKeyTp {
+	case model.PrimaryKeyTypeClustered:
+		if isIntPK {
+			return true
+		}
+		hasBinlog := ctx.GetSessionVars().BinlogClient != nil
+		if hasBinlog {
+			errMsg := "cannot build clustered index table because the binlog is ON"
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf(errMsg))
+			return false
+		}
+		return true
+	case model.PrimaryKeyTypeNonClustered:
+		return false
+	default: // should never reach here
+		logutil.BgLogger().Error("Unknown primary key type")
+		return false
+	}
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
@@ -4754,11 +4759,10 @@ func getAnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) 
 
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
-	if !config.GetGlobalConfig().AlterPrimaryKey {
-		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false. " +
-			"Please check the documentation for the tidb-server configuration files")
+	if indexOption != nil && indexOption.PrimaryKeyTp == model.PrimaryKeyTypeClustered {
+		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Adding clustered primary key is not supported. " +
+			"Please consider adding NONCLUSTERED primary key instead")
 	}
-
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -5168,10 +5172,6 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		isPK = true
 	}
 	if isPK {
-		if !config.GetGlobalConfig().AlterPrimaryKey {
-			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
-
-		}
 		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
 		if indexInfo == nil && !t.Meta().PKIsHandle {
 			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
