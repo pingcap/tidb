@@ -180,7 +180,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 
 		primary := txn.GetCommitter().GetPrimaryKey()
 		bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
-		lockResolver := tikv.LockResolverProbe{s.store.GetLockResolver()}
+		lockResolver := tikv.LockResolverProbe{LockResolver: s.store.GetLockResolver()}
 		txnStatus, err := lockResolver.GetTxnStatus(bo, txn.StartTS(), primary, 0, 0, false, false, nil)
 		c.Assert(err, IsNil)
 		c.Assert(txnStatus.IsCommitted(), IsFalse)

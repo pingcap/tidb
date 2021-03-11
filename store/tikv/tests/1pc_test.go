@@ -27,7 +27,7 @@ func (s *testAsyncCommitCommon) begin1PC(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.Enable1PC, true)
-	return tikv.TxnProbe{txn}
+	return tikv.TxnProbe{KVTxn: txn}
 }
 
 type testOnePCSuite struct {
