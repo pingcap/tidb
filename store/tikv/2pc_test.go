@@ -423,17 +423,6 @@ func errMsgMustContain(c *C, err error, msg string) {
 	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
 }
 
-func newTwoPhaseCommitterWithInit(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, error) {
-	c, err := newTwoPhaseCommitter(txn, sessionID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err = c.initKeysAndMutations(); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return c, nil
-}
-
 func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	txn := s.begin(c)
 	err := txn.Set([]byte("a"), []byte("a1"))
@@ -1036,19 +1025,6 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	c.Assert(err, IsNil)
 	waitErr := <-doneCh
 	c.Assert(ErrLockWaitTimeout.Equal(waitErr), IsTrue)
-}
-
-func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
-	var res PlainMutations
-	for i := 0; i < c.mutations.Len(); i++ {
-		for _, key := range keys {
-			if bytes.Equal(c.mutations.GetKey(i), key) {
-				res.Push(c.mutations.GetOp(i), c.mutations.GetKey(i), c.mutations.GetValue(i), c.mutations.IsPessimisticLock(i))
-				break
-			}
-		}
-	}
-	return &res
 }
 
 func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
