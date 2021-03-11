@@ -577,7 +577,7 @@ func NewExtraHandleColInfo() *ColumnInfo {
 		ID:   ExtraHandleID,
 		Name: ExtraHandleName,
 	}
-	colInfo.Flag = mysql.PriKeyFlag
+	colInfo.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	colInfo.Tp = mysql.TypeLonglong
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	return colInfo
