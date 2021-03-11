@@ -598,3 +598,47 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	c.Assert(r.Close(), IsNil)
 	mustExecSQL(c, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
 }
+
+func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
+	var err error
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer func() {
+		c.Assert(store.Close(), IsNil)
+	}()
+	se := newSession(c, store, s.dbName)
+	// Bootstrap to Version65
+	mustExecSQL(c, se, "set @@global.tidb_track_aggregate_memory_usage = 0")
+	// Do some clean up, BootstrapSession will not create a new domain otherwise.
+	dom.Close()
+	domap.Delete(store)
+
+	dom, err = BootstrapSession(store)
+	c.Assert(err, IsNil)
+	se = newSession(c, store, s.dbName)
+	r := mustExecSQL(c, se, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
+	req := r.NewChunk()
+	c.Assert(r.Next(ctx, req), IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+	row := req.GetRow(0)
+	c.Assert(row.GetInt64(0), Equals, int64(0))
+	c.Assert(row.GetInt64(1), Equals, int64(0))
+
+	// Upgrade to Version66
+	upgradeToVer66(se, version65)
+	// Do some clean up, BootstrapSession will not create a new domain otherwise.
+	dom.Close()
+	domap.Delete(store)
+
+	dom, err = BootstrapSession(store)
+	c.Assert(err, IsNil)
+	se = newSession(c, store, s.dbName)
+	r = mustExecSQL(c, se, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
+	req = r.NewChunk()
+	c.Assert(r.Next(ctx, req), IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+	row = req.GetRow(0)
+	c.Assert(row.GetInt64(0), Equals, int64(1))
+	c.Assert(row.GetInt64(1), Equals, int64(1))
+}
