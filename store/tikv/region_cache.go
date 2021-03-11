@@ -1798,7 +1798,10 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 					return
 				}
 			}
-
+			// The store is deleted due to metadata change. No need to check its health.
+			if s.getResolveState() == deleted {
+				return
+			}
 			bo := NewNoopBackoff(ctx)
 			l := s.requestLiveness(bo)
 			if l == reachable {
