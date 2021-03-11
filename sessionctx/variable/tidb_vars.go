@@ -666,7 +666,7 @@ const (
 	DefTiDBGuaranteeLinearizability    = true
 	DefTiDBAnalyzeVersion              = 1
 	DefTiDBEnableIndexMergeJoin        = false
-	DefTiDBTrackAggregateMemoryUsage   = false
+	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
 	DefTiDBEnableTiFlashFallbackTiKV   = false
 )
