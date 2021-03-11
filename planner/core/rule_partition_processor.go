@@ -217,6 +217,10 @@ func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl tabl
 func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.FieldName, error) {
 	names := make([]*types.FieldName, 0, len(ds.TblCols))
 	colsInfo := ds.table.FullHiddenColsAndVisibleCols()
+	colsInfoMap := make(map[int64]*table.Column, len(colsInfo))
+	for _, c := range colsInfo {
+		colsInfoMap[c.ID] = c
+	}
 	for _, colExpr := range ds.TblCols {
 		if colExpr.ID == model.ExtraHandleID {
 			names = append(names, &types.FieldName{
@@ -227,25 +231,18 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 			})
 			continue
 		}
-
-		found := false
-		for _, colInfo := range colsInfo {
-			if colInfo.ID == colExpr.ID {
-				names = append(names, &types.FieldName{
-					DBName:      ds.DBName,
-					TblName:     ds.tableInfo.Name,
-					ColName:     colInfo.Name,
-					OrigTblName: ds.tableInfo.Name,
-					OrigColName: colInfo.Name,
-					Hidden:      colInfo.Hidden,
-				})
-				found = true
-				break
-			}
+		if colInfo, found := colsInfoMap[colExpr.ID]; found {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.tableInfo.Name,
+				ColName:     colInfo.Name,
+				OrigTblName: ds.tableInfo.Name,
+				OrigColName: colInfo.Name,
+				Hidden:      colInfo.Hidden,
+			})
+			continue
 		}
-		if !found {
-			return nil, errors.New(fmt.Sprintf("information of column %v is not found", colExpr.String()))
-		}
+		return nil, errors.New(fmt.Sprintf("information of column %v is not found", colExpr.String()))
 	}
 	return names, nil
 }
