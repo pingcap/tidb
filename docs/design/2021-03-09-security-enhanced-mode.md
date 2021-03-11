@@ -4,17 +4,31 @@
 - Last updated:  March 9, 2021
 - Discussion at: N/A
 
-## Abstract
+## Table of Contents
 
-This document was created to discuss the design of Security Enhanced Mode. It comes from the requirement of [Permission isolation from DBaaS users and DBaaS admin](https://docs.google.com/document/d/1S7-8KqR98DYaE-2NCrPiDWlmUvsHvIZytCE8Ofmbgyg/edit) (internal document).
+* [Introduction](#introduction)
+* [Motivation or Background](#motivation-or-background)
+* [Detailed Design](#detailed-design)
+* [Test Design](#test-design)
+    * [Functional Tests](#functional-tests)
+    * [Scenario Tests](#scenario-tests)
+    * [Compatibility Tests](#compatibility-tests)
+    * [Benchmark Tests](#benchmark-tests)
+* [Impacts & Risks](#impacts--risks)
+* [Investigation & Alternatives](#investigation--alternatives)
+* [Unresolved Questions](#unresolved-questions)
 
-## Terminology
+## Introduction
+
+This document was created to discuss the design of Security Enhanced Mode. It comes from the DBaaS requirement that `SUPER` users must not be able to perform certain actions that could comprimise the system.
+
+### Terminology
 
 * **Configuration Option**: The name of a variable as set in a configuration file.
 * **System Variable** (aka sysvar): The name of a variable that is set in a running TiDB server using the MySQL protocol.
 * **Super**: The primary MySQL "admin" privilege, which is intended to be superseded by MySQL’s "dynamic" (fine-grained) privileges starting from MySQL 8.0.
 
-## Background
+## Motivation or Background
 
 Currently the MySQL `SUPER` privilege encapsulates a very large set of system capabilities. It does not follow the best practices of allocating _fine grained access_ to users based only on their system-access requirements.
 
@@ -29,7 +43,7 @@ This approach was requested by product management based on the broad "in the wil
 
 The design and name of "Security Enhanced" is inspired by prior art with SELinux and AppArmor.
 
-## Proposal
+## Detailed Design
 
 A boolean option called `EnableEnhancedSecurity` (default `FALSE`) will be added as a TiDB configuration option.  The following subheadings describe the behavior when `EnableEnhancedSecurity` is set to `TRUE`.
 
@@ -131,9 +145,11 @@ All tables will be hidden, including the schema itself.
 * `SHOW CONFIG` is disabled.
 * `SET CONFIG` is disabled by the `CONFIG` Privilege (no change necessary)
 
-## Testing Plan
+## Test Design
 
-### Unit test
+### Functional Tests
+
+The integration test suite will run with `EnableEnhancedSecurity=FALSE`, but new integration tests will be written to cover specific use cases.
 
 Unit tests will be added to cover the enabling and disabling of sysvars, and tables.
 
@@ -141,9 +157,24 @@ Tests will need to check that invisible tables are both non-visible and non-gran
 
 If the user with `SUPER` privilege grants privileges related to these tables to other users, for example, `GRANT SELECT, INSERT, UPDATE ON information_schema.cluster_config TO 'userA'@'%%';` -- it should fail.
 
-### Integration testing
+### Scenario Tests
 
-The integration test suite will run with `EnableEnhancedSecurity=FALSE`, but new integration tests will be written to cover specific use cases.
+It is important that users can still use TiDB with all connectors when `SEM` is enabled, and that the TiDB documentation makes sense for users with `SEM` enabled.
+
+It is not expected that any user scenarios are affected by `SEM`, but see "Impact & Risks" for additional discussion behind design decisions.
+
+### Compatibility Tests
+
+We will need to consider the impact on tools. When SEM is disabled, no impact is expected. When SEM is enabled, it should be possible to make recommendations to the tools team so that they can still access meta data required to operate in DBaaS environment:
+
+* Lightning and BR will not work currently with SEM + https://github.com/pingcap/tidb/pull/21988
+* In 5.0 the recommended method for BR/Lightning to get TiKV GC stats should change.
+* There is one PR still pending for obtaining statistics: https://github.com/pingcap/tidb/pull/22286 
+
+### Benchmark Tests
+
+No performance impact is expected.
+
 
 #### Documentation Plan
 
@@ -157,7 +188,7 @@ Supporting PRs will be required to modify both documentation and functionality s
 
 * A further change to move the `new_collation_enabled` variable from mysql.tidb to a status variable has been identified, as it appears on several manual pages. No PR has been created yet.
 
-### Impact & Risks
+## Impacts & Risks
 
 The impact of `SEM` only applies in the case that it is enabled, which it is only intended to be on DBaaS (although users of on-premises installations of TiDB may also consider enabling it).
 
@@ -173,15 +204,9 @@ The largest risk with `SEM` enabled is application/MySQL compatibility. There ar
 
 Users will also be able to observe if the system they are using has enhanced security mode enabled via the system variable, `tidb_enable_enhanced_security` (read-only).
 
-We will need to consider the impact on tools. When SEM is disabled, no impact is expected. When SEM is enabled, it should be possible to make recommendations to the tools team so that they can still access meta data required to operate in DBaaS environment:
+## Investigation & Alternatives
 
-* Lightning and BR will not work currently with SEM + https://github.com/pingcap/tidb/pull/21988
-* In 5.0 the recommended method for BR/Lightning to get TiKV GC stats should change.
-* There is one PR still pending for obtaining statistics: https://github.com/pingcap/tidb/pull/22286 
-
-### Alternatives
-
-The alternative to SEM is to implement fine-grained privileges for end users. This idea has been discussed and rejected. See "Background" for context.
+The alternative to SEM is to implement fine-grained privileges for end users. This idea has been discussed and rejected. See "Motivation or Background" for context.
 
 Amazon RDS also uses the approach of not granting `SUPER` to users, and instead offering a set of custom stored procedures to support use-cases that would usually require `SUPER`. This idea has been rejected.
 
