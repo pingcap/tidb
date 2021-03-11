@@ -335,7 +335,8 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 	}
 
 	dtblNil = tblToDtbl(tblNil)
-	s.ctx.GetSessionVars().SetSystemVar("sql_mode", "NO_ZERO_DATE")
+	err := s.ctx.GetSessionVars().SetSystemVar("sql_mode", "NO_ZERO_DATE")
+	c.Assert(err, IsNil)
 	for _, t := range dtblNil {
 		fc := funcs[ast.Year]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
@@ -864,8 +865,10 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	}
 
 	// Test that "timestamp" and "time_zone" variable may affect the result of Now() builtin function.
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("+00:00"))
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(1234))
+	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("+00:00"))
+	c.Assert(err, IsNil)
+	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(1234))
+	c.Assert(err, IsNil)
 	fc := funcs[ast.Now]
 	resetStmtContext(s.ctx)
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(nil))
@@ -875,8 +878,10 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	result, err := v.ToString()
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, "1970-01-01 00:20:34")
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(0))
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("system"))
+	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(0))
+	c.Assert(err, IsNil)
+	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("system"))
+	c.Assert(err, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestIsDuration(c *C) {
@@ -1119,7 +1124,8 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	timezones := []types.Datum{types.NewDatum(1234), types.NewDatum(0)}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
-		variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone)
+		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone)
+		c.Assert(err, IsNil)
 		f, err := fc.getFunction(ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
 		resetStmtContext(s.ctx)
@@ -1645,9 +1651,11 @@ func (s *testEvaluatorSuite) TestWeekWithoutModeSig(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(result.GetInt64(), Equals, test.expect)
 		if i == 1 {
-			s.ctx.GetSessionVars().SetSystemVar("default_week_format", "6")
+			err = s.ctx.GetSessionVars().SetSystemVar("default_week_format", "6")
+			c.Assert(err, IsNil)
 		} else if i == 3 {
-			s.ctx.GetSessionVars().SetSystemVar("default_week_format", "")
+			err = s.ctx.GetSessionVars().SetSystemVar("default_week_format", "")
+			c.Assert(err, IsNil)
 		}
 	}
 }

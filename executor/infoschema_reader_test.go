@@ -371,7 +371,8 @@ func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
@@ -398,7 +399,8 @@ func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	// Test partition table.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16))`)
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
@@ -418,7 +420,7 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test;")
-	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+	testkit.WithPruneMode(tk, variable.Static, func() {
 		c.Assert(h.RefreshVars(), IsNil)
 		tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
 		tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
@@ -462,7 +464,7 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions1';").Check(testkit.Rows("p0 RANGE COLUMNS id", "p1 RANGE COLUMNS id", "p2 RANGE COLUMNS id"))
 	tk.MustExec("DROP TABLE test_partitions1")
 
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table test_partitions (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (2));")
 	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions';").Check(testkit.Rows("p0 LIST `a`", "p1 LIST `a`"))
 	tk.MustExec("drop table test_partitions")
@@ -554,7 +556,10 @@ func (s *testInfoschemaTableSerialSuite) TestForServersInfo(c *C) {
 
 func (s *testInfoschemaTableSerialSuite) TestForTableTiFlashReplica(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
 
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()

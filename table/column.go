@@ -239,11 +239,11 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 // Set it to true only in FillVirtualColumnValue and UnionScanExec.Next()
 // If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
-func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnOverflow, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
-	if returnOverflow && types.ErrOverflow.Equal(err) {
+	if returnErr && err != nil {
 		return casted, err
 	}
 	if err != nil && types.ErrTruncated.Equal(err) && col.Tp != mysql.TypeSet && col.Tp != mysql.TypeEnum {
@@ -620,10 +620,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		} else {
 			d.SetString("", col.Collate)
 		}
-	case mysql.TypeVarString, mysql.TypeVarchar:
+	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetString("", col.Collate)
-	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		d.SetBytes([]byte{})
 	case mysql.TypeDuration:
 		d.SetMysqlDuration(types.ZeroDuration)
 	case mysql.TypeDate:

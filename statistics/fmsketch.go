@@ -170,6 +170,7 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 		return nil, errors.Trace(err)
 	}
 	fm := FMSketchFromProto(p)
+	fm.maxSize = 10000 // TODO: add this attribute to PB and persist it instead of using a fixed number(executor.maxSketchSize)
 	return fm, nil
 }
 
