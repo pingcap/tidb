@@ -144,52 +144,30 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 			return
 		}
 		count := req.GetRow(0).GetInt64(0)
-<<<<<<< HEAD
 		value := types.NewDatum(colInfo.GetOriginDefaultValue())
 		value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 		if err != nil {
 			return
 		}
-		sqls := make([]string, 0, 1)
 		if value.IsNull() {
 			// If the adding column has default value null, all the existing rows have null value on the newly added column.
-			sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, 0, %d, 0, %d)", startTS, physicalID, colInfo.ID, count))
+			if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%?, %?, 0, %?, 0, %?)", startTS, physicalID, colInfo.ID, count); err != nil {
+				return err
+			}
 		} else {
 			// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-			sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%d, %d, 0, %d, 1, %d)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count))
+			if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
+				return err
+			}
+
 			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 			if err != nil {
 				return
 			}
 			// There must be only one bucket for this new column and the value is the default value.
-			sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%d, 0, %d, 0, %d, %d, X'%X', X'%X')", physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()))
-=======
-		for _, colInfo := range colInfos {
-			value := types.NewDatum(colInfo.GetOriginDefaultValue())
-			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
-			if err != nil {
-				return
+			if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%?, 0, %?, 0, %?, %?, %?, %?)", physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()); err != nil {
+				return err
 			}
-			if value.IsNull() {
-				// If the adding column has default value null, all the existing rows have null value on the newly added column.
-				if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%?, %?, 0, %?, 0, %?)", startTS, physicalID, colInfo.ID, count); err != nil {
-					return err
-				}
-			} else {
-				// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-				if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
-					return err
-				}
-				value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
-				if err != nil {
-					return
-				}
-				// There must be only one bucket for this new column and the value is the default value.
-				if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%?, 0, %?, 0, %?, %?, %?, %?)", physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()); err != nil {
-					return err
-				}
-			}
->>>>>>> 8304d661f... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636) (#22961)
 		}
 	}
 	return

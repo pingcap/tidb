@@ -15,11 +15,6 @@ package handle
 
 import (
 	"context"
-<<<<<<< HEAD
-	"fmt"
-=======
-	"encoding/json"
->>>>>>> 8304d661f... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636) (#22961)
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -39,13 +34,8 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 	if h.LastUpdateVersion() < offset {
 		return nil
 	}
-<<<<<<< HEAD
-	sql := fmt.Sprintf("select table_id from mysql.stats_meta where version < %d", h.LastUpdateVersion()-offset)
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
-=======
 	gcVer := h.LastUpdateVersion() - offset
 	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version < %?", gcVer)
->>>>>>> 8304d661f... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636) (#22961)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -102,43 +92,6 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 			}
 		}
 	}
-<<<<<<< HEAD
-=======
-	// Mark records in mysql.stats_extended as `deleted`.
-	rows, _, err = h.execRestrictedSQL(ctx, "select stats_name, db, column_ids from mysql.stats_extended where table_id = %? and status in (%?, %?)", physicalID, StatsStatusAnalyzed, StatsStatusInited)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	for _, row := range rows {
-		statsName, db, strColIDs := row.GetString(0), row.GetString(1), row.GetString(2)
-		var colIDs []int64
-		err = json.Unmarshal([]byte(strColIDs), &colIDs)
-		if err != nil {
-			logutil.BgLogger().Debug("decode column IDs failed", zap.String("column_ids", strColIDs), zap.Error(err))
-			return errors.Trace(err)
-		}
-		for _, colID := range colIDs {
-			found := false
-			for _, col := range tblInfo.Columns {
-				if colID == col.ID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				err = h.MarkExtendedStatsDeleted(statsName, db, physicalID)
-				if err != nil {
-					logutil.BgLogger().Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.String("db", db), zap.Error(err))
-					return errors.Trace(err)
-				}
-				break
-			}
-		}
-	}
->>>>>>> 8304d661f... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636) (#22961)
 	return nil
 }
 
@@ -199,15 +152,6 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 	ctx := context.Background()
 	startTS := txn.StartTS()
 	// We only update the version so that other tidb will know that this table is deleted.
-<<<<<<< HEAD
-	sqls = append(sqls, fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", startTS, physicalID))
-	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", physicalID))
-	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", physicalID))
-	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d", physicalID))
-	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d", physicalID))
-	return execSQLs(context.Background(), exec, sqls)
-}
-=======
 	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, physicalID); err != nil {
 		return err
 	}
@@ -223,26 +167,5 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_feedback where table_id = %?", physicalID); err != nil {
 		return err
 	}
-	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, StatsStatusDeleted, physicalID, StatsStatusAnalyzed, StatsStatusInited); err != nil {
-		return err
-	}
 	return nil
 }
-
-func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	ctx := context.Background()
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-	const sql = "delete from mysql.stats_extended where status = %? and version < %?"
-	_, err = exec.ExecuteInternal(ctx, sql, StatsStatusDeleted, version)
-	return
-}
->>>>>>> 8304d661f... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636) (#22961)

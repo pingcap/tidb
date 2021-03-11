@@ -75,13 +75,8 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, hist
 // DumpStatsToJSONBySnapshot dumps statistic to json.
 func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64) (*JSONTable, error) {
 	pi := tableInfo.GetPartitionInfo()
-<<<<<<< HEAD
 	if pi == nil {
-		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, historyStatsExec)
-=======
-	if pi == nil || h.CurrentPruneMode() == variable.DynamicOnly {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
->>>>>>> 8304d661f... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636) (#22961)
 	}
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,

@@ -208,120 +208,6 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	return newCollector
 }
 
-<<<<<<< HEAD
-=======
-// IndexUsageInformation is the data struct to store index usage information.
-type IndexUsageInformation struct {
-	QueryCount   int64
-	RowsSelected int64
-	LastUsedAt   string
-}
-
-// GlobalIndexID is the key type for indexUsageMap.
-type GlobalIndexID struct {
-	TableID int64
-	IndexID int64
-}
-
-type indexUsageMap map[GlobalIndexID]IndexUsageInformation
-
-// SessionIndexUsageCollector is a list item that holds the index usage mapper. If you want to write or read mapper, you must lock it.
-type SessionIndexUsageCollector struct {
-	sync.Mutex
-
-	mapper  indexUsageMap
-	next    *SessionIndexUsageCollector
-	deleted bool
-}
-
-func (m indexUsageMap) updateByKey(id GlobalIndexID, value *IndexUsageInformation) {
-	item := m[id]
-	item.QueryCount += value.QueryCount
-	item.RowsSelected += value.RowsSelected
-	if item.LastUsedAt < value.LastUsedAt {
-		item.LastUsedAt = value.LastUsedAt
-	}
-	m[id] = item
-}
-
-func (m indexUsageMap) update(tableID int64, indexID int64, value *IndexUsageInformation) {
-	id := GlobalIndexID{TableID: tableID, IndexID: indexID}
-	m.updateByKey(id, value)
-}
-
-func (m indexUsageMap) merge(destMap indexUsageMap) {
-	for id, item := range destMap {
-		m.updateByKey(id, &item)
-	}
-}
-
-// Update updates the mapper in SessionIndexUsageCollector.
-func (s *SessionIndexUsageCollector) Update(tableID int64, indexID int64, value *IndexUsageInformation) {
-	value.LastUsedAt = time.Now().Format(types.TimeFSPFormat)
-	s.Lock()
-	defer s.Unlock()
-	s.mapper.update(tableID, indexID, value)
-}
-
-// Delete will set s.deleted to true which means it can be deleted from linked list.
-func (s *SessionIndexUsageCollector) Delete() {
-	s.Lock()
-	defer s.Unlock()
-	s.deleted = true
-}
-
-// NewSessionIndexUsageCollector will add a new SessionIndexUsageCollector into linked list headed by idxUsageListHead.
-// idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
-// points to new item. It's helpful to sweepIdxUsageList.
-func (h *Handle) NewSessionIndexUsageCollector() *SessionIndexUsageCollector {
-	h.idxUsageListHead.Lock()
-	defer h.idxUsageListHead.Unlock()
-	newCollector := &SessionIndexUsageCollector{
-		mapper: make(indexUsageMap),
-		next:   h.idxUsageListHead.next,
-	}
-	h.idxUsageListHead.next = newCollector
-	return newCollector
-}
-
-// sweepIdxUsageList will loop over the list, merge each session's local index usage information into handle
-// and remove closed session's collector.
-// For convenience, we keep idxUsageListHead always points to sentinel node. So that we don't need to consider corner case.
-func (h *Handle) sweepIdxUsageList() indexUsageMap {
-	prev := h.idxUsageListHead
-	prev.Lock()
-	mapper := make(indexUsageMap)
-	for curr := prev.next; curr != nil; curr = curr.next {
-		curr.Lock()
-		mapper.merge(curr.mapper)
-		if curr.deleted {
-			prev.next = curr.next
-			curr.Unlock()
-		} else {
-			prev.Unlock()
-			curr.mapper = make(indexUsageMap)
-			prev = curr
-		}
-	}
-	prev.Unlock()
-	return mapper
-}
-
-// DumpIndexUsageToKV will dump in-memory index usage information to KV.
-func (h *Handle) DumpIndexUsageToKV() error {
-	ctx := context.Background()
-	mapper := h.sweepIdxUsageList()
-	for id, value := range mapper {
-		const sql = `insert into mysql.SCHEMA_INDEX_USAGE values (%?, %?, %?, %?, %?) on duplicate key update query_count=query_count+%?, rows_selected=rows_selected+%?, last_used_at=greatest(last_used_at, %?)`
-		_, _, err := h.execRestrictedSQL(ctx, sql, id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
->>>>>>> 8304d661f... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636) (#22961)
 var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
@@ -853,39 +739,21 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			pi := tblInfo.GetPartitionInfo()
-			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
-<<<<<<< HEAD
-				sql := fmt.Sprintf("analyze table %s", tblName)
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
-=======
 				sql := "analyze table %n.%n"
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
->>>>>>> 8304d661f... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636) (#22961)
 				if analyzed {
 					return
 				}
 				continue
 			}
-<<<<<<< HEAD
 			for _, def := range pi.Definitions {
-				sql := fmt.Sprintf("analyze table %s partition `%s`", tblName, def.Name.O)
+				sql := "analyze table %n.%n partition %n"
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return
-=======
-			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
-				for _, def := range pi.Definitions {
-					sql := "analyze table %n.%n partition %n"
-					statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-					analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
-					if analyzed {
-						return
-					}
-					continue
->>>>>>> 8304d661f... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636) (#22961)
 				}
 				continue
 			}
@@ -914,11 +782,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 
 func (h *Handle) execAutoAnalyze(sql string, params ...interface{}) {
 	startTime := time.Now()
-<<<<<<< HEAD
-	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
-=======
 	_, _, err := h.execRestrictedSQL(context.Background(), sql, params...)
->>>>>>> 8304d661f... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636) (#22961)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {

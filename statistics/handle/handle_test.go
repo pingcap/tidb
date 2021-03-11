@@ -265,12 +265,7 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-<<<<<<< HEAD
-	h := handle.NewHandle(testKit.Se, time.Millisecond)
-=======
-	h, err := handle.NewHandle(testKit.Se, time.Millisecond, do.SysSessionPool())
-	c.Assert(err, IsNil)
->>>>>>> 8304d661f... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636) (#22961)
+	h := handle.NewHandle(testKit.Se, time.Millisecond, do.SysSessionPool())
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
 
