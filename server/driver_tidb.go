@@ -29,11 +29,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/sessionctx/variable"
-=======
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
->>>>>>> c4f398948... *: add infoschema client errors (#22382)
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -206,7 +203,6 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	return tc, nil
 }
 
-<<<<<<< HEAD
 // Status implements QueryCtx Status method.
 func (tc *TiDBContext) Status() uint16 {
 	return tc.session.Status()
@@ -250,11 +246,6 @@ func (tc *TiDBContext) AffectedRows() uint64 {
 // LastMessage implements QueryCtx LastMessage method.
 func (tc *TiDBContext) LastMessage() string {
 	return tc.session.LastMessage()
-=======
-// GetWarnings implements QueryCtx GetWarnings method.
-func (tc *TiDBContext) GetWarnings() []stmtctx.SQLWarn {
-	return tc.GetSessionVars().StmtCtx.GetWarnings()
->>>>>>> c4f398948... *: add infoschema client errors (#22382)
 }
 
 // CurrentDB implements QueryCtx CurrentDB method.
@@ -265,6 +256,11 @@ func (tc *TiDBContext) CurrentDB() string {
 // WarningCount implements QueryCtx WarningCount method.
 func (tc *TiDBContext) WarningCount() uint16 {
 	return tc.session.GetSessionVars().StmtCtx.WarningCount()
+}
+
+// GetWarnings implements QueryCtx GetWarnings method.
+func (tc *TiDBContext) GetWarnings() []stmtctx.SQLWarn {
+	return tc.GetSessionVars().StmtCtx.GetWarnings()
 }
 
 // ExecuteStmt implements QueryCtx interface.

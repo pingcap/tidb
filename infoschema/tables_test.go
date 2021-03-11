@@ -1383,76 +1383,6 @@ func (s *testTableSuite) TestServerInfoResolveLoopBackAddr(c *C) {
 		c.Assert(n.StatusAddr, Equals, "192.168.130.22:10080")
 	}
 }
-<<<<<<< HEAD
-=======
-
-func (s *testTableSuite) TestPlacementPolicy(c *C) {
-	tk := s.newTestKitWithRoot(c)
-	tk.MustExec("use test")
-	tk.MustExec("create table test_placement(id int primary key) partition by hash(id) partitions 2")
-
-	is := s.dom.InfoSchema()
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_placement"))
-	c.Assert(err, IsNil)
-	partDefs := tb.Meta().GetPartitionInfo().Definitions
-
-	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
-
-	bundleID := "pd"
-	is.SetBundle(&placement.Bundle{
-		ID: bundleID,
-		Rules: []*placement.Rule{
-			{
-				GroupID: bundleID,
-				ID:      "default",
-				Role:    "voter",
-				Count:   3,
-			},
-		},
-	})
-	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
-
-	bundleID = fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[0].ID)
-	bundle := &placement.Bundle{
-		ID:       bundleID,
-		Index:    3,
-		Override: true,
-		Rules: []*placement.Rule{
-			{
-				GroupID: bundleID,
-				ID:      "0",
-				Role:    "voter",
-				Count:   3,
-				LabelConstraints: []placement.LabelConstraint{
-					{
-						Key:    "zone",
-						Op:     "in",
-						Values: []string{"bj"},
-					},
-				},
-			},
-		},
-	}
-	is.SetBundle(bundle)
-	expected := fmt.Sprintf(`%s 3 0 test test_placement p0 <nil> voter 3 "+zone=bj"`, bundleID)
-	tk.MustQuery(`select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name,
-		role, replicas, constraints from information_schema.placement_policy`).Check(testkit.Rows(expected))
-
-	rule1 := bundle.Rules[0].Clone()
-	rule1.ID = "1"
-	bundle.Rules = append(bundle.Rules, rule1)
-	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
-		"0 test test_placement p0", "1 test test_placement p0"))
-
-	bundleID = fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[1].ID)
-	bundle1 := bundle.Clone()
-	bundle1.ID = bundleID
-	bundle1.Rules[0].GroupID = bundleID
-	bundle1.Rules[1].GroupID = bundleID
-	is.SetBundle(bundle1)
-	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by partition_name, rule_id").Check(testkit.Rows(
-		"0 test test_placement p0", "1 test test_placement p0", "0 test test_placement p1", "1 test test_placement p1"))
-}
 
 func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
 	tk := s.newTestKitWithRoot(c)
@@ -1477,4 +1407,3 @@ func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
 	err = tk.ExecToErr("FLUSH CLIENT_ERRORS_SUMMARY")
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RELOAD privilege(s) for this operation")
 }
->>>>>>> c4f398948... *: add infoschema client errors (#22382)

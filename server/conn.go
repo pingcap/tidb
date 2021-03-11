@@ -63,11 +63,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
->>>>>>> c4f398948... *: add infoschema client errors (#22382)
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"

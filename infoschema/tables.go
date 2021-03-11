@@ -150,19 +150,14 @@ const (
 	TableTiFlashTables = "TIFLASH_TABLES"
 	// TableTiFlashSegments is the string constant of tiflash segments table.
 	TableTiFlashSegments = "TIFLASH_SEGMENTS"
-<<<<<<< HEAD
 	// TableStorageStats is a table that contains all tables disk usage
 	TableStorageStats = "TABLE_STORAGE_STATS"
-=======
-	// TablePlacementPolicy is the string constant of placement policy table.
-	TablePlacementPolicy = "PLACEMENT_POLICY"
 	// TableClientErrorsSummaryGlobal is the string constant of client errors table.
 	TableClientErrorsSummaryGlobal = "CLIENT_ERRORS_SUMMARY_GLOBAL"
 	// TableClientErrorsSummaryByUser is the string constant of client errors table.
 	TableClientErrorsSummaryByUser = "CLIENT_ERRORS_SUMMARY_BY_USER"
 	// TableClientErrorsSummaryByHost is the string constant of client errors table.
 	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
->>>>>>> c4f398948... *: add infoschema client errors (#22382)
 )
 
 var tableIDMap = map[string]int64{
@@ -231,13 +226,9 @@ var tableIDMap = map[string]int64{
 	TableStorageStats:                       autoid.InformationSchemaDBID + 63,
 	TableTiFlashTables:                      autoid.InformationSchemaDBID + 64,
 	TableTiFlashSegments:                    autoid.InformationSchemaDBID + 65,
-<<<<<<< HEAD
-=======
-	TablePlacementPolicy:                    autoid.InformationSchemaDBID + 66,
-	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
-	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
-	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
->>>>>>> c4f398948... *: add infoschema client errors (#22382)
+	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 66,
+	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 67,
+	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 68,
 }
 
 type columnInfo struct {
@@ -1736,14 +1727,10 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableStatementsSummaryHistory:           tableStatementsSummaryCols,
 	TableTiFlashTables:                      tableTableTiFlashTablesCols,
 	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
-<<<<<<< HEAD
 	TableStorageStats:                       tableStorageStatsCols,
-=======
-	TablePlacementPolicy:                    tablePlacementPolicyCols,
 	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
->>>>>>> c4f398948... *: add infoschema client errors (#22382)
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

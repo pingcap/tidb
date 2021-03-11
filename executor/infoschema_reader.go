@@ -132,15 +132,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.ClusterTableStatementsSummary,
 			infoschema.ClusterTableStatementsSummaryHistory:
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
-<<<<<<< HEAD
-=======
-		case infoschema.TablePlacementPolicy:
-			err = e.setDataForPlacementPolicy(sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
->>>>>>> c4f398948... *: add infoschema client errors (#22382)
 		}
 		if err != nil {
 			return nil, err
@@ -1659,52 +1654,6 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 	return nil
 }
 
-<<<<<<< HEAD
-=======
-func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) error {
-	checker := privilege.GetPrivilegeManager(ctx)
-	is := infoschema.GetInfoSchema(ctx)
-	var rows [][]types.Datum
-	for _, bundle := range is.RuleBundles() {
-		id, err := placement.ObjectIDFromGroupID(bundle.ID)
-		if err != nil {
-			return errors.Wrapf(err, "Restore bundle %s failed", bundle.ID)
-		}
-		if id == 0 {
-			continue
-		}
-		// Currently, only partitions have placement rules.
-		tb, db, part := is.FindTableByPartitionID(id)
-		if tb == nil {
-			return errors.Errorf("Can't find partition by id %d", id)
-		}
-		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
-			continue
-		}
-		for _, rule := range bundle.Rules {
-			constraint, err := placement.RestoreLabelConstraintList(rule.LabelConstraints)
-			if err != nil {
-				return errors.Wrapf(err, "Restore rule %s in bundle %s failed", rule.ID, bundle.ID)
-			}
-			row := types.MakeDatums(
-				bundle.ID,
-				bundle.Index,
-				rule.ID,
-				db.Name.L,
-				tb.Meta().Name.L,
-				part.Name.L,
-				nil,
-				string(rule.Role),
-				rule.Count,
-				constraint,
-			)
-			rows = append(rows, row)
-		}
-	}
-	e.rows = rows
-	return nil
-}
-
 func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context, tableName string) error {
 	// Seeing client errors should require the PROCESS privilege, with the exception of errors for your own user.
 	// This is similar to information_schema.processlist, which is the closest comparison.
@@ -1781,62 +1730,6 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	return nil
 }
 
-type hugeMemTableRetriever struct {
-	dummyCloser
-	table       *model.TableInfo
-	columns     []*model.ColumnInfo
-	retrieved   bool
-	initialized bool
-	rows        [][]types.Datum
-	dbs         []*model.DBInfo
-	dbsIdx      int
-	tblIdx      int
-}
-
-// retrieve implements the infoschemaRetriever interface
-func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.retrieved {
-		return nil, nil
-	}
-
-	if !e.initialized {
-		is := infoschema.GetInfoSchema(sctx)
-		dbs := is.AllSchemas()
-		sort.Sort(infoschema.SchemasSorter(dbs))
-		e.dbs = dbs
-		e.initialized = true
-		e.rows = make([][]types.Datum, 0, 1024)
-	}
-
-	var err error
-	switch e.table.Name.O {
-	case infoschema.TableColumns:
-		err = e.setDataForColumns(ctx, sctx)
-	}
-	if err != nil {
-		return nil, err
-	}
-	e.retrieved = len(e.rows) == 0
-
-	return adjustColumns(e.rows, e.columns, e.table), nil
-}
-
-func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
-	if len(outColumns) == len(table.Columns) {
-		return input
-	}
-	rows := make([][]types.Datum, len(input))
-	for i, fullRow := range input {
-		row := make([]types.Datum, len(outColumns))
-		for j, col := range outColumns {
-			row[j] = fullRow[col.Offset]
-		}
-		rows[i] = row
-	}
-	return rows
-}
-
->>>>>>> c4f398948... *: add infoschema client errors (#22382)
 // TiFlashSystemTableRetriever is used to read system table from tiflash.
 type TiFlashSystemTableRetriever struct {
 	dummyCloser
