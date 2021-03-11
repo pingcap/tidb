@@ -105,7 +105,11 @@ func (s *TestGracefulShutdownSuite) connectTiDB(port int) (db *sql.DB, err error
 			zap.Error(err),
 		)
 
-		db.Close()
+		err = db.Close()
+		if err != nil {
+			log.Warnf("close db failed, retry count %d err %v", i, err)
+			break
+		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
 	}
@@ -130,7 +134,10 @@ func (s *TestGracefulShutdownSuite) TestGracefulShutdown(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	defer db.Close()
+	defer func(){
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(10*time.Second))
 	defer cancel()

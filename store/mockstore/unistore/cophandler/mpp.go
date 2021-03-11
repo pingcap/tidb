@@ -15,6 +15,7 @@ package cophandler
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -22,15 +23,13 @@ import (
 	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/uber-go/atomic"
@@ -41,12 +40,6 @@ const (
 	MPPErrTunnelNotFound = iota
 	// MPPErrEstablishConnMultiTimes means we receive the Establish requests at least twice.
 	MPPErrEstablishConnMultiTimes
-)
-
-const (
-	taskRunning int32 = iota + 1
-	taskFailed
-	taskFinished
 )
 
 type mppExecBuilder struct {
@@ -89,6 +82,21 @@ func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender) (*exchS
 			children:   []mppExec{child},
 			fieldTypes: child.getFieldTypes(),
 		},
+		exchangeTp: pb.Tp,
+	}
+	if pb.Tp == tipb.ExchangeType_Hash {
+		if len(pb.PartitionKeys) != 1 {
+			return nil, errors.New("The number of hash key must be 1")
+		}
+		expr, err := expression.PBToExpr(pb.PartitionKeys[0], child.getFieldTypes(), b.sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		col, ok := expr.(*expression.Column)
+		if !ok {
+			return nil, errors.New("Hash key must be column type")
+		}
+		e.hashKeyOffset = col.Index
 	}
 
 	for _, taskMeta := range pb.EncodedTaskMeta {
@@ -146,6 +154,25 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 	rightCh, err := b.buildMPPExecutor(children[1])
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if pb.JoinType == tipb.JoinType_TypeLeftOuterJoin {
+		for _, tp := range rightCh.getFieldTypes() {
+			tp.Flag &= ^mysql.NotNullFlag
+		}
+		defaultInner := chunk.MutRowFromTypes(rightCh.getFieldTypes())
+		for i := range rightCh.getFieldTypes() {
+			defaultInner.SetDatum(i, types.NewDatum(nil))
+		}
+		e.defaultInner = defaultInner.ToRow()
+	} else if pb.JoinType == tipb.JoinType_TypeRightOuterJoin {
+		for _, tp := range leftCh.getFieldTypes() {
+			tp.Flag &= ^mysql.NotNullFlag
+		}
+		defaultInner := chunk.MutRowFromTypes(leftCh.getFieldTypes())
+		for i := range leftCh.getFieldTypes() {
+			defaultInner.SetDatum(i, types.NewDatum(nil))
+		}
+		e.defaultInner = defaultInner.ToRow()
 	}
 	// because the field type is immutable, so this kind of appending is safe.
 	e.fieldTypes = append(leftCh.getFieldTypes(), rightCh.getFieldTypes()...)
@@ -248,6 +275,7 @@ func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 	for _, gby := range agg.GroupBy {
 		ft := expression.PbTypeToFieldType(gby.FieldType)
 		e.fieldTypes = append(e.fieldTypes, ft)
+		e.groupByTypes = append(e.groupByTypes, ft)
 		gbyExpr, err := expression.PBToExpr(gby, chExec.getFieldTypes(), b.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -283,9 +311,9 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 	}
 }
 
-// handleMPPDAGReq handles a cop request that is converted from mpp request.
+// HandleMPPDAGReq handles a cop request that is converted from mpp request.
 // It returns nothing. Real data will return by stream rpc.
-func handleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppCtx *MPPCtx) *coprocessor.Response {
+func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppCtx *MPPCtx) *coprocessor.Response {
 	dagReq := new(tipb.DAGRequest)
 	err := proto.Unmarshal(req.Data, dagReq)
 	if err != nil {
@@ -300,15 +328,15 @@ func handleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 	}
 	mppExec, err := builder.buildMPPExecutor(dagReq.RootExecutor)
 	if err != nil {
-		return &coprocessor.Response{OtherError: err.Error()}
+		panic("build error: " + err.Error())
 	}
 	err = mppExec.open()
 	if err != nil {
-		return &coprocessor.Response{OtherError: err.Error()}
+		panic("open phase find error: " + err.Error())
 	}
 	_, err = mppExec.next()
 	if err != nil {
-		return &coprocessor.Response{OtherError: err.Error()}
+		panic("running phase find error: " + err.Error())
 	}
 	return &coprocessor.Response{}
 }
@@ -324,46 +352,6 @@ type MPPTaskHandler struct {
 
 	Status atomic.Int32
 	Err    error
-}
-
-// HandleMPPDispatch handle DispatchTaskRequest
-func (h *MPPTaskHandler) HandleMPPDispatch(ctx context.Context, req *mpp.DispatchTaskRequest, storeAddr string, storeID uint64) (*mpp.DispatchTaskResponse, error) {
-	// At first register task to store.
-	kvContext := kvrpcpb.Context{
-		RegionId:    req.Regions[0].RegionId,
-		RegionEpoch: req.Regions[0].RegionEpoch,
-		// this is a hack to reuse task id in kvContext to pass mpp task id
-		TaskId: uint64(h.Meta.TaskId),
-		Peer:   &metapb.Peer{StoreId: storeID},
-	}
-	copReq := &coprocessor.Request{
-		Tp:      kv.ReqTypeDAG,
-		Data:    req.EncodedPlan,
-		StartTs: req.Meta.StartTs,
-		Context: &kvContext,
-	}
-	for _, regionMeta := range req.Regions {
-		copReq.Ranges = append(copReq.Ranges, regionMeta.Ranges...)
-	}
-	rpcReq := &tikvrpc.Request{
-		Type:    tikvrpc.CmdCop,
-		Req:     copReq,
-		Context: kvContext,
-	}
-	go h.run(ctx, storeAddr, rpcReq, time.Hour)
-	return &mpp.DispatchTaskResponse{}, nil
-}
-
-func (h *MPPTaskHandler) run(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) {
-	h.Status.Store(taskRunning)
-	_, err := h.RPCClient.SendRequest(ctx, addr, req, timeout)
-	// TODO: Remove itself after execution is closed.
-	if err != nil {
-		h.Err = err
-		h.Status.Store(taskFailed)
-	} else {
-		h.Status.Store(taskFinished)
-	}
 }
 
 // HandleEstablishConn handles EstablishMPPConnectionRequest
@@ -413,6 +401,10 @@ type ExchangerTunnel struct {
 
 	connectedCh chan struct{}
 	ErrCh       chan error
+}
+
+func (tunnel *ExchangerTunnel) debugString() string {
+	return fmt.Sprintf("(%d->%d)", tunnel.sourceTask.TaskId, tunnel.targetTask.TaskId)
 }
 
 // RecvChunk recive tipb chunk
