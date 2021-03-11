@@ -381,13 +381,12 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 				}
 				errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, indexName)
 			}
-			err = types.ErrBuildGlobalLevelStatsFailed.GenWithStackByArgs(errMsg)
+			err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
 			return
 		}
 		statistics.CheckAnalyzeVerOnTable(partitionStats, &statsVer)
 		if statsVer != statistics.Version2 { // global-stats only support stats-ver2
-			return nil, fmt.Errorf("[stats]: global statistics for partitioned tables only available in statistics version2, please set tidb_analyze_version to 2")
-
+			return nil, fmt.Errorf("[stats]: some partition level statistics are not in statistics version 2, please set tidb_analyze_version to 2 and analyze the this table")
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			ID := tableInfo.Columns[i].ID
