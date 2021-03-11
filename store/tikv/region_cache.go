@@ -619,11 +619,14 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				zap.Error(err))
 			return
 		}
+
 		rs := r.getStore()
 		startForwarding := false
+		incEpochStoreIdx := -1
+
 		if err != nil {
 			storeIdx, s := rs.accessStore(ctx.AccessMode, ctx.AccessIdx)
-			leaderReq := ctx.Store.storeType == TiKV && rs.workTiKVIdx != ctx.AccessIdx
+			leaderReq := ctx.Store.storeType == TiKV && rs.workTiKVIdx == ctx.AccessIdx
 
 			//  Mark the store as failure if it's not a redirection request because we
 			//  can't know the status of the proxy store by it.
@@ -643,6 +646,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				epoch := rs.storeEpochs[storeIdx]
 				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
 					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+					incEpochStoreIdx = storeIdx
 					metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 				}
 				// schedule a store addr resolve.
@@ -657,7 +661,9 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				if ctx.ProxyStore != nil {
 					currentProxyIdx = ctx.ProxyAccessIdx
 				}
-				rs.switchNextProxyStore(r, currentProxyIdx)
+				// In case the epoch of the store is increased, try to avoid reloading the current region by also
+				// increasing the epoch stored in `rs`.
+				rs.switchNextProxyStore(r, currentProxyIdx, incEpochStoreIdx)
 			} else {
 				rs.switchNextTiKVPeer(r, ctx.AccessIdx)
 			}
@@ -1484,7 +1490,7 @@ func (r *RegionStore) switchNextTiKVPeer(rr *Region, currentPeerIdx AccessIndex)
 // switchNextProxyStore switches the index of the peer that will forward requests to the leader to the next peer.
 // If proxy is currently not used on this region, the value of `currentProxyIdx` should be -1, and it will be moved to
 // the first peer that can be the proxy.
-func (r *RegionStore) switchNextProxyStore(rr *Region, currentProxyIdx AccessIndex) {
+func (r *RegionStore) switchNextProxyStore(rr *Region, currentProxyIdx AccessIndex, incEpochStoreIdx int) {
 	if r.proxyTiKVIdx != currentProxyIdx {
 		return
 	}
@@ -1495,6 +1501,9 @@ func (r *RegionStore) switchNextProxyStore(rr *Region, currentProxyIdx AccessInd
 	}
 	newRegionStore := r.clone()
 	newRegionStore.proxyTiKVIdx = nextIdx
+	if incEpochStoreIdx >= 0 {
+		newRegionStore.storeEpochs[incEpochStoreIdx]++
+	}
 	rr.compareAndSwapStore(r, newRegionStore)
 }
 

@@ -519,6 +519,44 @@ func (s *testRegionCacheSuite) TestSendFailInvalidateRegionsInSameStore(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
+	EnableRedirection = true
+	defer func() { EnableRedirection = false }()
+
+	// key range: ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := s.cluster.AllocIDs(2)
+	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+
+	// Check the two regions.
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+
+	// Invoke OnSendFail so that the store will be marked as needForwarding
+	ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx, NotNil)
+	s.cache.OnSendFail(s.bo, ctx, false, errors.New("test error"))
+
+	// ...then on next retry, proxy will be used
+	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx, NotNil)
+	c.Assert(ctx.ProxyStore, NotNil)
+	c.Assert(ctx.ProxyStore.storeID, Equals, s.store2)
+
+	// Proxy will be also applied to other regions whose leader is on the store
+	loc2, err := s.cache.LocateKey(s.bo, []byte("x"))
+	c.Assert(err, IsNil)
+	c.Assert(loc2.Region.id, Equals, region2)
+	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc2.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx, NotNil)
+	c.Assert(ctx.ProxyStore, NotNil)
+	c.Assert(ctx.ProxyStore.storeID, Equals, s.store2)
+}
+
 func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	// 3 nodes and no.1 is leader.
 	store3 := s.cluster.AllocID()
