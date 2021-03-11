@@ -929,6 +929,7 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 
 func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t0(a varchar(20), primary key(a) clustered)")
@@ -937,5 +938,7 @@ func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
 	tk.MustExec("insert into t1 values('1111')")
 	tk.MustExec("analyze table t0 index primary")
 	tk.MustExec("analyze table t1 index primary")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows(""))
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows(
+		"test t0  PRIMARY 1 0 1 1 1111 1111 0",
+		"test t1  PRIMARY 1 0 1 1 1111 1111 0"))
 }
