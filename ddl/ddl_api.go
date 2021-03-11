@@ -1453,11 +1453,10 @@ func buildTableInfo(
 				// AlterPrimaryKey = false + EnableClusteredIndex = false + IntPrimaryKeyDefaultAsClustered = true --> int pk must be clustered
 				// AlterPrimaryKey = false + EnableClusteredIndex = false + IntPrimaryKeyDefaultAsClustered = false --> all pk must be nonclustered [Default]
 				alterPKConf := config.GetGlobalConfig().AlterPrimaryKey
-				clustered := !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex
 				if isSingleIntPK(constr, lastCol) {
-					tbInfo.PKIsHandle = clustered || (!alterPKConf && ctx.GetSessionVars().IntPrimaryKeyDefaultAsClustered)
+					tbInfo.PKIsHandle = !alterPKConf && (ctx.GetSessionVars().EnableClusteredIndex || ctx.GetSessionVars().IntPrimaryKeyDefaultAsClustered)
 				} else {
-					tbInfo.IsCommonHandle = clustered && noBinlog
+					tbInfo.IsCommonHandle = !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex && noBinlog
 					if tbInfo.IsCommonHandle {
 						tbInfo.CommonHandleVersion = 1
 					}
