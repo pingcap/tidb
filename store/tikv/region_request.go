@@ -395,6 +395,15 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		defer cancel()
 	}
 
+	// TODO: Uncomment this once another pr is merged
+	//sendToAddr := rpcCtx.Addr
+	//if rpcCtx.ProxyStore == nil {
+	//	req.ReceiverAddr = ""
+	//} else {
+	//	req.ReceiverAddr = rpcCtx.Addr
+	//	sendToAddr = rpcCtx.ProxyAddr
+	//}
+
 	var sessionID uint64
 	if v := bo.ctx.Value(util.SessionID); v != nil {
 		sessionID = v.(uint64)
@@ -424,6 +433,8 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 
 	if !injectFailOnSend {
 		start := time.Now()
+		// TODO: Replace with this after another pr is merged
+		//resp, err = s.client.SendRequest(ctx, sendToAddr, req, timeout)
 		resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
 		if s.Stats != nil {
 			RecordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
