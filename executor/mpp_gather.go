@@ -31,7 +31,7 @@ import (
 )
 
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
-	if !ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() {
+	if !ctx.GetSessionVars().AllowMPPExecution && collate.NewCollationEnabled() {
 		return false
 	}
 	_, ok := tr.GetTablePlan().(*plannercore.PhysicalExchangeSender)
