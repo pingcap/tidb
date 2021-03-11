@@ -4,16 +4,25 @@
 - Last updated:  March 09, 2021
 - Discussion at: N/A
 
-## Abstract
+## Table of Contents
 
-This document was created to discuss the design of Dynamic Privileges. It is intended to be implemented in combination with Security Enhanced Mode, but there no interdependencies between the two features. It comes from the requirement of [Permission isolation from DBaaS users and DBaaS admin](https://docs.google.com/document/d/1S7-8KqR98DYaE-2NCrPiDWlmUvsHvIZytCE8Ofmbgyg/edit) (internal document).
+* [Introduction](#introduction)
+* [Motivation or Background](#motivation-or-background)
+* [Detailed Design](#detailed-design)
+* [Test Design](#test-design)
+    * [Functional Tests](#functional-tests)
+    * [Scenario Tests](#scenario-tests)
+    * [Compatibility Tests](#compatibility-tests)
+    * [Benchmark Tests](#benchmark-tests)
+* [Impacts & Risks](#impacts--risks)
+* [Investigation & Alternatives](#investigation--alternatives)
+* [Unresolved Questions](#unresolved-questions)
 
-## Terminology
+## Introduction
 
-* **Static Privileges**: Existing privilege system in MySQL as used exclusively by TiDB and MySQL up until 8.0.
-* **Dynamic Privileges**: A new privilege system proposed that extends static privileges and acts more fine-grained in access.
+This document was created to discuss the design of Dynamic Privileges. It is intended to be implemented in combination with Security Enhanced Mode, but there no interdependencies between the two features.
 
-## Background
+## Motivation or Background
 
 MySQL 8.0 introduced the concept of “dynamic privileges” (see [WL#8131](https://dev.mysql.com/worklog/task/?id=8131)). The intention behind this functionality is that plugins can create new named privileges to suit their purposes, such as “Firewall Admin” or “Audit Admin” instead of requiring the `SUPER` privilege, which becomes overloaded and too coarse.
 
@@ -26,7 +35,7 @@ Dynamic privileges are different from static privileges in the following ways:
 
 We have the same requirement for fine grained privileges in TiDB, so it makes sense to adopt a similar implementation of dynamic privileges. This document describes both the implementation of the framework for dynamic privileges and an initial set of dynamic privileges that are required to be implemented.
 
-## Proposal
+## Detailed Design
 
 Implementing Dynamic Privileges requires the following work to be completed.
 
@@ -214,20 +223,27 @@ GRANT BINLOG_ADMIN ON *.* TO u1; // grants the dynamic privilege binlog_admin
 
 This same nuance applies to MySQL.
 
-## Testing Plan
+### Documentation Plan
+
+The statement reference pages for each of the affected metadata commands will need to be updated to describe dynamic privileges.
+
+There will also need to be documentation specific to `DYNAMIC` privileges to describe how it works, and the purpose of fine-grained access control.
+
+
+## Test Design
 
 Testing dynamic privileges is a little bit complex because of the various ways privileges can be inherited by users:
 
 * Direct `GRANT` to the user
 * Granting to a role that the user inherits.
 
-### Unit test
+### Functional Tests
 
 Unit tests will be added to cover the semantics around role/dynamic privilege precedence, including logical restoring in a different order.
 
-### Integration testing
+Integration testing needs to test with global kill enabled/disabled.
 
-Need to test with global kill enabled/disabled.
+### Scenario Tests
 
 The use-cases required by the DBaaS team should be validated when combined with `security-enhanced-mode`. They are:
 
@@ -245,19 +261,17 @@ The use-cases required by the DBaaS team should be validated when combined with 
 | Kill connections belong to cloudAdmin | N | Y |
 | SHUTDOWN / RESTART | N | Y (graceful shutdown on k8s for tidb-server) |
 
-## Documentation Plan
+### Compatibility Tests
 
-The statement reference pages for each of the affected metadata commands will need to be updated to describe dynamic privileges.
-
-There will also need to be documentation specific to DYNAMIC privileges to describe how it works, and the purpose of fine-grained access control.
+The introduction of `DYNAMIC` privileges is not expected to introduce any compatibility issues, because backwards compatibility is ensured. However, plugins should migrate to registering their own dynamic privileges and not rely on the use of `SUPER`. This is considered an enhancement, and not included in-scope for the initial introduction of dynamic privileges (which introduces the framework for plugins to use).
 
 ## Impact & Risks
 
-In its initial release, dynamic privilege usage will be controlled by an experimental feature flag. The implementation will be via restricting GRANT and REVOKE statements from creating dynamic privileges (it is too invasive to conditionally modify the ast visitor functionaliy).
+In its initial release, dynamic privilege usage will be controlled by an experimental feature flag. The implementation will be via restricting `GRANT` and `REVOKE` statements from creating dynamic privileges (it is too invasive to conditionally modify the ast visitor functionaliy).
 
 For backwards compatibility, the MySQL-compatible dynamic privileges will also permit `SUPER`. This helps prevent upgrade issues, such a when TiDB was bootstrapped `GRANT ALL ON *.*` would not have granted all the dynamic privileges. There might be some impact on Upgrade/Downgrade story if eventually the `BACKUP_ADMIN` privilege is used instead of `SUPER`, but for the initial release I am planning to allow either.
 
-## Alternatives
+## Investigation & Alternatives
 
 An alternative could be to support fine-grained access in a TiDB specific way. Because the MySQL functionality overlaps nicely, it doesn’t really make sense not to follow.
 The initial implementation of dynamic privileges only implements a subset of MySQL’s [dynamic privileges](https://dev.mysql.com/doc/refman/8.0/en/privileges-provided.html) (see table 6.3). Given that these are supposed to be “dynamic”, I don’t think this is a problem.
