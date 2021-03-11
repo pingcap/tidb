@@ -63,11 +63,12 @@ var ShuttingDown uint32
 // errors, since region range have changed, the request may need to split, so we
 // simply return the error to caller.
 type RegionRequestSender struct {
-	regionCache  *RegionCache
-	client       Client
-	storeAddr    string
-	rpcError     error
-	failStoreIDs map[uint64]struct{}
+	regionCache       *RegionCache
+	client            Client
+	storeAddr         string
+	rpcError          error
+	failStoreIDs      map[uint64]struct{}
+	failProxyStoreIDs map[uint64]struct{}
 	RegionRequestRuntimeStats
 }
 
@@ -565,8 +566,14 @@ func (s *RegionRequestSender) NeedReloadRegion(ctx *RPCContext) (need bool) {
 	if s.failStoreIDs == nil {
 		s.failStoreIDs = make(map[uint64]struct{})
 	}
+	if s.failProxyStoreIDs == nil {
+		s.failProxyStoreIDs = make(map[uint64]struct{})
+	}
 	s.failStoreIDs[ctx.Store.storeID] = struct{}{}
-	need = len(s.failStoreIDs) == len(ctx.Meta.Peers)
+	if ctx.ProxyStore != nil {
+		s.failProxyStoreIDs[ctx.ProxyStore.storeID] = struct{}{}
+	}
+	need = len(s.failStoreIDs)+len(s.failProxyStoreIDs) >= len(ctx.Meta.Peers)
 	if need {
 		s.failStoreIDs = nil
 	}

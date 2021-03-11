@@ -49,6 +49,8 @@ const (
 
 // RegionCacheTTLSec is the max idle time for regions in the region cache.
 var RegionCacheTTLSec int64 = 600
+
+// EnableRedirection is the flag that forwarding request via region follower to the leader is enable.
 var EnableRedirection = false
 
 const (
@@ -71,7 +73,7 @@ type AccessIndex int
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
 	workTiKVIdx    AccessIndex          // point to current work peer in meta.Peers and work store in stores(same idx) for tikv peer
-	proxyTiKVIdx   int32                // point to the tikv peer that can forward requests to the leader. -1 means not using proxy
+	proxyTiKVIdx   AccessIndex          // point to the tikv peer that can forward requests to the leader. -1 means not using proxy
 	workTiFlashIdx int32                // point to current work peer in meta.Peers and work store in stores(same idx) for tiflash peer
 	stores         []*Store             // stores in this region
 	storeEpochs    []uint32             // snapshots of store's epoch, need reload when `storeEpochs[curr] != stores[cur].fail`
@@ -328,16 +330,16 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
-	Region        RegionVerID
-	Meta          *metapb.Region
-	Peer          *metapb.Peer
-	AccessIdx     AccessIndex
-	Store         *Store
-	Addr          string
-	AccessMode    AccessMode
-	UseProxy      bool
-	ProxyStoreIdx int32
-	ProxyAddr     string
+	Region         RegionVerID
+	Meta           *metapb.Region
+	Peer           *metapb.Peer
+	AccessIdx      AccessIndex
+	Store          *Store
+	Addr           string
+	AccessMode     AccessMode
+	ProxyStore     *Store      // nil means proxy is not used
+	ProxyAccessIdx AccessIndex // valid when ProxyStore is not nil
+	ProxyAddr      string      // valid when ProxyStore is not nil
 }
 
 func (c *RPCContext) String() string {
@@ -437,33 +439,39 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 
 	var (
-		useProxy      bool
-		proxyStoreIdx int32
-		proxyAddr     string
+		proxyStore     *Store
+		proxyAddr      string
+		proxyAccessIdx AccessIndex
+		proxyStoreIdx  int
 	)
 	if EnableRedirection {
 		if atomic.LoadInt32(&store.needForwarding) == 0 {
 			regionStore.unsetProxyStoreIfNeeded(cachedRegion)
 		} else {
-			proxyStoreIdx, proxyAddr, err = c.getProxyStoreAddr(cachedRegion, store, regionStore, storeIdx)
+			proxyStore, proxyAccessIdx, proxyStoreIdx, err = c.getProxyStore(bo, cachedRegion, store, regionStore, accessIdx)
 			if err != nil {
 				return nil, err
 			}
-			useProxy = true
+			if proxyStore != nil {
+				proxyAddr, err = c.getStoreAddr(bo, cachedRegion, proxyStore, proxyStoreIdx)
+				if err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 
 	return &RPCContext{
-		Region:        id,
-		Meta:          cachedRegion.meta,
-		Peer:          peer,
-		AccessIdx:     accessIdx,
-		Store:         store,
-		Addr:          addr,
-		AccessMode:    TiKVOnly,
-		UseProxy:      useProxy,
-		ProxyStoreIdx: proxyStoreIdx,
-		ProxyAddr:     proxyAddr,
+		Region:         id,
+		Meta:           cachedRegion.meta,
+		Peer:           peer,
+		AccessIdx:      accessIdx,
+		Store:          store,
+		Addr:           addr,
+		AccessMode:     TiKVOnly,
+		ProxyStore:     proxyStore,
+		ProxyAccessIdx: proxyAccessIdx,
+		ProxyAddr:      proxyAddr,
 	}, nil
 }
 
@@ -623,7 +631,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				return
 			}
 
-			if !ctx.UseProxy {
+			if ctx.ProxyStore == nil {
 				// invalidate regions in store.
 				epoch := rs.storeEpochs[storeIdx]
 				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
@@ -643,10 +651,10 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 
 		// try next peer to found new leader.
 		if ctx.AccessMode == TiKVOnly {
-			if startForwarding || ctx.UseProxy {
-				var currentProxyIdx int32 = -1
-				if ctx.UseProxy {
-					currentProxyIdx = ctx.ProxyStoreIdx
+			if startForwarding || ctx.ProxyStore != nil {
+				var currentProxyIdx AccessIndex = -1
+				if ctx.ProxyStore != nil {
+					currentProxyIdx = ctx.ProxyAccessIdx
 				}
 				rs.switchNextProxyStore(r, currentProxyIdx)
 			} else {
@@ -1175,23 +1183,27 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 	}
 }
 
-func (c *RegionCache) getProxyStoreAddr(region *Region, store *Store, rs *RegionStore, storeIdx int) (proxyStoreIdx int32, addr string, err error) {
+func (c *RegionCache) getProxyStore(bo *Backoffer, region *Region, store *Store, rs *RegionStore, workStoreIdx AccessIndex) (proxyStore *Store, proxyAccessIdx AccessIndex, proxyStoreIdx int, err error) {
 	if !EnableRedirection || store.storeType != TiKV || atomic.LoadInt32(&store.needForwarding) == 0 {
 		return
 	}
 
 	if rs.proxyTiKVIdx >= 0 {
-		return rs.proxyTiKVIdx, rs.stores[proxyStoreIdx].addr, nil
+		storeIdx, proxyStore := rs.accessStore(TiKVOnly, rs.proxyTiKVIdx)
+		return proxyStore, rs.proxyTiKVIdx, storeIdx, err
 	}
 
-	for index, s := range rs.stores {
-		if index != storeIdx && s.storeType == TiKV || atomic.LoadInt32(&s.needForwarding) == 0 {
-			rs.setProxyStoreIdx(region, int32(index))
-			return int32(index), s.addr, nil
+	tikvNum := rs.accessStoreNum(TiKVOnly)
+	for index := 0; index < tikvNum; index++ {
+		// Skip work store which is the actual store to be accessed
+		if index == int(workStoreIdx) {
+			continue
 		}
+		storeIdx, store := rs.accessStore(TiKVOnly, AccessIndex(index))
+		return store, AccessIndex(index), storeIdx, nil
 	}
 
-	return -1, "", errors.New("the region leader is disconnected and no store is available ")
+	return nil, 0, 0, errors.New("the region leader is disconnected and no store is available ")
 }
 
 func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx int) (addr string) {
@@ -1468,24 +1480,24 @@ func (r *RegionStore) switchNextTiKVPeer(rr *Region, currentPeerIdx AccessIndex)
 	rr.compareAndSwapStore(r, newRegionStore)
 }
 
-func (r *RegionStore) switchNextProxyStore(rr *Region, currentProxyIdx int32) {
+func (r *RegionStore) switchNextProxyStore(rr *Region, currentProxyIdx AccessIndex) {
 	// The default value of `currentProxyIdx` is -1 which means proxy won't be used. Calling this function with -1 will
 	// increase the proxy store index to 0.
 
 	if r.proxyTiKVIdx != currentProxyIdx {
 		return
 	}
-	nextIdx := (currentProxyIdx + 1) % int32(r.accessStoreNum(TiKVOnly))
+	nextIdx := (currentProxyIdx + 1) % AccessIndex(r.accessStoreNum(TiKVOnly))
 	// skips the current workTiKVIdx
-	if nextIdx == int32(r.workTiKVIdx) {
-		nextIdx = (currentProxyIdx + 1) % int32(r.accessStoreNum(TiKVOnly))
+	if nextIdx == r.workTiKVIdx {
+		nextIdx = (currentProxyIdx + 1) % AccessIndex(r.accessStoreNum(TiKVOnly))
 	}
 	newRegionStore := r.clone()
 	newRegionStore.proxyTiKVIdx = nextIdx
 	rr.compareAndSwapStore(r, newRegionStore)
 }
 
-func (r *RegionStore) setProxyStoreIdx(rr *Region, idx int32) {
+func (r *RegionStore) setProxyStoreIdx(rr *Region, idx AccessIndex) {
 	if r.proxyTiKVIdx == idx {
 		return
 	}
