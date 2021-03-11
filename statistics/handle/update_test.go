@@ -41,6 +41,26 @@ import (
 )
 
 var _ = Suite(&testStatsSuite{})
+var _ = SerialSuites(&testSerialStatsSuite{})
+
+type testSerialStatsSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+}
+
+func (s *testSerialStatsSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSerialStatsSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
 
 type testStatsSuite struct {
 	store kv.Storage
@@ -373,9 +393,8 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a varchar(20))")
+}
 
-<<<<<<< HEAD
-=======
 func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -409,106 +428,6 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='00:00 +0000'"))
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='23:59 +0000'"))
 	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
-}
-
-func (s *testSerialStatsSuite) TestAutoAnalyzeOnChangeAnalyzeVer(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, index idx(a))")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec("set @@global.tidb_analyze_version = 1")
-	do := s.do
->>>>>>> 579cf90af... statistics: fix a case that auto-analyze is triggered outside its time range (#23214)
-	handle.AutoAnalyzeMinCnt = 0
-	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
-	defer func() {
-		handle.AutoAnalyzeMinCnt = 1000
-		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
-	}()
-
-	do := s.do
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
-
-	h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(h.Update(is), IsNil)
-	stats := h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(0))
-
-	_, err = testKit.Exec("insert into t values ('ss'), ('ss'), ('ss'), ('ss'), ('ss')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(5))
-	c.Assert(stats.ModifyCount, Equals, int64(0))
-	for _, item := range stats.Columns {
-		// TotColSize = 5*(2(length of 'ss') + 1(size of len byte)).
-		c.Assert(item.TotColSize, Equals, int64(15))
-		break
-	}
-
-	// Test that even if the table is recently modified, we can still analyze the table.
-	h.SetLease(time.Second)
-	defer func() { h.SetLease(0) }()
-	_, err = testKit.Exec("insert into t values ('fff')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(6))
-	c.Assert(stats.ModifyCount, Equals, int64(1))
-
-	_, err = testKit.Exec("insert into t values ('fff')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(7))
-	c.Assert(stats.ModifyCount, Equals, int64(0))
-
-	_, err = testKit.Exec("insert into t values ('eee')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(8))
-	// Modify count is non-zero means that we do not analyze the table.
-	c.Assert(stats.ModifyCount, Equals, int64(1))
-	for _, item := range stats.Columns {
-		// TotColSize = 27, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
-		c.Assert(item.TotColSize, Equals, int64(27))
-		break
-	}
-
-	testKit.MustExec("analyze table t")
-	_, err = testKit.Exec("create index idx on t(a)")
-	c.Assert(err, IsNil)
-	is = do.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo = tbl.Meta()
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(8))
-	c.Assert(stats.ModifyCount, Equals, int64(0))
-	hg, ok := stats.Indices[tableInfo.Indices[0].ID]
-	c.Assert(ok, IsTrue)
-	c.Assert(hg.NDV, Equals, int64(3))
-	c.Assert(hg.Len(), Equals, 3)
 }
 
 func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {

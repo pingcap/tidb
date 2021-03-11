@@ -731,16 +731,7 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
-<<<<<<< HEAD
-func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
-=======
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
-	err := h.UpdateSessionVar()
-	if err != nil {
-		logutil.BgLogger().Error("[stats] update analyze version for auto analyze session failed", zap.Error(err))
-		return false
-	}
->>>>>>> 579cf90af... statistics: fix a case that auto-analyze is triggered outside its time range (#23214)
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
@@ -757,22 +748,8 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
-<<<<<<< HEAD
 				sql := fmt.Sprintf("analyze table %s", tblName)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
-=======
-				sql := "analyze table %n.%n"
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
-				if analyzed {
-					// analyze one table at a time to let it get the freshest parameters.
-					// others will be analyzed next round which is just 3s later.
-					return true
-				}
-				continue
-			}
-			if pruneMode == variable.Dynamic {
-				analyzed := h.autoAnalyzePartitionTable(tblInfo, pi, db, start, end, autoAnalyzeRatio)
->>>>>>> 579cf90af... statistics: fix a case that auto-analyze is triggered outside its time range (#23214)
 				if analyzed {
 					return true
 				}
