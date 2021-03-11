@@ -881,7 +881,7 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		}
 	case CmdMPPCancel:
 		// it cannot use the ctx with cancel(), otherwise this cmd will fail.
-		resp.Resp, err = client.CancelMPPTask(context.Background(), req.CancelMPPTask())
+		resp.Resp, err = client.CancelMPPTask(ctx, req.CancelMPPTask())
 	case CmdCopStream:
 		var streamClient tikvpb.Tikv_CoprocessorStreamClient
 		streamClient, err = client.CoprocessorStream(ctx, req.Cop())

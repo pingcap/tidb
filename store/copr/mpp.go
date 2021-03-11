@@ -123,21 +123,31 @@ type mppIterator struct {
 
 	respChan chan *mppResponse
 
-	rpcCancel *tikv.RPCCanceller
+	cancelFunc context.CancelFunc
 
 	wg sync.WaitGroup
 
 	closed uint32
 
 	vars *kv.Variables
+
+	mu sync.Mutex
 }
 
 func (m *mppIterator) run(ctx context.Context) {
 	for _, task := range m.tasks {
-		if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
+		if atomic.LoadUint32(&m.closed) == 1 {
 			break
 		}
-		task.State = kv.MppTaskRunning
+		m.mu.Lock()
+		switch task.State {
+		case kv.MppTaskReady:
+			task.State = kv.MppTaskRunning
+			m.mu.Unlock()
+		default:
+			m.mu.Unlock()
+			break
+		}
 		m.wg.Add(1)
 		bo := tikv.NewBackoffer(ctx, copNextMaxBackoff)
 		go m.handleDispatchReq(ctx, bo, task)
@@ -148,6 +158,7 @@ func (m *mppIterator) run(ctx context.Context) {
 
 func (m *mppIterator) sendError(err error) {
 	m.sendToRespCh(&mppResponse{err: err})
+	m.cancelMppTasks()
 }
 
 func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
@@ -238,9 +249,17 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 }
 
 // NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution on TiFlash will finally stop after some minutes.
-func (m *mppIterator) cancelMppTasks(bo *tikv.Backoffer, meta *mpp.TaskMeta) {
+// This function is exclusively called, and only the first call succeeds sending tasks and setting all tasks as cancelled, while others will not work.
+func (m *mppIterator) cancelMppTasks() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	killReq := &mpp.CancelTaskRequest{
-		Meta: meta,
+		Meta: &mpp.TaskMeta{
+			StartTs:     m.startTs,
+			TaskId:      0,
+			PartitionId: 0,
+			Address:     "",
+		},
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
@@ -251,16 +270,18 @@ func (m *mppIterator) cancelMppTasks(bo *tikv.Backoffer, meta *mpp.TaskMeta) {
 		// get the store address of running tasks
 		if task.State == kv.MppTaskRunning && !usedStoreAddrs[task.Meta.GetAddress()] {
 			usedStoreAddrs[task.Meta.GetAddress()] = true
+		} else if task.State == kv.MppTaskCancelled {
+			return
 		}
 		task.State = kv.MppTaskCancelled
 	}
 
 	// send cancel cmd to all stores where tasks run
 	for addr := range usedStoreAddrs {
-		_, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), addr, wrappedReq, tikv.ReadTimeoutUltraLong)
-		logutil.BgLogger().Debug("cancel task ", zap.Uint64("query id ", meta.GetStartTs()), zap.String(" on addr ", addr))
+		_, err := m.store.GetTiKVClient().SendRequest(context.Background(), addr, wrappedReq, tikv.ReadTimeoutUltraLong)
+		logutil.BgLogger().Debug("cancel task ", zap.Uint64("query id ", m.startTs), zap.String(" on addr ", addr))
 		if err != nil {
-			logutil.BgLogger().Error("cancel task error: ", zap.Error(err), zap.Uint64(" for query id ", meta.GetStartTs()), zap.String(" on addr ", addr))
+			logutil.BgLogger().Error("cancel task error: ", zap.Error(err), zap.Uint64(" for query id ", m.startTs), zap.String(" on addr ", addr))
 		}
 	}
 }
@@ -283,7 +304,6 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 
 	if err != nil {
 		m.sendError(err)
-		m.cancelMppTasks(bo, taskMeta)
 		return
 	}
 
@@ -299,14 +319,6 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 		err := m.handleMPPStreamResponse(bo, resp, req)
 		if err != nil {
 			m.sendError(err)
-			m.cancelMppTasks(bo, taskMeta)
-			return
-		}
-
-		if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
-			err = tikv.ErrQueryInterrupted
-			m.sendError(err)
-			m.cancelMppTasks(bo, taskMeta)
 			return
 		}
 
@@ -323,11 +335,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 				}
 			}
-			m.sendToRespCh(&mppResponse{
-				err: tikv.ErrTiFlashServerTimeout,
-			})
-
-			m.cancelMppTasks(bo, taskMeta)
+			m.sendError(tikv.ErrTiFlashServerTimeout)
 			return
 		}
 	}
@@ -338,7 +346,7 @@ func (m *mppIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&m.closed, 0, 1) {
 		close(m.finishCh)
 	}
-	m.rpcCancel.CancelAll()
+	m.cancelFunc()
 	m.wg.Wait()
 	return nil
 }
@@ -419,19 +427,18 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
-// DispatchMPPTasks dispatches all the mpp task and waits for the reponses.
+// DispatchMPPTasks dispatches all the mpp task and waits for the responses.
 func (c *MPPClient) DispatchMPPTasks(ctx context.Context, vars *kv.Variables, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
+	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
-		store:     c.store,
-		tasks:     dispatchReqs,
-		finishCh:  make(chan struct{}),
-		rpcCancel: tikv.NewRPCanceller(),
-		respChan:  make(chan *mppResponse, 4096),
-		startTs:   dispatchReqs[0].StartTs,
-		vars:      vars,
+		store:      c.store,
+		tasks:      dispatchReqs,
+		finishCh:   make(chan struct{}),
+		cancelFunc: cancelFunc,
+		respChan:   make(chan *mppResponse, 4096),
+		startTs:    dispatchReqs[0].StartTs,
+		vars:       vars,
 	}
-	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, iter.rpcCancel)
-
-	go iter.run(ctx)
+	go iter.run(ctxChild)
 	return iter
 }
