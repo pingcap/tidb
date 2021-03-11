@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -240,7 +241,13 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		m.sendError(errors.New(realResp.Error.Msg))
 		return
 	}
-
+	failpoint.Inject("mppExitFromErrors", func(val failpoint.Value) {
+		if val.(bool) && !req.IsRoot {
+			time.Sleep(1 * time.Second)
+			m.sendError(tikv.ErrTiFlashServerTimeout)
+			return
+		}
+	})
 	if !req.IsRoot {
 		return
 	}
@@ -254,12 +261,7 @@ func (m *mppIterator) cancelMppTasks() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	killReq := &mpp.CancelTaskRequest{
-		Meta: &mpp.TaskMeta{
-			StartTs:     m.startTs,
-			TaskId:      0,
-			PartitionId: 0,
-			Address:     "",
-		},
+		Meta: &mpp.TaskMeta{StartTs: m.startTs},
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
@@ -348,6 +350,11 @@ func (m *mppIterator) Close() error {
 	}
 	m.cancelFunc()
 	m.wg.Wait()
+	failpoint.Inject("mppExitsDone", func(val failpoint.Value) {
+		if val.(bool) {
+			atomic.StoreUint32(m.vars.Killed, 20)
+		}
+	})
 	return nil
 }
 

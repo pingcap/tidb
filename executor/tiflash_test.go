@@ -309,3 +309,48 @@ func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
 	wg.Wait()
 	c.Assert(failpoint.Disable(hang), IsNil)
 }
+
+// all goroutines exit if one goroutine hangs but another return errors
+func (s *tiflashTestSuite) TestMppGoroutinesExitFromErrors(c *C) {
+	// mock non-root tasks return error
+	var mockTaskError = "github.com/pingcap/tidb/store/copr/mppExitFromErrors"
+	// mock root tasks hang
+	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
+	// check all goroutines done
+	var exitDone = "github.com/pingcap/tidb/store/copr/mppExitsDone"
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("insert into t values(3,0)")
+
+	tk.MustExec("create table t1(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "t1")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t1 values(1,0)")
+	tk.MustExec("insert into t1 values(2,0)")
+	tk.MustExec("insert into t1 values(3,0)")
+	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 0)
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	c.Assert(failpoint.Enable(exitDone, `return(true)`), IsNil)
+	c.Assert(failpoint.Enable(mockTaskError, `return(true)`), IsNil)
+	c.Assert(failpoint.Enable(hang, `return(true)`), IsNil)
+
+	// generate 2 root tasks, one will hang and another will return errors
+	err = tk.QueryToErr("select count(*) from t as t1 , t where t1.a = t.a")
+	c.Assert(err, NotNil)
+	// check that all goroutine exit normally.
+	c.Assert(atomic.LoadUint32(&tk.Se.GetSessionVars().Killed), Equals, uint32(20))
+	c.Assert(failpoint.Disable(exitDone), IsNil)
+	c.Assert(failpoint.Disable(mockTaskError), IsNil)
+	c.Assert(failpoint.Disable(hang), IsNil)
+}
