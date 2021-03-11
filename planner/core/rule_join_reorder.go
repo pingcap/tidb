@@ -91,11 +91,15 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			return nil, err
 		}
 		schemaChanged := false
-		originalSchemaColLen := len(originalSchema.Columns)
-		for i, col := range p.Schema().Columns {
-			if i >= originalSchemaColLen || !col.Equal(nil, originalSchema.Columns[i]) {
-				schemaChanged = true
-				break
+		// We compare the length of the column in the schema first.
+		if len(p.Schema().Columns) > len(originalSchema.Columns) {
+			schemaChanged = true
+		} else {
+			for i, col := range p.Schema().Columns {
+				if !col.Equal(nil, originalSchema.Columns[i]) {
+					schemaChanged = true
+					break
+				}
 			}
 		}
 		if schemaChanged {
