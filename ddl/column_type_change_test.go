@@ -1732,6 +1732,7 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("alter table t add index(b)")
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit=3")
 
 	failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`)
 	defer func() {
@@ -1747,7 +1748,7 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 		if jobID != 0 {
 			return
 		}
-		if "drop index" == job.Type.String() {
+		if job.Type == model.ActionDropIndex {
 			jobID = job.ID
 		}
 	}
@@ -1757,7 +1758,7 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	// write-reorg can't be cancelled, so it will be converted to running state and try again (dead loop).
 	_, err := tk.Exec("alter table t drop index b")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation 512, cancelled")
+	c.Assert(err.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation 3, cancelled")
 	c.Assert(jobID > 0, Equals, true)
 
 	// Verification of the history job state.
@@ -1769,6 +1770,6 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 		return errors2.Trace(err1)
 	})
 	c.Assert(err, IsNil)
-	c.Assert(job.ErrorCount, Equals, int64(513))
-	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation 512, cancelled")
+	c.Assert(job.ErrorCount, Equals, int64(4))
+	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation 3, cancelled")
 }
