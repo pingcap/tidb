@@ -236,6 +236,11 @@ type topNRows struct {
 	currSize  uint64
 	limitSize uint64
 	sepSize   uint64
+	// If sep is truncated, we need to append part of sep to result.
+	// In the following example, session.group_concat_max_len is 10 and sep is '---'.
+	// ('---', 'ccc') should be poped from heap, so '-' should be appended to result.
+	// eg: 'aaa---bbb---ccc' -> 'aaa---bbb-'
+	isSepTruncated bool
 }
 
 func (h topNRows) Len() int {
@@ -296,6 +301,7 @@ func (h *topNRows) tryToAdd(row sortRow) (truncated bool) {
 		} else {
 			h.currSize -= uint64(h.rows[0].buffer.Len()) + h.sepSize
 			heap.Pop(h)
+			h.isSepTruncated = true
 		}
 	}
 	return true
@@ -316,10 +322,11 @@ func (h *topNRows) concat(sep string, truncated bool) string {
 		}
 		buffer.Write(row.buffer.Bytes())
 	}
-	if truncated && uint64(buffer.Len()) < h.limitSize {
-		// append the last separator, because the last separator may be truncated in tryToAdd.
+	if h.isSepTruncated {
 		buffer.WriteString(sep)
-		buffer.Truncate(int(h.limitSize))
+		if uint64(buffer.Len()) > h.limitSize {
+			buffer.Truncate(int(h.limitSize))
+		}
 	}
 	return buffer.String()
 }
@@ -349,10 +356,11 @@ func (e *groupConcatOrder) AllocPartialResult() PartialResult {
 	}
 	p := &partialResult4GroupConcatOrder{
 		topN: &topNRows{
-			desc:      desc,
-			currSize:  0,
-			limitSize: e.maxLen,
-			sepSize:   uint64(len(e.sep)),
+			desc:           desc,
+			currSize:       0,
+			limitSize:      e.maxLen,
+			sepSize:        uint64(len(e.sep)),
+			isSepTruncated: false,
 		},
 	}
 	return PartialResult(p)
@@ -449,10 +457,11 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() PartialResult {
 	}
 	p := &partialResult4GroupConcatOrderDistinct{
 		topN: &topNRows{
-			desc:      desc,
-			currSize:  0,
-			limitSize: e.maxLen,
-			sepSize:   uint64(len(e.sep)),
+			desc:           desc,
+			currSize:       0,
+			limitSize:      e.maxLen,
+			sepSize:        uint64(len(e.sep)),
+			isSepTruncated: false,
 		},
 		valSet: set.NewStringSet(),
 	}
