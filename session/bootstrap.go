@@ -474,7 +474,7 @@ const (
 	version64 = 64
 	// version65 add mysql.stats_fm_sketch table.
 	version65 = 65
-	// version66 open the feature `track_aggregate_memory_usage` by default.
+	// version66 enables the feature `track_aggregate_memory_usage` by default.
 	version66 = 66
 
 	// please make sure this is the largest version
