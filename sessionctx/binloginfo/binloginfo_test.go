@@ -619,8 +619,12 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 			"create table t1(id int, v int, primary key(a) /*T![clustered_index] clustered */ );",
 		},
 		{
-			"create table t1(id int primary key clustered, v int);", // CDC upstream => downstream never produce this
 			"create table t1(id int primary key clustered, v int);",
+			"create table t1(id int primary key /*T![clustered_index] clustered */ , v int);",
+		},
+		{
+			"alter table t add primary key(a) clustered;",
+			"alter table t add primary key(a) /*T![clustered_index] clustered */ ;",
 		},
 		{
 			"create table t1 (id int, a varchar(255), primary key (a, b) nonclustered);",

@@ -68,5 +68,5 @@ var FeatureIDPatterns = map[featureID]*regexp.Regexp{
 	FeatureIDAutoRandom:     regexp.MustCompile(`(?P<REPLACE>(?i)AUTO_RANDOM\b\s*(\s*\(\s*\d+\s*\)\s*)?)`),
 	FeatureIDAutoIDCache:    regexp.MustCompile(`(?P<REPLACE>(?i)AUTO_ID_CACHE\s*=?\s*\d+\s*)`),
 	FeatureIDAutoRandomBase: regexp.MustCompile(`(?P<REPLACE>(?i)AUTO_RANDOM_BASE\s*=?\s*\d+\s*)`),
-	FeatureClusteredIndex:   regexp.MustCompile(`(?i)PRIMARY\s+KEY\s*\(.*\)\s+(?P<REPLACE>(NON)?CLUSTERED\b)`),
+	FeatureClusteredIndex:   regexp.MustCompile(`(?i)PRIMARY\s+KEY(\s*\(.*\))?\s+(?P<REPLACE>(NON)?CLUSTERED\b)`),
 }
