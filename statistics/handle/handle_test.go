@@ -879,6 +879,66 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
 	s.checkForGlobalStatsWithOpts(c, tk, "p1", 100, 200)
 }
 
+func (s *testStatsSuite) TestGlobalStatsHealthy(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`
+create table t (
+	a int,
+	key(a)
+)
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20)
+)`)
+
+	checkModifyAndCount := func(gModify, gCount, p0Modify, p0Count, p1Modify, p1Count int) {
+		rs := tk.MustQuery("show stats_meta").Rows()
+		c.Assert(rs[0][4].(string), Equals, fmt.Sprintf("%v", gModify))  // global.modify_count
+		c.Assert(rs[0][5].(string), Equals, fmt.Sprintf("%v", gCount))   // global.row_count
+		c.Assert(rs[1][4].(string), Equals, fmt.Sprintf("%v", p0Modify)) // p0.modify_count
+		c.Assert(rs[1][5].(string), Equals, fmt.Sprintf("%v", p0Count))  // p0.row_count
+		c.Assert(rs[2][4].(string), Equals, fmt.Sprintf("%v", p1Modify)) // p1.modify_count
+		c.Assert(rs[2][5].(string), Equals, fmt.Sprintf("%v", p1Count))  // p1.row_count
+	}
+	checkHealthy := func(gH, p0H, p1H int) {
+		tk.MustQuery("show stats_healthy").Check(testkit.Rows(
+			fmt.Sprintf("test t global %v", gH),
+			fmt.Sprintf("test t p0 %v", p0H),
+			fmt.Sprintf("test t p1 %v", p1H)))
+	}
+
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("analyze table t")
+	checkModifyAndCount(0, 0, 0, 0, 0, 0)
+	checkHealthy(100, 100, 100)
+
+	tk.MustExec("insert into t values (1), (2)") // update p0
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+	checkModifyAndCount(2, 2, 2, 2, 0, 0)
+	checkHealthy(0, 0, 100)
+
+	tk.MustExec("insert into t values (11), (12), (13), (14)") // update p1
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+	checkModifyAndCount(6, 6, 2, 2, 4, 4)
+	checkHealthy(0, 0, 0)
+
+	tk.MustExec("analyze table t")
+	checkModifyAndCount(0, 6, 0, 2, 0, 4)
+	checkHealthy(100, 100, 100)
+
+	tk.MustExec("insert into t values (4), (5), (15), (16)") // update p0 and p1 together
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+	checkModifyAndCount(4, 10, 2, 4, 2, 6)
+	checkHealthy(60, 50, 66)
+}
+
 func (s *testStatsSuite) TestGlobalStatsData(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -1668,6 +1728,100 @@ func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	err = do.StatsHandle().GCIndexUsage()
 	c.Assert(err, IsNil)
 	tk.MustQuery(querySQL).Check(testkit.Rows("0"))
+}
+
+func (s *statsSerialSuite) TestFeedbackWithGlobalStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_analyze_version = 1")
+
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriNumber := statistics.MaxNumberOfRanges
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		statistics.MaxNumberOfRanges = oriNumber
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
+	}()
+	// Case 1: You can't set tidb_analyze_version to 2 if feedback is enabled.
+	// Note: if we want to set @@tidb_partition_prune_mode = 'dynamic'. We must set tidb_analyze_version to 2 first. We have already tested this.
+	statistics.FeedbackProbability.Store(1)
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
+	testKit.MustExec("set @@tidb_analyze_version = 2")
+	testKit.MustQuery("show warnings").Check(testkit.Rows(`Error 1105 variable tidb_analyze_version not updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback`))
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
+
+	h := s.do.StatsHandle()
+	var err error
+	// checkFeedbackOnPartitionTable is used to check whether the statistics are the same as before.
+	checkFeedbackOnPartitionTable := func(statsBefore *statistics.Table, tblInfo *model.TableInfo) {
+		h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+		err = h.DumpStatsFeedbackToKV()
+		c.Assert(err, IsNil)
+		err = h.HandleUpdateStats(s.do.InfoSchema())
+		c.Assert(err, IsNil)
+		statsTblAfter := h.GetTableStats(tblInfo)
+		// assert that statistics not changed
+		// the feedback can not work for the partition table in both static and dynamic mode
+		assertTableEqual(c, statsBefore, statsTblAfter)
+	}
+
+	// Case 2: Feedback wouldn't be applied on version 2 and global-level statistics.
+	statistics.FeedbackProbability.Store(0)
+	testKit.MustExec("set @@tidb_analyze_version = 2")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("2"))
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx(b)) PARTITION BY HASH(a) PARTITIONS 2;")
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t values (1,2),(2,2),(4,5),(2,3),(3,4)")
+	}
+	testKit.MustExec("analyze table t with 0 topn")
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	testKit.MustExec("analyze table t")
+	err = h.Update(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	statsTblBefore := h.GetTableStats(tblInfo)
+	statistics.FeedbackProbability.Store(1)
+	// make the statistics inaccurate.
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t values (3,4), (3,4), (3,4), (3,4), (3,4)")
+	}
+	// trigger feedback
+	testKit.MustExec("select b from t partition(p0) use index(idx) where t.b <= 3;")
+	testKit.MustExec("select b from t partition(p1) use index(idx) where t.b <= 3;")
+	testKit.MustExec("select b from t use index(idx) where t.b <= 3 order by b;")
+	testKit.MustExec("select b from t use index(idx) where t.b <= 3;")
+	checkFeedbackOnPartitionTable(statsTblBefore, tblInfo)
+
+	// Case 3: Feedback is also not effective on version 1 and partition-level statistics.
+	testKit.MustExec("set tidb_analyze_version = 1")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	testKit.MustExec("create table t1 (a bigint(64), b bigint(64), index idx(b)) PARTITION BY HASH(a) PARTITIONS 2")
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t1 values (1,2),(2,2),(4,5),(2,3),(3,4)")
+	}
+	testKit.MustExec("analyze table t1 with 0 topn")
+	// make the statistics inaccurate.
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t1 values (3,4), (3,4), (3,4), (3,4), (3,4)")
+	}
+	is = s.do.InfoSchema()
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tblInfo = table.Meta()
+	statsTblBefore = h.GetTableStats(tblInfo)
+	// trigger feedback
+	testKit.MustExec("select b from t1 partition(p0) use index(idx) where t1.b <= 3;")
+	testKit.MustExec("select b from t1 partition(p1) use index(idx) where t1.b <= 3;")
+	testKit.MustExec("select b from t1 use index(idx) where t1.b <= 3 order by b;")
+	testKit.MustExec("select b from t1 use index(idx) where t1.b <= 3;")
+	checkFeedbackOnPartitionTable(statsTblBefore, tblInfo)
 }
 
 func (s *testStatsSuite) TestExtendedStatsPartitionTable(c *C) {
