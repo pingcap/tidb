@@ -146,7 +146,7 @@ KEY `aid_c2` (`aid`,`c2`)
 );
 desc select /*+ USE_INDEX_MERGE(t, aid_c1, aid_c2) */ * from t where (aid = 1 and c1='aaa') or (aid = 2 and c2='bbb');
 id	estRows	task	access object	operator info
-IndexMerge_8	269.49	root		
+IndexMerge_8	8.08	root		
 ├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
 ├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t, index:aid_c2(aid, c2)	range:[2 "bbb",2 "bbb"], keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	269.49	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	8.08	cop[tikv]	table:t	keep order:false, stats:pseudo
