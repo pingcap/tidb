@@ -670,7 +670,7 @@ func (w *worker) countForErrorOrPanic(err error, job *model.Job) error {
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runDDLJob", w),
 		func() {
-			w.countForErrorOrPanic(nil, job)
+			err = w.countForErrorOrPanic(nil, job)
 		}, false)
 
 	// Mock for run ddl job panic.
