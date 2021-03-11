@@ -2533,13 +2533,13 @@ func (s *testIntegrationSuite) TestIssue23030(c *C) {
 	tk.MustExec("DROP VIEW IF EXISTS `view_10`, `view_8`;")
 	tk.MustExec("create definer='root'@'localhost' VIEW `view_10` (`col_1`, `col_2`, `col_3`, `col_4`, `col_5`) AS SELECT `tmp1`.`id_4` AS `col_1`,`tmp1`.`col_int_4` AS `col_2`,`tmp1`.`col_varchar_4` AS `col_3`,`tmp2`.`id_1` AS `col_4`,`tmp2`.`col_float_1` AS `col_5` FROM `table_int_varchar` AS `tmp1` RIGHT JOIN `table_float` AS `tmp2` ON !(NULLIF(0e+00, -1e+00)) WHERE (_UTF8MB4'xwJ]6]v' XOR `tmp1`.`col_int_4`) IS NULL ORDER BY `col_1`,`col_2`,`col_3`,`col_4`,`col_5` LIMIT 21,6;")
 	tk.MustExec("create definer='root'@'localhost' VIEW `view_8` (`col_1`, `col_2`, `col_3`, `col_4`) AS SELECT `tmp1`.`id_2` AS `col_1`,`tmp1`.`col_varchar_2` AS `col_2`,`tmp2`.`id_0` AS `col_3`,`tmp2`.`col_int_0` AS `col_4` FROM `table_varchar` AS `tmp1` RIGHT JOIN `table_int` AS `tmp2` ON (_UTF8MB4'1990-03-30 12:34:19' AND _UTF8MB4'2010-08-21 00:45:39') IS NOT NULL WHERE (IF(1601033895098770559, `tmp1`.`id_2`, `tmp1`.`id_2`)) IS NOT NULL ORDER BY `col_1`,`col_2`,`col_3`,`col_4` LIMIT 236,14;")
-	tk.MustQuery("SELECT count(1) FROM view_10 AS tmp1 JOIN view_8 AS tmp2  WHERE (tmp2.col_1);").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT count(1) FROM view_10 AS tmp1 JOIN view_8 AS tmp2  WHERE (tmp2.col_1);").Check(testkit.Rows("0")) // work fine without any error
 
 	tk.MustExec("INSERT INTO `table_float` VALUES (5065705155861676033,-0.1),(5065705155861676034,0.5),(5065705155861676035,NULL),(5065705155861676036,-0.1),(5065705155861676037,NULL),(5065705155861676038,-1),(5065705155861676039,0.5),(5065705155861676040,1.5),(5065705155861676041,-0.1),(5065705155861676042,NULL),(5065705155861676043,NULL),(5065705155861676044,-1),(5065705155861676045,1),(5065705155861676046,-1),(5065705155861676047,1.5),(5065705155861676048,NULL);")
 	tk.MustExec("INSERT INTO `table_int` VALUES (29,1),(30,1),(33,1),(40,1),(32,65535),(27,-1),(28,0),(31,0),(34,0),(35,0),(36,0),(37,-1),(38,0),(39,-1),(41,-1);")
 	tk.MustExec("INSERT INTO `table_int_varchar` VALUES (1,NULL,NULL),(2,0,NULL),(3,-1,NULL),(4,65535,'0000-00-00 00:00:00'),(5,1,NULL),(6,NULL,' '),(7,NULL,'-0'),(8,1,'-0'),(9,NULL,NULL),(10,65535,'0000-00-00 00:00:00'),(11,NULL,'');")
 	tk.MustExec("INSERT INTO `table_varchar` VALUES (1,''),(2,''),(3,''),(4,''),(5,''),(6,''),(7,''),(8,''),(9,''),(10,''),(11,''),(12,''),(13,''),(14,''),(15,''),(16,''),(17,''),(18,'');")
-	tk.MustQuery("SELECT count(1) FROM view_10 AS tmp1 JOIN view_8 AS tmp2  WHERE (tmp2.col_1);").Check(testkit.Rows("84"))
+	tk.MustQuery("SELECT count(1) FROM view_10 AS tmp1 JOIN view_8 AS tmp2  WHERE (tmp2.col_1);").Check(testkit.Rows("84")) // work fine without any error
 }
 
 func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
