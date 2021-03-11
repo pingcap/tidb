@@ -120,16 +120,16 @@ func (c CommitterProbe) GetOnePCCommitTS() uint64 {
 	return c.onePCCommitTS
 }
 
-// IsTTLUninititlized returns if the TTL manager is uninitialized.
-func (s CommitterProbe) IsTTLUninitialized() bool {
-	return s.ttlManager.state == stateUninitialized
+// IsTTLUninitialized  returns if the TTL manager is uninitialized.
+func (c CommitterProbe) IsTTLUninitialized() bool {
+	return c.ttlManager.state == stateUninitialized
 }
 
 // GetUndeterminedErr returns the encountered undetermined error (if any).
-func (s CommitterProbe) GetUndeterminedErr() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.mu.undeterminedErr
+func (c CommitterProbe) GetUndeterminedErr() error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.mu.undeterminedErr
 }
 
 // LockProbe exposes some lock utilities for testing purpose.
