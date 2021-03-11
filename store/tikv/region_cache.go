@@ -1490,7 +1490,7 @@ func (r *RegionStore) switchNextProxyStore(rr *Region, currentProxyIdx AccessInd
 	nextIdx := (currentProxyIdx + 1) % AccessIndex(r.accessStoreNum(TiKVOnly))
 	// skips the current workTiKVIdx
 	if nextIdx == r.workTiKVIdx {
-		nextIdx = (currentProxyIdx + 1) % AccessIndex(r.accessStoreNum(TiKVOnly))
+		nextIdx = (nextIdx + 1) % AccessIndex(r.accessStoreNum(TiKVOnly))
 	}
 	newRegionStore := r.clone()
 	newRegionStore.proxyTiKVIdx = nextIdx
