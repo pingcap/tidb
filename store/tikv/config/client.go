@@ -62,7 +62,7 @@ type TiKVClient struct {
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
 	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
-
+	// EnableRedirection controls whether forwarding requests via region follower to leader is allowed.
 	EnableRedirection bool `toml:"enable-redirection" json:"enable-redirection"`
 }
 
