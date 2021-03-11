@@ -18,6 +18,7 @@ import (
 	"sort"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -51,10 +52,10 @@ PARTITION BY RANGE (c) (
 	c.Assert(err, IsNil)
 	partDefs := tb.Meta().GetPartitionInfo().Definitions
 	p0ID := placement.GroupID(partDefs[0].ID)
-	is.SetBundle(&placement.Bundle{
+	bundle := &placement.Bundle{
 		ID:    p0ID,
 		Rules: []*placement.Rule{{Role: placement.Leader, Count: 1}},
-	})
+	}
 
 	// normal cases
 	_, err = tk.Exec(`alter table t1 alter partition p0
@@ -119,6 +120,7 @@ alter placement policy
 	replicas=3`)
 	c.Assert(err, IsNil)
 
+	s.dom.InfoSchema().SetBundle(bundle)
 	_, err = tk.Exec(`alter table t1 alter partition p0
 drop placement policy
 	role=leader`)
@@ -202,6 +204,7 @@ drop placement policy
 	role=leader`)
 	c.Assert(err, NotNil)
 
+	s.dom.InfoSchema().SetBundle(bundle)
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=nj":1}'
@@ -372,12 +375,16 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	tk.MustExec("set @@tidb_enable_exchange_partition = 1")
 	defer func() {
+		tk.MustExec("set @@tidb_enable_exchange_partition = 0")
 		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop table if exists t2")
 		tk.Se.GetSessionVars().EnableAlterPlacement = false
 	}()
 
 	initTable := func() []string {
+		tk.MustExec("drop table if exists t2")
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec(`create table t1(id int) partition by range(id)
 (partition p0 values less than (100), partition p1 values less than (200))`)
@@ -422,6 +429,13 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	rows = initTable()
 	tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
 	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
+
+	// test exchange
+	rows = initTable()
+	tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
+	tk.MustExec("create table t2(id int)")
+	tk.MustExec("alter table t1 exchange partition p0 with table t2")
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 }
 
@@ -495,6 +509,7 @@ PARTITION BY RANGE (c) (
 		name              string
 		sql               string
 		txnScope          string
+		zone              string
 		disableAutoCommit bool
 		err               error
 	}{
@@ -502,18 +517,21 @@ PARTITION BY RANGE (c) (
 			name:     "Insert into PARTITION p0 with global txnScope",
 			sql:      "insert into t1 (c) values (1)",
 			txnScope: "global",
+			zone:     "",
 			err:      nil,
 		},
 		{
 			name:     "insert into PARTITION p0 with wrong txnScope",
 			sql:      "insert into t1 (c) values (1)",
-			txnScope: "bj",
+			txnScope: "local",
+			zone:     "bj",
 			err:      fmt.Errorf(".*out of txn_scope.*"),
 		},
 		{
 			name:     "insert into PARTITION p1 with local txnScope",
 			sql:      "insert into t1 (c) values (10)",
-			txnScope: "bj",
+			txnScope: "local",
+			zone:     "bj",
 			err:      fmt.Errorf(".*doesn't have placement policies with txn_scope.*"),
 		},
 		{
@@ -525,19 +543,22 @@ PARTITION BY RANGE (c) (
 		{
 			name:     "insert into PARTITION p2 with local txnScope",
 			sql:      "insert into t1 (c) values (15)",
-			txnScope: "bj",
+			txnScope: "local",
+			zone:     "bj",
 			err:      fmt.Errorf(".*leader placement policy is not defined.*"),
 		},
 		{
 			name:     "insert into PARTITION p2 with global txnScope",
 			sql:      "insert into t1 (c) values (15)",
 			txnScope: "global",
+			zone:     "",
 			err:      nil,
 		},
 		{
 			name:              "insert into PARTITION p0 with wrong txnScope and autocommit off",
 			sql:               "insert into t1 (c) values (1)",
-			txnScope:          "bj",
+			txnScope:          "local",
+			zone:              "bj",
 			disableAutoCommit: true,
 			err:               fmt.Errorf(".*out of txn_scope.*"),
 		},
@@ -545,6 +566,8 @@ PARTITION BY RANGE (c) (
 
 	for _, testcase := range testCases {
 		c.Log(testcase.name)
+		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope",
+			fmt.Sprintf(`return("%v")`, testcase.zone))
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
@@ -564,6 +587,7 @@ PARTITION BY RANGE (c) (
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, testcase.err.Error())
 		}
+		failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	}
 }
 
@@ -617,6 +641,7 @@ add placement policy
 	constraints='["+   zone   =   sh  "]'
 	role=leader
 	replicas=1;`)
+	c.Assert(err, IsNil)
 	// modify p0 when alter p1 placement policy, the txn should be success.
 	_, err = tk.Exec("begin;")
 	c.Assert(err, IsNil)
@@ -625,13 +650,14 @@ add placement policy
 	constraints='["+   zone   =   sh  "]'
 	role=follower
 	replicas=3;`)
+	c.Assert(err, IsNil)
 	_, err = tk.Exec("insert into tp1 (c) values (1);")
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("commit")
 	c.Assert(err, IsNil)
 }
 
-func (s *testDBSuite1) TestGlobalTxnState(c *C) {
+func (s *testSerialSuite) TestGlobalTxnState(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -655,7 +681,7 @@ PARTITION BY RANGE (c) (
 	pid, err := tables.FindPartitionByName(tb.Meta(), "p0")
 	c.Assert(err, IsNil)
 	groupID := placement.GroupID(pid)
-	is.SetBundle(&placement.Bundle{
+	bundle := &placement.Bundle{
 		ID: groupID,
 		Rules: []*placement.Rule{
 			{
@@ -671,7 +697,9 @@ PARTITION BY RANGE (c) (
 				},
 			},
 		},
-	})
+	}
+	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	dbInfo := testGetSchemaByName(c, tk.Se, "test")
 	tk2 := testkit.NewTestKit(c, s.store)
 	var chkErr error
@@ -688,9 +716,10 @@ PARTITION BY RANGE (c) (
 				hook.OnJobUpdatedExported = func(job *model.Job) {
 					if job.Type == model.ActionAlterTableAlterPartition && job.State == model.JobStateRunning &&
 						job.SchemaState == model.StateGlobalTxnOnly && job.SchemaID == dbInfo.ID && done == false {
+						s.dom.InfoSchema().SetBundle(bundle)
 						done = true
 						tk2.MustExec("use test")
-						tk2.MustExec("set @@txn_scope=bj")
+						tk2.MustExec("set @@txn_scope=local")
 						_, chkErr = tk2.Exec("insert into t1 (c) values (1);")
 					}
 				}

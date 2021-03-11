@@ -13,7 +13,7 @@
 - [**Slack Channel**](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb)
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - [**Reddit**](https://www.reddit.com/r/TiDB/)
-- **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
+- **Mailing list**: [lists.tidb.io](https://lists.tidb.io/g/main/subgroups)
 - [**For support, please contact PingCAP**](http://bit.ly/contact_us_via_github)
 
 ## What is TiDB?
@@ -36,7 +36,7 @@ TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports 
 
     TiDB is designed to work in the cloud -- public, private, or hybrid -- making deployment, provisioning, operations, and maintenance simple.
 
-    The storage layer of TiDB, called TiKV, [became](https://www.cncf.io/blog/2018/08/28/cncf-to-host-tikv-in-the-sandbox/) a [Cloud Native Computing Foundation](https://www.cncf.io/) member project in 2018. The architecture of the TiDB platform also allows SQL processing and storage to be scaled independently of each other in a very cloud-friendly manner.
+    The storage layer of TiDB, called TiKV, is a [Cloud Native Computing Foundation (CNCF) Graduated](https://www.cncf.io/announcements/2020/09/02/cloud-native-computing-foundation-announces-tikv-graduation/) project. The architecture of the TiDB platform also allows SQL processing and storage to be scaled independently of each other in a very cloud-friendly manner.
 
 - __Minimize ETL__
 
@@ -58,9 +58,7 @@ The [community repository](https://github.com/pingcap/community) hosts all infor
 
 [<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
 
-Contributions are welcomed and greatly appreciated. See
-[Contribution Guide](https://github.com/pingcap/community/blob/master/contributors/README.md)
-for details on submitting patches and the contribution workflow. For more contributing information, click on the contributor icon above.
+Contributions are welcomed and greatly appreciated. See [Contribution Guide](https://github.com/pingcap/community/blob/master/contributors/README.md) for details on submitting patches and the contribution workflow. For more contributing information, click on the contributor icon above.
 
 ## Adopters
 

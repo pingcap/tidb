@@ -15,6 +15,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"time"
@@ -367,6 +368,39 @@ func (s *testPrepareSuite) TestPrepareWithWindowFunction(c *C) {
 	tk.MustQuery("execute stmt2 using @a, @b").Check(testkit.Rows("0", "0"))
 }
 
+func (s *testPrepareSuite) TestPrepareWithSnapshot(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t select 1, 2")
+	tk.MustExec("begin")
+	ts := tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+	tk.MustExec("commit")
+	tk.MustExec("update t set v = 3 where id = 1")
+	tk.MustExec("prepare s1 from 'select * from t where id = 1';")
+	tk.MustExec("prepare s2 from 'select * from t';")
+	tk.MustExec("set @@tidb_snapshot = " + ts)
+	tk.MustQuery("execute s1").Check(testkit.Rows("1 2"))
+	tk.MustQuery("execute s2").Check(testkit.Rows("1 2"))
+}
+
 func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -392,6 +426,25 @@ func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
 	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("3"))
 }
 
+func (s *testPrepareSuite) TestPrepareCacheForClusteredIndex(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(k varchar(100) primary key clustered, v1 int, v2 int)")
+	tk.MustExec("insert into t1 (k, v1, v2) values('a', 1, 2), ('b', 1, 1)")
+	tk.MustExec("create table t2(k varchar(100) primary key clustered, v int)")
+	tk.MustExec("insert into t2 (k, v) values('c', 100)")
+	tk.MustExec(`prepare prepare_1 from " select v2, v from t1 left join t2 on v1 != v2 "`)
+	tk.MustQuery("execute prepare_1").Check(testkit.Rows("2 100", "1 <nil>"))
+	tk.MustQuery("execute prepare_1").Check(testkit.Rows("2 100", "1 <nil>"))
+}
+
 func (s *testPrepareSerialSuite) TestPrepareCacheForPartition(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -411,7 +464,7 @@ func (s *testPrepareSerialSuite) TestPrepareCacheForPartition(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("use test")
-	for _, val := range []string{string(variable.StaticOnly), string(variable.DynamicOnly)} {
+	for _, val := range []string{string(variable.Static), string(variable.Dynamic)} {
 		tk.MustExec("set @@tidb_partition_prune_mode = '" + val + "'")
 		// Test for PointGet and IndexRead.
 		tk.MustExec("drop table if exists t_index_read")
@@ -817,15 +870,15 @@ func (s *testPlanSerialSuite) TestIssue18066(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("prepare stmt from 'select * from t'")
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
-	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
 		testkit.Rows("1 0 0"))
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
-	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
 		testkit.Rows("2 1 1"))
 	tk.MustExec("prepare stmt from 'select * from t'")
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
 		testkit.Rows("3 1 0"))
 }
 
@@ -920,4 +973,54 @@ func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
 	tk.MustExec(`prepare stmt from "select * from ta a left join tb b on 1 where ? = 1 or b.s is not null"`)
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("a <nil> <nil>"))
+}
+
+func (s *testPlanSerialSuite) TestPlanCacheSnapshot(c *C) {
+	store, _, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1),(2),(3),(4)")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	timeSafe := time.Now().Add(-48 * 60 * 60 * time.Second).Format("20060102-15:04:05 -0700 MST")
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeSafe))
+
+	tk.MustExec("prepare stmt from 'select * from t where id=?'")
+	tk.MustExec("set @p = 1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Record the current tso.
+	tk.MustExec("begin")
+	tso := tk.Se.GetSessionVars().TxnCtx.StartTS
+	tk.MustExec("rollback")
+	c.Assert(tso > 0, IsTrue)
+	// Insert one more row with id = 1.
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", tso))
+	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
