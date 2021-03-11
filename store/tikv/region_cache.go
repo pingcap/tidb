@@ -623,29 +623,30 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 		startForwarding := false
 		if err != nil {
 			storeIdx, s := rs.accessStore(ctx.AccessMode, ctx.AccessIdx)
-			followerRead := rs.workTiKVIdx != ctx.AccessIdx
+			leaderReq := ctx.Store.storeType == TiKV && rs.workTiKVIdx != ctx.AccessIdx
 
-			// send fail but store is reachable, keep retry current peer for replica leader request.
-			// but we still need switch peer for follower-read or learner-read(i.e. tiflash)
-			if ctx.Store.storeType == TiKV && !followerRead && s.requestLiveness(bo) == reachable {
-				return
-			}
-
+			//  Mark the store as failure if it's not a redirection request because we
+			//  can't know the status of the proxy store by it.
 			if ctx.ProxyStore == nil {
+				// send fail but store is reachable, keep retry current peer for replica leader request.
+				// but we still need switch peer for follower-read or learner-read(i.e. tiflash)
+				if leaderReq {
+					if s.requestLiveness(bo) == reachable {
+						return
+					} else if EnableRedirection {
+						s.startHealthCheckLoopIfNeeded(c)
+						startForwarding = true
+					}
+				}
+
 				// invalidate regions in store.
 				epoch := rs.storeEpochs[storeIdx]
 				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
 					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 					metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 				}
-
 				// schedule a store addr resolve.
 				s.markNeedCheck(c.notifyCheckCh)
-				// If the failing request is already being forwarded, do not start the loop
-				if EnableRedirection {
-					s.startHealthCheckLoopIfNeeded(c)
-					startForwarding = true
-				}
 			}
 		}
 
