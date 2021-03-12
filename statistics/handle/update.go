@@ -465,15 +465,33 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		return false, errors.Trace(err)
 	}
 	startTS := txn.StartTS()
-	if delta.Delta < 0 {
-		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
-	} else {
-		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+	updateStatsMeta := func(id int64) error {
+		var err error
+		if delta.Delta < 0 {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+		} else {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+		}
+		return errors.Trace(err)
 	}
-	if err != nil {
-		return false, errors.Trace(err)
+	if err = updateStatsMeta(id); err != nil {
+		return
 	}
-	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	affectedRows := h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+
+	// if it's a partitioned table and its global-stats exists, update its count and modify_count as well.
+	is := infoschema.GetInfoSchema(h.mu.ctx)
+	if is == nil {
+		return false, errors.New("cannot get the information schema")
+	}
+	if tbl, _, _ := is.FindTableByPartitionID(id); tbl != nil {
+		if err = updateStatsMeta(tbl.Meta().ID); err != nil {
+			return
+		}
+	}
+
+	affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+	updated = affectedRows > 0
 	return
 }
 
@@ -558,12 +576,17 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 // feedback locally on this tidb-server, so it could be used more timely.
 func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 	h.sweepList()
+OUTER:
 	for _, fbs := range h.feedback.Feedbacks {
 		for _, fb := range fbs {
 			h.mu.Lock()
 			table, ok := h.getTableByPhysicalID(is, fb.PhysicalID)
 			h.mu.Unlock()
 			if !ok {
+				continue
+			}
+			if table.Meta().Partition != nil {
+				// If the table is partition table, the feedback will not work.
 				continue
 			}
 			tblStats := h.GetPartitionStats(table.Meta(), fb.PhysicalID)
@@ -575,9 +598,10 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				}
 				newIdx := *idx
 				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
-				// For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
 				if idx.StatsVer >= statistics.Version2 {
-					ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
+					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					continue OUTER
 				}
 				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
 				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB}, int(idx.StatsVer))
@@ -589,6 +613,11 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				if !ok || col.Histogram.Len() == 0 {
 					continue
 				}
+				if col.StatsVer >= statistics.Version2 {
+					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
+					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					continue OUTER
+				}
 				newCol := *col
 				// only use the range query to update primary key
 				_, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
@@ -598,8 +627,12 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 				newTblStats.Columns[fb.Hist.ID] = &newCol
 			}
-			oldCache := h.statsCache.Load().(statsCache)
-			h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version))
+			for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
+				oldCache := h.statsCache.Load().(statsCache)
+				if h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version)) {
+					break
+				}
+			}
 		}
 	}
 }
@@ -631,8 +664,12 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		delete(h.mu.rateMap, id)
 	}
 	h.mu.Unlock()
-	oldCache := h.statsCache.Load().(statsCache)
-	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version))
+	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
+		oldCache := h.statsCache.Load().(statsCache)
+		if h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version)) {
+			break
+		}
+	}
 }
 
 // HandleUpdateStats update the stats using feedback.
@@ -713,7 +750,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		return nil
 	}
 	var tbl *statistics.Table
-	if table.Meta().GetPartitionInfo() == nil || h.CurrentPruneMode() == variable.DynamicOnly {
+	if table.Meta().GetPartitionInfo() == nil || h.CurrentPruneMode() == variable.Dynamic {
 		tbl = h.GetTableStats(table.Meta())
 	} else {
 		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
@@ -726,6 +763,12 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
 		statsVer = idx.StatsVer
+		if statsVer >= 2 {
+			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
+				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
+				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
+			return err
+		}
 		if ok && idx.Histogram.Len() > 0 {
 			statsVer = idx.StatsVer
 			idxHist := idx.Histogram
@@ -735,6 +778,12 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		}
 	} else {
 		col, ok := tbl.Columns[histID]
+		if ok && col.StatsVer >= 2 {
+			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
+				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
+				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
+			return err
+		}
 		if ok && col.Histogram.Len() > 0 {
 			colHist := col.Histogram
 			hist = &colHist
@@ -749,7 +798,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	for _, row := range rows {
 		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, topN, hist.Tp)
 		if err1 != nil {
-			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err))
+			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err1))
 		}
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN, fms, statsVer)
@@ -810,6 +859,11 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 //    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
 //    between `start` and `end`.
 func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) (bool, string) {
+	// Tests if current time is within the time period.
+	if !timeutil.WithinDayTimePeriod(start, end, now) {
+		return false, ""
+	}
+
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
@@ -824,8 +878,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
 		return false, ""
 	}
-	// Tests if current time is within the time period.
-	return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
+	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
@@ -866,11 +919,11 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
-func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
+func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	err := h.UpdateSessionVar()
 	if err != nil {
 		logutil.BgLogger().Error("[stats] update analyze version for auto analyze session failed", zap.Error(err))
-		return
+		return false
 	}
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
@@ -878,7 +931,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
 	if err != nil {
 		logutil.BgLogger().Error("[stats] parse auto analyze period failed", zap.Error(err))
-		return
+		return false
 	}
 	pruneMode := h.CurrentPruneMode()
 	for _, db := range dbs {
@@ -886,29 +939,35 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			pi := tblInfo.GetPartitionInfo()
-			if pi == nil || pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
-					return
+					// analyze one table at a time to let it get the freshest parameters.
+					// others will be analyzed next round which is just 3s later.
+					return true
 				}
 				continue
 			}
-			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
-				for _, def := range pi.Definitions {
-					sql := "analyze table %n.%n partition %n"
-					statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-					analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
-					if analyzed {
-						return
-					}
-					continue
+			if pruneMode == variable.Dynamic {
+				analyzed := h.autoAnalyzePartitionTable(tblInfo, pi, db, start, end, autoAnalyzeRatio)
+				if analyzed {
+					return true
 				}
 				continue
+			}
+			for _, def := range pi.Definitions {
+				sql := "analyze table %n.%n partition %n"
+				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				if analyzed {
+					return true
+				}
 			}
 		}
 	}
+	return false
 }
 
 func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string, params ...interface{}) bool {
@@ -928,6 +987,65 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 			h.execAutoAnalyze(tableStatsVer, sql+" index %n", append(params, idx.Name.O)...)
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, start, end time.Time, ratio float64) bool {
+	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+	partitionNames := make([]interface{}, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
+		if partitionStatsTbl.Pseudo || partitionStatsTbl.Count < AutoAnalyzeMinCnt {
+			continue
+		}
+		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
+			partitionNames = append(partitionNames, def.Name.O)
+			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
+		}
+	}
+	getSQL := func(prefix, suffix string, numPartitions int) string {
+		var sqlBuilder strings.Builder
+		sqlBuilder.WriteString(prefix)
+		for i := 0; i < numPartitions; i++ {
+			if i != 0 {
+				sqlBuilder.WriteString(",")
+			}
+			sqlBuilder.WriteString(" %n")
+		}
+		sqlBuilder.WriteString(suffix)
+		return sqlBuilder.String()
+	}
+	if len(partitionNames) > 0 {
+		logutil.BgLogger().Info("[stats] auto analyze triggered")
+		sql := getSQL("analyze table %n.%n partition", "", len(partitionNames))
+		params := append([]interface{}{db, tblInfo.Name.O}, partitionNames...)
+		statsTbl := h.GetTableStats(tblInfo)
+		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+		h.execAutoAnalyze(tableStatsVer, sql, params...)
+		return true
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		for _, def := range pi.Definitions {
+			partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
+			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
+				partitionNames = append(partitionNames, def.Name.O)
+				statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
+			}
+		}
+		if len(partitionNames) > 0 {
+			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed")
+			sql := getSQL("analyze table %n.%n partition", " index %n", len(partitionNames))
+			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames...)
+			params = append(params, idx.Name.O)
+			statsTbl := h.GetTableStats(tblInfo)
+			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+			h.execAutoAnalyze(tableStatsVer, sql, params...)
 			return true
 		}
 	}
@@ -1118,7 +1236,7 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sc, ranges, t.ModifyCount)
+		expected, err = idx.GetRowCount(sc, nil, ranges, t.ModifyCount)
 		expected *= idx.GetIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]

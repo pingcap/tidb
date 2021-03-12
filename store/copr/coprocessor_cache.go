@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package copr
 
 import (
 	"bytes"
@@ -57,7 +57,7 @@ func (v *coprCacheValue) Len() int {
 }
 
 func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
-	if config == nil || !config.Enable {
+	if config == nil || config.CapacityMB == 0 {
 		return nil, nil
 	}
 	capacityInBytes := int64(config.CapacityMB * 1024.0 * 1024.0)

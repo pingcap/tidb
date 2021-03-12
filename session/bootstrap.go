@@ -1389,7 +1389,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		if err != nil {
 			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
 		}
-		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db))
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db, bind))
 		if _, ok := bindMap[originWithDB]; ok {
 			// The results are sorted in descending order of time.
 			// And in the following cases, duplicate originWithDB may occur
@@ -1400,7 +1400,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 			continue
 		}
 		bindMap[originWithDB] = bindInfo{
-			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db),
+			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db, bind),
 			status:     row.GetString(2),
 			createTime: row.GetTime(3),
 			charset:    charset,
@@ -1549,10 +1549,10 @@ func doDMLWorks(s Session) {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
 			if v.Name == variable.TiDBPartitionPruneMode {
-				vVal = string(variable.StaticOnly)
+				vVal = string(variable.Static)
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
 					// enable Dynamic Prune by default in test case.
-					vVal = string(variable.DynamicOnly)
+					vVal = string(variable.Dynamic)
 				}
 			}
 			if v.Name == variable.TiDBEnableChangeMultiSchema {

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -77,6 +78,9 @@ type tikvSnapshot struct {
 		stats       *SnapshotRuntimeStats
 		replicaRead kv.ReplicaReadType
 		taskID      uint64
+		isStaleness bool
+		// MatchStoreLabels indicates the labels the store should be matched
+		matchStoreLabels []*metapb.StoreLabel
 	}
 	sampleStep uint32
 	txnScope   string
@@ -272,6 +276,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 	pending := batch.keys
 	for {
+		isStaleness := false
+		var matchStoreLabels []*metapb.StoreLabel
 		s.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
@@ -281,9 +287,17 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
+		isStaleness = s.mu.isStaleness
+		matchStoreLabels = s.mu.matchStoreLabels
 		s.mu.RUnlock()
-
-		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "")
+		var ops []StoreSelectorOption
+		if isStaleness {
+			req.EnableStaleRead()
+		}
+		if len(matchStoreLabels) > 0 {
+			ops = append(ops, WithMatchLabels(matchStoreLabels))
+		}
+		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "", ops...)
 
 		if err != nil {
 			return errors.Trace(err)
@@ -413,6 +427,8 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 	}
 	failpoint.Inject("snapshotGetTSAsync", nil)
 
+	isStaleness := false
+	var matchStoreLabels []*metapb.StoreLabel
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -429,14 +445,22 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
+	isStaleness = s.mu.isStaleness
+	matchStoreLabels = s.mu.matchStoreLabels
 	s.mu.RUnlock()
-
+	var ops []StoreSelectorOption
+	if isStaleness {
+		req.EnableStaleRead()
+	}
+	if len(matchStoreLabels) > 0 {
+		ops = append(ops, WithMatchLabels(matchStoreLabels))
+	}
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "")
+		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "", ops...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -465,6 +489,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 				return nil, errors.Trace(err)
 			}
 
+			snapVer := s.version.Ver
 			if s.version == kv.MaxVersion {
 				newTS, err := tsFuture.Wait()
 				if err != nil {
@@ -478,7 +503,10 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 				}
 			}
 
-			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
+			// Use the original snapshot version to resolve locks so we can use MaxUint64
+			// as the callerStartTS if it's an auto-commit point get. This could save us
+			// one write at TiKV by not pushing forward the minCommitTS.
+			msBeforeExpired, err := cli.ResolveLocks(bo, snapVer, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -552,6 +580,14 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.mu.Unlock()
 	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
+	case kv.IsStalenessReadOnly:
+		s.mu.Lock()
+		s.mu.isStaleness = val.(bool)
+		s.mu.Unlock()
+	case kv.MatchStoreLabels:
+		s.mu.Lock()
+		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
+		s.mu.Unlock()
 	case kv.TxnScope:
 		s.txnScope = val.(string)
 	}
