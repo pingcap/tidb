@@ -1541,7 +1541,7 @@ partition by range (a) (
 	// We did not analyze partition p1, so the value here has not changed
 	c.Assert(globalStats.Count, Equals, int64(7))
 
-	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table t partition p1;")
 	globalStats = h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(4)
 	// The value of p1.Count is correct now.
