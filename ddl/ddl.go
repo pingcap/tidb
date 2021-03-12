@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -54,7 +55,9 @@ const (
 	currentVersion = 1
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey = "/tidb/ddl/fg/owner"
-	ddlPrompt   = "ddl"
+	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
+	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
+	ddlPrompt          = "ddl"
 
 	shardRowIDBitsMax = 15
 
@@ -200,6 +203,7 @@ type ddlCtx struct {
 	infoHandle   *infoschema.Handle
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
+	etcdCli      *clientv3.Client
 
 	// hook may be modified.
 	mu struct {
@@ -286,6 +290,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		binlogCli:    binloginfo.GetPumpsClient(),
 		infoHandle:   opt.InfoHandle,
 		tableLockCkr: deadLockCkr,
+		etcdCli:      opt.EtcdCli,
 	}
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
@@ -481,16 +486,23 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
+func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	// If the workers don't run, we needn't to notify workers.
 	if !RunWorker {
 		return
 	}
 
+	var worker *worker
+	jobTp := job.Type
 	if jobTp == model.ActionAddIndex || jobTp == model.ActionAddPrimaryKey {
-		asyncNotify(d.workers[addIdxWorker].ddlJobCh)
+		worker = d.workers[addIdxWorker]
 	} else {
-		asyncNotify(d.workers[generalWorker].ddlJobCh)
+		worker = d.workers[generalWorker]
+	}
+	if d.ownerManager.IsOwner() {
+		asyncNotify(worker.ddlJobCh)
+	} else {
+		d.asyncNotifyByEtcd(worker.addingDDLJobKey, job)
 	}
 }
 
@@ -519,7 +531,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
-	d.asyncNotifyWorker(job.Type)
+	d.asyncNotifyWorker(job)
 	logutil.BgLogger().Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
 	var historyJob *model.Job
