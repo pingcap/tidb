@@ -509,28 +509,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 }
 
 func (s *testSerialSuite2) TestFastAnalyze4GlobalStats(c *C) {
-	var cls cluster.Cluster
-	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-			cls = c
-		}),
-	)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := store.Close()
-		c.Assert(err, IsNil)
-	}()
-	var dom *domain.Domain
-	session.DisableStats4Test()
-	session.SetSchemaLease(0)
-	dom, err = session.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	dom.SetStatsUpdating(true)
-	defer dom.Close()
-	tk := testkit.NewTestKit(c, store)
-	executor.RandSeed = 123
-
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
@@ -540,7 +519,7 @@ func (s *testSerialSuite2) TestFastAnalyze4GlobalStats(c *C) {
 	tk.MustExec("drop table if exists t4;")
 	tk.MustExec("create table t4(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
 	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
-	err = tk.ExecToErr("analyze table t4;")
+	err := tk.ExecToErr("analyze table t4;")
 	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
 }
 
