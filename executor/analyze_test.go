@@ -508,8 +508,8 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	*/
 
 	// test fast analyze in dynamic mode
-	tk.MustExec("set @@tidb_analyze_version = 2;")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("drop table if exists t4;")
 	tk.MustExec("create table t4(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
 	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
@@ -632,7 +632,7 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(val), Equals, uint64(1))
 
 	// test analyzeIndexIncremental for global-level stats;
-	tk.MustExec("set @@tidb_analyze_version = 2;")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t (a int, b int, primary key(a), index idx(b)) partition by range (a) (
@@ -925,4 +925,20 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 		"test t  idxb 1 0 1 1 \x00A \x00A 0",
 		"test t  idxb 1 1 3 2 \x00C \x00C 0",
 	))
+}
+
+func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t0(a varchar(20), primary key(a) clustered)")
+	tk.MustExec("create table t1(a varchar(20), primary key(a))")
+	tk.MustExec("insert into t0 values('1111')")
+	tk.MustExec("insert into t1 values('1111')")
+	tk.MustExec("analyze table t0 index primary")
+	tk.MustExec("analyze table t1 index primary")
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows(
+		"test t0  PRIMARY 1 0 1 1 1111 1111 0",
+		"test t1  PRIMARY 1 0 1 1 1111 1111 0"))
 }
