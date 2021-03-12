@@ -553,7 +553,6 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 			bindCase.bindText,
 			bindCase.db,
 		)
-		fmt.Println("[sql]", sql)
 		mustExecSQL(c, se, sql)
 
 		upgradeToVer67(se, version66)
@@ -567,7 +566,6 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 		c.Assert(row.GetString(3), Equals, "using")
 		c.Assert(r.Close(), IsNil)
 		sql = fmt.Sprintf("drop global binding for %s", bindCase.deleteText)
-		fmt.Println("[delete SQL]", sql)
 		mustExecSQL(c, se, sql)
 		r = mustExecSQL(c, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
 		c.Assert(r.Next(ctx, req), IsNil)

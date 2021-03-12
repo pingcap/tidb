@@ -544,7 +544,7 @@ var (
 		// We will redo upgradeToVer58 in upgradeToVer64, it is skipped here.
 		upgradeToVer59,
 		upgradeToVer60,
-		// We will redo upgradeToVer61 in upgradeToVer6, it is skipped here.
+		// We will redo upgradeToVer61 in upgradeToVer67, it is skipped here.
 		upgradeToVer62,
 		upgradeToVer63,
 		upgradeToVer64,
