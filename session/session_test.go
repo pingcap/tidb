@@ -870,13 +870,6 @@ func (s *testSessionSuite) TestDatabase(c *C) {
 	tk.MustExec("drop schema if exists xxx")
 }
 
-func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	r, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select 1;")
-	c.Assert(err, IsNil)
-	c.Assert(len(r), Equals, 1)
-}
-
 // TestInTrans . See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestInTrans(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
