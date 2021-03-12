@@ -650,6 +650,10 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 			"create table clustered (id int)",
 			"create table clustered (id int)",
 		},
+		{
+			"create table t1 (id int, a varchar(255) key clustered);",
+			"create table t1 (id int, a varchar(255) key /*T![clustered_index] clustered */ );",
+		},
 	}
 	for _, ca := range testCase {
 		re := binloginfo.AddSpecialComment(ca.input)
