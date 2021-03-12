@@ -1758,7 +1758,7 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	// write-reorg can't be cancelled, so it will be converted to running state and try again (dead loop).
 	_, err := tk.Exec("alter table t drop index b")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation 3, cancelled")
+	c.Assert(err.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
 	c.Assert(jobID > 0, Equals, true)
 
 	// Verification of the history job state.
@@ -1771,5 +1771,5 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	})
 	c.Assert(err, IsNil)
 	c.Assert(job.ErrorCount, Equals, int64(4))
-	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling ddl logic and error count beyond the limitation 3, cancelled")
+	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
 }
