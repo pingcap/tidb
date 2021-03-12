@@ -615,12 +615,44 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] clustered */ );",
 		},
 		{
+			"create table t1(id int, v int, primary key(a) clustered);",
+			"create table t1(id int, v int, primary key(a) /*T![clustered_index] clustered */ );",
+		},
+		{
+			"create table t1(id int primary key clustered, v int);",
+			"create table t1(id int primary key /*T![clustered_index] clustered */ , v int);",
+		},
+		{
+			"alter table t add primary key(a) clustered;",
+			"alter table t add primary key(a) /*T![clustered_index] clustered */ ;",
+		},
+		{
 			"create table t1 (id int, a varchar(255), primary key (a, b) nonclustered);",
 			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */ );",
 		},
 		{
 			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */);",
 			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */);",
+		},
+		{
+			"create table clustered_test(id int)",
+			"create table clustered_test(id int)",
+		},
+		{
+			"create database clustered_test",
+			"create database clustered_test",
+		},
+		{
+			"create database clustered",
+			"create database clustered",
+		},
+		{
+			"create table clustered (id int)",
+			"create table clustered (id int)",
+		},
+		{
+			"create table t1 (id int, a varchar(255) key clustered);",
+			"create table t1 (id int, a varchar(255) key /*T![clustered_index] clustered */ );",
 		},
 	}
 	for _, ca := range testCase {
