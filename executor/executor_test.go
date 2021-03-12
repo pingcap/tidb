@@ -650,6 +650,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields := rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "NULL")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select "\N";`
 	r = tk.MustQuery(sql)
@@ -659,6 +660,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
+	c.Assert(rs.Close(), IsNil)
 
 	tk.MustExec("use test;")
 	tk.MustExec("create table test (`\\N` int);")
@@ -672,6 +674,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select \N from test;`
 	r = tk.MustQuery(sql)
@@ -682,6 +685,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select (\N) from test;`
 	r = tk.MustQuery(sql)
@@ -691,6 +695,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select `\\N` from test;"
 	r = tk.MustQuery(sql)
@@ -700,6 +705,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select (`\\N`) from test;"
 	r = tk.MustQuery(sql)
@@ -709,6 +715,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select '\N' from test;`
 	r = tk.MustQuery(sql)
@@ -718,6 +725,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select ('\N') from test;`
 	r = tk.MustQuery(sql)
@@ -727,6 +735,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
+	c.Assert(rs.Close(), IsNil)
 }
 
 // TestSelectNull Issue #4053.
@@ -741,6 +750,7 @@ func (s *testSuiteP1) TestSelectNull(c *C) {
 	fields := rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select (null);`
 	r = tk.MustQuery(sql)
@@ -750,6 +760,7 @@ func (s *testSuiteP1) TestSelectNull(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select null+NULL;`
 	r = tk.MustQuery(sql)
@@ -760,6 +771,7 @@ func (s *testSuiteP1) TestSelectNull(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `null+NULL`)
+	c.Assert(rs.Close(), IsNil)
 }
 
 // TestSelectStringLiteral Issue #3686.
@@ -774,6 +786,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields := rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `abc`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select (('abc'));`
 	r = tk.MustQuery(sql)
@@ -783,6 +796,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `abc`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select 'abc'+'def';`
 	r = tk.MustQuery(sql)
@@ -792,6 +806,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `'abc'+'def'`)
+	c.Assert(rs.Close(), IsNil)
 
 	// Below checks whether leading invalid chars are trimmed.
 	sql = "select '\n';"
@@ -802,6 +817,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select '\t   col';" // Lowercased letter is a valid char.
 	rs, err = tk.Exec(sql)
@@ -809,6 +825,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "col")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select '\t   Col';" // Uppercased letter is a valid char.
 	rs, err = tk.Exec(sql)
@@ -816,6 +833,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "Col")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select '\n\t   中文 col';" // Chinese char is a valid char.
 	rs, err = tk.Exec(sql)
@@ -823,6 +841,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "中文 col")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select ' \r\n  .col';" // Punctuation is a valid char.
 	rs, err = tk.Exec(sql)
@@ -830,6 +849,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, ".col")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select '   😆col';" // Emoji is a valid char.
 	rs, err = tk.Exec(sql)
@@ -837,6 +857,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "😆col")
+	c.Assert(rs.Close(), IsNil)
 
 	// Below checks whether trailing invalid chars are preserved.
 	sql = `select 'abc   ';`
@@ -845,6 +866,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "abc   ")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select '  abc   123   ';`
 	rs, err = tk.Exec(sql)
@@ -852,6 +874,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "abc   123   ")
+	c.Assert(rs.Close(), IsNil)
 
 	// Issue #4239.
 	sql = `select 'a' ' ' 'string';`
@@ -862,6 +885,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "a")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select 'a' " " "string";`
 	r = tk.MustQuery(sql)
@@ -871,6 +895,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "a")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select 'string' 'string';`
 	r = tk.MustQuery(sql)
@@ -880,6 +905,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "string")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select "ss" "a";`
 	r = tk.MustQuery(sql)
@@ -889,6 +915,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select "ss" "a" "b";`
 	r = tk.MustQuery(sql)
@@ -898,6 +925,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select "ss" "a" ' ' "b";`
 	r = tk.MustQuery(sql)
@@ -907,6 +935,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select "ss" "a" ' ' "b" ' ' "d";`
 	r = tk.MustQuery(sql)
@@ -916,6 +945,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuiteP1) TestSelectLimit(c *C) {
@@ -1111,7 +1141,7 @@ func (s *testSuiteP1) TestIssue2612(c *C) {
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetDuration(0, 0).String(), Equals, "-46:09:02")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -2536,14 +2566,14 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Check(fields[0].ColumnAsName.L, Equals, "1 + c")
 	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
 	c.Check(fields[1].ColumnAsName.L, Equals, "count(*)")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select (c) > all (select c from t) from t")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
 	c.Check(fields[0].ColumnAsName.L, Equals, "(c) > all (select c from t)")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	tk.MustExec("begin")
 	tk.MustExec("insert t values(1,1)")
 	rs, err = tk.Exec("select c d, d c from t")
@@ -2554,7 +2584,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Check(fields[0].ColumnAsName.L, Equals, "d")
 	c.Check(fields[1].Column.Name.L, Equals, "d")
 	c.Check(fields[1].ColumnAsName.L, Equals, "c")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	// Test case for query a column of a table.
 	// In this case, all attributes have values.
 	rs, err = tk.Exec("select c as a from t as t2")
@@ -2565,7 +2595,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "t")
 	c.Check(fields[0].TableAsName.L, Equals, "t2")
 	c.Check(fields[0].DBName.L, Equals, "test")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	// Test case for query a expression which only using constant inputs.
 	// In this case, the table, org_table and database attributes will all be empty.
 	rs, err = tk.Exec("select hour(1) as a from t as t2")
@@ -2576,7 +2606,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "")
 	c.Check(fields[0].TableAsName.L, Equals, "")
 	c.Check(fields[0].DBName.L, Equals, "")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	// Test case for query a column wrapped with parentheses and unary plus.
 	// In this case, the column name should be its original name.
 	rs, err = tk.Exec("select (c), (+c), +(c), +(+(c)), ++c from t")
@@ -2586,7 +2616,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 		c.Check(fields[i].Column.Name.L, Equals, "c")
 		c.Check(fields[i].ColumnAsName.L, Equals, "c")
 	}
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 
 	// Test issue https://github.com/pingcap/tidb/issues/9639 .
 	// Both window function and expression appear in final result field.
@@ -2599,7 +2629,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Assert(fields[1].Column.Name.L, Equals, "num")
 	c.Assert(fields[1].ColumnAsName.L, Equals, "num")
 	tk.MustExec("set @@tidb_enable_window_function = 0")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 
 	rs, err = tk.Exec("select if(1,c,c) from t;")
 	c.Check(err, IsNil)
@@ -2607,6 +2637,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Assert(fields[0].Column.Name.L, Equals, "if(1,c,c)")
 	// It's a compatibility issue. Should be empty instead.
 	c.Assert(fields[0].ColumnAsName.L, Equals, "if(1,c,c)")
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuiteP2) TestSelectVar(c *C) {
@@ -4025,7 +4056,7 @@ func (s *testSuite3) TestUnsignedDecimalOverflow(c *C) {
 			c.Assert(err, IsNil)
 		}
 		if res != nil {
-			res.Close()
+			c.Assert(res.Close(), IsNil)
 		}
 	}
 
@@ -4187,8 +4218,7 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	err = rs.Next(context.TODO(), rs.NewChunk())
 	c.Assert(err.Error(), Equals, "[executor:1242]Subquery returns more than 1 row")
 
-	err = rs.Close()
-	c.Assert(err, IsNil)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuiteP2) TestCurrentTimestampValueSelection(c *C) {
@@ -4410,9 +4440,11 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustExec("create definer='root'@'localhost' view view1 as select * from view_t")
 	tk.MustExec("create definer='root'@'localhost' view view2(c,d) as select * from view_t")
 	tk.MustExec("create definer='root'@'localhost' view view3(c,d) as select a,b from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view4 as select * from (select * from (select * from view_t) tb1) tb;")
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(c int,d int)")
 	err := tk.ExecToErr("select * from view1")
@@ -4427,14 +4459,16 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
 	tk.MustExec("alter table view_t drop column a")
 	tk.MustExec("alter table view_t add column a int after b")
 	tk.MustExec("update view_t set a=1;")
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
 	tk.MustExec("drop table view_t;")
-	tk.MustExec("drop view view1,view2,view3;")
+	tk.MustExec("drop view view1,view2,view3,view4;")
 
 	tk.MustExec("set @@tidb_enable_window_function = 1")
 	defer func() {
@@ -7011,7 +7045,7 @@ func (s *testCoprCache) TestIntegrationCopCache(c *C) {
 
 	// Test for cop cache disabled.
 	cfg := config.NewConfig()
-	cfg.TiKVClient.CoprCache.Enable = false
+	cfg.TiKVClient.CoprCache.CapacityMB = 0
 	config.StoreGlobalConfig(cfg)
 	rows = tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
 	c.Assert(rows[0][2], Equals, "9")
@@ -7365,40 +7399,6 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
 }
 
-func (s *testSerialSuite) TestIssue21441(c *C) {
-	err := failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
-		c.Assert(err, IsNil)
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec(`insert into t values(1),(2),(3)`)
-	tk.Se.GetSessionVars().InitChunkSize = 1
-	tk.Se.GetSessionVars().MaxChunkSize = 1
-	sql := `
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t`
-	tk.MustQuery(sql).Sort().Check(testkit.Rows(
-		"1", "1", "1", "1", "1", "1", "1", "1",
-		"2", "2", "2", "2", "2", "2", "2", "2",
-		"3", "3", "3", "3", "3", "3", "3", "3",
-	))
-
-	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
-	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
-}
-
 func (s *testSuite) Test17780(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7631,6 +7631,54 @@ func (s *testSerialSuite) TestStalenessTransaction(c *C) {
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
 		tk.MustExec("commit")
 		failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	}
+}
+
+func (s *testSerialSuite) TestStaleReadKVRequest(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key);")
+	defer tk.MustExec(`drop table if exists t`)
+	testcases := []struct {
+		name     string
+		sql      string
+		txnScope string
+		zone     string
+	}{
+		{
+			name:     "coprocessor read",
+			sql:      "select * from t",
+			txnScope: "local",
+			zone:     "sh",
+		},
+		{
+			name:     "point get read",
+			sql:      "select * from t where id = 1",
+			txnScope: "local",
+			zone:     "bj",
+		},
+		{
+			name:     "batch point get read",
+			sql:      "select * from t where id in (1,2,3)",
+			txnScope: "local",
+			zone:     "hz",
+		},
+	}
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
+		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
+		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v")`, testcase.txnScope))
+		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
+		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`)
+		tk.MustQuery(testcase.sql)
+		tk.MustExec(`commit`)
+		failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag")
 	}
 }
 
