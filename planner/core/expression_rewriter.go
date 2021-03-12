@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -339,11 +338,24 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if er.aggrMap != nil {
 			index, ok = er.aggrMap[v]
 		}
-		if !ok {
-			er.err = ErrInvalidGroupFuncUse
+		if ok {
+			// index < 0 indicates this is a correlated aggregate belonging to outer query,
+			// for which a correlated column will be created later, so we append a null constant
+			// as a temporary result expression.
+			if index < 0 {
+				er.ctxStackAppend(expression.NewNull(), types.EmptyName)
+			} else {
+				// index >= 0 indicates this is a regular aggregate column
+				er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+			}
 			return inNode, true
 		}
-		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+		// replace correlated aggregate in sub-query with its corresponding correlated column
+		if col, ok := er.b.correlatedAggMapper[v]; ok {
+			er.ctxStackAppend(col, types.EmptyName)
+			return inNode, true
+		}
+		er.err = ErrInvalidGroupFuncUse
 		return inNode, true
 	case *ast.ColumnNameExpr:
 		if index, ok := er.b.colMapper[v]; ok {
@@ -1167,7 +1179,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		if v.Value != nil {
 			tp := er.ctxStack[stkLen-1].GetType()
 			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
-				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
+				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
 				er.ctxStack[stkLen-1])
 			er.ctxNameStk[stkLen-1] = types.EmptyName
 			// Store the field type of the variable into SessionVars.UserVarTypes.
@@ -1185,7 +1197,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			tp.Flen = mysql.MaxFieldVarCharLength
 		}
-		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
+		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
 		if err != nil {
 			er.err = err
 			return
@@ -1218,8 +1230,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = err
 		return
 	}
-	nativeVal, nativeType := sysVar.GetNativeValType(val)
-	e := expression.DatumToConstant(nativeVal, nativeType)
+	nativeVal, nativeType, nativeFlag := sysVar.GetNativeValType(val)
+	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
 	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStackAppend(e, types.EmptyName)
@@ -1469,8 +1481,8 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	var function expression.Expression
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
-	// Treat predicate 'like' the same way as predicate '=' when it is an exact match.
-	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
+	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
+	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
 		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
 		if err != nil {
 			er.err = err
@@ -1532,7 +1544,7 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 	stkLen := len(er.ctxStack)
 	expr, lexp, rexp = er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
 	var castFunc func(sessionctx.Context, expression.Expression) expression.Expression
-	switch expression.GetCmpTp4MinMax([]expression.Expression{expr, lexp, rexp}) {
+	switch expression.ResolveType4Between([3]expression.Expression{expr, lexp, rexp}) {
 	case types.ETInt:
 		castFunc = expression.WrapWithCastAsInt
 	case types.ETReal:
@@ -1547,6 +1559,11 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 			}
 			return expression.WrapWithCastAsString(ctx, e)
 		}
+	case types.ETDuration:
+		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDuration))
+		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDuration))
+		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldType(mysql.TypeDuration))
+		return
 	case types.ETDatetime:
 		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
 		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDatetime))
@@ -1930,6 +1947,9 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 			handleColIDs = append(handleColIDs, tblInfo.Columns[col.Offset].ID)
 		}
 
+		if len(handleColIDs) != handle.NumCols() {
+			return "", errors.Trace(errors.Errorf("primary key length not match handle columns number in key"))
+		}
 		datumMap, err := tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, cols, loc, nil)
 		if err != nil {
 			return "", errors.Trace(err)
@@ -1938,7 +1958,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		ret["table_id"] = tableID
 		handleRet := make(map[string]interface{})
 		for colID, dt := range datumMap {
-			dtStr, err := dt.ToString()
+			dtStr, err := datumToJSONObject(&dt)
 			if err != nil {
 				return "", errors.Trace(err)
 			}
@@ -1978,28 +1998,18 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 			return "", errors.Trace(errors.Errorf("invalid record/index key: %X", key))
 		}
 		tblInfo := tbl.Meta()
-		var colInfos []rowcodec.ColInfo
-		var tps []*types.FieldType
 		var targetIndex *model.IndexInfo
 		for _, idx := range tblInfo.Indices {
 			if idx.ID == indexID {
 				targetIndex = idx
-				colInfos = make([]rowcodec.ColInfo, 0, len(idx.Columns))
-				tps = make([]*types.FieldType, 0, len(idx.Columns))
-				for _, idxCol := range idx.Columns {
-					col := tblInfo.Columns[idxCol.Offset]
-					colInfos = append(colInfos, rowcodec.ColInfo{
-						ID: col.ID,
-						Ft: rowcodec.FieldTypeFromModelColumn(col),
-					})
-					tps = append(tps, rowcodec.FieldTypeFromModelColumn(col))
-				}
 				break
 			}
 		}
-		if len(colInfos) == 0 || len(tps) == 0 || targetIndex == nil {
+		if targetIndex == nil {
 			return "", errors.Trace(errors.Errorf("index not found when decoding index key: %X", key))
 		}
+		colInfos := tables.BuildRowcodecColInfoForIndexColumns(targetIndex, tblInfo)
+		tps := tables.BuildFieldTypesForIndexColumns(targetIndex, tblInfo)
 		values, err := tablecodec.DecodeIndexKV(key, []byte{0}, len(colInfos), tablecodec.HandleNotNeeded, colInfos)
 		if err != nil {
 			return "", errors.Trace(err)
@@ -2017,7 +2027,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 		ret["index_id"] = indexID
 		idxValMap := make(map[string]interface{}, len(targetIndex.Columns))
 		for i := 0; i < len(targetIndex.Columns); i++ {
-			dtStr, err := ds[i].ToString()
+			dtStr, err := datumToJSONObject(&ds[i])
 			if err != nil {
 				return "", errors.Trace(err)
 			}
@@ -2043,4 +2053,11 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 		return "", errors.Trace(err)
 	}
 	return string(retStr), nil
+}
+
+func datumToJSONObject(d *types.Datum) (interface{}, error) {
+	if d.IsNull() {
+		return nil, nil
+	}
+	return d.ToString()
 }

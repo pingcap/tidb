@@ -72,7 +72,8 @@ type TestGlobalKillSuite struct {
 }
 
 func (s *TestGlobalKillSuite) SetUpSuite(c *C) {
-	logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	c.Assert(err, IsNil)
 
 	s.pdCli, s.pdErr = s.connectPD()
 }
@@ -117,7 +118,8 @@ func (s *TestGlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd 
 		fmt.Sprintf("--path=%s/mocktikv", *tmpPath),
 		fmt.Sprintf("-P=%d", port),
 		fmt.Sprintf("--status=%d", statusPort),
-		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port))
+		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
+		fmt.Sprintf("--config=%s", "./config.toml"))
 	log.Infof("starting tidb: %v", cmd)
 	err = cmd.Start()
 	if err != nil {
@@ -134,7 +136,8 @@ func (s *TestGlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath s
 		fmt.Sprintf("--path=%s", pdPath),
 		fmt.Sprintf("-P=%d", port),
 		fmt.Sprintf("--status=%d", statusPort),
-		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port))
+		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
+		fmt.Sprintf("--config=%s", "./config.toml"))
 	log.Infof("starting tidb: %v", cmd)
 	err = cmd.Start()
 	if err != nil {
@@ -201,7 +204,10 @@ func (s *TestGlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 		}
 		log.Warnf("ping addr %v failed, retry count %d err %v", addr, i, err)
 
-		db.Close()
+		err = db.Close()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
 	}
@@ -321,7 +327,10 @@ func (s *TestGlobalKillSuite) TestWithoutPD(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	defer db.Close()
+	defer func(){
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	const sleepTime = 2
 
@@ -346,7 +355,10 @@ func (s *TestGlobalKillSuite) TestOneTiDB(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	defer db.Close()
+	defer func(){
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	const sleepTime = 2
 

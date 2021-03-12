@@ -54,7 +54,6 @@ var (
 	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
-	_ PhysicalPlan = &PhysicalBroadCastJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
@@ -75,6 +74,9 @@ type PhysicalTableReader struct {
 
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
+
+	// BatchCop = true means the cop task in the physical table reader will be executed in batch mode(use in TiFlash only)
+	BatchCop bool
 
 	IsCommonHandle bool
 
@@ -105,7 +107,7 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 		} else if chCnt == 1 {
 			curPlan = curPlan.Children()[0]
 		} else {
-			join := curPlan.(*PhysicalBroadCastJoin)
+			join := curPlan.(*PhysicalHashJoin)
 			curPlan = join.children[1-join.globalChildIndex]
 		}
 	}
@@ -144,6 +146,7 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.StoreType = p.StoreType
+	cloned.BatchCop = p.BatchCop
 	cloned.IsCommonHandle = p.IsCommonHandle
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
@@ -721,6 +724,10 @@ type PhysicalHashJoin struct {
 
 	// use the outer table to build a hash table when the outer table is smaller.
 	UseOuterToBuild bool
+
+	// on which store the join executes.
+	storeTp          kv.StoreType
+	globalChildIndex int
 }
 
 // Clone implements PhysicalPlan interface.
@@ -784,8 +791,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
-	outerSchema *expression.Schema
-	innerTask   task
+	innerTask task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges []*ranger.Range
@@ -841,90 +847,25 @@ type PhysicalMergeJoin struct {
 	Desc bool
 }
 
-// PhysicalBroadCastJoin only works for TiFlash Engine, which broadcast the small table to every replica of probe side of tables.
-type PhysicalBroadCastJoin struct {
-	basePhysicalJoin
-	EqualConditions  []*expression.ScalarFunction
-	globalChildIndex int
-}
-
-// PhysicalExchangerBase is the common part of Exchanger and ExchangerClient.
-type PhysicalExchangerBase struct {
-	basePhysicalPlan
-}
-
 // PhysicalExchangeReceiver accepts connection and receives data passively.
 type PhysicalExchangeReceiver struct {
-	PhysicalExchangerBase
+	basePhysicalPlan
 
 	Tasks   []*kv.MPPTask
 	ChildPf *Fragment
 }
 
-// ToPB generates the pb structure.
-func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
-	encodedTask := make([][]byte, 0, len(e.Tasks))
-
-	for _, task := range e.Tasks {
-		encodedStr, err := task.ToPB().Marshal()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		encodedTask = append(encodedTask, encodedStr)
-	}
-
-	fieldTypes := make([]*tipb.FieldType, 0, len(e.ChildPf.Schema().Columns))
-	for _, column := range e.ChildPf.Schema().Columns {
-		fieldTypes = append(fieldTypes, expression.ToPBFieldType(column.RetType))
-	}
-	ecExec := &tipb.ExchangeReceiver{
-		EncodedTaskMeta: encodedTask,
-		FieldTypes:      fieldTypes,
-	}
-	executorID := e.ExplainID().String()
-	return &tipb.Executor{
-		Tp:               tipb.ExecType_TypeExchangeReceiver,
-		ExchangeReceiver: ecExec,
-		ExecutorId:       &executorID,
-	}, nil
-}
-
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
 type PhysicalExchangeSender struct {
-	PhysicalExchangerBase
+	basePhysicalPlan
 
-	Tasks        []*kv.MPPTask
+	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
-}
+	HashCols     []*expression.Column
+	// Tasks is the mpp task for current PhysicalExchangeSender
+	Tasks []*kv.MPPTask
 
-// ToPB generates the pb structure.
-func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
-	child, err := e.Children()[0].ToPB(ctx, kv.TiFlash)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	encodedTask := make([][]byte, 0, len(e.Tasks))
-
-	for _, task := range e.Tasks {
-		encodedStr, err := task.ToPB().Marshal()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		encodedTask = append(encodedTask, encodedStr)
-	}
-
-	ecExec := &tipb.ExchangeSender{
-		Tp:              e.ExchangeType,
-		EncodedTaskMeta: encodedTask,
-		Child:           child,
-	}
-	executorID := e.ExplainID().String()
-	return &tipb.Executor{
-		Tp:             tipb.ExecType_TypeExchangeSender,
-		ExchangeSender: ecExec,
-		ExecutorId:     &executorID,
-	}, nil
+	Fragment *Fragment
 }
 
 // Clone implements PhysicalPlan interface.
@@ -977,11 +918,35 @@ type PhysicalUnionAll struct {
 	physicalSchemaProducer
 }
 
+// AggMppRunMode defines the running mode of aggregation in MPP
+type AggMppRunMode int
+
+const (
+	// NoMpp means the default value which does not run in MPP
+	NoMpp AggMppRunMode = iota
+	// Mpp1Phase runs only 1 phase but requires its child's partition property
+	Mpp1Phase
+	// Mpp2Phase runs partial agg + final agg with hash partition
+	Mpp2Phase
+	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)
+	MppTiDB
+)
+
 type basePhysicalAgg struct {
 	physicalSchemaProducer
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
+	MppRunMode   AggMppRunMode
+}
+
+func (p *basePhysicalAgg) isFinalAgg() bool {
+	if len(p.AggFuncs) > 0 {
+		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg, error) {

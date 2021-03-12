@@ -99,6 +99,10 @@ func AggFieldType(tps []*FieldType) *FieldType {
 		}
 	}
 
+	if mysql.HasUnsignedFlag(currType.Flag) && !isMixedSign {
+		currType.Flag |= mysql.UnsignedFlag
+	}
+
 	return &currType
 }
 
@@ -130,8 +134,8 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 		}
 		lft = rft
 	}
-	setTypeFlag(flag, mysql.UnsignedFlag, unsigned)
-	setTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
+	SetTypeFlag(flag, mysql.UnsignedFlag, unsigned)
+	SetTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
 	return aggregatedEvalType
 }
 
@@ -156,7 +160,8 @@ func mergeEvalType(lhs, rhs EvalType, lft, rft *FieldType, isLHSUnsigned, isRHSU
 	return ETInt
 }
 
-func setTypeFlag(flag *uint, flagItem uint, on bool) {
+// SetTypeFlag turns the flagItem on or off.
+func SetTypeFlag(flag *uint, flagItem uint, on bool) {
 	if on {
 		*flag |= flagItem
 	} else {
@@ -185,7 +190,7 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 func hasVariantFieldLength(tp *FieldType) bool {
 	switch tp.Tp {
 	case mysql.TypeLonglong, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeBlob,
-		mysql.TypeBit, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeEnum, mysql.TypeSet:
+		mysql.TypeBit, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeSet:
 		return true
 	}
 	return false

@@ -473,10 +473,10 @@ func (s *testPlanSuite) TestEliminateMaxOneRow(c *C) {
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }
@@ -536,7 +536,49 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 	tk.MustExec("create table t (a int primary key, b int, index idx(a))")
 	tk.MustExec("create table tt (a int primary key) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
 
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
+
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		tk.MustExec("begin")
+		for j, tt := range ts {
+			if j != len(ts)-1 {
+				tk.MustExec(tt)
+			}
+			s.testData.OnRecord(func() {
+				output[i].SQL = ts
+				if j == len(ts)-1 {
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
+			})
+			if j == len(ts)-1 {
+				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			}
+		}
+		tk.MustExec("rollback")
+	}
+}
+
+func (s *testPlanSuite) TestMergeJoinUnionScan(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	var input [][]string
+	var output []struct {
+		SQL  []string
+		Plan []string
+	}
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int))")
+	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int))")
+	tk.MustExec("insert into t1 (`c_int`, `c_str`) values (11, 'keen williamson'), (10, 'gracious hermann')")
+	tk.MustExec("insert into t2 (`c_int`, `c_str`) values (10, 'gracious hermann')")
 
 	s.testData.GetTestCases(c, &input, &output)
 	for i, ts := range input {
@@ -932,7 +974,7 @@ func (s *testPlanSuite) TestLimitToCopHint(c *C) {
 		output []struct {
 			SQL     string
 			Plan    []string
-			Warning string
+			Warning []string
 		}
 	)
 
@@ -941,23 +983,28 @@ func (s *testPlanSuite) TestLimitToCopHint(c *C) {
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 
 		comment := Commentf("case:%v sql:%s", i, ts)
 		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 		s.testData.OnRecord(func() {
 			if len(warnings) > 0 {
-				output[i].Warning = warnings[0].Err.Error()
+				output[i].Warning = make([]string, len(warnings))
+				for j, warning := range warnings {
+					output[i].Warning[j] = warning.Err.Error()
+				}
 			}
 		})
-		if output[i].Warning == "" {
+		if len(output[i].Warning) == 0 {
 			c.Assert(len(warnings), Equals, 0, comment)
 		} else {
-			c.Assert(len(warnings), Equals, 1, comment)
-			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
-			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning, comment)
+			c.Assert(len(warnings), Equals, len(output[i].Warning), comment)
+			for j, warning := range warnings {
+				c.Assert(warning.Level, Equals, stmtctx.WarnLevelWarning, comment)
+				c.Assert(warning.Err.Error(), Equals, output[i].Warning[j], comment)
+			}
 		}
 	}
 }
@@ -1054,7 +1101,7 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggPartialConcurrency))
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggFinalConcurrency))
 
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 
 	for _, v := range vars {
 		tk.MustExec(v)
@@ -1063,10 +1110,10 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
@@ -1108,10 +1155,10 @@ func (s *testPlanSuite) TestGroupConcatOrderby(c *C) {
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }
@@ -1546,10 +1593,10 @@ func (s *testPlanSuite) TestNominalSort(c *C) {
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }
@@ -1624,7 +1671,7 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	_, err = se.Execute(ctx, "insert into tt values (1, 1), (2, 2), (3, 4)")
 	c.Assert(err, IsNil)
 
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 
 	var input []string
 	var output []struct {
@@ -1635,14 +1682,14 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
 
 	// This assert makes sure a query with or without nth_plan() hint output exactly the same plan(including plan ID).
 	// The query below is the same as queries in the testdata except for nth_plan() hint.
 	// Currently its output is the same as the second test case in the testdata, which is `output[1]`. If this doesn't
 	// hold in the future, you may need to modify this.
-	tk.MustQuery("explain select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
+	tk.MustQuery("explain format = 'brief' select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
 }

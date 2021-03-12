@@ -24,8 +24,8 @@ import (
 var (
 	// ErrBodyMissing response body is missing error
 	ErrBodyMissing = errors.New("response body is missing")
-	// When TiDB is closing and send request to tikv fail, do not retry, return this error.
-	errTiDBShuttingDown = errors.New("tidb server shutting down")
+	// ErrTiDBShuttingDown is returned when TiDB is closing and send request to tikv fail, do not retry.
+	ErrTiDBShuttingDown = errors.New("tidb server shutting down")
 )
 
 // mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
@@ -76,4 +76,13 @@ type PDError struct {
 
 func (d *PDError) Error() string {
 	return d.Err.String()
+}
+
+// ErrKeyExist wraps *pdpb.AlreadyExist to implement the error interface.
+type ErrKeyExist struct {
+	*kvrpcpb.AlreadyExist
+}
+
+func (k *ErrKeyExist) Error() string {
+	return k.AlreadyExist.String()
 }

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -57,14 +58,41 @@ func (txn *wrapTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
 }
 
+// GetUnionStore implements GetUnionStore
+func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
+	if txn.Transaction == nil {
+		return nil
+	}
+	return txn.Transaction.GetUnionStore()
+}
+
+func (txn *wrapTxn) CacheTableInfo(id int64, info *model.TableInfo) {
+	if txn.Transaction == nil {
+		return
+	}
+	txn.Transaction.CacheTableInfo(id, info)
+}
+
+func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
+	if txn.Transaction == nil {
+		return nil
+	}
+	return txn.Transaction.GetTableInfo(id)
+}
+
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Support.")
+	return nil, errors.Errorf("Not Supported.")
+}
+
+// ExecuteStmt implements sqlexec.SQLExecutor ExecuteStmt interface.
+func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	return nil, errors.Errorf("Not Supported.")
 }
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
-func (c *Context) ExecuteInternal(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Support.")
+func (c *Context) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+	return nil, errors.Errorf("Not Supported.")
 }
 
 type mockDDLOwnerChecker struct{}
@@ -183,13 +211,18 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
+		txn, err := c.Store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(oracle.GlobalTxnScope).SetStartTs(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		c.txn.Transaction = txn
 	}
 	return nil
+}
+
+// NewTxnWithStalenessOption implements the sessionctx.Context interface.
+func (c *Context) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
+	return c.NewTxn(ctx)
 }
 
 // GetStore gets the store of session.

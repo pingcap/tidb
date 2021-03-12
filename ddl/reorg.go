@@ -66,6 +66,10 @@ type reorgCtx struct {
 
 	doneKey atomic.Value // nullable kv.Key
 
+	// element is used to record the current element in the reorg process, it can be
+	// accessed by reorg-worker and daemon-worker concurrently.
+	element atomic.Value
+
 	// warnings is used to store the warnings when doing the reorg job under
 	// a certain SQL Mode.
 	mu struct {
@@ -79,14 +83,6 @@ type reorgCtx struct {
 // Storing a nil object to atomic.Value can lead to panic. This is a workaround.
 type nullableKey struct {
 	key kv.Key
-}
-
-// toString is used in log to avoid nil dereference panic.
-func toString(handle kv.Handle) string {
-	if handle == nil {
-		return "<nil>"
-	}
-	return handle.String()
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
@@ -123,6 +119,10 @@ func (rc *reorgCtx) setNextKey(doneKey kv.Key) {
 	rc.doneKey.Store(nullableKey{key: doneKey})
 }
 
+func (rc *reorgCtx) setCurrentElement(element *meta.Element) {
+	rc.element.Store(element)
+}
+
 func (rc *reorgCtx) mergeWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
 	if len(warnings) == 0 || len(warningsCount) == 0 {
 		return
@@ -143,10 +143,11 @@ func (rc *reorgCtx) increaseRowCount(count int64) {
 	atomic.AddInt64(&rc.rowCount, count)
 }
 
-func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key) {
+func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 	row := atomic.LoadInt64(&rc.rowCount)
 	h, _ := (rc.doneKey.Load()).(nullableKey)
-	return row, h.key
+	element, _ := (rc.element.Load()).(*meta.Element)
+	return row, h.key, element
 }
 
 func (rc *reorgCtx) clean() {
@@ -185,6 +186,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// initial reorgCtx
 		w.reorgCtx.setRowCount(job.GetRowCount())
 		w.reorgCtx.setNextKey(reorgInfo.StartKey)
+		w.reorgCtx.setCurrentElement(reorgInfo.currElement)
 		w.reorgCtx.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 		w.reorgCtx.mu.warningsCount = make(map[errors.ErrorID]int64)
 		go func() {
@@ -206,7 +208,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	// wait reorganization job done or timeout
 	select {
 	case err := <-w.reorgCtx.doneCh:
-		rowCount, _ := w.reorgCtx.getRowCountAndKey()
+		rowCount, _, _ := w.reorgCtx.getRowCountAndKey()
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
@@ -237,7 +239,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount, doneKey := w.reorgCtx.getRowCountAndKey()
+		rowCount, doneKey, currentElement := w.reorgCtx.getRowCountAndKey()
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
@@ -246,12 +248,16 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		w.mergeWarningsIntoJob(job)
 
 		w.reorgCtx.resetWarnings()
+
 		// Update a reorgInfo's handle.
-		err := t.UpdateDDLReorgStartHandle(job, reorgInfo.currElement, doneKey)
+		// Since daemon-worker is triggered by timer to store the info half-way.
+		// you should keep these infos is read-only (like job) / atomic (like doneKey & element) / concurrent safe.
+		err := t.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
+
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
 			zap.Duration("waitTime", waitTimeout),
-			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
-			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.ByteString("elementType", currentElement.TypeKey),
+			zap.Int64("elementID", currentElement.ID),
 			zap.Int64("totalAddedRowCount", rowCount),
 			zap.String("doneKey", tryDecodeToHandleString(doneKey)),
 			zap.Error(err))
@@ -305,8 +311,12 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	if !ok {
 		return statistics.PseudoRowCount
 	}
-	sql := fmt.Sprintf("select table_rows from information_schema.tables where tidb_table_id=%v;", tblInfo.ID)
-	rows, _, err := executor.ExecRestrictedSQL(sql)
+	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
+	stmt, err := executor.ParseWithParams(context.Background(), sql, tblInfo.ID)
+	if err != nil {
+		return statistics.PseudoRowCount
+	}
+	rows, _, err := executor.ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
@@ -519,7 +529,7 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 		return startHandleKey, nil, errors.Trace(err)
 	}
 	if maxHandle != nil {
-		endHandleKey = tbl.RecordKey(maxHandle)
+		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
 		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
@@ -696,7 +706,7 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
 		return nil
 	}
 
-	err := kv.RunInNewTxn(r.d.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
 	})

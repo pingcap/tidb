@@ -48,6 +48,9 @@ func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result
 			if types.ErrOverflow.Equal(err) {
 				err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
 			}
+			if types.ErrTruncatedWrongVal.Equal(err) {
+				err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+			}
 			if err != nil {
 				return err
 			}
@@ -373,11 +376,19 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 	i64s := buf.Int64s()
 	stmt := b.ctx.GetSessionVars().StmtCtx
 	fsp := int8(b.tp.Decimal)
+
+	var tm types.Time
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			continue
 		}
-		tm, err := types.ParseTimeFromNum(stmt, i64s[i], b.tp.Tp, fsp)
+
+		if b.args[0].GetType().Tp == mysql.TypeYear {
+			tm, err = types.ParseTimeFromYear(stmt, i64s[i])
+		} else {
+			tm, err = types.ParseTimeFromNum(stmt, i64s[i], b.tp.Tp, fsp)
+		}
+
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -852,6 +863,12 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
 		return b.args[0].VecEvalInt(b.ctx, input, result)
 	}
+
+	// Take the implicit evalInt path if possible.
+	if CanImplicitEvalInt(b.args[0]) {
+		return b.args[0].VecEvalInt(b.ctx, input, result)
+	}
+
 	result.ResizeInt64(n, false)
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -1557,6 +1574,12 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chu
 	if IsBinaryLiteral(b.args[0]) {
 		return b.args[0].VecEvalReal(b.ctx, input, result)
 	}
+
+	// Take the implicit evalReal path if possible.
+	if CanImplicitEvalReal(b.args[0]) {
+		return b.args[0].VecEvalReal(b.ctx, input, result)
+	}
+
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {

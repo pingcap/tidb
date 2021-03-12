@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
@@ -518,10 +519,18 @@ func (s *testSuite3) TestKillStmt(c *C) {
 		serverID: 0,
 	}
 	tk.Se.SetSessionManager(sm)
+	tk.MustExec("kill 1")
+	result := tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Experimental.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg)
 
 	// ZERO serverID, treated as truncated.
 	tk.MustExec("kill 1")
-	result := tk.MustQuery("show warnings")
+	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
 
 	// truncated
@@ -541,6 +550,7 @@ func (s *testSuite3) TestKillStmt(c *C) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
+	config.StoreGlobalConfig(originCfg)
 	// remote kill is tested in `tests/globalkilltest`
 }
 
@@ -575,7 +585,10 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	// Run in a separate suite because this test need to set SkipGrantTable config.
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -588,6 +601,54 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("FLUSH PRIVILEGES")
+}
+
+func (s *testSuite3) TestDropPartitionStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (
+	a int,
+	key(a)
+)
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20),
+	partition global values less than (30)
+)`)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("insert into t values (1), (5), (11), (15), (21), (25)")
+	c.Assert(s.domain.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	checkPartitionStats := func(names ...string) {
+		rs := tk.MustQuery("show stats_meta").Rows()
+		c.Assert(len(rs), Equals, len(names))
+		for i := range names {
+			c.Assert(rs[i][2].(string), Equals, names[i])
+		}
+	}
+
+	tk.MustExec("analyze table t")
+	checkPartitionStats("global", "p0", "p1", "global")
+
+	tk.MustExec("drop stats t partition p0")
+	checkPartitionStats("global", "p1", "global")
+
+	err := tk.ExecToErr("drop stats t partition abcde")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "can not found the specified partition name abcde in the table definition")
+
+	tk.MustExec("drop stats t partition global")
+	checkPartitionStats("global", "p1")
+
+	tk.MustExec("drop stats t global")
+	checkPartitionStats("p1")
+
+	tk.MustExec("analyze table t")
+	checkPartitionStats("global", "p0", "p1", "global")
+
+	tk.MustExec("drop stats t partition p0, p1, global")
+	checkPartitionStats("global")
 }
 
 func (s *testSuite3) TestDropStats(c *C) {
@@ -765,24 +826,28 @@ func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 't'")
+	c.Assert(err.Error(), Equals, "[planner:1142]ALTER command denied to user 'u1'@'%' for table 't'")
+	tk.MustExec("grant alter on test.* to 'u1'@'%'")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 't'")
 	tk.MustExec("grant select on test.* to 'u1'@'%'")
-	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 'stats_extended'")
+	c.Assert(err.Error(), Equals, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'")
 	tk.MustExec("grant insert on mysql.stats_extended to 'u1'@'%'")
-	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
 	c.Assert(err, IsNil)
 
 	_, err = se.Execute(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, "drop statistics s1")
+	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]DROP STATISTICS command denied to user 'u1'@'%' for table 'stats_extended'")
+	c.Assert(err.Error(), Equals, "[planner:1142]DROP STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'")
 	tk.MustExec("grant update on mysql.stats_extended to 'u1'@'%'")
-	_, err = se.Execute(ctx, "drop statistics s1")
+	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
 	c.Assert(err, IsNil)
 	tk.MustExec("drop user 'u1'@'%'")
 }
