@@ -390,7 +390,6 @@ REBUILD:
 			if !hitVal {
 				cacheVals = append(cacheVals.([]*PSTMTPlanCacheValue), cached)
 			}
-			sctx.PreparedPlanCache().Delete(cacheKey)
 			sctx.PreparedPlanCache().Put(cacheKey, cacheVals)
 		} else {
 			sctx.PreparedPlanCache().Put(cacheKey, []*PSTMTPlanCacheValue{cached})
