@@ -4440,9 +4440,11 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustExec("create definer='root'@'localhost' view view1 as select * from view_t")
 	tk.MustExec("create definer='root'@'localhost' view view2(c,d) as select * from view_t")
 	tk.MustExec("create definer='root'@'localhost' view view3(c,d) as select a,b from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view4 as select * from (select * from (select * from view_t) tb1) tb;")
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(c int,d int)")
 	err := tk.ExecToErr("select * from view1")
@@ -4457,14 +4459,16 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
 	tk.MustExec("alter table view_t drop column a")
 	tk.MustExec("alter table view_t add column a int after b")
 	tk.MustExec("update view_t set a=1;")
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
 	tk.MustExec("drop table view_t;")
-	tk.MustExec("drop view view1,view2,view3;")
+	tk.MustExec("drop view view1,view2,view3,view4;")
 
 	tk.MustExec("set @@tidb_enable_window_function = 1")
 	defer func() {
@@ -7041,7 +7045,7 @@ func (s *testCoprCache) TestIntegrationCopCache(c *C) {
 
 	// Test for cop cache disabled.
 	cfg := config.NewConfig()
-	cfg.TiKVClient.CoprCache.Enable = false
+	cfg.TiKVClient.CoprCache.CapacityMB = 0
 	config.StoreGlobalConfig(cfg)
 	rows = tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
 	c.Assert(rows[0][2], Equals, "9")
@@ -7393,40 +7397,6 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 		action = action.GetFallback()
 	}
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
-}
-
-func (s *testSerialSuite) TestIssue21441(c *C) {
-	err := failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
-		c.Assert(err, IsNil)
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec(`insert into t values(1),(2),(3)`)
-	tk.Se.GetSessionVars().InitChunkSize = 1
-	tk.Se.GetSessionVars().MaxChunkSize = 1
-	sql := `
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t`
-	tk.MustQuery(sql).Sort().Check(testkit.Rows(
-		"1", "1", "1", "1", "1", "1", "1", "1",
-		"2", "2", "2", "2", "2", "2", "2", "2",
-		"3", "3", "3", "3", "3", "3", "3", "3",
-	))
-
-	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
-	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
 }
 
 func (s *testSuite) Test17780(c *C) {
