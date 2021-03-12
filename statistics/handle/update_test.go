@@ -16,6 +16,7 @@ package handle_test
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -808,8 +809,8 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	tbl = h.GetPartitionStats(tblInfo, pid)
 
-	// The error rate of this column is not larger than MaxErrorRate now.
-	c.Assert(tbl.Columns[aID].NotAccurate(), IsFalse)
+	// Feedback will not take effect under partition table.
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsTrue)
 }
 
 func appendBucket(h *statistics.Histogram, l, r int64) {
@@ -1014,6 +1015,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	handle.MinLogErrorRate = 0
 
 	h := s.do.StatsHandle()
+	// Feedback will not take effect under partition table.
 	tests := []struct {
 		sql     string
 		hist    string
@@ -1022,23 +1024,23 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 		{
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5",
-			hist: "column:1 ndv:2 totColSize:0\n" +
-				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0 ndv: 0\n" +
-				"num: 1 lower_bound: 2 upper_bound: 5 repeats: 0 ndv: 0",
+			hist: "column:1 ndv:2 totColSize:2\n" +
+				"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n" +
+				"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0",
 			idxCols: 0,
 		},
 		{
 			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0 ndv: 0",
+				"num: 2 lower_bound: 2 upper_bound: 2 repeats: 2 ndv: 0",
 			idxCols: 1,
 		},
 		{
 			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0 ndv: 0",
+				"num: 2 lower_bound: 2 upper_bound: 2 repeats: 2 ndv: 0",
 			idxCols: 1,
 		},
 	}
@@ -1215,10 +1217,11 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	pid := tblInfo.Partition.Definitions[0].ID
 	tbl := h.GetPartitionStats(tblInfo, pid)
 
+	// Feedback will not take effect under partition table.
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
 		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n"+
-		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0 ndv: 0\n"+
-		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0 ndv: 0")
+		"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0\n"+
+		"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0")
 }
 
 func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
@@ -2080,11 +2083,99 @@ func (s *testStatsSuite) TestFeedbackCounter(c *C) {
 	c.Assert(subtraction(newNum, oldNum), Equals, 20)
 }
 
+func (s *testSerialStatsSuite) TestMergeTopN(c *C) {
+	// Move this test to here to avoid race test.
+	tests := []struct {
+		topnNum    int
+		n          int
+		maxTopNVal int
+		maxTopNCnt int
+	}{
+		{
+			topnNum:    10,
+			n:          5,
+			maxTopNVal: 50,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    1,
+			n:          5,
+			maxTopNVal: 50,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    5,
+			n:          5,
+			maxTopNVal: 5,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    5,
+			n:          5,
+			maxTopNVal: 10,
+			maxTopNCnt: 100,
+		},
+	}
+	for _, t := range tests {
+		topnNum, n := t.topnNum, t.n
+		maxTopNVal, maxTopNCnt := t.maxTopNVal, t.maxTopNCnt
+
+		// the number of maxTopNVal should be bigger than n.
+		ok := maxTopNVal >= n
+		c.Assert(ok, Equals, true)
+
+		topNs := make([]*statistics.TopN, 0, topnNum)
+		res := make(map[int]uint64)
+		rand.Seed(time.Now().Unix())
+		for i := 0; i < topnNum; i++ {
+			topN := statistics.NewTopN(n)
+			occur := make(map[int]bool)
+			for j := 0; j < n; j++ {
+				// The range of numbers in the topn structure is in [0, maxTopNVal)
+				// But there cannot be repeated occurrences of value in a topN structure.
+				randNum := rand.Intn(maxTopNVal)
+				for occur[randNum] {
+					randNum = rand.Intn(maxTopNVal)
+				}
+				occur[randNum] = true
+				tString := []byte(fmt.Sprintf("%d", randNum))
+				// The range of the number of occurrences in the topn structure is in [0, maxTopNCnt)
+				randCnt := uint64(rand.Intn(maxTopNCnt))
+				res[randNum] += randCnt
+				topNMeta := statistics.TopNMeta{Encoded: tString, Count: randCnt}
+				topN.TopN = append(topN.TopN, topNMeta)
+			}
+			topNs = append(topNs, topN)
+		}
+		topN, remainTopN := statistics.MergeTopN(topNs, uint32(n))
+		cnt := len(topN.TopN)
+		var minTopNCnt uint64
+		for _, topNMeta := range topN.TopN {
+			val, err := strconv.Atoi(string(topNMeta.Encoded))
+			c.Assert(err, IsNil)
+			c.Assert(topNMeta.Count, Equals, res[val])
+			minTopNCnt = topNMeta.Count
+		}
+		if remainTopN != nil {
+			cnt += len(remainTopN)
+			for _, remainTopNMeta := range remainTopN {
+				val, err := strconv.Atoi(string(remainTopNMeta.Encoded))
+				c.Assert(err, IsNil)
+				c.Assert(remainTopNMeta.Count, Equals, res[val])
+				ok = minTopNCnt > remainTopNMeta.Count
+				c.Assert(ok, Equals, true)
+			}
+		}
+		c.Assert(cnt, Equals, len(res))
+	}
+}
+
 func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testkit.WithPruneMode(testKit, variable.DynamicOnly, func() {
 		testKit.MustExec("use test")
+		testKit.MustExec("set @@tidb_analyze_version = 2;")
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec(`create table t (a int, b varchar(10), index idx_ab(a, b))
 					partition by range (a) (

@@ -474,9 +474,11 @@ const (
 	version64 = 64
 	// version65 add mysql.stats_fm_sketch table.
 	version65 = 65
+	// version66 enables the feature `track_aggregate_memory_usage` by default.
+	version66 = 66
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version65
+	currentBootstrapVersion = version66
 )
 
 var (
@@ -546,6 +548,7 @@ var (
 		upgradeToVer63,
 		upgradeToVer64,
 		upgradeToVer65,
+		upgradeToVer66,
 	}
 )
 
@@ -1389,7 +1392,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		if err != nil {
 			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
 		}
-		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db))
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db, bind))
 		if _, ok := bindMap[originWithDB]; ok {
 			// The results are sorted in descending order of time.
 			// And in the following cases, duplicate originWithDB may occur
@@ -1400,7 +1403,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 			continue
 		}
 		bindMap[originWithDB] = bindInfo{
-			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db),
+			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db, bind),
 			status:     row.GetString(2),
 			createTime: row.GetTime(3),
 			charset:    charset,
@@ -1446,6 +1449,13 @@ func upgradeToVer65(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateStatsFMSketchTable)
+}
+
+func upgradeToVer66(s Session, ver int64) {
+	if ver >= version66 {
+		return
+	}
+	mustExecute(s, "set @@global.tidb_track_aggregate_memory_usage = 1")
 }
 
 func writeOOMAction(s Session) {
