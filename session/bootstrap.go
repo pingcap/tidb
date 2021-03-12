@@ -464,8 +464,8 @@ const (
 	version59 = 59
 	// version60 redesigns `mysql.stats_extended`
 	version60 = 60
-	// version61 restore all SQL bindings.
-	version61 = 61
+	// version61 will be redone in version66
+	// version61 = 61
 	// version62 add column ndv for mysql.stats_buckets.
 	version62 = 62
 	// version63 fixes the bug that upgradeToVer51 would be missed when upgrading from v4.0 to a new version
@@ -474,9 +474,11 @@ const (
 	version64 = 64
 	// version65 add mysql.stats_fm_sketch table.
 	version65 = 65
+	// version66 restore all SQL bindings.
+	version66 = 66
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version65
+	currentBootstrapVersion = version66
 )
 
 var (
@@ -541,11 +543,12 @@ var (
 		// We will redo upgradeToVer58 in upgradeToVer64, it is skipped here.
 		upgradeToVer59,
 		upgradeToVer60,
-		upgradeToVer61,
+		// We will redo upgradeToVer61 in upgradeToVer66, it is skipped here.
 		upgradeToVer62,
 		upgradeToVer63,
 		upgradeToVer64,
 		upgradeToVer65,
+		upgradeToVer66,
 	}
 )
 
@@ -1319,8 +1322,8 @@ type bindInfo struct {
 	source     string
 }
 
-func upgradeToVer61(s Session, ver int64) {
-	if ver >= version61 {
+func upgradeToVer66(s Session, ver int64) {
+	if ver >= version66 {
 		return
 	}
 	bindMap := make(map[string]bindInfo)

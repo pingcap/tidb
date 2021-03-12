@@ -532,6 +532,14 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 			bindWithDB:   "SELECT /*+ use_index(t idx)*/ count(1),max(a) FROM test.t GROUP BY b",
 			deleteText:   "select count(1), max(a) from test.t group by b",
 		},
+		{
+			originText:   "select * from `test` . `t` where `a` = (_charset) ?",
+			bindText:     "SELECT * FROM test.t WHERE a = _utf8\\'ab\\'",
+			db:           "test",
+			originWithDB: "select * from `test` . `t` where `a` = ?",
+			bindWithDB:   "SELECT * FROM test.t WHERE a = 'ab'",
+			deleteText:   "select * from test.t where a = 'c'",
+		},
 	}
 	defer testleak.AfterTest(c)()
 	ctx := context.Background()
@@ -545,9 +553,10 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 			bindCase.bindText,
 			bindCase.db,
 		)
+		fmt.Println("[sql]", sql)
 		mustExecSQL(c, se, sql)
 
-		upgradeToVer61(se, version60)
+		upgradeToVer66(se, version60)
 		r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
 		req := r.NewChunk()
 		c.Assert(r.Next(ctx, req), IsNil)
@@ -558,6 +567,7 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 		c.Assert(row.GetString(3), Equals, "using")
 		c.Assert(r.Close(), IsNil)
 		sql = fmt.Sprintf("drop global binding for %s", bindCase.deleteText)
+		fmt.Println("[delete SQL]", sql)
 		mustExecSQL(c, se, sql)
 		r = mustExecSQL(c, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
 		c.Assert(r.Next(ctx, req), IsNil)
@@ -582,7 +592,7 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	// The latest one.
 	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 
-	upgradeToVer61(se, version60)
+	upgradeToVer66(se, version60)
 
 	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin'`)
 	req := r.NewChunk()
