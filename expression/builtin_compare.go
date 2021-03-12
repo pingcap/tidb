@@ -1306,6 +1306,15 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		case types.ETReal, types.ETDecimal:
 			return con, true
 		case types.ETString:
+			// Year will change 2 to 2002 so in this case double datum never equal int datum.
+			if targetFieldType.Tp == mysql.TypeYear {
+				return &Constant{
+					Value:        intDatum,
+					RetType:      &targetFieldType,
+					DeferredExpr: con.DeferredExpr,
+					ParamMarker:  con.ParamMarker,
+				}, false
+			}
 			// We try to convert the string constant to double.
 			// If the double result equals the int result, we can return the int result;
 			// otherwise, the compare function will be false.
