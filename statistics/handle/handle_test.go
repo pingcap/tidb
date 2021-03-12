@@ -1347,16 +1347,32 @@ partition by range (a) (
 
 	// If we already have global-stats, we can get the latest global-stats by analyzing the newly added partition.
 	tk.MustExec("alter table t add partition (partition p2 values less than (30))")
-	tk.MustExec("insert t values (13), (14)")
+	tk.MustExec("insert t values (13), (14), (22), (23)")
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	tk.MustExec("analyze table t partition p2") // it will success since p0 and p1 are both in ver2
-	result := tk.MustQuery("show stats_meta").Rows()
-	c.Assert(len(result), Equals, 4) // p0, p1, p2 and global
+	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
+	c.Assert(len(result), Equals, 4)    // p0, p1, p2 and global
+	c.Assert(result[0][5], Equals, "9") // global.count = p0.count + p1.count + p2.count
+	c.Assert(result[1][5], Equals, "3")
+	c.Assert(result[2][5], Equals, "4")
+	c.Assert(result[3][5], Equals, "2")
 
 	tk.MustExec("alter table t drop partition p2;")
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	result = tk.MustQuery("show stats_meta").Rows()
+	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	c.Assert(len(result), Equals, 3) // p0, p1 and global
+	// The value of global.count will be updated the next time analyze.
+	c.Assert(result[0][5], Equals, "9") // global.count = p0.count + p1.count
+	c.Assert(result[1][5], Equals, "3")
+	c.Assert(result[2][5], Equals, "4")
+
+	tk.MustExec("analyze table t;")
+	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
+	c.Assert(len(result), Equals, 3) // p0, p1 and global
+	// The value of global.count is correct now.
+	c.Assert(result[0][5], Equals, "7") // global.count = p0.count + p1.count
+	c.Assert(result[1][5], Equals, "3")
+	c.Assert(result[2][5], Equals, "4")
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
