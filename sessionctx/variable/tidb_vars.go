@@ -667,7 +667,7 @@ const (
 	DefTiDBGuaranteeLinearizability    = true
 	DefTiDBAnalyzeVersion              = 1
 	DefTiDBEnableIndexMergeJoin        = false
-	DefTiDBTrackAggregateMemoryUsage   = false
+	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
 )
 
@@ -706,6 +706,7 @@ var FeatureSwitchVariables = []string{
 	TiDBEnable1PC,
 	TiDBGuaranteeLinearizability,
 	TiDBEnableClusteredIndex,
+	TiDBTrackAggregateMemoryUsage,
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
