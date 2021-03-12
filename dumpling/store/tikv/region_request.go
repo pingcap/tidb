@@ -254,6 +254,10 @@ func (s *RegionRequestSender) SendReqCtx(
 			if sType == kv.TiDB {
 				failpoint.Return(nil, nil, ErrTiKVServerTimeout)
 			}
+		case "requestTiFlashError":
+			if sType == kv.TiFlash {
+				failpoint.Return(nil, nil, ErrTiFlashServerTimeout)
+			}
 		}
 	})
 
