@@ -5893,9 +5893,19 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 func (s *testIntegrationSerialSuite) TestPreparePlanCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	// Plan cache should now be on by default
-	c.Assert(plannercore.PreparedPlanCacheEnabled(), Equals, true)
+	// Plan cache should now be off by default
+	c.Assert(plannercore.PreparedPlanCacheEnabled(), Equals, false)
 
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
 	// Use the example from the docs https://docs.pingcap.com/tidb/stable/sql-prepare-plan-cache
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
