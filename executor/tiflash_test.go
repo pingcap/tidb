@@ -73,7 +73,6 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 }
 
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -101,7 +100,6 @@ func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 }
 
 func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -137,7 +135,6 @@ func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
 }
 
 func (s *tiflashTestSuite) TestMppExecution(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -196,7 +193,6 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 }
 
 func (s *tiflashTestSuite) TestPartitionTable(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -285,7 +281,6 @@ func (s *tiflashTestSuite) TestPartitionTable(c *C) {
 }
 
 func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
-	defer testleak.AfterTest(c)()
 	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
