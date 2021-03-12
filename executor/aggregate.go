@@ -229,6 +229,7 @@ func (e *HashAggExec) Close() error {
 		e.childResult = nil
 		e.groupSet, _ = set.NewStringSetWithMemoryUsage()
 		e.partialResultMap = nil
+		e.memTracker.ReplaceBytesUsed(0)
 		return e.baseExecutor.Close()
 	}
 	// `Close` may be called after `Open` without calling `Next` in test.
@@ -255,6 +256,7 @@ func (e *HashAggExec) Close() error {
 	for range e.finalOutputCh {
 	}
 	e.executed = false
+	e.memTracker.ReplaceBytesUsed(0)
 	return e.baseExecutor.Close()
 }
 
