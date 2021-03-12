@@ -617,7 +617,7 @@ var defaultConf = Config{
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:          true,
+		Enabled:          false,
 		Capacity:         100,
 		MemoryGuardRatio: 0.1,
 	},
@@ -699,6 +699,7 @@ var deprecatedConfig = map[string]struct{}{
 	"max-txn-time-use":               {},
 	"experimental.allow-auto-random": {},
 	"enable-redact-log":              {}, // use variable tidb_redact_log instead
+	"tikv-client.copr-cache.enable":  {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
