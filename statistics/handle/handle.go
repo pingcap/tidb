@@ -318,9 +318,9 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		return
 	}
 	globalTableInfo := globalTable.Meta()
-	partitionNum := globalTableInfo.Partition.Num
+	partitionNum := len(globalTableInfo.Partition.Definitions)
 	partitionIDs := make([]int64, 0, partitionNum)
-	for i := uint64(0); i < partitionNum; i++ {
+	for i := 0; i < partitionNum; i++ {
 		partitionIDs = append(partitionIDs, globalTableInfo.Partition.Definitions[i].ID)
 	}
 
@@ -411,7 +411,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 	for i := 0; i < globalStats.Num; i++ {
 		// Merge CMSketch
 		globalStats.Cms[i] = allCms[i][0].Copy()
-		for j := uint64(1); j < partitionNum; j++ {
+		for j := 1; j < partitionNum; j++ {
 			err = globalStats.Cms[i].MergeCMSketch(allCms[i][j])
 			if err != nil {
 				return
@@ -435,7 +435,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			// For the column stats, we should merge the FMSketch first. And use the FMSketch to calculate the new NDV.
 			// merge FMSketch
 			globalStats.Fms[i] = allFms[i][0].Copy()
-			for j := uint64(1); j < partitionNum; j++ {
+			for j := 1; j < partitionNum; j++ {
 				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
 			}
 

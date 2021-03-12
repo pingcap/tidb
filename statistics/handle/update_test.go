@@ -2142,7 +2142,7 @@ func (s *testSerialStatsSuite) TestMergeTopN(c *C) {
 				// The range of the number of occurrences in the topn structure is in [0, maxTopNCnt)
 				randCnt := uint64(rand.Intn(maxTopNCnt))
 				res[randNum] += randCnt
-				topNMeta := statistics.TopNMeta{tString, randCnt}
+				topNMeta := statistics.TopNMeta{Encoded: tString, Count: randCnt}
 				topN.TopN = append(topN.TopN, topNMeta)
 			}
 			topNs = append(topNs, topN)
