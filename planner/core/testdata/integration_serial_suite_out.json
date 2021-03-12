@@ -778,6 +778,75 @@
     ]
   },
   {
+    "Name": "TestJoinNotSupportedByTiFlash",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from table_1 a, table_1 b where a.bit_col = b.bit_col",
+        "Plan": [
+          "HashJoin 2.00 root  inner join, equal:[eq(test.table_1.bit_col, test.table_1.bit_col)]",
+          "├─TableReader(Build) 2.00 root  data:TableFullScan",
+          "│ └─TableFullScan 2.00 cop[tiflash] table:b keep order:false",
+          "└─TableReader(Probe) 2.00 root  data:TableFullScan",
+          "  └─TableFullScan 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from table_1 a left join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > 100",
+        "Plan": [
+          "HashJoin 2.00 root  left outer join, equal:[eq(test.table_1.id, test.table_1.id)], left cond:[gt(dayofmonth(test.table_1.datetime_col), 100)]",
+          "├─TableReader(Build) 2.00 root  data:TableFullScan",
+          "│ └─TableFullScan 2.00 cop[tiflash] table:b keep order:false",
+          "└─TableReader(Probe) 2.00 root  data:TableFullScan",
+          "  └─TableFullScan 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from table_1 a right join table_1 b on a.id = b.id and dayofmonth(b.datetime_col) > 100",
+        "Plan": [
+          "HashJoin 2.00 root  right outer join, equal:[eq(test.table_1.id, test.table_1.id)], right cond:gt(dayofmonth(test.table_1.datetime_col), 100)",
+          "├─TableReader(Build) 2.00 root  data:TableFullScan",
+          "│ └─TableFullScan 2.00 cop[tiflash] table:a keep order:false",
+          "└─TableReader(Probe) 2.00 root  data:TableFullScan",
+          "  └─TableFullScan 2.00 cop[tiflash] table:b keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from table_1 a join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > dayofmonth(b.datetime_col)",
+        "Plan": [
+          "HashJoin 2.00 root  inner join, equal:[eq(test.table_1.id, test.table_1.id)], other cond:gt(dayofmonth(test.table_1.datetime_col), dayofmonth(test.table_1.datetime_col))",
+          "├─TableReader(Build) 2.00 root  data:TableFullScan",
+          "│ └─TableFullScan 2.00 cop[tiflash] table:b keep order:false",
+          "└─TableReader(Probe) 2.00 root  data:TableFullScan",
+          "  └─TableFullScan 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMPPNotSupportedInNewCollation",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from table_1 a, table_1 b where a.id = b.id",
+        "Plan": [
+          "HashJoin 2.00 root  inner join, equal:[eq(test.table_1.id, test.table_1.id)]",
+          "├─TableReader(Build) 2.00 root  data:TableFullScan",
+          "│ └─TableFullScan 2.00 cop[tiflash] table:b keep order:false",
+          "└─TableReader(Probe) 2.00 root  data:TableFullScan",
+          "  └─TableFullScan 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ agg_to_cop() */ count(*), id from table_1 group by id",
+        "Plan": [
+          "HashAgg 2.00 root  group by:test.table_1.id, funcs:count(Column#5)->Column#4, funcs:firstrow(test.table_1.id)->test.table_1.id",
+          "└─TableReader 2.00 root  data:HashAgg",
+          "  └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_1.id, funcs:count(1)->Column#5",
+          "    └─TableFullScan 2.00 batchCop[tiflash] table:table_1 keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestReadFromStorageHint",
     "Cases": [
       {
