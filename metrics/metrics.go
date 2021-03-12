@@ -119,7 +119,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StmtNodeCounter)
 	prometheus.MustRegister(DbStmtNodeCounter)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
-	prometheus.MustRegister(GetStoreLimitErrorCounter)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)
 	prometheus.MustRegister(StatementDeadlockDetectDuration)
