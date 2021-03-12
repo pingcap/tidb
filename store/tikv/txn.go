@@ -80,7 +80,7 @@ func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
 
 // newTiKVTxnWithStartTS creates a txn with startTS.
 func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*KVTxn, error) {
-	ver := kv.NewVersion(startTS)
+	ver := startTS
 	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
 	newTiKVTxn := &KVTxn{
 		snapshot:  snapshot,

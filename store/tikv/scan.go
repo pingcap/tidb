@@ -86,7 +86,7 @@ func (s *Scanner) Value() []byte {
 
 // Next return next element.
 func (s *Scanner) Next() error {
-	bo := NewBackofferWithVars(context.WithValue(context.Background(), TxnStartKey, s.snapshot.version.Ver), scannerNextMaxBackoff, s.snapshot.vars)
+	bo := NewBackofferWithVars(context.WithValue(context.Background(), TxnStartKey, s.snapshot.version), scannerNextMaxBackoff, s.snapshot.vars)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
@@ -140,7 +140,7 @@ func (s *Scanner) Close() {
 }
 
 func (s *Scanner) startTS() uint64 {
-	return s.snapshot.version.Ver
+	return s.snapshot.version
 }
 
 func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
@@ -245,7 +245,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			msBeforeExpired, _, err := newLockResolver(s.snapshot.store).ResolveLocks(bo, s.snapshot.version.Ver, []*Lock{lock})
+			msBeforeExpired, _, err := newLockResolver(s.snapshot.store).ResolveLocks(bo, s.snapshot.version, []*Lock{lock})
 			if err != nil {
 				return errors.Trace(err)
 			}

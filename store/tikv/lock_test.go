@@ -406,7 +406,7 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
 		Key:     key,
-		Version: ver.Ver,
+		Version: ver,
 	})
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)

@@ -1281,8 +1281,8 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 					if err != nil {
 						return errors.Trace(err)
 					}
-					lCtx.ForUpdateTS = newForUpdateTSVer.Ver
-					c.forUpdateTS = newForUpdateTSVer.Ver
+					lCtx.ForUpdateTS = newForUpdateTSVer
+					c.forUpdateTS = newForUpdateTSVer
 					logutil.Logger(ctx).Info("amend pessimistic lock pessimistic retry lock",
 						zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS),
 						zap.Uint64("newForUpdateTS", c.forUpdateTS))
