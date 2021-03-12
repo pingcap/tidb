@@ -676,16 +676,20 @@ var defaultSysVars = []*SysVar{
 		}
 		engines := strings.Split(normalizedValue, ",")
 		var formatVal string
+		storeTypes := make(map[kv.StoreType]struct{})
 		for i, engine := range engines {
 			engine = strings.TrimSpace(engine)
-			if i != 0 {
-				formatVal += ","
-			}
 			switch {
 			case strings.EqualFold(engine, kv.TiFlash.Name()):
-				formatVal += kv.TiFlash.Name()
+				if _, ok := storeTypes[kv.TiFlash]; !ok {
+					if i != 0 {
+						formatVal += ","
+					}
+					formatVal += kv.TiFlash.Name()
+					storeTypes[kv.TiFlash] = struct{}{}
+				}
 			default:
-				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBIsolationReadEngines, normalizedValue)
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBAllowFallbackToTiKV, normalizedValue)
 			}
 		}
 		return formatVal, nil

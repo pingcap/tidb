@@ -526,8 +526,13 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.tidb_allow_fallback_to_tikv").Check(testkit.Rows("tiflash"))
 	tk.MustExec("SET GLOBAL tidb_allow_fallback_to_tikv = ''")
 	tk.MustQuery("select @@global.tidb_allow_fallback_to_tikv").Check(testkit.Rows(""))
-	c.Assert(tk.ExecToErr("SET SESSION tidb_allow_fallback_to_tikv = 'tikv,tiflash'"), NotNil)
-	c.Assert(tk.ExecToErr("SET GLOBAL tidb_allow_fallback_to_tikv = 'tikv,tiflash'"), NotNil)
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv = 'tiflash, tiflash, tiflash'")
+	tk.MustQuery("select @@tidb_allow_fallback_to_tikv").Check(testkit.Rows("tiflash"))
+
+	tk.MustGetErrMsg("SET SESSION tidb_allow_fallback_to_tikv = 'tikv,tiflash'", "ERROR 1231 (42000): Variable 'tidb_allow_fallback_to_tikv' can't be set to the value of 'tikv,tiflash'")
+	tk.MustGetErrMsg("SET GLOBAL tidb_allow_fallback_to_tikv = 'tikv,tiflash'", "ERROR 1231 (42000): Variable 'tidb_allow_fallback_to_tikv' can't be set to the value of 'tikv,tiflash'")
+	tk.MustGetErrMsg("set @@tidb_allow_fallback_to_tikv = 'tidb, tiflash, tiflash'", "ERROR 1231 (42000): Variable 'tidb_allow_fallback_to_tikv' can't be set to the value of 'tidb, tiflash, tiflash'")
+	tk.MustGetErrMsg("set @@tidb_allow_fallback_to_tikv = 'unknown, tiflash, tiflash'", "ERROR 1231 (42000): Variable 'tidb_allow_fallback_to_tikv' can't be set to the value of 'unknown, tiflash, tiflash'")
 
 	// Test issue #22145
 	tk.MustExec(`set global sync_relay_log = "'"`)
