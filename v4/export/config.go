@@ -243,6 +243,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.Duration(flagReadTimeout, 15*time.Minute, "I/O read timeout for db connection.")
 	_ = flags.MarkHidden(flagReadTimeout)
 	flags.Bool(flagTransactionalConsistency, true, "Only support transactional consistency")
+	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'no-compression' now")
 }
 
