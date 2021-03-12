@@ -649,7 +649,7 @@ func (w *worker) countForError(err error, job *model.Job) error {
 	// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
 	if job.State == model.JobStateCancelled {
 		logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
-		err = nil
+		return nil
 	}
 	logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
 
