@@ -1793,9 +1793,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	}
 
 	for {
-		failpoint.Inject("secondNextErr", func(value failpoint.Value) {
-			if value.(bool) && !firstNext {
+		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
+			switch value.(string) {
+			case "firstNext":
 				failpoint.Return(firstNext, tikv.ErrTiFlashServerTimeout)
+			case "secondNext":
+				if !firstNext {
+					failpoint.Return(firstNext, tikv.ErrTiFlashServerTimeout)
+				}
 			}
 		})
 		// Here server.tidbResultSet implements Next method.
