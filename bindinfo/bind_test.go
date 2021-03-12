@@ -1541,6 +1541,28 @@ func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t`")
 }
 
+func (s *testSuite) TestSPMHitInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t2(id int)")
+
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+	c.Assert(tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+
+	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
+	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
+	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+}
+
 func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
