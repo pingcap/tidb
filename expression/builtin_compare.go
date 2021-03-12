@@ -1131,7 +1131,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 		if lhsFieldType.Tp == rhsFieldType.Tp {
 			cmpType = lhsFieldType.EvalType()
 		} else {
-			cmpType = types.ETDatetime
+			cmpType = types.ETString
 		}
 	} else if lhsFieldType.Tp == mysql.TypeDuration && rhsFieldType.Tp == mysql.TypeDuration {
 		// duration <cmp> duration
