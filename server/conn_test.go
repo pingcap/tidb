@@ -778,7 +778,11 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	c.Assert(cc.handleQuery(ctx, "select * from t t1 join t t2 on t1.a = t2.a"), NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/secondNextErr"), IsNil)
 
-	// TODO: simple TiFlash query (unary + non-streaming)
+	// simple TiFlash query (unary + non-streaming)
+	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=0;")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", "return(\"requestTiFlashError\")"), IsNil)
+	testFallbackWork(c, tk, cc, "select sum(a) from t")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	// TiFlash query based on batch cop (batch + streaming)
 	tk.MustExec("set @@tidb_allow_batch_cop=1; set @@tidb_allow_mpp=0;")

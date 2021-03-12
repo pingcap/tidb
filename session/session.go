@@ -2172,7 +2172,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	dom := domain.GetDomain(se)
-	dom.InitExpensiveQueryHandle()
 
 	se2, err := createSession(store)
 	if err != nil {
