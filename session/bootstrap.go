@@ -464,8 +464,7 @@ const (
 	version59 = 59
 	// version60 redesigns `mysql.stats_extended`
 	version60 = 60
-	// version61 will be redone in version66
-	// version61 = 61
+	// version61 will be redone in version67
 	// version62 add column ndv for mysql.stats_buckets.
 	version62 = 62
 	// version63 fixes the bug that upgradeToVer51 would be missed when upgrading from v4.0 to a new version
@@ -474,11 +473,13 @@ const (
 	version64 = 64
 	// version65 add mysql.stats_fm_sketch table.
 	version65 = 65
-	// version66 restore all SQL bindings.
+	// version66 enables the feature `track_aggregate_memory_usage` by default.
 	version66 = 66
+  // version67 restore all SQL bindings.
+  version67 = 67
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version66
+	currentBootstrapVersion = version67
 )
 
 var (
@@ -543,12 +544,13 @@ var (
 		// We will redo upgradeToVer58 in upgradeToVer64, it is skipped here.
 		upgradeToVer59,
 		upgradeToVer60,
-		// We will redo upgradeToVer61 in upgradeToVer66, it is skipped here.
+		// We will redo upgradeToVer61 in upgradeToVer6, it is skipped here.
 		upgradeToVer62,
 		upgradeToVer63,
 		upgradeToVer64,
 		upgradeToVer65,
 		upgradeToVer66,
+    upgradeToVer67,
 	}
 )
 
@@ -1322,8 +1324,8 @@ type bindInfo struct {
 	source     string
 }
 
-func upgradeToVer66(s Session, ver int64) {
-	if ver >= version66 {
+func upgradeToVer67(s Session, ver int64) {
+	if ver >= version67 {
 		return
 	}
 	bindMap := make(map[string]bindInfo)
@@ -1347,7 +1349,7 @@ func upgradeToVer66(s Session, ver int64) {
 			WHERE source != 'builtin'
 			ORDER BY update_time DESC`)
 	if err != nil {
-		logutil.BgLogger().Fatal("upgradeToVer66 error", zap.Error(err))
+		logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 	}
 	if rs != nil {
 		defer terror.Call(rs.Close)
@@ -1359,7 +1361,7 @@ func upgradeToVer66(s Session, ver int64) {
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
-			logutil.BgLogger().Fatal("upgradeToVer66 error", zap.Error(err))
+			logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 		}
 		if req.NumRows() == 0 {
 			break
@@ -1392,7 +1394,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		if err != nil {
 			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
 		}
-		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db))
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db, bind))
 		if _, ok := bindMap[originWithDB]; ok {
 			// The results are sorted in descending order of time.
 			// And in the following cases, duplicate originWithDB may occur
@@ -1403,7 +1405,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 			continue
 		}
 		bindMap[originWithDB] = bindInfo{
-			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db),
+			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db, bind),
 			status:     row.GetString(2),
 			createTime: row.GetTime(3),
 			charset:    charset,
@@ -1449,6 +1451,13 @@ func upgradeToVer65(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateStatsFMSketchTable)
+}
+
+func upgradeToVer66(s Session, ver int64) {
+	if ver >= version66 {
+		return
+	}
+	mustExecute(s, "set @@global.tidb_track_aggregate_memory_usage = 1")
 }
 
 func writeOOMAction(s Session) {

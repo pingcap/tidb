@@ -607,3 +607,44 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	c.Assert(r.Close(), IsNil)
 	mustExecSQL(c, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
 }
+
+func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
+	var err error
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	store, _ := newStoreWithBootstrap(c, s.dbName)
+	defer func() {
+		c.Assert(store.Close(), IsNil)
+	}()
+
+	seV65 := newSession(c, store, s.dbName)
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(65))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	mustExecSQL(c, seV65, "update mysql.tidb set variable_value='65' where variable_name='tidb_server_version'")
+	mustExecSQL(c, seV65, "set @@global.tidb_track_aggregate_memory_usage = 0")
+	mustExecSQL(c, seV65, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV65)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(65))
+
+	domV66, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer domV66.Close()
+	seV66 := newSession(c, store, s.dbName)
+	ver, err = getBootstrapVersion(seV66)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	r := mustExecSQL(c, seV66, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
+	req := r.NewChunk()
+	c.Assert(r.Next(ctx, req), IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+	row := req.GetRow(0)
+	c.Assert(row.GetInt64(0), Equals, int64(1))
+	c.Assert(row.GetInt64(1), Equals, int64(1))
+}
