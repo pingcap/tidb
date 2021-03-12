@@ -149,7 +149,7 @@ func normalizeWithDefaultDB(c *C, sql, db string) (string, string) {
 	testParser := parser.New()
 	stmt, err := testParser.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	return parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test"))
+	return parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
 }
 
 func (s *testSuite) TestBindParse(c *C) {

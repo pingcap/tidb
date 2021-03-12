@@ -746,12 +746,21 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindDrop,
+<<<<<<< HEAD
 		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB)),
+=======
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+>>>>>>> 276dd0e69... util: optimize the performance of restore with db (#22910)
 		IsGlobal:     v.GlobalScope,
 		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
 	}
+<<<<<<< HEAD
 	if v.HintedSel != nil {
 		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedSel, b.ctx.GetSessionVars().CurrentDB)
+=======
+	if v.HintedNode != nil {
+		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
+>>>>>>> 276dd0e69... util: optimize the performance of restore with db (#22910)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
@@ -790,8 +799,13 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
+<<<<<<< HEAD
 		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB)),
 		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedSel, b.ctx.GetSessionVars().CurrentDB),
+=======
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text()),
+>>>>>>> 276dd0e69... util: optimize the performance of restore with db (#22910)
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedSel,
 		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),

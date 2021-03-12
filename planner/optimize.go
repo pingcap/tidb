@@ -272,10 +272,18 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
+<<<<<<< HEAD
+=======
+			normalizeSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
+			normalizeSQL = plannercore.EraseLastSemicolonInSQL(normalizeSQL)
+			hash := parser.DigestNormalized(normalizeSQL)
+			return x.Stmt, normalizeSQL, hash, nil
+		case *ast.SetOprStmt:
+>>>>>>> 276dd0e69... util: optimize the performance of restore with db (#22910)
 			plannercore.EraseLastSemicolon(x)
 			var normalizeExplainSQL string
 			if specifiledDB != "" {
-				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB))
+				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
 			} else {
 				normalizeExplainSQL = parser.Normalize(x.Text())
 			}
@@ -308,6 +316,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		if len(x.Text()) == 0 {
 			return x, "", ""
 		}
+<<<<<<< HEAD
 		var normalizedSQL, hash string
 		if specifiledDB != "" {
 			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB))
@@ -315,6 +324,10 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 			normalizedSQL, hash = parser.NormalizeDigest(x.Text())
 		}
 		return x, normalizedSQL, hash
+=======
+		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+		return x, normalizedSQL, hash, nil
+>>>>>>> 276dd0e69... util: optimize the performance of restore with db (#22910)
 	}
 	return nil, "", ""
 }
