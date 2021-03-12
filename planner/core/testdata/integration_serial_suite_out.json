@@ -1926,13 +1926,14 @@
       {
         "SQL": "desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(b)=1) or (b=1 and length(a)=1)",
         "Plan": [
-          "TableReader 1.54 root  data:Selection",
-          "└─Selection 1.54 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b)), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a)), 1)))",
-          "  └─TableFullScan 10.00 cop[tikv] table:t keep order:false"
+          "Projection 1.54 root  test.t.a, test.t.b",
+          "└─IndexMerge 0.29 root  ",
+          "  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
+          "  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false",
+          "  └─Selection(Probe) 0.29 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b)), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a)), 1)))",
+          "    └─TableRowIDScan 1.90 cop[tikv] table:t keep order:false"
         ],
-        "Warnings": [
-          "Warning 1105 IndexMerge is inapplicable or disabled"
-        ]
+        "Warnings": null
       }
     ]
   }
