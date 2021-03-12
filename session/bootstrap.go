@@ -1347,7 +1347,7 @@ func upgradeToVer66(s Session, ver int64) {
 			WHERE source != 'builtin'
 			ORDER BY update_time DESC`)
 	if err != nil {
-		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+		logutil.BgLogger().Fatal("upgradeToVer66 error", zap.Error(err))
 	}
 	if rs != nil {
 		defer terror.Call(rs.Close)
@@ -1359,7 +1359,7 @@ func upgradeToVer66(s Session, ver int64) {
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
-			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+			logutil.BgLogger().Fatal("upgradeToVer66 error", zap.Error(err))
 		}
 		if req.NumRows() == 0 {
 			break
