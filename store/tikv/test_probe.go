@@ -87,9 +87,6 @@ func (c CommitterProbe) GetCommitTS() uint64 {
 
 // PrewriteMutations performs the first phase of commit.
 func (c CommitterProbe) PrewriteMutations(ctx context.Context) error {
-	if c.mutations == nil {
-		panic("fuck")
-	}
 	fmt.Println("len=", c.mutations.Len())
 	return c.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), c.mutations)
 }
