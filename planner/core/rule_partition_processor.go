@@ -211,8 +211,48 @@ func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl tabl
 	return used, nil
 }
 
+// reconstructTableColNames reconstructs FieldsNames according to ds.TblCols.
+// ds.names may not match ds.TblCols since ds.names is pruned while ds.TblCols contains all original columns.
+// please see https://github.com/pingcap/tidb/issues/22635 for more details.
+func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.FieldName, error) {
+	names := make([]*types.FieldName, 0, len(ds.TblCols))
+	colsInfo := ds.table.FullHiddenColsAndVisibleCols()
+	colsInfoMap := make(map[int64]*table.Column, len(colsInfo))
+	for _, c := range colsInfo {
+		colsInfoMap[c.ID] = c
+	}
+	for _, colExpr := range ds.TblCols {
+		if colExpr.ID == model.ExtraHandleID {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.tableInfo.Name,
+				ColName:     model.ExtraHandleName,
+				OrigColName: model.ExtraHandleName,
+			})
+			continue
+		}
+		if colInfo, found := colsInfoMap[colExpr.ID]; found {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.tableInfo.Name,
+				ColName:     colInfo.Name,
+				OrigTblName: ds.tableInfo.Name,
+				OrigColName: colInfo.Name,
+				Hidden:      colInfo.Hidden,
+			})
+			continue
+		}
+		return nil, errors.New(fmt.Sprintf("information of column %v is not found", colExpr.String()))
+	}
+	return names, nil
+}
+
 func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	used, err := s.pruneHashPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, ds.names)
+	names, err := s.reconstructTableColNames(ds)
+	if err != nil {
+		return nil, err
+	}
+	used, err := s.pruneHashPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, names)
 	if err != nil {
 		return nil, err
 	}
