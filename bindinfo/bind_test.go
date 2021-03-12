@@ -2079,3 +2079,16 @@ func (s *testSuite) TestSPMWithoutUseDatabase(c *C) {
 	tk1.MustExec("select * from test.t")
 	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
 }
+
+func (s *testSuite) TestBindingWithoutCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) CHARACTER SET utf8)")
+	tk.MustExec("create global binding for select * from t where a = 'aa' using select * from t where a = 'aa'")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
+	c.Assert(rows[0][1], Equals, "SELECT * FROM test.t WHERE a = 'aa'")
+}
