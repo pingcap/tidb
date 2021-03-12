@@ -75,7 +75,7 @@ type HashJoinExec struct {
 
 	probeChkResourceCh chan *probeChkResource
 	probeResultChs     []chan *chunk.Chunk
-	joinChkResourceCh  []chan *chunk.Chunk
+	joinChkResourceCh  chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
 
 	memTracker  *memory.Tracker // track memory usage.
@@ -109,7 +109,6 @@ type probeChkResource struct {
 type hashjoinWorkerResult struct {
 	chk *chunk.Chunk
 	err error
-	src chan<- *chunk.Chunk
 }
 
 // Close implements the Executor Close interface.
@@ -134,9 +133,9 @@ func (e *HashJoinExec) Close() error {
 			for range e.probeResultChs[i] {
 			}
 		}
-		for i := range e.joinChkResourceCh {
-			close(e.joinChkResourceCh[i])
-			for range e.joinChkResourceCh[i] {
+		if e.joinChkResourceCh != nil {
+			close(e.joinChkResourceCh)
+			for range e.joinChkResourceCh {
 			}
 		}
 		e.probeChkResourceCh = nil
@@ -305,10 +304,9 @@ func (e *HashJoinExec) initializeForProbe() {
 
 	// e.joinChkResourceCh is for transmitting the reused join result chunks
 	// from the main thread to join worker goroutines.
-	e.joinChkResourceCh = make([]chan *chunk.Chunk, e.concurrency)
+	e.joinChkResourceCh = make(chan *chunk.Chunk, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
-		e.joinChkResourceCh[i] <- newFirstChunk(e)
+		e.joinChkResourceCh <- newFirstChunk(e)
 	}
 
 	// e.joinResultCh is for transmitting the join result chunks to the main
@@ -470,7 +468,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		e.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
-		e.joinChkResourceCh[workerID] <- joinResult.chk
+		e.joinChkResourceCh <- joinResult.chk
 	}
 }
 
@@ -548,13 +546,12 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 
 func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerResult) {
 	joinResult := &hashjoinWorkerResult{
-		src: e.joinChkResourceCh[workerID],
 	}
 	ok := true
 	select {
 	case <-e.closeCh:
 		ok = false
-	case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
+	case joinResult.chk, ok = <-e.joinChkResourceCh:
 	}
 	return ok, joinResult
 }
@@ -674,7 +671,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		return result.err
 	}
 	req.SwapColumns(result.chk)
-	result.src <- result.chk
+	e.joinChkResourceCh <- result.chk
 	return nil
 }
 
