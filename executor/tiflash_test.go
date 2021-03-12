@@ -286,5 +286,5 @@ func (s *tiflashTestSuite) TestMppEnum(c *C) {
 	tk.MustExec("insert into t values(3,'zca')")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
-	tk.MustQuery("select t1.b from t t1 join t t2 on t1.a = t2.a").Check(testkit.Rows("aca", "bca", "zca"))
+	tk.MustQuery("select t1.b from t t1 join t t2 on t1.a = t2.a order by t1.b").Check(testkit.Rows("aca", "bca", "zca"))
 }
