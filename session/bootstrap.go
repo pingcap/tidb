@@ -475,8 +475,8 @@ const (
 	version65 = 65
 	// version66 enables the feature `track_aggregate_memory_usage` by default.
 	version66 = 66
-  // version67 restore all SQL bindings.
-  version67 = 67
+	// version67 restore all SQL bindings.
+	version67 = 67
 
 	// please make sure this is the largest version
 	currentBootstrapVersion = version67
@@ -550,7 +550,7 @@ var (
 		upgradeToVer64,
 		upgradeToVer65,
 		upgradeToVer66,
-    upgradeToVer67,
+		upgradeToVer67,
 	}
 )
 
