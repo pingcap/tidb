@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
@@ -366,4 +368,15 @@ func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
 	tk.MustExec("set @@tidb_partition_prune_mode=`" + string(mode) + "`")
 	tk.MustExec("set global tidb_partition_prune_mode=`" + string(mode) + "`")
 	f()
+}
+
+// TestGetTableByName get the table info by name, will assert error if not found
+func TestGetTableByName(c *check.C, ctx sessionctx.Context, db, table string) table.Table {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, check.IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, check.IsNil)
+	return tbl
 }
