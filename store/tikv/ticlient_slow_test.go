@@ -23,25 +23,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 )
 
-// TestCommitMultipleRegions tests commit multiple regions.
-// The test takes too long under the race detector.
-func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
-	m := make(map[string]string)
-	for i := 0; i < 100; i++ {
-		k, v := randKV(10, 10)
-		m[k] = v
-	}
-	s.mustCommit(c, m)
-
-	// Test big values.
-	m = make(map[string]string)
-	for i := 0; i < 50; i++ {
-		k, v := randKV(11, txnCommitBatchSize/7)
-		m[k] = v
-	}
-	s.mustCommit(c, m)
-}
-
 func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 	if *WithTiKV {
 		c.Skip("scatter will timeout with single node TiKV")

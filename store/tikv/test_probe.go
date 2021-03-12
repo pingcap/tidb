@@ -169,3 +169,11 @@ func (l LockResolverProbe) GetTxnStatus(bo *Backoffer, txnID uint64, primary []b
 func (l LockResolverProbe) GetSecondariesFromTxnStatus(status TxnStatus) [][]byte {
 	return status.primaryLock.GetSecondaries()
 }
+
+// ConfigProbe exposes configurations and global variables for testing purpose.
+type ConfigProbe struct{}
+
+// GetTxnCommitBatchSize returns the batch size to commit txn.
+func (c ConfigProbe) GetTxnCommitBatchSize() int {
+	return txnCommitBatchSize
+}

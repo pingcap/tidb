@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"bytes"
@@ -31,6 +31,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -41,15 +42,15 @@ import (
 type testCommitterSuite struct {
 	OneByOneSuite
 	cluster cluster.Cluster
-	store   *KVStore
+	store   *tikv.KVStore
 }
 
 var _ = SerialSuites(&testCommitterSuite{})
 
 func (s *testCommitterSuite) SetUpSuite(c *C) {
-	atomic.StoreUint64(&ManagedLockTTL, 3000) // 3s
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000) // 3s
 	s.OneByOneSuite.SetUpSuite(c)
-	atomic.StoreUint64(&CommitMaxBackoff, 1000)
+	atomic.StoreUint64(&tikv.CommitMaxBackoff, 1000)
 }
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
@@ -59,9 +60,9 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("a"), []byte("b"), []byte("c"))
 	s.cluster = cluster
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
-	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
-	spkv := NewMockSafePointKV()
-	store, err := NewKVStore("mocktikv-store", pdCli, spkv, client)
+	pdCli := &tikv.CodecPDClient{mocktikv.NewPDClient(cluster)}
+	spkv := tikv.NewMockSafePointKV()
+	store, err := tikv.NewKVStore("mocktikv-store", pdCli, spkv, client)
 	store.EnableTxnLocalLatches(1024000)
 	c.Assert(err, IsNil)
 
@@ -83,22 +84,22 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
-	atomic.StoreUint64(&CommitMaxBackoff, 20000)
+	atomic.StoreUint64(&tikv.CommitMaxBackoff, 20000)
 	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testCommitterSuite) begin(c *C) *KVTxn {
+func (s *testCommitterSuite) begin(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn
+	return tikv.TxnProbe{KVTxn: txn}
 }
 
-func (s *testCommitterSuite) beginAsyncCommit(c *C) *KVTxn {
+func (s *testCommitterSuite) beginAsyncCommit(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
-	return txn
+	return tikv.TxnProbe{KVTxn: txn}
 }
 
 func (s *testCommitterSuite) checkValues(c *C, m map[string]string) {
@@ -140,7 +141,7 @@ func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
 	defer config.StoreGlobalConfig(&oldConf)
 	conf.TiKVClient.TTLRefreshedTxnSize = 0
 	config.StoreGlobalConfig(&conf)
-	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
+	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 
 	{
 		txn := s.begin(c)
@@ -150,9 +151,9 @@ func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
 		c.Assert(err, IsNil)
 		err = txn.Delete(kv.Key("bb"))
 		c.Assert(err, IsNil)
-		committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+		committer, err := txn.NewCommitter(0)
 		c.Assert(err, IsNil)
-		err = committer.prewriteMutations(bo, committer.mutations)
+		err = committer.PrewriteMutations(context.Background())
 		c.Assert(err, IsNil)
 		state := atomic.LoadUint32((*uint32)(&committer.ttlManager.state))
 		c.Check(state, Equals, uint32(stateRunning))
@@ -214,7 +215,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
-	err = committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), committer.mutations)
+	err = committer.prewriteMutations(tikv.NewBackofferWithVars(ctx, tikv.PrewriteMaxBackoff, nil), committer.mutations)
 	c.Assert(err, IsNil)
 
 	txn2 := s.begin(c)
@@ -222,7 +223,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a0"))
 
-	err = committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), committer.mutations)
+	err = committer.prewriteMutations(tikv.NewBackofferWithVars(ctx, tikv.PrewriteMaxBackoff, nil), committer.mutations)
 	if err != nil {
 		// Retry.
 		txn1 = s.begin(c)
@@ -232,12 +233,12 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		committer, err = newTwoPhaseCommitterWithInit(txn1, 0)
 		c.Assert(err, IsNil)
-		err = committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), committer.mutations)
+		err = committer.prewriteMutations(tikv.NewBackofferWithVars(ctx, tikv.PrewriteMaxBackoff, nil), committer.mutations)
 		c.Assert(err, IsNil)
 	}
-	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	committer.commitTS, err = s.store.GetOracle().GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
-	err = committer.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), &PlainMutations{keys: [][]byte{[]byte("a")}})
+	err = committer.commitMutations(tikv.NewBackofferWithVars(ctx, int(atomic.LoadUint64(&tikv.CommitMaxBackoff)), nil), &tikv.PlainMutations{keys: [][]byte{[]byte("a")}})
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)
@@ -255,7 +256,7 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
 
-	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
+	bo := tikv.NewBackofferWithVars(context.Background(), tikv.PrewriteMaxBackoff, nil)
 	backoffer, cancel := bo.Fork()
 	cancel() // cancel the context
 	err = committer.prewriteMutations(backoffer, committer.mutations)
@@ -1111,7 +1112,7 @@ func (s *testCommitterSuite) TestPushPessimisticLock(c *C) {
 
 	txn1 := s.begin(c)
 	txn1.SetOption(kv.Pessimistic, true)
-	lockCtx := &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn1.StartTS(), WaitStartTime: time.Now()}
 	err := txn1.LockKeys(context.Background(), lockCtx, k1, k2)
 	c.Assert(err, IsNil)
 
@@ -1202,7 +1203,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	// txn2 tries to lock the pessimisticLockKey, the lock should has been resolved in clean whole region resolve
 	txn2 := s.begin(c)
 	txn2.SetOption(kv.Pessimistic, true)
-	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.StartTS(), WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
 	err = txn2.LockKeys(context.Background(), lockCtx, pessimisticLockKey)
 	c.Assert(err, IsNil)
 
@@ -1236,8 +1237,8 @@ func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
 	c.Assert(err, IsNil)
 
-	mock := mockClient{inner: s.store.client}
-	s.store.client = &mock
+	mock := mockClient{inner: s.store.GetTiKVClient()}
+	s.store.SetTiKVClient(&mock)
 	ctx := context.Background()
 	// TODO remove this when minCommitTS is returned from mockStore prewrite response.
 	committer.minCommitTS = committer.startTS + 10
@@ -1321,7 +1322,7 @@ func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
 }
 
 type mockClient struct {
-	inner            Client
+	inner            tikv.Client
 	seenPrimaryReq   uint32
 	seenSecondaryReq uint32
 }
