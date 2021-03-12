@@ -256,7 +256,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	committer.lockTTL = 3000
 	c.Assert(committer.prewriteMutations(bo, committer.mutations), IsNil)
 
-	snapshot := newTiKVSnapshot(s.store, maxVersion, 0)
+	snapshot := newTiKVSnapshot(s.store, maxTimestamp, 0)
 	start := time.Now()
 	c.Assert(committer.primary(), BytesEquals, []byte(x))
 	// Point get secondary key. Shouldn't be blocked by the lock and read old data.
@@ -268,7 +268,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	committer.commitTS = txn.StartTS() + 1
 	committer.commitMutations(bo, committer.mutationsOfKeys([][]byte{committer.primary()}))
 
-	snapshot = newTiKVSnapshot(s.store, maxVersion, 0)
+	snapshot = newTiKVSnapshot(s.store, maxTimestamp, 0)
 	start = time.Now()
 	// Point get secondary key. Should read committed data.
 	value, err := snapshot.Get(ctx, y)
@@ -285,7 +285,7 @@ func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
 	err := txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	snapshot := newTiKVSnapshot(s.store, maxVersion, 0)
+	snapshot := newTiKVSnapshot(s.store, maxTimestamp, 0)
 	var wg sync.WaitGroup
 	wg.Add(5)
 	for i := 0; i < 5; i++ {

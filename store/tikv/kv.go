@@ -212,9 +212,9 @@ func (s *KVStore) beginWithExactStaleness(txnScope string, prevSec uint64) (*KVT
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
-// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-func (s *KVStore) GetSnapshot(ver uint64) kv.Snapshot {
-	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
+// if ts is MaxVersion or > current max committed version, we will use current version for this snapshot.
+func (s *KVStore) GetSnapshot(ts uint64) kv.Snapshot {
+	snapshot := newTiKVSnapshot(s, ts, s.nextReplicaReadSeed())
 	return snapshot
 }
 
@@ -244,8 +244,8 @@ func (s *KVStore) UUID() string {
 	return s.uuid
 }
 
-// CurrentVersion returns current max committed version with the given txnScope (local or global).
-func (s *KVStore) CurrentVersion(txnScope string) (uint64, error) {
+// CurrentTimestamp returns current timestamp with the given txnScope (local or global).
+func (s *KVStore) CurrentTimestamp(txnScope string) (uint64, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := s.getTimestampWithRetry(bo, txnScope)
 	if err != nil {

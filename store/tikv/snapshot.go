@@ -48,7 +48,7 @@ var (
 const (
 	scanBatchSize = 256
 	batchGetSize  = 5120
-	maxVersion    = math.MaxUint64
+	maxTimestamp  = math.MaxUint64
 )
 
 // tikvSnapshot implements the kv.Snapshot interface.
@@ -88,15 +88,15 @@ type tikvSnapshot struct {
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
-func newTiKVSnapshot(store *KVStore, ver uint64, replicaReadSeed uint32) *tikvSnapshot {
+func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *tikvSnapshot {
 	// Sanity check for snapshot version.
-	if ver >= math.MaxInt64 && ver != math.MaxUint64 {
-		err := errors.Errorf("try to get snapshot with a large ts %d", ver)
+	if ts >= math.MaxInt64 && ts != math.MaxUint64 {
+		err := errors.Errorf("try to get snapshot with a large ts %d", ts)
 		panic(err)
 	}
 	return &tikvSnapshot{
 		store:           store,
-		version:         ver,
+		version:         ts,
 		priority:        pb.CommandPri_Normal,
 		vars:            kv.DefaultVars,
 		replicaReadSeed: replicaReadSeed,
@@ -423,7 +423,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 	// Secondary locks or async commit locks cannot be ignored when getting using the max version.
 	// So we concurrently get a TS from PD and use it in retries to avoid unnecessary blocking.
 	var tsFuture oracle.Future
-	if s.version == maxVersion {
+	if s.version == maxTimestamp {
 		tsFuture = s.store.oracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.txnScope})
 	}
 	failpoint.Inject("snapshotGetTSAsync", nil)
@@ -491,7 +491,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			}
 
 			snapVer := s.version
-			if s.version == maxVersion {
+			if s.version == maxTimestamp {
 				newTS, err := tsFuture.Wait()
 				if err != nil {
 					return nil, errors.Trace(err)

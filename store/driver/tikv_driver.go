@@ -316,6 +316,6 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 
 // CurrentVersion returns current max committed version with the given txnScope (local or global).
 func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
-	ver, err := s.KVStore.CurrentVersion(txnScope)
+	ver, err := s.KVStore.CurrentTimestamp(txnScope)
 	return kv.NewVersion(ver), err
 }

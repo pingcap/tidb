@@ -142,7 +142,7 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
 	defer s.cleanup(c)
 
-	snapshot := s.store.GetSnapshot(maxVersion)
+	snapshot := s.store.GetSnapshot(maxTimestamp)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshotGetTSAsync", `pause`), IsNil)
 	ch := make(chan error)
 	go func() {
@@ -200,7 +200,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	// Wait until prewrite finishes
 	time.Sleep(200 * time.Millisecond)
 	// Should get nothing with max version, and **not pushing forward minCommitTS** of the primary lock
-	snapshot := s.store.GetSnapshot(maxVersion)
+	snapshot := s.store.GetSnapshot(maxTimestamp)
 	_, err = snapshot.Get(context.Background(), []byte("k2"))
 	c.Assert(err, ErrorMatches, ".*key not exist")
 
