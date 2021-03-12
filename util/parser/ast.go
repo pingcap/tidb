@@ -18,6 +18,8 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // GetDefaultDB checks if all columns in the AST have explicit DBName. If not, return specified DBName.
@@ -50,15 +52,25 @@ func (i *implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // RestoreWithDefaultDB returns restore strings for StmtNode with defaultDB
+<<<<<<< HEAD
 func RestoreWithDefaultDB(node ast.StmtNode, defaultDB string) string {
+=======
+// This function is customized for SQL bind usage.
+func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
+	if s, ok := SimpleCases(node, defaultDB, origin); ok {
+		return s
+	}
+>>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	var sb strings.Builder
 	// Three flags for restore with default DB:
 	// 1. RestoreStringSingleQuotes specifies to use single quotes to surround the string;
 	// 2. RestoreSpacesAroundBinaryOperation specifies to add space around binary operation;
-	// 3. RestoreStringWithoutDefaultCharset specifies to not print default charset before string;
-	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutDefaultCharset, &sb)
+	// 3. RestoreStringWithoutCharset specifies to not print charset before string;
+	// 4. RestoreNameBackQuotes specifies to use back quotes to surround the name;
+	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &sb)
 	ctx.DefaultDB = defaultDB
 	if err := node.Restore(ctx); err != nil {
+		logutil.BgLogger().Debug("[sql-bind] restore SQL failed", zap.Error(err))
 		return ""
 	}
 	return sb.String()

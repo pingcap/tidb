@@ -446,17 +446,35 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 			originText:   "select * from t where a > ?",
 			bindText:     "select /*+ use_index(t, idxb) */ * from t where a > 1",
 			db:           "test",
+<<<<<<< HEAD
 			originWithDB: "select * from test . t where a > ?",
 			bindWithDB:   "SELECT /*+ use_index(t idxb)*/ * FROM test.t WHERE a > 1",
+=======
+			originWithDB: "select * from `test` . `t` where `a` > ?",
+			bindWithDB:   "SELECT /*+ use_index(`t` `idxb`)*/ * FROM `test`.`t` WHERE `a` > 1",
+>>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 			deleteText:   "select * from test.t where a > 1",
 		},
 		{
 			originText:   "select count ( ? ), max ( a ) from t group by b",
 			bindText:     "select /*+ use_index(t, idx) */ count(1), max(a) from t group by b",
 			db:           "test",
+<<<<<<< HEAD
 			originWithDB: "select count ( ? ) , max ( a ) from test . t group by b",
 			bindWithDB:   "SELECT /*+ use_index(t idx)*/ count(1),max(a) FROM test.t GROUP BY b",
+=======
+			originWithDB: "select count ( ? ) , max ( `a` ) from `test` . `t` group by `b`",
+			bindWithDB:   "SELECT /*+ use_index(`t` `idx`)*/ count(1),max(`a`) FROM `test`.`t` GROUP BY `b`",
+>>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 			deleteText:   "select count(1), max(a) from test.t group by b",
+		},
+		{
+			originText:   "select * from `test` . `t` where `a` = (_charset) ?",
+			bindText:     "SELECT * FROM test.t WHERE a = _utf8\\'ab\\'",
+			db:           "test",
+			originWithDB: "select * from `test` . `t` where `a` = ?",
+			bindWithDB:   "SELECT * FROM `test`.`t` WHERE `a` = 'ab'",
+			deleteText:   "select * from test.t where a = 'c'",
 		},
 	}
 	defer testleak.AfterTest(c)()
@@ -473,7 +491,11 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 		)
 		mustExecSQL(c, se, sql)
 
+<<<<<<< HEAD
 		upgradeToVer51(se, version50)
+=======
+		upgradeToVer67(se, version66)
+>>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 		r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
 		req := r.NewChunk()
 		c.Assert(r.Next(ctx, req), IsNil)
@@ -508,15 +530,24 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	// The latest one.
 	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 
+<<<<<<< HEAD
 	upgradeToVer51(se, version50)
+=======
+	upgradeToVer67(se, version66)
+>>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 
 	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin'`)
 	req := r.NewChunk()
 	c.Assert(r.Next(ctx, req), IsNil)
 	c.Assert(req.NumRows(), Equals, 1)
 	row := req.GetRow(0)
+<<<<<<< HEAD
 	c.Assert(row.GetString(0), Equals, "select * from test . t")
 	c.Assert(row.GetString(1), Equals, "SELECT /*+ use_index(t idx_b)*/ * FROM test.t")
+=======
+	c.Assert(row.GetString(0), Equals, "select * from `test` . `t`")
+	c.Assert(row.GetString(1), Equals, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`")
+>>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	c.Assert(row.GetString(2), Equals, "")
 	c.Assert(row.GetString(3), Equals, "using")
 	c.Assert(row.GetTime(4).String(), Equals, "2021-01-04 14:50:58.257")
