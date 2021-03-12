@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -241,9 +240,13 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64
 		lowerStr, err1 := datumSliceToString(e.lower)
 		upperStr, err2 := datumSliceToString(e.upper)
 		if err1 != nil || err2 != nil {
-			return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, e.lower, e.upper)
+			errMsg := fmt.Sprintf("Split index `%v` region lower value %v should less than the upper value %v",
+				e.indexInfo.Name, e.lower, e.upper)
+			return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
-		return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, lowerStr, upperStr)
+		errMsg := fmt.Sprintf("Split index `%v` region lower value %v should less than the upper value %v",
+			e.indexInfo.Name, lowerStr, upperStr)
+		return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	return getValuesList(lowerIdxKey, upperIdxKey, e.num, keys), nil
 }
@@ -602,11 +605,13 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int
 		lowerStr, err1 := datumSliceToString(e.lower)
 		upperStr, err2 := datumSliceToString(e.upper)
 		if err1 != nil || err2 != nil {
-			return nil, errors.Errorf("Split table `%v` region lower value %v should less than the upper value %v",
+			errMsg := fmt.Sprintf("Split table `%v` region lower value %v should less than the upper value %v",
 				e.tableInfo.Name.O, e.lower, e.upper)
+			return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
-		return nil, errors.Errorf("Split table `%v` region lower value %v should less than the upper value %v",
+		errMsg := fmt.Sprintf("Split table `%v` region lower value %v should less than the upper value %v",
 			e.tableInfo.Name.O, lowerStr, upperStr)
+		return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	low := tablecodec.EncodeRecordKey(recordPrefix, lowerHandle)
 	up := tablecodec.EncodeRecordKey(recordPrefix, upperHandle)
