@@ -196,10 +196,10 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
 	}
+	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	if p.Table.IsCommonHandle {
 		tsExec.PrimaryPrefixColumnIds = tables.PrimaryPrefixColumnIDs(p.Table)
 	}
-	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
 }
 
