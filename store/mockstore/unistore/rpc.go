@@ -223,11 +223,6 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdRawScan:
 		resp.Resp, err = c.rawHandler.RawScan(ctx, req.RawScan())
 	case tikvrpc.CmdCop:
-		failpoint.Inject("copRpcErr"+addr, func(value failpoint.Value) {
-			if value.(string) == addr {
-				failpoint.Return(nil, errors.New("cop rpc error"))
-			}
-		})
 		resp.Resp, err = c.usSvr.Coprocessor(ctx, req.Cop())
 	case tikvrpc.CmdCopStream:
 		resp.Resp, err = c.handleCopStream(ctx, req.Cop())
