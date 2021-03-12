@@ -627,6 +627,7 @@ type ddlCallback struct {
 	do *Domain
 }
 
+// OnChanged overrides ddl Callback interface.
 func (c *ddlCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
@@ -639,6 +640,14 @@ func (c *ddlCallback) OnChanged(err error) error {
 	}
 
 	return nil
+}
+
+// OnSchemaStateChange overrides the ddl Callback interface.
+func (c *ddlCallback) OnSchemaStateChanged() {
+	err := c.do.Reload()
+	if err != nil {
+		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
+	}
 }
 
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
@@ -1206,9 +1215,12 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 		}
 	}
 	// update locally
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(`FLUSH PRIVILEGES`)
-	if err != nil {
-		logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	if stmt, err := exec.ParseWithParams(context.Background(), `FLUSH PRIVILEGES`); err == nil {
+		_, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
+		if err != nil {
+			logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
+		}
 	}
 }
 

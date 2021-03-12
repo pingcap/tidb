@@ -120,7 +120,7 @@ func (r ReplicaReadType) IsFollowerRead() bool {
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
-	TxnEntrySizeLimit = 6 * 1024 * 1024
+	TxnEntrySizeLimit uint64 = config.DefTxnEntrySizeLimit
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )

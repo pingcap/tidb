@@ -532,19 +532,19 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(2))
+			c.Check(hit, Equals, float64(0))
 		}
 		tk.MustExec(`set @a=2,@b=200; execute stmt_update using @b,@a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(3))
+			c.Check(hit, Equals, float64(1))
 		}
 		tk.MustExec(`set @a=3,@b=300; execute stmt_update using @b,@a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(4))
+			c.Check(hit, Equals, float64(2))
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
@@ -554,6 +554,30 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 3)
 		result.Check(testkit.Rows("3 303"))
 	}
+}
+
+func (s *seqTestSuite) TestIssue21884(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists prepare_test")
+	tk.MustExec("create table prepare_test(a bigint primary key, status bigint, last_update_time datetime)")
+	tk.MustExec("insert into prepare_test values (100, 0, '2020-12-18 20:00:00')")
+	tk.MustExec("prepare stmt from 'update prepare_test set status = ?, last_update_time = now() where a = 100'")
+	tk.MustExec("set @status = 1")
+	tk.MustExec("execute stmt using @status")
+	updateTime := tk.MustQuery("select last_update_time from prepare_test").Rows()[0][0]
+	// Sleep 1 second to make sure `last_update_time` is updated.
+	time.Sleep(1 * time.Second)
+	tk.MustExec("execute stmt using @status")
+	newUpdateTime := tk.MustQuery("select last_update_time from prepare_test").Rows()[0][0]
+	c.Assert(updateTime == newUpdateTime, IsFalse)
 }
 
 func (s *seqTestSuite) TestPreparedDelete(c *C) {
@@ -717,19 +741,39 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 		c.Assert(err, IsNil)
 
 		tk.MustExec("use test")
+
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(data mediumblob)")
-
-		tk.MustExec(`prepare stmt1 from 'insert t (data) values (?)'`)
-
+		tk.MustExec(`prepare stmt from 'insert t (data) values (?)'`)
 		tk.MustExec(`set @a = 'a'`)
-		tk.MustExec(`execute stmt1 using @a;`)
-
+		tk.MustExec(`execute stmt using @a;`)
 		tk.MustExec(`set @b = 'aaaaaaaaaaaaaaaaaa'`)
-		tk.MustExec(`execute stmt1 using @b;`)
+		tk.MustExec(`execute stmt using @b;`)
 
 		r := tk.MustQuery(`select * from t`)
 		r.Check(testkit.Rows("a", "aaaaaaaaaaaaaaaaaa"))
+
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(data decimal)")
+		tk.MustExec(`prepare stmt from 'insert t (data) values (?)'`)
+		tk.MustExec(`set @a = '1'`)
+		tk.MustExec(`execute stmt using @a;`)
+		tk.MustExec(`set @b = '11111.11111'`) // '.11111' will be truncated.
+		tk.MustExec(`execute stmt using @b;`)
+
+		r = tk.MustQuery(`select * from t`)
+		r.Check(testkit.Rows("1", "11111"))
+
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(data decimal(10,3));")
+		tk.MustExec("prepare stmt from 'insert t (data) values (?)';")
+		tk.MustExec("set @a = 1.1;")
+		tk.MustExec("execute stmt using @a;")
+		tk.MustExec("set @b = 11.11;")
+		tk.MustExec("execute stmt using @b;")
+
+		r = tk.MustQuery(`select * from t`)
+		r.Check(testkit.Rows("1.100", "11.110"))
 	}
 }
 

@@ -763,7 +763,7 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if e.innerWorker.totalTime > 0 {
 		buf.WriteString("inner:{total:")
-		buf.WriteString(time.Duration(e.innerWorker.totalTime).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.totalTime)))
 		buf.WriteString(", concurrency:")
 		if e.concurrency > 0 {
 			buf.WriteString(strconv.Itoa(e.concurrency))
@@ -773,20 +773,20 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		buf.WriteString(", task:")
 		buf.WriteString(strconv.FormatInt(e.innerWorker.task, 10))
 		buf.WriteString(", construct:")
-		buf.WriteString(time.Duration(e.innerWorker.construct).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.construct)))
 		buf.WriteString(", fetch:")
-		buf.WriteString(time.Duration(e.innerWorker.fetch).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.fetch)))
 		buf.WriteString(", build:")
-		buf.WriteString(time.Duration(e.innerWorker.build).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.build)))
 		if e.innerWorker.join > 0 {
 			buf.WriteString(", join:")
-			buf.WriteString(time.Duration(e.innerWorker.join).String())
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.join)))
 		}
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {
 		buf.WriteString(", probe:")
-		buf.WriteString(time.Duration(e.probe).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
 	}
 	return buf.String()
 }

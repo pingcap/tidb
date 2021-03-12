@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
@@ -272,7 +273,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[kv:1062]Duplicate entry '' for key 'PRIMARY'"
+	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 'PRIMARY'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -289,7 +290,7 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	hasNullValsInKey := false
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	errMsg := "[kv:1062]Duplicate entry '' for key 'c3_index'"
+	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 'c3_index'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -308,7 +309,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	_, checkErr = tk1.Exec("use test_db")
 
 	d := s.dom.DDL()
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly {
 			if checkErr != nil {
@@ -403,7 +404,7 @@ LOOP:
 func (s *testDBSuite5) TestCancelAddPrimaryKey(c *C) {
 	idxName := "primary"
 	addIdxSQL := "alter table t1 add primary key idx_c2 (c2);"
-	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "")
+	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "", s.dom)
 
 	// Check the column's flag when the "add primary key" failed.
 	tk := testkit.NewTestKit(c, s.store)
@@ -419,14 +420,14 @@ func (s *testDBSuite5) TestCancelAddPrimaryKey(c *C) {
 func (s *testDBSuite3) TestCancelAddIndex(c *C) {
 	idxName := "c3_index "
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "")
+	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "", s.dom)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table t1")
 }
 
-func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, idxName, addIdxSQL, sqlModeSQL string) {
+func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, idxName, addIdxSQL, sqlModeSQL string, dom *domain.Domain) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -448,7 +449,7 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 	}
 
 	var c3IdxInfo *model.IndexInfo
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
@@ -514,7 +515,7 @@ func (s *testDBSuite4) TestCancelAddIndex1(c *C) {
 	}
 
 	var checkErr error
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0 {
 			jobIDs := []int64{job.ID}
@@ -568,7 +569,7 @@ func (s *testDBSuite4) TestCancelDropPrimaryKey(c *C) {
 	idxName := "primary"
 	addIdxSQL := "alter table t add primary key idx_c2 (c2);"
 	dropIdxSQL := "alter table t drop primary key;"
-	testCancelDropIndex(c, s.store, s.dom.DDL(), idxName, addIdxSQL, dropIdxSQL)
+	testCancelDropIndex(c, s.store, s.dom.DDL(), idxName, addIdxSQL, dropIdxSQL, s.dom)
 }
 
 // TestCancelDropIndex tests cancel ddl job which type is drop index.
@@ -576,11 +577,11 @@ func (s *testDBSuite5) TestCancelDropIndex(c *C) {
 	idxName := "idx_c2"
 	addIdxSQL := "alter table t add index idx_c2 (c2);"
 	dropIdxSQL := "alter table t drop index idx_c2;"
-	testCancelDropIndex(c, s.store, s.dom.DDL(), idxName, addIdxSQL, dropIdxSQL)
+	testCancelDropIndex(c, s.store, s.dom.DDL(), idxName, addIdxSQL, dropIdxSQL, s.dom)
 }
 
 // testCancelDropIndex tests cancel ddl job which type is drop index.
-func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, dropIdxSQL string) {
+func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, dropIdxSQL string, dom *domain.Domain) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t")
@@ -603,7 +604,7 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
 	}
 	var checkErr error
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var jobID int64
 	testCase := &testCases[0]
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -678,7 +679,7 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 	s.mustExec(c, "create table t(c1 int, c2 int)")
 	defer s.mustExec(c, "drop table t;")
 	var checkErr error
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionTruncateTable && job.State == model.JobStateNone {
 			jobIDs := []int64{job.ID}
@@ -721,7 +722,7 @@ func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 	s.mustExec(c, "use test_drop_schema_table")
 	s.mustExec(c, "create table t(c1 int, c2 int)")
 	var checkErr error
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	dbInfo := testGetSchemaByName(c, s.tk.Se, "test_drop_schema_table")
 	done := false
 	var wg sync.WaitGroup
@@ -775,7 +776,7 @@ func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 	}
 	s.mustExec(c, "alter table t add index idx_c2(c2)")
 	var checkErr error
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRenameIndex && job.State == model.JobStateNone {
 			jobIDs := []int64{job.ID}
@@ -842,7 +843,7 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 		{true, model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, false},
 	}
 	var checkErr error
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var jobID int64
 	testCase := &testCases[0]
 	s.mustExec(c, "create database if not exists test_drop_db")
@@ -1248,7 +1249,7 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 		{model.ActionDropTablePartition, model.JobStateRunning, model.StatePublic, false},
 	}
 	var checkErr error
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	testCase := &testCases[0]
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -1409,7 +1410,7 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
 	}
 	var checkErr error
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var jobID int64
 	testCase := &testCases[0]
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -1693,7 +1694,6 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
-				forceReloadDomain(s.tk.Se)
 				n := rand.Intn(num)
 				s.tk.MustExec("begin")
 				s.tk.MustExec("delete from t2 where c1 = ?", n)
@@ -2070,7 +2070,7 @@ func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 
 	tbl1 := testGetTableByName(c, s.s, "test_db", "t1")
 	doneCh := make(chan error, 2)
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var onceChecker sync.Map
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn && job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
@@ -2206,19 +2206,35 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	s.tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	failSQL = "create table t_enum (a enum('e','E'));"
+}
+
+func (s *testSerialDBSuite) TestCreateTableWithCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	s.tk.MustExec("use test")
+	failSQL := "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	failSQL = "create table t_enum (a enum('abc','Abc'));"
+	failSQL = "create table t_enum (a enum('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
+	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_unicode_ci;"
+	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	// test for set column
 	failSQL = "create table t_enum (a set('e','e'));"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	failSQL = "create table t_enum (a set('e','E'));"
+	failSQL = "create table t_enum (a set('e','E')) charset=utf8 collate=utf8_general_ci;"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	failSQL = "create table t_enum (a set('abc','Abc'));"
+	failSQL = "create table t_enum (a set('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	_, err = s.tk.Exec("create table t_enum (a enum('B','b'));")
-	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
+	_, err := s.tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
+	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
+	failSQL = "create table t_enum (a set('e','E')) charset=utf8 collate=utf8_unicode_ci;"
+	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('ss','ß')) charset=utf8 collate=utf8_unicode_ci;"
+	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	_, err = s.tk.Exec("create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;")
+	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'ß' in ENUM")
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
@@ -2311,7 +2327,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	// Repaired tableInfo has been filtered by `domain.InfoSchema()`, so get it in repairInfo.
 	originTableInfo, _ := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var repairErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type != model.ActionRepairTable {
@@ -2942,7 +2958,7 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
 		"  `first_name` varchar(10) DEFAULT NULL,\n" +
 		"  `last_name` varchar(10) DEFAULT NULL,\n" +
-		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`first_name`, ' ', `last_name`)) VIRTUAL\n" +
+		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`first_name`, _utf8mb4' ', `last_name`)) VIRTUAL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	s.tk.MustExec("alter table table_with_gen_col_string modify column full_name varchar(255) GENERATED ALWAYS AS (CONCAT(last_name,' ' ,first_name) ) VIRTUAL")
@@ -2950,8 +2966,12 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
 		"  `first_name` varchar(10) DEFAULT NULL,\n" +
 		"  `last_name` varchar(10) DEFAULT NULL,\n" +
-		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`last_name`, ' ', `first_name`)) VIRTUAL\n" +
+		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`last_name`, _utf8mb4' ', `first_name`)) VIRTUAL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Test incorrect parameter count.
+	s.tk.MustGetErrCode("create table test_gv_incorrect_pc(a double, b int as (lower(a, 2)))", errno.ErrWrongParamcountToNativeFct)
+	s.tk.MustGetErrCode("create table test_gv_incorrect_pc(a double, b int as (lower(a, 2)) stored)", errno.ErrWrongParamcountToNativeFct)
 
 	genExprTests := []struct {
 		stmt string
@@ -2983,6 +3003,14 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 		// Add stored generated column through alter table.
 		{`alter table test_gv_ddl add column d int as (b+2) stored`, errno.ErrUnsupportedOnGeneratedColumn},
 		{`alter table test_gv_ddl modify column b int as (a + 8) stored`, errno.ErrUnsupportedOnGeneratedColumn},
+
+		// Add generated column with incorrect parameter count.
+		{`alter table test_gv_ddl add column z int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
+		{`alter table test_gv_ddl add column z int as (lower(a, 2)) stored`, errno.ErrWrongParamcountToNativeFct},
+
+		// Modify generated column with incorrect parameter count.
+		{`alter table test_gv_ddl modify column b int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
+		{`alter table test_gv_ddl change column b b int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
 	}
 	for _, tt := range genExprTests {
 		s.tk.MustGetErrCode(tt.stmt, tt.err)
@@ -3248,7 +3276,7 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 
 	var c2 *table.Column
 	var checkErr error
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
 			return
@@ -3345,7 +3373,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 
 	// Check insert null before job first update.
 	times := 0
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	s.tk.MustExec("delete from t1")
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -3413,7 +3441,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -3469,7 +3497,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -3865,7 +3893,6 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 	s.tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
 	defer s.mustExec(c, "drop table t_mcc;")
 
-	forceReloadDomain(s.tk.Se)
 	result := s.tk.MustQuery(`show create table t_mcc`)
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +

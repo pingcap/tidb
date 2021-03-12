@@ -86,6 +86,16 @@ func (s *testSuite1) TestSelectIntoOutfileTypes(c *C) {
 	cmpAndRm(`0
 1
 `, outfile, c)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id float(16,2)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t values (3.4), (1), (10.1), (2.00)")
+	tk.MustExec(fmt.Sprintf("SELECT * FROM t ORDER BY id INTO OUTFILE %q", outfile))
+	cmpAndRm(`1.00
+2.00
+3.40
+10.10
+`, outfile, c)
 }
 
 func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
@@ -235,4 +245,24 @@ func (s *testSuite1) TestDumpReal(c *C) {
 		_, buf := executor.DumpRealOutfile(nil, nil, testCase.val, tp)
 		c.Assert(string(buf), Equals, testCase.result)
 	}
+}
+
+func (s *testSuite1) TestEscapeType(c *C) {
+	outfile := randomSelectFilePath("TestEscapeType")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
+	a int,
+	b double,
+	c varchar(10),
+	d blob,
+	e json,
+	f set('1', '2', '3'),
+	g enum('1', '2', '3'))`)
+	tk.MustExec(`insert into t values (1, 1, "1", "1", '{"key": 1}', "1", "1")`)
+
+	tk.MustExec(fmt.Sprintf("select * from t into outfile '%v' fields terminated by ',' escaped by '1'", outfile))
+	cmpAndRm(`1,1,11,11,{"key": 11},11,11
+`, outfile, c)
 }

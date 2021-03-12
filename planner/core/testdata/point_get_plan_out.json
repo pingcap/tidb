@@ -87,14 +87,14 @@
         "Plan": [
           "Point_Get_1 1.00 root table:t1, index:PRIMARY(id) "
         ],
-        "Res": []
+        "Res": null
       },
       {
         "SQL": "select * from t1 where id = b'00'",
         "Plan": [
           "Point_Get_1 1.00 root table:t1, index:PRIMARY(id) "
         ],
-        "Res": []
+        "Res": null
       },
       {
         "SQL": "select * from t1 where id = 0.0",
@@ -196,7 +196,7 @@
           "└─IndexReader_9 10000.00 root  index:IndexFullScan_8",
           "  └─IndexFullScan_8 10000.00 cop[tikv] table:t5, index:PRIMARY(id) keep order:false, stats:pseudo"
         ],
-        "Res": []
+        "Res": null
       }
     ]
   }

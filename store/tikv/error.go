@@ -34,10 +34,12 @@ const mismatchClusterID = "mismatch cluster id"
 // MySQL error instances.
 var (
 	ErrTiKVServerTimeout           = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVServerTimeout)
+	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(mysql.ErrTiFlashServerTimeout)
 	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(mysql.ErrResolveLockTimeout)
 	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(mysql.ErrPDServerTimeout)
 	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(mysql.ErrRegionUnavailable)
 	ErrTiKVServerBusy              = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVServerBusy)
+	ErrTiFlashServerBusy           = dbterror.ClassTiKV.NewStd(mysql.ErrTiFlashServerBusy)
 	ErrTiKVStaleCommand            = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVStaleCommand)
 	ErrGCTooEarly                  = dbterror.ClassTiKV.NewStd(mysql.ErrGCTooEarly)
 	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(mysql.ErrQueryInterrupted)

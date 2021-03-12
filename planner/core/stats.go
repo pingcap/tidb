@@ -338,6 +338,10 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		}
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
+			if possiblePath == nil {
+				return
+			}
+
 			accessConds := make([]expression.Expression, 0, len(partialPaths))
 			for _, p := range partialPaths {
 				accessConds = append(accessConds, p.AccessConds...)
@@ -461,8 +465,10 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
 	for _, path := range partialPaths {
+		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
-			indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.TableFilters...)
+			indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current])
+			break
 		}
 	}
 	return indexMergePath

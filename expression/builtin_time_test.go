@@ -915,6 +915,8 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		{"2017-12-31 23:59:59", "1", "2018-01-01 00:00:00"},
 		{"2007-12-31 23:59:59.999999", "2 1:1:1.000002", "2008-01-03 01:01:01.000001"},
 		{"2018-08-16 20:21:01", "00:00:00.000001", "2018-08-16 20:21:01.000001"},
+		{"1", "xxcvadfgasd", ""},
+		{"xxcvadfgasd", "1", ""},
 	}
 	fc := funcs[ast.AddTime]
 	for _, t := range tbl {
@@ -992,7 +994,10 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		{types.CurrentTime(mysql.TypeTimestamp), "-32073", types.ErrTruncatedWrongVal},
 		{types.CurrentTime(mysql.TypeDate), "-32073", types.ErrTruncatedWrongVal},
 		{types.CurrentTime(mysql.TypeDatetime), "-32073", types.ErrTruncatedWrongVal},
+		{"1", "xxcvadfgasd", types.ErrTruncatedWrongVal},
+		{"xxcvadfgasd", "1", types.ErrTruncatedWrongVal},
 	}
+	beforeWarnCnt := int(s.ctx.GetSessionVars().StmtCtx.WarningCount())
 	for i, t := range tblWarning {
 		tmpInput := types.NewDatum(t.Input)
 		tmpInputDuration := types.NewDatum(t.InputDuration)
@@ -1004,7 +1009,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		c.Assert(result, Equals, "")
 		c.Assert(d.IsNull(), Equals, true)
 		warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-		c.Assert(len(warnings), Equals, i+1)
+		c.Assert(len(warnings), Equals, i+1+beforeWarnCnt)
 		c.Assert(terror.ErrorEqual(t.warning, warnings[i].Err), IsTrue, Commentf("err %v", warnings[i].Err))
 	}
 }
@@ -1019,6 +1024,8 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		{"110:00:00", "1 02:00:00", "84:00:00"},
 		{"2017-01-01 01:01:01.11", "01:01:01.11111", "2016-12-31 23:59:59.998890"},
 		{"2007-12-31 23:59:59.999999", "1 1:1:1.000002", "2007-12-30 22:58:58.999997"},
+		{"1", "xxcvadfgasd", ""},
+		{"xxcvadfgasd", "1", ""},
 	}
 	fc := funcs[ast.SubTime]
 	for _, t := range tbl {
@@ -1084,7 +1091,10 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		{types.CurrentTime(mysql.TypeTimestamp), "-32073", types.ErrTruncatedWrongVal},
 		{types.CurrentTime(mysql.TypeDate), "-32073", types.ErrTruncatedWrongVal},
 		{types.CurrentTime(mysql.TypeDatetime), "-32073", types.ErrTruncatedWrongVal},
+		{"1", "xxcvadfgasd", types.ErrTruncatedWrongVal},
+		{"xxcvadfgasd", "1", types.ErrTruncatedWrongVal},
 	}
+	beforeWarnCnt := int(s.ctx.GetSessionVars().StmtCtx.WarningCount())
 	for i, t := range tblWarning {
 		tmpInput := types.NewDatum(t.Input)
 		tmpInputDuration := types.NewDatum(t.InputDuration)
@@ -1096,7 +1106,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		c.Assert(result, Equals, "")
 		c.Assert(d.IsNull(), Equals, true)
 		warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-		c.Assert(len(warnings), Equals, i+1)
+		c.Assert(len(warnings), Equals, i+1+beforeWarnCnt)
 		c.Assert(terror.ErrorEqual(t.warning, warnings[i].Err), IsTrue, Commentf("err %v", warnings[i].Err))
 	}
 }
@@ -1401,6 +1411,15 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%S.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
 		{"2003-01-02 10:11:12 PM", "%Y-%m-%d %H:%i:%S %p", false, time.Time{}},
 		{"10:20:10AM", "%H:%i:%S%p", false, time.Time{}},
+		// test %@(skip alpha), %#(skip number), %.(skip punct)
+		{"2020-10-10ABCD", "%Y-%m-%d%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-101234", "%Y-%m-%d%#", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10....", "%Y-%m-%d%.", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10.1", "%Y-%m-%d%.%#%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"abcd2020-10-10.1", "%@%Y-%m-%d%.%#%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"abcd-2020-10-10.1", "%@-%Y-%m-%d%.%#%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10", "%Y-%m-%d%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10abcde123abcdef", "%Y-%m-%d%@%#", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
 	}
 
 	fc := funcs[ast.StrToDate]
@@ -2058,6 +2077,7 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 		{[]types.Datum{types.NewStringDatum("2017-01-18"), types.NewStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
 		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("12:30:50")}, "2017-01-18 13:31:51"},
 		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("838:59:59")}, "2017-02-22 00:01:00"},
+		{[]types.Datum{types.NewStringDatum("0000-01-01"), types.NewStringDatum("1")}, ""},
 
 		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123"))}, "2017-01-18 12:39:50.123"},
 		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.999"))}, "2017-01-18 12:39:50.999"},
@@ -2155,7 +2175,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 
 		{[]interface{}{0, 58.4, 0}, "00:58:00"},
 		{[]interface{}{0, "58.4", 0}, "00:58:00"},
-		{[]interface{}{0, 58.5, 1}, "00:59:01"},
+		{[]interface{}{0, 58.5, 1}, "00:58:01"},
 		{[]interface{}{0, "58.5", 1}, "00:58:01"},
 		{[]interface{}{0, 59.5, 1}, nil},
 		{[]interface{}{0, "59.5", 1}, "00:59:01"},
@@ -2410,6 +2430,7 @@ func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
 		{"MINUTE", 1, "2003-01-02", "2003-01-02 00:01:00"},
 		{"WEEK", 1, "2003-01-02 23:59:59", "2003-01-09 23:59:59"},
 		{"MICROSECOND", 1, 950501, "1995-05-01 00:00:00.000001"},
+		{"DAY", 28768, 0, ""},
 	}
 
 	fc := funcs[ast.TimestampAdd]

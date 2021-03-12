@@ -475,6 +475,7 @@ var partitionsCols = []columnInfo{
 	{name: "PARTITION_COMMENT", tp: mysql.TypeVarchar, size: 80},
 	{name: "NODEGROUP", tp: mysql.TypeVarchar, size: 12},
 	{name: "TABLESPACE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -727,6 +728,8 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogRewriteTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogPreprocSubQueriesStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogPreProcSubQueryTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogOptimizeTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogWaitTSTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.PreWriteTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.WaitPrewriteBinlogTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.CommitTimeStr, tp: mysql.TypeDouble, size: 22},

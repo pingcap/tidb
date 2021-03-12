@@ -524,6 +524,29 @@ func prepareCompareDatums() ([]Datum, []Datum) {
 	return vals, vals1
 }
 
+func (ts *testDatumSuite) TestStringToMysqlBit(c *C) {
+	tests := []struct {
+		a   Datum
+		out []byte
+	}{
+		{NewStringDatum("true"), []byte{1}},
+		{NewStringDatum("false"), []byte{0}},
+		{NewStringDatum("1"), []byte{1}},
+		{NewStringDatum("0"), []byte{0}},
+		{NewStringDatum("b'1'"), []byte{1}},
+		{NewStringDatum("b'0'"), []byte{0}},
+	}
+	sc := new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+	tp := NewFieldType(mysql.TypeBit)
+	tp.Flen = 1
+	for _, tt := range tests {
+		bin, err := tt.a.convertToMysqlBit(nil, tp)
+		c.Assert(err, IsNil)
+		c.Assert(bin.b, BytesEquals, tt.out)
+	}
+}
+
 func BenchmarkCompareDatum(b *testing.B) {
 	vals, vals1 := prepareCompareDatums()
 	sc := new(stmtctx.StatementContext)

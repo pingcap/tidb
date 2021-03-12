@@ -225,7 +225,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		tikvLockResolverCountWithExpired.Inc()
 
 		// Use currentTS = math.MaxUint64 means rollback the txn, no matter the lock is expired or not!
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true)
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true, l)
 		if err != nil {
 			return false, err
 		}
@@ -430,7 +430,7 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary
 	if err != nil {
 		return status, err
 	}
-	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS, true)
+	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS, true, nil)
 }
 
 func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64) (TxnStatus, error) {
@@ -455,7 +455,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		time.Sleep(100 * time.Millisecond)
 	})
 	for {
-		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist)
+		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist, l)
 		if err == nil {
 			return status, nil
 		}
@@ -507,7 +507,8 @@ func (e txnNotFoundErr) Error() string {
 
 // getTxnStatus sends the CheckTxnStatus request to the TiKV server.
 // When rollbackIfNotExist is false, the caller should be careful with the txnNotFoundErr error.
-func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64, rollbackIfNotExist bool) (TxnStatus, error) {
+func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64,
+	rollbackIfNotExist bool, lockInfo *Lock) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
@@ -576,7 +577,21 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			}
 
 			status.commitTS = cmdResp.CommitVersion
-			lr.saveResolved(txnID, status)
+			// If the transaction is still valid with ttl greater than zero, do nothing.
+			// If its status is certain:
+			//     If transaction is already committed, the result could be cached.
+			//     Otherwise:
+			//       If l.LockType is pessimistic lock type:
+			//           - if its primary lock is pessimistic too, the check txn status result should not be cached.
+			//           - if its primary lock is prewrite lock type, the check txn status could be cached, todo.
+			//       If l.lockType is prewrite lock type:
+			//           - always cache the check txn status result.
+			// For prewrite locks, their primary keys should ALWAYS be the correct one and will NOT change.
+			if status.ttl == 0 {
+				if status.IsCommitted() || (lockInfo != nil && lockInfo.LockType != kvrpcpb.Op_PessimisticLock) {
+					lr.saveResolved(txnID, status)
+				}
+			}
 		}
 		return status, nil
 	}

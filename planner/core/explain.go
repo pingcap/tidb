@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -49,11 +50,16 @@ func (p *PhysicalLock) ExplainInfo() string {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.isFullScan() {
-			return "IndexFullScan_" + strconv.Itoa(p.id)
-		}
-		return "IndexRangeScan_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
+}
+
+// TP overrides the TP in order to match different range.
+func (p *PhysicalIndexScan) TP() string {
+	if p.isFullScan() {
+		return plancodec.TypeIndexFullScan
+	}
+	return plancodec.TypeIndexRangeScan
 }
 
 // ExplainInfo implements Plan interface.
@@ -157,13 +163,18 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.isChildOfIndexLookUp {
-			return "TableRowIDScan_" + strconv.Itoa(p.id)
-		} else if p.isFullScan() {
-			return "TableFullScan_" + strconv.Itoa(p.id)
-		}
-		return "TableRangeScan_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
+}
+
+// TP overrides the TP in order to match different range.
+func (p *PhysicalTableScan) TP() string {
+	if p.isChildOfIndexLookUp {
+		return plancodec.TypeTableRowIDScan
+	} else if p.isFullScan() {
+		return plancodec.TypeTableFullScan
+	}
+	return plancodec.TypeTableRangeScan
 }
 
 // ExplainInfo implements Plan interface.

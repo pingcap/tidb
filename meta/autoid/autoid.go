@@ -913,17 +913,13 @@ func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 	alloc.(*allocator).mu.Unlock()
 }
 
-// AutoRandomIDLayout is used to calculate the bits length of different section in auto_random id.
-// The primary key with auto_random can only be `bigint` column, the total layout length of auto random is 64 bits.
-// These are two type of layout:
-// 1. Signed bigint:
-//   | [sign_bit] | [shard_bits] | [incremental_bits] |
-//   sign_bit(1 fixed) + shard_bits(15 max) + incremental_bits(the rest) = total_layout_bits(64 fixed)
-// 2. Unsigned bigint:
-//   | [shard_bits] | [incremental_bits] |
-//   shard_bits(15 max) + incremental_bits(the rest) = total_layout_bits(64 fixed)
-// Please always use NewAutoRandomIDLayout() to instantiate.
-type AutoRandomIDLayout struct {
+// ShardIDLayout is used to calculate the bits length of different segments in auto id.
+// Generally, an auto id is consist of 3 segments: sign bit, shard bits and incremental bits.
+// Take ``a BIGINT AUTO_INCREMENT PRIMARY KEY`` as an example, assume that the `shard_row_id_bits` = 5,
+// the layout is like
+//  | [sign_bit] (1 bit) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
+// Please always use NewShardIDLayout() to instantiate.
+type ShardIDLayout struct {
 	FieldType *types.FieldType
 	ShardBits uint64
 	// Derived fields.
@@ -932,15 +928,15 @@ type AutoRandomIDLayout struct {
 	HasSignBit      bool
 }
 
-// NewAutoRandomIDLayout create an instance of AutoRandomIDLayout.
-func NewAutoRandomIDLayout(fieldType *types.FieldType, shardBits uint64) *AutoRandomIDLayout {
+// NewShardIDLayout create an instance of ShardIDLayout.
+func NewShardIDLayout(fieldType *types.FieldType, shardBits uint64) *ShardIDLayout {
 	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
 	incrementalBits := typeBitsLength - shardBits
 	hasSignBit := !mysql.HasUnsignedFlag(fieldType.Flag)
 	if hasSignBit {
 		incrementalBits -= 1
 	}
-	return &AutoRandomIDLayout{
+	return &ShardIDLayout{
 		FieldType:       fieldType,
 		ShardBits:       shardBits,
 		TypeBitsLength:  typeBitsLength,
@@ -950,11 +946,11 @@ func NewAutoRandomIDLayout(fieldType *types.FieldType, shardBits uint64) *AutoRa
 }
 
 // IncrementalBitsCapacity returns the max capacity of incremental section of the current layout.
-func (l *AutoRandomIDLayout) IncrementalBitsCapacity() uint64 {
+func (l *ShardIDLayout) IncrementalBitsCapacity() uint64 {
 	return uint64(math.Pow(2, float64(l.IncrementalBits))) - 1
 }
 
 // IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current layout.
-func (l *AutoRandomIDLayout) IncrementalMask() int64 {
+func (l *ShardIDLayout) IncrementalMask() int64 {
 	return (1 << l.IncrementalBits) - 1
 }
