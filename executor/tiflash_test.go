@@ -193,9 +193,9 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustExec("insert into t values(1.00000,1.00000,1.0000,1.0000)")
 	tk.MustExec("insert into t values(1.00010,1.00010,1.0001,1.0001)")
 	tk.MustExec("insert into t values(1.00001,1.00001,1.0000,1.0002)")
-	tk.MustQuery("select t1.c1 from t t1 join t t2 on t1.c1 = t2.c1").Check(testkit.Rows("1.00000", "1.00010", "1.00001"))
-	tk.MustQuery("select t1.c1 from t t1 join t t2 on t1.c1 = t2.c3").Check(testkit.Rows("1.00000", "1.00010", "1.00000"))
-	tk.MustQuery("select t1.c4 from t t1 join t t2 on t1.c4 = t2.c3").Check(testkit.Rows("1.0000", "1.0001", "1.0000"))
+	tk.MustQuery("select t1.c1 from t t1 join t t2 on t1.c1 = t2.c1 order by t1.c1").Check(testkit.Rows("1.00000", "1.00001", "1.00010"))
+	tk.MustQuery("select t1.c1 from t t1 join t t2 on t1.c1 = t2.c3 order by t1.c1").Check(testkit.Rows("1.00000", "1.00000", "1.00010"))
+	tk.MustQuery("select t1.c4 from t t1 join t t2 on t1.c4 = t2.c3 order by t1.c4").Check(testkit.Rows("1.0000", "1.0000", "1.0001"))
 }
 
 func (s *tiflashTestSuite) TestPartitionTable(c *C) {
