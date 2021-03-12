@@ -1746,8 +1746,8 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle),
 		PrimaryColumnIds: pkColIds,
 	}
-	if tableInfo.IsCommonHandle {
-		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
-	}
+	//if tableInfo.IsCommonHandle {
+	//	tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
+	//}
 	return tsExec
 }
