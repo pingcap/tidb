@@ -49,7 +49,8 @@ func (i *implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
-// RestoreWithDefaultDB returns restore strings for StmtNode with defaultDB
+// RestoreWithDefaultDB returns restore strings for StmtNode with defaultDB.
+// This function is customized for SQL bind usage.
 func RestoreWithDefaultDB(node ast.StmtNode, defaultDB string) string {
 	var sb strings.Builder
 	// Three flags for restore with default DB:
