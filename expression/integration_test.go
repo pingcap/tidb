@@ -6076,6 +6076,46 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustQuery("select * from t_ci where a='A'").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from t_ci where a='a   '").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from t_ci where a='a                    '").Check(testkit.Rows("a"))
+<<<<<<< HEAD
+=======
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) primary key,b int)")
+	tk.MustExec("insert into t values ('a', 1), ('b', 3), ('a', 2) on duplicate key update b = b + 1;")
+	tk.MustExec("set autocommit=0")
+	tk.MustExec("insert into t values ('a', 1), ('b', 3), ('a', 2) on duplicate key update b = b + 1;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a 4", "b 4"))
+	tk.MustExec("set autocommit=1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a 4", "b 4"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10),b int, key tk (a))")
+	tk.MustExec("insert into t values ('', 1), ('', 3)")
+	tk.MustExec("set autocommit=0")
+	tk.MustExec("update t set b = b + 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows(" 2", " 4"))
+	tk.MustExec("set autocommit=1")
+	tk.MustQuery("select * from t").Check(testkit.Rows(" 2", " 4"))
+
+	tk.MustExec("drop table t_ci")
+	tk.MustExec("create table t_ci(id bigint primary key, a varchar(10) collate utf8mb4_general_ci, unique key(a, id))")
+	tk.MustExec("insert into t_ci values (1, 'a')")
+	tk.MustQuery("select a from t_ci").Check(testkit.Rows("a"))
+	tk.MustQuery("select a from t_ci").Check(testkit.Rows("a"))
+	tk.MustQuery("select a from t_ci where a='a'").Check(testkit.Rows("a"))
+	tk.MustQuery("select a from t_ci where a='A'").Check(testkit.Rows("a"))
+	tk.MustQuery("select a from t_ci where a='a   '").Check(testkit.Rows("a"))
+	tk.MustQuery("select a from t_ci where a='a                    '").Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c set('A', 'B') collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t values('a');")
+	tk.MustExec("insert into t values('B');")
+	tk.MustQuery("select c from t where c = 'a';").Check(testkit.Rows("A"))
+	tk.MustQuery("select c from t where c = 'A';").Check(testkit.Rows("A"))
+	tk.MustQuery("select c from t where c = 'b';").Check(testkit.Rows("B"))
+	tk.MustQuery("select c from t where c = 'B';").Check(testkit.Rows("B"))
+>>>>>>> 689a5983e... planner: fix the bug that wrong collation is used when try fast path for enum or set (#23217)
 }
 
 func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
