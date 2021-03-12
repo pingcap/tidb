@@ -241,7 +241,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		m.sendError(errors.New(realResp.Error.Msg))
 		return
 	}
-	failpoint.Inject("mppExitFromErrors", func(val failpoint.Value) {
+	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
 			m.sendError(tikv.ErrTiFlashServerTimeout)
@@ -350,11 +350,6 @@ func (m *mppIterator) Close() error {
 	}
 	m.cancelFunc()
 	m.wg.Wait()
-	failpoint.Inject("mppExitsDone", func(val failpoint.Value) {
-		if val.(bool) {
-			atomic.StoreUint32(m.vars.Killed, 20)
-		}
-	})
 	return nil
 }
 
