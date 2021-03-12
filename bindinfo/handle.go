@@ -689,6 +689,9 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	// So here we would remove the hint and inject the current best plan hint.
 	hint.BindHint(stmtNode, &hint.HintsSet{})
 	bindSQL := utilparser.RestoreWithDefaultDB(stmtNode, defaultDB, "")
+	if bindSQL == "" {
+		return ""
+	}
 	switch n := stmtNode.(type) {
 	case *ast.DeleteStmt:
 		deleteIdx := strings.Index(bindSQL, "DELETE")
