@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/storeutil"
@@ -504,7 +503,7 @@ func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 		st.tokenCount.Add(1)
 		return nil
 	}
-	tidbmetrics.GetStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
+	metrics.TiKVStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
 	return ErrTokenLimit.GenWithStackByArgs(st.storeID)
 
 }
