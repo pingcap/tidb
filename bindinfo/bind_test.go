@@ -1914,8 +1914,8 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "update `test` . `t` set `name` = (_charset) ? where `name` <= (_charset) ?")
-	c.Assert(rows[0][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`=_ASCII'hello' WHERE `name`<=_ASCII'abc'")
+	c.Assert(rows[0][0], Equals, "update `test` . `t` set `name` = ? where `name` <= ?")
+	c.Assert(rows[0][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`='hello' WHERE `name`<='abc'")
 	// Charset and Collation are empty now, they are not used currently.
 	c.Assert(rows[0][6], Equals, "")
 	c.Assert(rows[0][7], Equals, "")
