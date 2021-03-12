@@ -671,3 +671,19 @@ func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
 	_, err = t3.Get(context.Background(), []byte("fb2"))
 	errMsgMustContain(c, err, "key not exist")
 }
+
+func errMsgMustContain(c *C, err error, msg string) {
+	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
+}
+
+func randKV(keyLen, valLen int) (string, string) {
+	const letters = "abc"
+	k, v := make([]byte, keyLen), make([]byte, valLen)
+	for i := range k {
+		k[i] = letters[rand.Intn(len(letters))]
+	}
+	for i := range v {
+		v[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(k), string(v)
+}

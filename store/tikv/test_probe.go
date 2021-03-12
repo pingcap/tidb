@@ -21,16 +21,38 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
+
+// StoreProbe wraps KVSTore and exposes internal states for testing purpose.
+type StoreProbe struct {
+	*KVStore
+}
+
+// NewLockResolver creates a new LockResolver instance.
+func (s StoreProbe) NewLockResolver() LockResolverProbe {
+	return LockResolverProbe{LockResolver: newLockResolver(s.KVStore)}
+}
 
 // TxnProbe wraps a txn and exports internal states for testing purpose.
 type TxnProbe struct {
 	*KVTxn
 }
 
+// SetStartTS resets the txn's start ts.
+func (txn TxnProbe) SetStartTS(ts uint64) {
+	txn.startTS = ts
+}
+
 // GetCommitTS returns the commit ts.
 func (txn TxnProbe) GetCommitTS() uint64 {
 	return txn.commitTS
+}
+
+// GetUnionStore returns transaction's embeded unionstore.
+func (txn TxnProbe) GetUnionStore() kv.UnionStore {
+	return txn.us
 }
 
 // IsAsyncCommit returns if the txn is committed using async commit.
@@ -49,6 +71,21 @@ func (txn TxnProbe) GetCommitter() CommitterProbe {
 	return CommitterProbe{txn.committer}
 }
 
+// SetCommitter sets the bind committer of a transaction.
+func (txn TxnProbe) SetCommitter(committer CommitterProbe) {
+	txn.committer = committer.twoPhaseCommitter
+}
+
+// ClearStoreTxnLatches clears store's txn latch scheduler.
+func (txn TxnProbe) ClearStoreTxnLatches() {
+	txn.store.txnLatches = nil
+}
+
+// CollectLockedKeys returns all locked keys of a transaction.
+func (txn TxnProbe) CollectLockedKeys() [][]byte {
+	return txn.collectLockedKeys()
+}
+
 func newTwoPhaseCommitterWithInit(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, error) {
 	c, err := newTwoPhaseCommitter(txn, sessionID)
 	if err != nil {
@@ -65,6 +102,11 @@ type CommitterProbe struct {
 	*twoPhaseCommitter
 }
 
+// InitKeysAndMutations prepares the committer for commit.
+func (c CommitterProbe) InitKeysAndMutations() error {
+	return c.initKeysAndMutations()
+}
+
 // SetPrimaryKey resets the committer's commit ts.
 func (c CommitterProbe) SetPrimaryKey(key []byte) {
 	c.primaryKey = key
@@ -75,6 +117,16 @@ func (c CommitterProbe) GetPrimaryKey() []byte {
 	return c.primaryKey
 }
 
+// GetMutations returns the mutation buffer to commit.
+func (c CommitterProbe) GetMutations() CommitterMutations {
+	return c.mutations
+}
+
+// SetMutations replace the mutation buffer.
+func (c CommitterProbe) SetMutations(muts CommitterMutations) {
+	c.mutations = muts.(*memBufferMutations)
+}
+
 // SetCommitTS resets the committer's commit ts.
 func (c CommitterProbe) SetCommitTS(ts uint64) {
 	c.commitTS = ts
@@ -83,6 +135,42 @@ func (c CommitterProbe) SetCommitTS(ts uint64) {
 // GetCommitTS returns the commit ts of the committer.
 func (c CommitterProbe) GetCommitTS() uint64 {
 	return c.commitTS
+}
+
+// SetMinCommitTS sets the minimal commit ts can be used.
+func (c CommitterProbe) SetMinCommitTS(ts uint64) {
+	c.minCommitTS = ts
+}
+
+// SetSessionID sets the session id of the committer.
+func (c CommitterProbe) SetSessionID(id uint64) {
+	c.sessionID = id
+}
+
+// SetForUpdateTS sets pessimistic ForUpdate ts.
+func (c CommitterProbe) SetForUpdateTS(ts uint64) {
+	c.forUpdateTS = ts
+}
+
+// GetStartTS returns the start ts of the transaction.
+func (c CommitterProbe) GetStartTS() uint64 {
+	return c.startTS
+}
+
+// GetLockTTL returns the lock ttl duration of the transaction.
+func (c CommitterProbe) GetLockTTL() uint64 {
+	return c.lockTTL
+}
+
+// SetTxnSize resets the txn size of the committer and updates lock TTL.
+func (c CommitterProbe) SetTxnSize(sz int) {
+	c.txnSize = sz
+	c.lockTTL = txnLockTTL(c.txn.startTime, sz)
+}
+
+// Execute runs the commit process.
+func (c CommitterProbe) Execute(ctx context.Context) error {
+	return c.execute(ctx)
 }
 
 // PrewriteMutations performs the first phase of commit.
@@ -96,9 +184,24 @@ func (c CommitterProbe) CommitMutations(ctx context.Context) error {
 	return c.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), c.mutationsOfKeys([][]byte{c.primaryKey}))
 }
 
+// MutationsOfKeys returns mutations match the keys.
+func (c CommitterProbe) MutationsOfKeys(keys [][]byte) CommitterMutations {
+	return c.mutationsOfKeys(keys)
+}
+
+// PessimisticRollbackMutations rolls mutations back.
+func (c CommitterProbe) PessimisticRollbackMutations(ctx context.Context, muts CommitterMutations) error {
+	return c.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, nil), muts)
+}
+
 // Cleanup cleans dirty data of a committer.
 func (c CommitterProbe) Cleanup(ctx context.Context) {
 	c.cleanup(ctx)
+	c.cleanWg.Wait()
+}
+
+// WaitCleanup waits for the committer to complete.
+func (c CommitterProbe) WaitCleanup() {
 	c.cleanWg.Wait()
 }
 
@@ -107,9 +210,22 @@ func (c CommitterProbe) IsOnePC() bool {
 	return c.isOnePC()
 }
 
+// BuildPrewriteRequest builds rpc request for mutation.
+func (c CommitterProbe) BuildPrewriteRequest(regionID, regionConf, regionVersion uint64, mutations CommitterMutations, txnSize uint64) *tikvrpc.Request {
+	var batch batchMutations
+	batch.mutations = mutations
+	batch.region = RegionVerID{regionID, regionConf, regionVersion}
+	return c.buildPrewriteRequest(batch, txnSize)
+}
+
 // IsAsyncCommit returns if the committer uses async commit.
 func (c CommitterProbe) IsAsyncCommit() bool {
 	return c.isAsyncCommit()
+}
+
+// CheckAsyncCommit returns if async commit is available.
+func (c CommitterProbe) CheckAsyncCommit() bool {
+	return c.checkAsyncCommit()
 }
 
 // GetOnePCCommitTS returns the commit ts of one pc.
@@ -117,9 +233,21 @@ func (c CommitterProbe) GetOnePCCommitTS() uint64 {
 	return c.onePCCommitTS
 }
 
-// IsTTLUninitialized  returns if the TTL manager is uninitialized.
+// IsTTLUninitialized returns if the TTL manager is uninitialized.
 func (c CommitterProbe) IsTTLUninitialized() bool {
-	return c.ttlManager.state == stateUninitialized
+	state := atomic.LoadUint32((*uint32)(&c.ttlManager.state))
+	return state == uint32(stateUninitialized)
+}
+
+// IsTTLRunning returns if the TTL manager is running state.
+func (c CommitterProbe) IsTTLRunning() bool {
+	state := atomic.LoadUint32((*uint32)(&c.ttlManager.state))
+	return state == uint32(stateRunning)
+}
+
+// CloseTTLManager closes the TTL manager.
+func (c CommitterProbe) CloseTTLManager() {
+	c.ttlManager.close()
 }
 
 // GetUndeterminedErr returns the encountered undetermined error (if any).
@@ -127,6 +255,17 @@ func (c CommitterProbe) GetUndeterminedErr() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.mu.undeterminedErr
+}
+
+// SetNoFallBack disallows async commit to fall back to normal mode.
+func (c CommitterProbe) SetNoFallBack() {
+	c.testingKnobs.noFallBack = true
+}
+
+// SetPrimaryKeyBlocker is used to block committer after primary is sent.
+func (c CommitterProbe) SetPrimaryKeyBlocker(ac, bk chan struct{}) {
+	c.testingKnobs.acAfterCommitPrimary = ac
+	c.testingKnobs.bkAfterCommitPrimary = bk
 }
 
 // LockProbe exposes some lock utilities for testing purpose.
@@ -159,10 +298,27 @@ func (l LockResolverProbe) ResolveLockAsync(bo *Backoffer, lock *Lock, status Tx
 	return l.resolveLockAsync(bo, lock, status)
 }
 
+// ResolveLock resolves single lock.
+func (l LockResolverProbe) ResolveLock(ctx context.Context, lock *Lock) error {
+	bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
+	return l.resolveLock(bo, lock, TxnStatus{}, false, make(map[RegionVerID]struct{}))
+}
+
+// ResolvePessimisticLock resolves single pessimistic lock.
+func (l LockResolverProbe) ResolvePessimisticLock(ctx context.Context, lock *Lock) error {
+	bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
+	return l.resolvePessimisticLock(bo, lock, make(map[RegionVerID]struct{}))
+}
+
 // GetTxnStatus sends the CheckTxnStatus request to the TiKV server.
 func (l LockResolverProbe) GetTxnStatus(bo *Backoffer, txnID uint64, primary []byte,
 	callerStartTS, currentTS uint64, rollbackIfNotExist bool, forceSyncCommit bool, lockInfo *Lock) (TxnStatus, error) {
 	return l.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS, rollbackIfNotExist, forceSyncCommit, lockInfo)
+}
+
+// GetTxnStatusFromLock queries tikv for a txn's status.
+func (l LockResolverProbe) GetTxnStatusFromLock(bo *Backoffer, lock *Lock, callerStartTS uint64, forceSyncCommit bool) (TxnStatus, error) {
+	return l.getTxnStatusFromLock(bo, lock, callerStartTS, forceSyncCommit)
 }
 
 // GetSecondariesFromTxnStatus returns the secondary locks from txn status.
@@ -170,10 +326,20 @@ func (l LockResolverProbe) GetSecondariesFromTxnStatus(status TxnStatus) [][]byt
 	return status.primaryLock.GetSecondaries()
 }
 
+// SetMeetLockCallback is called whenever it meets locks.
+func (l LockResolverProbe) SetMeetLockCallback(f func([]*Lock)) {
+	l.testingKnobs.meetLock = f
+}
+
 // ConfigProbe exposes configurations and global variables for testing purpose.
 type ConfigProbe struct{}
 
 // GetTxnCommitBatchSize returns the batch size to commit txn.
-func (c ConfigProbe) GetTxnCommitBatchSize() int {
+func (c ConfigProbe) GetTxnCommitBatchSize() uint64 {
 	return txnCommitBatchSize
+}
+
+// GetBigTxnThreshold returns the txn size to be considered as big txn.
+func (c ConfigProbe) GetBigTxnThreshold() int {
+	return bigTxnThreshold
 }

@@ -17,7 +17,6 @@ package tikv_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv"
 )
 
 // TestCommitMultipleRegions tests commit multiple regions.
@@ -33,7 +32,7 @@ func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
 	// Test big values.
 	m = make(map[string]string)
 	for i := 0; i < 50; i++ {
-		k, v := randKV(11, tikv.ConfigProbe{}.GetTxnCommitBatchSize()/7)
+		k, v := randKV(11, int(txnCommitBatchSize)/7)
 		m[k] = v
 	}
 	s.mustCommit(c, m)
