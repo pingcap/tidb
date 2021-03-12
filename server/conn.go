@@ -1495,7 +1495,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
-			if cc.ctx.GetSessionVars().EnableTiFlashFallbackTiKV && errors.ErrorEqual(err, tikv.ErrTiFlashServerTimeout) && retryable {
+			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+			if allowTiFlashFallback && errors.ErrorEqual(err, tikv.ErrTiFlashServerTimeout) && retryable {
 				// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 				// server and fallback to TiKV.
 				warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
@@ -1614,7 +1615,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	return pointPlans, nil
 }
 
-// The first return value indicates whether the call of handleStmt has no side effect and can be retried to correct error.
+// The first return value indicates whether the call of handleStmt has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
@@ -1792,9 +1793,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	}
 
 	for {
-		failpoint.Inject("secondNextErr", func(value failpoint.Value) {
-			if value.(bool) && !firstNext {
+		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
+			switch value.(string) {
+			case "firstNext":
 				failpoint.Return(firstNext, tikv.ErrTiFlashServerTimeout)
+			case "secondNext":
+				if !firstNext {
+					failpoint.Return(firstNext, tikv.ErrTiFlashServerTimeout)
+				}
 			}
 		})
 		// Here server.tidbResultSet implements Next method.
