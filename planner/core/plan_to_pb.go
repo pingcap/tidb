@@ -283,9 +283,7 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.Sto
 	for _, column := range e.Schema().Columns {
 		pbType := expression.ToPBFieldType(column.RetType)
 		if column.RetType.Tp == mysql.TypeEnum {
-			for _, e := range column.RetType.Elems {
-				pbType.Elems = append(pbType.Elems, e)
-			}
+			pbType.Elems = append(pbType.Elems, column.RetType.Elems...)
 		}
 		fieldTypes = append(fieldTypes, pbType)
 	}

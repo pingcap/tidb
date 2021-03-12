@@ -134,9 +134,7 @@ func (b *mppExecBuilder) buildMPPExchangeReceiver(pb *tipb.ExchangeReceiver) (*e
 	for _, pbType := range pb.FieldTypes {
 		tp := expression.FieldTypeFromPB(pbType)
 		if tp.Tp == mysql.TypeEnum {
-			for _, elem := range pbType.Elems {
-				tp.Elems = append(tp.Elems, elem)
-			}
+			tp.Elems = append(tp.Elems, pbType.Elems...) 
 		}
 		e.fieldTypes = append(e.fieldTypes, tp)
 	}
