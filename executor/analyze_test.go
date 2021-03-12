@@ -506,14 +506,20 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		c.Assert(result.Rows()[1][5], Equals, "2")
 		c.Assert(result.Rows()[2][5], Equals, "3")
 	*/
+}
 
+func (s *testSerialSuite2) TestFastAnalyze4GlobalStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	// test fast analyze in dynamic mode
 	tk.MustExec("set @@session.tidb_analyze_version = 2;")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("drop table if exists t4;")
 	tk.MustExec("create table t4(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
 	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
-	err = tk.ExecToErr("analyze table t4;")
+	err := tk.ExecToErr("analyze table t4;")
 	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
 }
 
