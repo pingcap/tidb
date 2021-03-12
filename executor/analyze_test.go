@@ -506,7 +506,34 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		c.Assert(result.Rows()[1][5], Equals, "2")
 		c.Assert(result.Rows()[2][5], Equals, "3")
 	*/
+}
 
+func (s *testSerialSuite2) TestFastAnalyze4GlobalStats(c *C) {
+	var cls cluster.Cluster
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			cls = c
+		}),
+	)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	var dom *domain.Domain
+	session.DisableStats4Test()
+	session.SetSchemaLease(0)
+	dom, err = session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	dom.SetStatsUpdating(true)
+	defer dom.Close()
+	tk := testkit.NewTestKit(c, store)
+	executor.RandSeed = 123
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	// test fast analyze in dynamic mode
 	tk.MustExec("set @@session.tidb_analyze_version = 2;")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
