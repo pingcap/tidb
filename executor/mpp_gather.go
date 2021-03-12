@@ -83,6 +83,7 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 			Timeout:   10,
 			SchemaVar: e.is.SchemaMetaVersion(),
 			StartTs:   e.startTS,
+			State:     kv.MppTaskReady,
 		}
 		e.mppReqs = append(e.mppReqs, req)
 	}
