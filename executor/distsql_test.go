@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -37,14 +37,17 @@ import (
 func checkGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)
 	profile := pprof.Lookup("goroutine")
-	profile.WriteTo(buf, 1)
+	err := profile.WriteTo(buf, 1)
+	if err != nil {
+		panic(err)
+	}
 	str := buf.String()
 	return strings.Contains(str, keyword)
 }
 
 func (s *testSuite3) TestCopClientSend(c *C) {
 	c.Skip("not stable")
-	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
+	if _, ok := s.store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
 		return
 	}
@@ -77,7 +80,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(500))
@@ -92,7 +95,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 
 	// Check there is no goroutine leak.
 	rs, err = tk.Exec("select * from copclient order by id")
@@ -100,7 +103,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	req = rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	keyword := "(*copIterator).work"
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 }
@@ -218,7 +221,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		_, err = idxOp.Create(ctx, txn.GetUnionStore(), types.MakeDatums(i+10), kv.IntHandle(100+i))
+		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i), nil)
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)

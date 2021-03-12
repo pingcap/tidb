@@ -72,7 +72,8 @@ type TestGlobalKillSuite struct {
 }
 
 func (s *TestGlobalKillSuite) SetUpSuite(c *C) {
-	logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	c.Assert(err, IsNil)
 
 	s.pdCli, s.pdErr = s.connectPD()
 }
@@ -203,7 +204,10 @@ func (s *TestGlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 		}
 		log.Warnf("ping addr %v failed, retry count %d err %v", addr, i, err)
 
-		db.Close()
+		err = db.Close()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
 	}
@@ -323,7 +327,10 @@ func (s *TestGlobalKillSuite) TestWithoutPD(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	defer db.Close()
+	defer func(){
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	const sleepTime = 2
 
@@ -348,7 +355,10 @@ func (s *TestGlobalKillSuite) TestOneTiDB(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	defer db.Close()
+	defer func(){
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	const sleepTime = 2
 

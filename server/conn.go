@@ -52,6 +52,8 @@ import (
 	"time"
 	"unsafe"
 
+	goerr "errors"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -62,6 +64,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -80,7 +83,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -682,13 +684,14 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, err := cc.PeerHost(hasPassword)
+	host, port, err := cc.PeerHost(hasPassword)
 	if err != nil {
 		return err
 	}
 	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
 		return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
+	cc.ctx.SetPort(port)
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
@@ -699,9 +702,9 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	return nil
 }
 
-func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
+func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
 	if len(cc.peerHost) > 0 {
-		return cc.peerHost, nil
+		return cc.peerHost, "", nil
 	}
 	host = variable.DefHostname
 	if cc.server.isUnixSocket() {
@@ -709,7 +712,6 @@ func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
 		return
 	}
 	addr := cc.bufReadConn.RemoteAddr().String()
-	var port string
 	host, port, err = net.SplitHostPort(addr)
 	if err != nil {
 		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
@@ -1097,7 +1099,18 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 }
 
 func (cc *clientConn) flush(ctx context.Context) error {
-	defer trace.StartRegion(ctx, "FlushClientConn").End()
+	defer func() {
+		trace.StartRegion(ctx, "FlushClientConn").End()
+		if cc.ctx != nil && cc.ctx.WarningCount() > 0 {
+			for _, err := range cc.ctx.GetWarnings() {
+				var warn *errors.Error
+				if ok := goerr.As(err.Err, &warn); ok {
+					code := uint16(warn.Code())
+					errno.IncrementWarning(code, cc.user, cc.peerHost)
+				}
+			}
+		}
+	}()
 	failpoint.Inject("FakeClientConn", func() {
 		if cc.pkt == nil {
 			failpoint.Return(nil)
@@ -1159,6 +1172,7 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 	}
 
 	cc.lastCode = m.Code
+	defer errno.IncrementError(m.Code, cc.user, cc.peerHost)
 	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))
 	data = append(data, mysql.ErrHeader)
 	data = append(data, byte(m.Code), byte(m.Code>>8))
@@ -1778,6 +1792,11 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	}
 
 	for {
+		failpoint.Inject("secondNextErr", func(value failpoint.Value) {
+			if value.(bool) && !firstNext {
+				failpoint.Return(firstNext, tikv.ErrTiFlashServerTimeout)
+			}
+		})
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
 		if err != nil {
@@ -1895,30 +1914,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		cl.OnFetchReturned()
 	}
 	return cc.writeEOF(serverStatus)
-}
-
-func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {
-	for i, rs := range rss {
-		lastRs := i == len(rss)-1
-		if r, ok := rs.(*tidbResultSet).recordSet.(sqlexec.MultiQueryNoDelayResult); ok {
-			status := r.Status()
-			if !lastRs {
-				status |= mysql.ServerMoreResultsExists
-			}
-			if err := cc.writeOkWith(ctx, r.LastMessage(), r.AffectedRows(), r.LastInsertID(), status, r.WarnCount()); err != nil {
-				return err
-			}
-			continue
-		}
-		status := uint16(0)
-		if !lastRs {
-			status |= mysql.ServerMoreResultsExists
-		}
-		if _, err := cc.writeResultset(ctx, rs, binary, status, 0); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (cc *clientConn) setConn(conn net.Conn) {
