@@ -73,6 +73,7 @@ const (
 	CmdBatchCop
 	CmdMPPTask
 	CmdMPPConn
+	CmdMPPCancel
 
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
@@ -147,6 +148,8 @@ func (t CmdType) String() string {
 		return "DispatchMPPTask"
 	case CmdMPPConn:
 		return "EstablishMPPConnection"
+	case CmdMPPCancel:
+		return "CancelMPPTask"
 	case CmdMvccGetByKey:
 		return "MvccGetByKey"
 	case CmdMvccGetByStartTs:
@@ -337,6 +340,11 @@ func (req *Request) DispatchMPPTask() *mpp.DispatchTaskRequest {
 // EstablishMPPConn returns EstablishMPPConnectionRequest in request.
 func (req *Request) EstablishMPPConn() *mpp.EstablishMPPConnectionRequest {
 	return req.Req.(*mpp.EstablishMPPConnectionRequest)
+}
+
+// CancelMPPTask returns canceling task in request
+func (req *Request) CancelMPPTask() *mpp.CancelTaskRequest {
+	return req.Req.(*mpp.CancelTaskRequest)
 }
 
 // MvccGetByKey returns MvccGetByKeyRequest in request.
@@ -871,6 +879,9 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp = &MPPStreamResponse{
 			Tikv_EstablishMPPConnectionClient: streamClient,
 		}
+	case CmdMPPCancel:
+		// it cannot use the ctx with cancel(), otherwise this cmd will fail.
+		resp.Resp, err = client.CancelMPPTask(ctx, req.CancelMPPTask())
 	case CmdCopStream:
 		var streamClient tikvpb.Tikv_CoprocessorStreamClient
 		streamClient, err = client.CoprocessorStream(ctx, req.Cop())
