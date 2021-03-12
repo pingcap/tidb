@@ -448,7 +448,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		if atomic.LoadInt32(&store.needForwarding) == 0 {
 			regionStore.unsetProxyStoreIfNeeded(cachedRegion)
 		} else {
-			proxyStore, proxyAccessIdx, proxyStoreIdx, err = c.getProxyStore(bo, cachedRegion, store, regionStore, accessIdx)
+			proxyStore, proxyAccessIdx, proxyStoreIdx, err = c.getProxyStore(cachedRegion, store, regionStore, accessIdx)
 			if err != nil {
 				return nil, err
 			}
@@ -1190,7 +1190,7 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 	}
 }
 
-func (c *RegionCache) getProxyStore(bo *Backoffer, region *Region, store *Store, rs *RegionStore, workStoreIdx AccessIndex) (proxyStore *Store, proxyAccessIdx AccessIndex, proxyStoreIdx int, err error) {
+func (c *RegionCache) getProxyStore(region *Region, store *Store, rs *RegionStore, workStoreIdx AccessIndex) (proxyStore *Store, proxyAccessIdx AccessIndex, proxyStoreIdx int, err error) {
 	if !EnableRedirection || store.storeType != TiKV || atomic.LoadInt32(&store.needForwarding) == 0 {
 		return
 	}
@@ -1207,6 +1207,7 @@ func (c *RegionCache) getProxyStore(bo *Backoffer, region *Region, store *Store,
 			continue
 		}
 		storeIdx, store := rs.accessStore(TiKVOnly, AccessIndex(index))
+		rs.setProxyStoreIdx(region, AccessIndex(index))
 		return store, AccessIndex(index), storeIdx, nil
 	}
 
@@ -1815,6 +1816,17 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 }
 
 func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
+	failpoint.Inject("mockRequestLiveness", func(val failpoint.Value) {
+		result, ok := val.(bool)
+		if ok {
+			if result {
+				failpoint.Return(reachable)
+			} else {
+				failpoint.Return(unreachable)
+			}
+		}
+	})
+
 	if StoreLivenessTimeout == 0 {
 		return unreachable
 	}

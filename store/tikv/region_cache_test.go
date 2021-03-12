@@ -555,6 +555,9 @@ func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
 	c.Assert(ctx, NotNil)
 	c.Assert(ctx.ProxyStore, NotNil)
 	c.Assert(ctx.ProxyStore.storeID, Equals, s.store2)
+
+	//// Recover the store
+	//c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockRequestLiveness", "return(true)"), IsNil)
 }
 
 func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
