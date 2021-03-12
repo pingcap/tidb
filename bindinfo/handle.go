@@ -624,7 +624,7 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
-		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName))
+		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
 		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
 			continue
 		}
