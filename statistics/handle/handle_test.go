@@ -1352,6 +1352,14 @@ partition by range (a) (
 	tk.MustExec("analyze table t partition p2") // it will success since p0 and p1 are both in ver2
 	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	c.Assert(len(result), Equals, 4)    // p0, p1, p2 and global
+	c.Assert(result[0][5], Equals, "7") // global.count = p0.count + p1.count + p2.count
+	c.Assert(result[1][5], Equals, "3")
+	c.Assert(result[2][5], Equals, "2") // We did not analyze partition p1, so the value here has not changed
+	c.Assert(result[3][5], Equals, "2")
+
+	tk.MustExec("analyze table t;")
+	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
+	c.Assert(len(result), Equals, 4)    // p0, p1, p2 and global
 	c.Assert(result[0][5], Equals, "9") // global.count = p0.count + p1.count + p2.count
 	c.Assert(result[1][5], Equals, "3")
 	c.Assert(result[2][5], Equals, "4")
