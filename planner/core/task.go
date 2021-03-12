@@ -16,6 +16,7 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -1114,6 +1115,13 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			return false
 		}
 		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
+			if sc.InExplainStmt {
+				storageName := storeType.Name()
+				if storeType == kv.UnSpecified {
+					storageName = "storage layer"
+				}
+				sc.AppendWarning(errors.New("Agg function '" + aggFunc.Name + "' can not be pushed to " + storageName))
+			}
 			return false
 		}
 		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
@@ -1507,6 +1515,13 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 					cop.finishIndexPlan()
 					partialAgg.SetChildren(cop.tablePlan)
 					cop.tablePlan = partialAgg
+					// If doubleReadNeedProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
+					// the schema is the same as the original DataSource schema.
+					// However, we pushed down the agg here, the partial agg was placed on the top of tablePlan, and the final
+					// agg will be placed above the PhysicalIndexLookUpReader, and the schema will be set correctly for them.
+					// If we add the projection again, the projection will be between the PhysicalIndexLookUpReader and
+					// the partial agg, and the schema will be broken.
+					cop.doubleReadNeedProj = false
 				} else {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
@@ -1576,28 +1591,29 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		mpp.addCost(p.GetCost(inputRows, false))
 		return mpp
 	case Mpp2Phase:
-		// 2-phase agg: partial + final agg for hash partition
-		if len(p.MppPartitionCols) == 0 {
-			return invalidTask
-		}
-		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: p.MppPartitionCols}
-		// if mpp does not need to enforce exchange, i.e., the child is properly partitioned, then this 2-phase agg is invalid
-		if !mpp.needEnforce(prop) {
-			return invalidTask
-		}
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if partialAgg == nil {
 			return invalidTask
 		}
 		attachPlan2Task(partialAgg, mpp)
+		items := finalAgg.(*PhysicalHashAgg).GroupByItems
+		partitionCols := make([]*expression.Column, 0, len(items))
+		for _, expr := range items {
+			col, ok := expr.(*expression.Column)
+			if !ok {
+				return invalidTask
+			}
+			partitionCols = append(partitionCols, col)
+		}
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols}
 		newMpp := mpp.enforceExchangerImpl(prop)
 		attachPlan2Task(finalAgg, newMpp)
 		if proj != nil {
 			attachPlan2Task(proj, newMpp)
 		}
 		// TODO: how to set 2-phase cost?
-		newMpp.addCost(p.GetCost(inputRows/2, false))
+		newMpp.addCost(p.GetCost(inputRows, false))
 		return newMpp
 	case MppTiDB:
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
@@ -1627,6 +1643,13 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 					cop.finishIndexPlan()
 					partialAgg.SetChildren(cop.tablePlan)
 					cop.tablePlan = partialAgg
+					// If doubleReadNeedProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
+					// the schema is the same as the original DataSource schema.
+					// However, we pushed down the agg here, the partial agg was placed on the top of tablePlan, and the final
+					// agg will be placed above the PhysicalIndexLookUpReader, and the schema will be set correctly for them.
+					// If we add the projection again, the projection will be between the PhysicalIndexLookUpReader and
+					// the partial agg, and the schema will be broken.
+					cop.doubleReadNeedProj = false
 				} else {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
@@ -1802,9 +1825,10 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		ChildPf: f,
 	}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
+	cst := t.cst + t.count()*ctx.GetSessionVars().NetworkFactor
 	return &mppTask{
 		p:         receiver,
-		cst:       t.cst,
+		cst:       cst,
 		partTp:    prop.PartitionTp,
 		hashCols:  prop.PartitionCols,
 		receivers: []*PhysicalExchangeReceiver{receiver},

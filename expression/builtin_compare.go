@@ -385,14 +385,18 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 
 	hasTemporal := false
 	if cmpTp == types.ETString {
-		for _, arg := range args {
-			if types.IsTypeTemporal(arg.GetType().Tp) {
-				hasTemporal = true
-				break
+		if args[0].GetType().Tp == mysql.TypeDuration {
+			cmpTp = types.ETDuration
+		} else {
+			for _, arg := range args {
+				if types.IsTypeTemporal(arg.GetType().Tp) {
+					hasTemporal = true
+					break
+				}
 			}
-		}
-		if hasTemporal {
-			cmpTp = types.ETDatetime
+			if hasTemporal {
+				cmpTp = types.ETDatetime
+			}
 		}
 	}
 
@@ -1373,7 +1377,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// int constant [cmp] year type
-	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear {
+	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear && !arg0.Value.IsNull() {
 		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
 		if failed == nil {
 			arg0.Value.SetInt64(adjusted)
@@ -1381,7 +1385,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// year type [cmp] int constant
-	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear {
+	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear && !arg1.Value.IsNull() {
 		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
 		if failed == nil {
 			arg1.Value.SetInt64(adjusted)
