@@ -15,6 +15,7 @@ package cophandler
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"time"
 
@@ -46,6 +47,7 @@ type MPPCtx struct {
 	RPCClient   client.Client
 	StoreAddr   string
 	TaskHandler *MPPTaskHandler
+	Ctx         context.Context
 }
 
 // HandleCopRequest handles coprocessor request.
