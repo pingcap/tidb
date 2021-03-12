@@ -211,8 +211,8 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	return err
 }
 
-// The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried
-// to correct error. Currently the first return value is used to fallback to TiKV when TiFlash is down.
+// The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
+// Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {
 	rs, err := stmt.Execute(ctx, args)
 	if err != nil {

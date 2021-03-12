@@ -1615,7 +1615,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	return pointPlans, nil
 }
 
-// The first return value indicates whether the call of handleStmt has no side effect and can be retried to correct error.
+// The first return value indicates whether the call of handleStmt has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
