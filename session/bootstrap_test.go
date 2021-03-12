@@ -484,7 +484,6 @@ func (s *testBootstrapSuite) TestBootstrapInitExpensiveQueryHandle(c *C) {
 	dom := domain.GetDomain(se)
 	c.Assert(dom, NotNil)
 	defer dom.Close()
-	dom.InitExpensiveQueryHandle()
 	c.Assert(dom.ExpensiveQueryHandle(), NotNil)
 }
 
