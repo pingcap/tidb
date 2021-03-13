@@ -157,8 +157,8 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 	bf, err = funcs[ast.LT].getFunction(s.ctx, []Expression{timeCol, stringCon})
 	c.Assert(err, IsNil)
 	args = bf.getArgs()
-	c.Assert(args[0].GetType().Tp, Equals, mysql.TypeDatetime)
-	c.Assert(args[1].GetType().Tp, Equals, mysql.TypeDatetime)
+	c.Assert(args[0].GetType().Tp, Equals, mysql.TypeVarString)
+	c.Assert(args[1].GetType().Tp, Equals, mysql.TypeVarchar)
 }
 
 func (s *testEvaluatorSuite) TestCoalesce(c *C) {
