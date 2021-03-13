@@ -1124,15 +1124,9 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	if (lhsEvalType.IsStringKind() && rhsFieldType.Tp == mysql.TypeJSON) ||
 		(lhsFieldType.Tp == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
 		cmpType = types.ETJson
-	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.Tp) || types.IsTypeTime(rhsFieldType.Tp)) {
+	} else if cmpType == types.ETString && types.IsTypeTime(lhsFieldType.Tp) && types.IsTypeTime(rhsFieldType.Tp) {
 		// date[time] <cmp> date[time]
-		// string <cmp> date[time]
-		// compare as time
-		if lhsFieldType.Tp == rhsFieldType.Tp {
-			cmpType = lhsFieldType.EvalType()
-		} else {
-			cmpType = types.ETString
-		}
+		cmpType = lhsFieldType.EvalType()
 	} else if lhsFieldType.Tp == mysql.TypeDuration && rhsFieldType.Tp == mysql.TypeDuration {
 		// duration <cmp> duration
 		// compare as duration
