@@ -86,6 +86,22 @@ if pm.RequestDynamicVerification(activeRoles, "BACKUP_ADMIN", false) {
 	// has backup admin privilege
 }
 ```
+
+### Plugin API
+
+There will need to be a way for plugins to register new dynamic privileges via their OnInit method. I propose the following:
+
+```
+import (
+	"github.com/pingcap/tidb/privilege/privileges"
+)
+
+err = privileges.RegisterDynamicPrivilege("AUDIT_ADMIN")
+if err != nil {
+	return err
+}
+```
+
 ### Metadata Commands
 
 #### SHOW GRANTS
@@ -241,6 +257,8 @@ Testing dynamic privileges is a little bit complex because of the various ways p
 
 Unit tests will be added to cover the semantics around role/dynamic privilege precedence, including logical restoring in a different order.
 
+Unit tests will also cover each of the "initial set of Dynamic privileges". Tests will include both directly assigning the privileges and assigning via a ROLE (RBAC).
+
 Integration testing needs to test with global kill enabled/disabled.
 
 ### Scenario Tests
@@ -260,6 +278,10 @@ The use-cases required by the DBaaS team should be validated when combined with 
 | Change password if the password of SUPER user is forgotten | N | Y |
 | Kill connections belong to cloudAdmin | N | Y |
 | SHUTDOWN / RESTART | N | Y (graceful shutdown on k8s for tidb-server) |
+
+Scenario testing will be required for:
+* all the dynamic privileges
+* several user-defined dynamic privileges
 
 ### Compatibility Tests
 
