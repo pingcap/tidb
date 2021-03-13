@@ -177,7 +177,7 @@ No change
 | Privilege Name | Description | Notes |
 | --------------- | --------------- | --------------- |
 | `RESTRICTED_SYSTEM_VARIABLES_ADMIN` | Allows changing a restricted `GLOBAL` system variable. | Currently in SEM all high risk variables are unloaded. TBD, it might be required in future that they are only visible/settable to those with this privilege and not SUPER. |
-| `RESTRICTED_CONNECTION_ADMIN` | A special privilege to say that their connections etc. can’t be killed by SUPER users AND they can kill connections by all other users. Affects `KILL`, `KILL TIDB` commands. | It is intended for the CloudAdmin user in DbaaS. |
+| `RESTRICTED_CONNECTION_ADMIN` | A special privilege to say that their connections, etc. can’t be killed by SUPER users AND they can kill connections by all other users. Affects `KILL`, `KILL TIDB` commands. | It is intended for the CloudAdmin user in DBaaS. |
 | `RESTRICTED_USER` | A special privilege to say that their access can’t be changed by `SUPER` users. Statements `DROP USER`, `SET PASSWORD`, `ALTER USER`, `REVOKE` are all limited. | It is intended for the CloudAdmin user in DbaaS. |
 | `RESTRICTED_TABLES` | A special privilege which means that the SEM hidden table semantic doesn’t apply. | It is intended for the CloudAdmin user in DbaaS. | 
 
@@ -279,4 +279,3 @@ The initial implementation of dynamic privileges only implements a subset of MyS
 ## Unresolved Questions
 
 None
-
