@@ -6588,6 +6588,7 @@ func (s *testSerialDBSuite) TestIssue22819(c *C) {
 	tk1.MustExec("update t1 set v = 2 where v = 1")
 
 	tk2.MustExec("alter table t1 truncate partition p0")
+	tk2.MustExec("alter table t1 truncate partition all")
 
 	_, err := tk1.Exec("commit")
 	c.Assert(err, ErrorMatches, ".*8028.*Information schema is changed during the execution of the statement.*")
