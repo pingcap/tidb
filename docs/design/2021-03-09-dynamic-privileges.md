@@ -26,6 +26,52 @@ This document was created to discuss the design of Dynamic Privileges. It is int
 
 MySQL 8.0 introduced the concept of “dynamic privileges” (see [WL#8131](https://dev.mysql.com/worklog/task/?id=8131)). The intention behind this functionality is that plugins can create new named privileges to suit their purposes, such as “Firewall Admin” or “Audit Admin” instead of requiring the `SUPER` privilege, which becomes overloaded and too coarse.
 
+Dynamic privileges are **not to be confused with** SQL Roles (RBAC). They work together just fine. Consider the following testcase which demonstrates the features working together:
+
+```sql
+  mustExec(c, rootSe, "CREATE USER notsuper")
+	mustExec(c, rootSe, "CREATE USER otheruser")
+	mustExec(c, rootSe, "CREATE ROLE anyrolename")
+	mustExec(c, rootSe, "SET tidb_enable_dynamic_privileges=1")
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "notsuper", Hostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "SET tidb_enable_dynamic_privileges=1")
+
+	// test SYSTEM_VARIABLES_ADMIN
+	_, err := se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86400")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_admin ON *.* TO notsuper")
+	mustExec(c, se, "SET GLOBAL wait_timeout = 86400")
+
+	// test ROLE_ADMIN
+	_, err = se.ExecuteInternal(context.Background(), "GRANT anyrolename TO otheruser")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or ROLE_ADMIN privilege(s) for this operation")
+	mustExec(c, rootSe, "GRANT ROLE_ADMIN ON *.* TO notsuper")
+	mustExec(c, se, "GRANT anyrolename TO otheruser")
+
+	// revoke SYSTEM_VARIABLES_ADMIN, confirm it is dropped
+	mustExec(c, rootSe, "REVOKE SYSTEM_VARIABLES_AdmIn ON *.* FROM notsuper")
+	_, err = se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86000")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+
+	// grant super, confirm that it is also a substitute for SYSTEM_VARIABLES_ADMIN
+	mustExec(c, rootSe, "GRANT SUPER ON *.* TO notsuper")
+	mustExec(c, se, "SET GLOBAL wait_timeout = 86400")
+
+	// revoke SUPER, assign SYSTEM_VARIABLES_ADMIN to anyrolename.
+	// confirm that a dynamic privilege can be inherited from a role.
+	mustExec(c, rootSe, "REVOKE SUPER ON *.* FROM notsuper")
+	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_AdmIn ON *.* TO anyrolename")
+	mustExec(c, rootSe, "GRANT anyrolename TO notsuper")
+
+	// It's not a default role, this should initially fail:
+	_, err = se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86400")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+	mustExec(c, se, "SET ROLE anyrolename")
+	mustExec(c, se, "SET GLOBAL wait_timeout = 87000")
+```
+
 Dynamic privileges are different from static privileges in the following ways:
 
 * The name of the privilege is “DYNAMIC”. A plugin registers it, and the server has no prior knowledge of its existence.
@@ -244,7 +290,6 @@ This same nuance applies to MySQL.
 The statement reference pages for each of the affected metadata commands will need to be updated to describe dynamic privileges.
 
 There will also need to be documentation specific to `DYNAMIC` privileges to describe how it works, and the purpose of fine-grained access control.
-
 
 ## Test Design
 
