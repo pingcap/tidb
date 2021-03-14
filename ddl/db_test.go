@@ -6588,8 +6588,20 @@ func (s *testSerialDBSuite) TestIssue22819(c *C) {
 	tk1.MustExec("update t1 set v = 2 where v = 1")
 
 	tk2.MustExec("alter table t1 truncate partition p0")
-	tk2.MustExec("alter table t1 truncate partition all")
 
 	_, err := tk1.Exec("commit")
 	c.Assert(err, ErrorMatches, ".*8028.*Information schema is changed during the execution of the statement.*")
+}
+
+func (s *testSerialSuite) TestTruncateAllPartitions(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test;")
+	tk1.MustExec("drop table if exists partition_table;")
+	defer func() {
+		tk1.MustExec("drop table if exists partition_table;")
+	}()
+	tk1.MustExec("create table partition_table (v int) partition by hash (v) partitions 2;")
+	tk1.MustExec("insert into partition_table values (1);")
+	tk1.MustExec("alter table partition_table truncate partition all;")
+	tk1.MustQuery("select count(*) from partition_table;").Check(testkit.Rows("0"))
 }
