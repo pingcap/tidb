@@ -334,7 +334,7 @@ The introduction of `DYNAMIC` privileges is not expected to introduce any compat
 
 ## Impact & Risks
 
-In its initial release, dynamic privilege usage will be controlled by an experimental feature flag. The implementation will be via restricting `GRANT` and `REVOKE` statements from creating dynamic privileges (it is too invasive to conditionally modify the ast visitor functionaliy).
+In its initial release, dynamic privilege usage will be controlled by an experimental feature flag (`tidb_enable_dynamic_privileges`), which is modifyable on a GLOBAL or SESSION basis. The implementation will be via restricting `GRANT` and `REVOKE` statements from creating dynamic privileges (it is too invasive to conditionally modify the ast visitor functionaliy).
 
 For backwards compatibility, the MySQL-compatible dynamic privileges will also permit `SUPER`. This helps prevent upgrade issues, such a when TiDB was bootstrapped `GRANT ALL ON *.*` would not have granted all the dynamic privileges. There might be some impact on Upgrade/Downgrade story if eventually the `BACKUP_ADMIN` privilege is used instead of `SUPER`, but for the initial release I am planning to allow either.
 
