@@ -71,7 +71,8 @@ type stmtSummaryByDigestMap struct {
 	beginTimeForCurInterval int64
 
 	// sysVars encapsulates system variables needed to control statement summary.
-	sysVars *systemVars
+	sysVars    *systemVars
+	EVICTED int64
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -94,6 +95,7 @@ type stmtSummaryByDigest struct {
 	normalizedSQL string
 	tableNames    string
 	isInternal    bool
+	evictedCount    int64
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
@@ -237,6 +239,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	return &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 		sysVars:    sysVars,
+		EVICTED: 0,
 	}
 }
 
@@ -274,6 +277,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
 			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
 			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
+			ssMap.EVICTED=0
 		}
 
 		beginTime := ssMap.beginTimeForCurInterval
@@ -282,6 +286,10 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		if !ok {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
+			if ssMap.summaryMap.Size()==ssMap.maxStmtCount(){
+				ssMap.EVICTED++
+				summary.evictedCount = ssMap.EVICTED
+			}
 			ssMap.summaryMap.Put(key, summary)
 		} else {
 			summary = value.(*stmtSummaryByDigest)
@@ -955,6 +963,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssElement.prevSQL,
 		ssbd.planDigest,
 		plan,
+		ssbd.evictedCount,
 	)
 }
 
