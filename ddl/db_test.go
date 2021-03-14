@@ -6600,8 +6600,8 @@ func (s *testSerialSuite) TestTruncateAllPartitions(c *C) {
 	defer func() {
 		tk1.MustExec("drop table if exists partition_table;")
 	}()
-	tk1.MustExec("create table partition_table (v int) partition by hash (v) partitions 2;")
-	tk1.MustExec("insert into partition_table values (1);")
+	tk1.MustExec("create table partition_table (v int) partition by hash (v) partitions 10;")
+	tk1.MustExec("insert into partition_table values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10);")
 	tk1.MustExec("alter table partition_table truncate partition all;")
 	tk1.MustQuery("select count(*) from partition_table;").Check(testkit.Rows("0"))
 }
