@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -375,7 +374,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	clientConn := connArray.Get()
 	if state := clientConn.GetState(); state == connectivity.TransientFailure {
 		storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-		tidbmetrics.GRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
+		metrics.TiKVGRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
 	}
 
 	if req.IsDebugReq() {
