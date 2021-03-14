@@ -1798,8 +1798,6 @@ AlterTableSpec:
 		}
 		if $3 == nil {
 			ret.OnAllPartitions = true
-			yylex.AppendError(yylex.Errorf("The TRUNCATE PARTITION ALL clause is parsed but ignored by all storage engines."))
-			parser.lastErrorAsWarn()
 		} else {
 			ret.PartitionNames = $3.([]model.CIStr)
 		}
