@@ -371,7 +371,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
-	if cachedRegion == nil {
+	if cachedRegion == nil || cachedRegion.needReload() {
 		return nil, nil
 	}
 
