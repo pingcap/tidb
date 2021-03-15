@@ -104,7 +104,7 @@ func (s *testAsyncCommitCommon) mustGetLock(c *C, key []byte) *tikv.Lock {
 }
 
 func (s *testAsyncCommitCommon) mustPointGet(c *C, key, expectedValue []byte) {
-	snap := s.store.GetSnapshot(maxTimestamp)
+	snap := s.store.GetSnapshot(math.MaxUint64)
 	value, err := snap.Get(context.Background(), key)
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, expectedValue)
