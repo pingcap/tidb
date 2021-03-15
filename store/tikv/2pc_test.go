@@ -333,12 +333,12 @@ func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
 }
 
 func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
-	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := s.store.CurrentTimestamp(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
 		Key:     key,
-		Version: ver.Ver,
+		Version: ver,
 	})
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
