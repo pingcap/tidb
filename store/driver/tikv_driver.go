@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	tidbconfig "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
@@ -129,7 +130,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 			}),
 		),
 		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
-		pd.WithForwardingOption(d.pdConfig.EnableForwarding))
+		pd.WithForwardingOption(tidbconfig.GetGlobalConfig().EnableForwarding))
 	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {

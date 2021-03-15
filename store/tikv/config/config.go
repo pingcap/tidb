@@ -68,16 +68,12 @@ func DefaultConfig() Config {
 type PDClient struct {
 	// PDServerTimeout is the max time which PD client will wait for the PD server in seconds.
 	PDServerTimeout uint `toml:"pd-server-timeout" json:"pd-server-timeout"`
-	// The client will forward the requests to the PD or allocator leader through the follower
-	// if there is a network partition problem between TiDB and PD or allocator leader.
-	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
 }
 
 // DefaultPDClient returns the default configuration for PDClient
 func DefaultPDClient() PDClient {
 	return PDClient{
-		PDServerTimeout:  3,
-		EnableForwarding: false,
+		PDServerTimeout: 3,
 	}
 }
 
