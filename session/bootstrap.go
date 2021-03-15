@@ -464,8 +464,7 @@ const (
 	version59 = 59
 	// version60 redesigns `mysql.stats_extended`
 	version60 = 60
-	// version61 restore all SQL bindings.
-	version61 = 61
+	// version61 will be redone in version67
 	// version62 add column ndv for mysql.stats_buckets.
 	version62 = 62
 	// version63 fixes the bug that upgradeToVer51 would be missed when upgrading from v4.0 to a new version
@@ -476,9 +475,11 @@ const (
 	version65 = 65
 	// version66 enables the feature `track_aggregate_memory_usage` by default.
 	version66 = 66
+	// version67 restore all SQL bindings.
+	version67 = 67
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version66
+	currentBootstrapVersion = version67
 )
 
 var (
@@ -543,12 +544,13 @@ var (
 		// We will redo upgradeToVer58 in upgradeToVer64, it is skipped here.
 		upgradeToVer59,
 		upgradeToVer60,
-		upgradeToVer61,
+		// We will redo upgradeToVer61 in upgradeToVer67, it is skipped here.
 		upgradeToVer62,
 		upgradeToVer63,
 		upgradeToVer64,
 		upgradeToVer65,
 		upgradeToVer66,
+		upgradeToVer67,
 	}
 )
 
@@ -1322,8 +1324,8 @@ type bindInfo struct {
 	source     string
 }
 
-func upgradeToVer61(s Session, ver int64) {
-	if ver >= version61 {
+func upgradeToVer67(s Session, ver int64) {
+	if ver >= version67 {
 		return
 	}
 	bindMap := make(map[string]bindInfo)
@@ -1347,7 +1349,7 @@ func upgradeToVer61(s Session, ver int64) {
 			WHERE source != 'builtin'
 			ORDER BY update_time DESC`)
 	if err != nil {
-		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+		logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 	}
 	if rs != nil {
 		defer terror.Call(rs.Close)
@@ -1359,7 +1361,7 @@ func upgradeToVer61(s Session, ver int64) {
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
-			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+			logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 		}
 		if req.NumRows() == 0 {
 			break
@@ -1571,6 +1573,12 @@ func doDMLWorks(s Session) {
 					// enable change multi schema in test case for compatibility with old cases.
 					vVal = variable.BoolOn
 				}
+			}
+			if v.Name == variable.TiDBEnableAsyncCommit && config.GetGlobalConfig().Store == "tikv" {
+				vVal = variable.BoolOn
+			}
+			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
+				vVal = variable.BoolOn
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
