@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/tidb/store/tikv/util"
 )
 
-func (s *testAsyncCommitCommon) begin1PC(c *C) *tikvTxn {
+func (s *testAsyncCommitCommon) begin1PC(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.Enable1PC, true)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 type testOnePCSuite struct {
@@ -130,7 +130,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	// Check all keys
 	keys := [][]byte{k1, k2, k3, k4, k5, k6}
 	values := [][]byte{v1, v2, v3, v4, v5, v6New}
-	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := s.store.CurrentTimestamp(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	snap := s.store.GetSnapshot(ver)
 	for i, k := range keys {
@@ -214,7 +214,7 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
 	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
 
-	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := s.store.CurrentTimestamp(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	snap := s.store.GetSnapshot(ver)
 	for i, k := range keys {
@@ -241,8 +241,8 @@ func (s *testOnePCSuite) Test1PCLinearizability(c *C) {
 	c.Assert(err, IsNil)
 	err = t1.Commit(ctx)
 	c.Assert(err, IsNil)
-	commitTS1 := t1.(*tikvTxn).committer.commitTS
-	commitTS2 := t2.(*tikvTxn).committer.commitTS
+	commitTS1 := t1.committer.commitTS
+	commitTS2 := t2.committer.commitTS
 	c.Assert(commitTS2, Less, commitTS1)
 }
 

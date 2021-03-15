@@ -117,7 +117,8 @@ func (c *MockContext) CommitTxn() error {
 
 func (s *testPrefixSuite) TestPrefix(c *C) {
 	ctx := &MockContext{10000000, make(map[fmt.Stringer]interface{}), s.s, nil}
-	ctx.fillTxn()
+	err := ctx.fillTxn()
+	c.Assert(err, IsNil)
 	txn, err := ctx.GetTxn(false)
 	c.Assert(err, IsNil)
 	err = util.DelKeyWithPrefix(txn, encodeInt(ctx.prefix))

@@ -44,10 +44,10 @@ func (s *testSafePointSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSafePointSuite) beginTxn(c *C) *tikvTxn {
+func (s *testSafePointSuite) beginTxn(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 func mymakeKeys(rowNum int, prefix string) []kv.Key {
@@ -113,7 +113,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 
 	s.waitUntilErrorPlugIn(txn4.startTS)
 
-	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn4.StartTS()}, 0)
+	snapshot := newTiKVSnapshot(s.store, txn4.StartTS(), 0)
 	_, batchgeterr := snapshot.BatchGet(context.Background(), keys)
 	c.Assert(batchgeterr, NotNil)
 	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrGCTooEarly)
