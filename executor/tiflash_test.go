@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/testleak"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -296,6 +297,8 @@ func (s *tiflashTestSuite) TestMppEnum(c *C) {
 }
 
 func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
 	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
