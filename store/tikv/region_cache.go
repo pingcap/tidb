@@ -664,21 +664,29 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				// In case the epoch of the store is increased, try to avoid reloading the current region by also
 				// increasing the epoch stored in `rs`.
 				rs.switchNextProxyStore(r, currentProxyIdx, incEpochStoreIdx)
+				logutil.Logger(bo.ctx).Info("switch region proxy peer to next due to send request fail",
+					zap.Stringer("current", ctx),
+					zap.Bool("needReload", scheduleReload),
+					zap.Error(err))
 			} else {
 				rs.switchNextTiKVPeer(r, ctx.AccessIdx)
+				logutil.Logger(bo.ctx).Info("switch region peer to next due to send request fail",
+					zap.Stringer("current", ctx),
+					zap.Bool("needReload", scheduleReload),
+					zap.Error(err))
 			}
 		} else {
 			rs.switchNextFlashPeer(r, ctx.AccessIdx)
+			logutil.Logger(bo.ctx).Info("switch region tiflash peer to next due to send request fail",
+				zap.Stringer("current", ctx),
+				zap.Bool("needReload", scheduleReload),
+				zap.Error(err))
 		}
 
 		// force reload region when retry all known peers in region.
 		if scheduleReload {
 			r.scheduleReload()
 		}
-		logutil.Logger(bo.ctx).Info("switch region peer to next due to send request fail",
-			zap.Stringer("current", ctx),
-			zap.Bool("needReload", scheduleReload),
-			zap.Error(err))
 	}
 }
 
@@ -1515,7 +1523,11 @@ func (r *RegionStore) setProxyStoreIdx(rr *Region, idx AccessIndex) {
 
 	newRegionStore := r.clone()
 	newRegionStore.proxyTiKVIdx = idx
-	rr.compareAndSwapStore(r, newRegionStore)
+	success := rr.compareAndSwapStore(r, newRegionStore)
+	logutil.BgLogger().Debug("try set proxy store index",
+		zap.Uint64("region", rr.GetID()),
+		zap.Int("index", int(idx)),
+		zap.Bool("success", success))
 }
 
 func (r *RegionStore) unsetProxyStoreIfNeeded(rr *Region) {
@@ -1806,6 +1818,7 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 			bo := NewNoopBackoff(ctx)
 			l := s.requestLiveness(bo)
 			if l == reachable {
+				logutil.BgLogger().Info("store became reachable", zap.Uint64("storeID", s.storeID))
 				if !atomic.CompareAndSwapInt32(&s.needForwarding, 1, 0) {
 					logutil.BgLogger().Panic("unreachable")
 				}
