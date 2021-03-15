@@ -23,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -81,17 +82,23 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	se, err := createSession(store)
 	c.Assert(err, IsNil)
 
+	count := 200
+	stmts := make([]ast.StmtNode, count)
+	for i := 0; i < count; i++ {
+		stmt, err := se.ParseWithParams(context.Background(), "select * from mysql.user limit 1")
+		c.Assert(err, IsNil)
+		stmts[i] = stmt
+	}
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
-	count := 200
 	var wg sync.WaitGroup
 	wg.Add(count)
 	for i := 0; i < count; i++ {
-		go func(se *session) {
-			_, _, err := se.ExecRestrictedSQL("select * from mysql.user limit 1")
+		go func(se *session, stmt ast.StmtNode) {
+			_, _, err := se.ExecRestrictedStmt(context.Background(), stmt)
 			c.Assert(err, IsNil)
 			wg.Done()
-		}(se)
+		}(se, stmts[i])
 	}
 	wg.Wait()
 }

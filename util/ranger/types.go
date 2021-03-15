@@ -122,6 +122,16 @@ func (ran *Range) IsFullRange() bool {
 	return true
 }
 
+// HasFullRange checks if any range in the slice is a full range.
+func HasFullRange(ranges []*Range) bool {
+	for _, ran := range ranges {
+		if ran.IsFullRange() {
+			return true
+		}
+	}
+	return false
+}
+
 // String implements the Stringer interface.
 func (ran *Range) String() string {
 	lowStrs := make([]string, 0, len(ran.LowVal))

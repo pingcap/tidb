@@ -157,7 +157,7 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 				if err != nil {
 					return err
 				}
-				batchKeys = append(batchKeys, r.t.RecordKey(handle))
+				batchKeys = append(batchKeys, tablecodec.EncodeRecordKey(r.t.RecordPrefix(), handle))
 			}
 		}
 	}
