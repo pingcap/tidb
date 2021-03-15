@@ -15,6 +15,8 @@ package tikv
 
 import (
 	"context"
+	"sync/atomic"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -43,11 +45,27 @@ func (s *testSnapshotFailSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
+func (s *testSnapshotFailSuite) cleanup(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	iter, err := txn.Iter(kv.Key(""), kv.Key(""))
+	c.Assert(err, IsNil)
+	for iter.Valid() {
+		err = txn.Delete(iter.Key())
+		c.Assert(err, IsNil)
+		err = iter.Next()
+		c.Assert(err, IsNil)
+	}
+	c.Assert(txn.Commit(context.TODO()), IsNil)
+}
+
 func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 	// Meaningless to test with tikv because it has a mock key error
 	if *WithTiKV {
 		return
 	}
+	defer s.cleanup(c)
+
 	// Put two KV pairs
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -75,6 +93,8 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	if *WithTiKV {
 		return
 	}
+	defer s.cleanup(c)
+
 	// Put two KV pairs
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -120,7 +140,9 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 }
 
 func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
-	snapshot := s.store.GetSnapshot(kv.MaxVersion)
+	defer s.cleanup(c)
+
+	snapshot := s.store.GetSnapshot(maxTimestamp)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshotGetTSAsync", `pause`), IsNil)
 	ch := make(chan error)
 	go func() {
@@ -133,18 +155,62 @@ func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
 	err = txn.Set([]byte("k4"), []byte("v4"))
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetOption(kv.Enable1PC, false)
 	txn.SetOption(kv.GuaranteeLinearizability, false)
 	// Prewrite an async-commit lock and do not commit it.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", `return`), IsNil)
-	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 1)
+	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
 	c.Assert(err, IsNil)
-	// Sets its minCommitTS to a large value, so the lock can be actually ignored.
-	committer.minCommitTS = committer.startTS + (1 << 28)
+	// Sets its minCommitTS to one second later, so the lock will be ignored by point get.
+	committer.minCommitTS = committer.startTS + (1000 << 18)
 	err = committer.execute(context.Background())
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshotGetTSAsync"), IsNil)
 
 	err = <-ch
 	c.Assert(err, ErrorMatches, ".*key not exist")
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
+}
+
+func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
+	defer s.cleanup(c)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("k1"), []byte("v1"))
+	err = txn.Set([]byte("k2"), []byte("v2"))
+	c.Assert(err, IsNil)
+	txn.SetOption(kv.EnableAsyncCommit, false)
+	txn.SetOption(kv.Enable1PC, false)
+	txn.SetOption(kv.GuaranteeLinearizability, false)
+
+	// Prewrite the lock without committing it
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeCommit", `pause`), IsNil)
+	ch := make(chan struct{})
+	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(committer.primary(), DeepEquals, []byte("k1"))
+	go func() {
+		c.Assert(err, IsNil)
+		err = committer.execute(context.Background())
+		c.Assert(err, IsNil)
+		ch <- struct{}{}
+	}()
+
+	// Wait until prewrite finishes
+	time.Sleep(200 * time.Millisecond)
+	// Should get nothing with max version, and **not pushing forward minCommitTS** of the primary lock
+	snapshot := s.store.GetSnapshot(maxTimestamp)
+	_, err = snapshot.Get(context.Background(), []byte("k2"))
+	c.Assert(err, ErrorMatches, ".*key not exist")
+
+	initialCommitTS := atomic.LoadUint64(&committer.commitTS)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeCommit"), IsNil)
+
+	<-ch
+	// check the minCommitTS is not pushed forward
+	snapshot = s.store.GetSnapshot(initialCommitTS)
+	v, err := snapshot.Get(context.Background(), []byte("k2"))
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("v2"))
 }

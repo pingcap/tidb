@@ -417,7 +417,6 @@ type configTestUtils struct {
 }
 
 type autoRandom struct {
-	originAllowAutoRandom bool
 	originAlterPrimaryKey bool
 }
 
