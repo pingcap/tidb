@@ -42,6 +42,8 @@ const (
 	DefaultRecordPlanInSlowLog = 1
 	// DefaultTiDBEnableSlowLog enables TiDB to log slow queries.
 	DefaultTiDBEnableSlowLog = true
+	// GRPCLogDebugVerbosity enables max verbosity when debugging grpc code.
+	GRPCLogDebugVerbosity = 99
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
@@ -92,8 +94,8 @@ const (
 	OldSlowLogTimeFormat = "2006-01-02-15:04:05.999999999 -0700"
 )
 
-// SlowQueryZapLogger is used to log slow query, InitZapLogger will modify it according to config file.
-var SlowQueryZapLogger = log.L()
+// SlowQueryLogger is used to log slow query, InitZapLogger will modify it according to config file.
+var SlowQueryLogger = log.L()
 
 // InitZapLogger initializes a zap logger with cfg.
 func InitZapLogger(cfg *LogConfig) error {
@@ -118,15 +120,15 @@ func InitZapLogger(cfg *LogConfig) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		SlowQueryZapLogger = sqLogger
+		SlowQueryLogger = sqLogger
 	} else {
-		SlowQueryZapLogger = gl
+		SlowQueryLogger = gl
 	}
 
 	// init logger for grpc debugging
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {
 		// more information for verbosity: https://github.com/google/glog#verbose-logging
-		gzap.ReplaceGrpcLoggerV2WithVerbosity(gl, 99)
+		gzap.ReplaceGrpcLoggerV2WithVerbosity(gl, GRPCLogDebugVerbosity)
 	} else {
 		gzap.ReplaceGrpcLoggerV2(gl)
 	}

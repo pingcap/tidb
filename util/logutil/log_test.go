@@ -72,10 +72,10 @@ func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
 	c.Assert(err, IsNil)
 	defer os.Remove(fileName)
 
-	SlowQueryZapLogger.Debug("debug message", zap.String("str key", "val"))
-	SlowQueryZapLogger.Info("info message", zap.String("str key", "val"))
-	SlowQueryZapLogger.Warn("warn", zap.Int("int key", 123))
-	SlowQueryZapLogger.Error("error message", zap.Bool("bool key", true))
+	SlowQueryLogger.Debug("debug message", zap.String("str key", "val"))
+	SlowQueryLogger.Info("info message", zap.String("str key", "val"))
+	SlowQueryLogger.Warn("warn", zap.Int("int key", 123))
+	SlowQueryLogger.Error("error message", zap.Bool("bool key", true))
 
 	f, err := os.Open(fileName)
 	c.Assert(err, IsNil)
