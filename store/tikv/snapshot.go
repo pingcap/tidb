@@ -590,7 +590,7 @@ func (s *KVSnapshot) SetOption(opt kv.Option, val interface{}) {
 	}
 }
 
-// ClearFollowerRead disables follower read on current transaction
+// DelOption deletes an option.
 func (s *KVSnapshot) DelOption(opt kv.Option) {
 	switch opt {
 	case kv.ReplicaRead:
