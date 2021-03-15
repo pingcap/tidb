@@ -979,7 +979,7 @@ func buildSchemaFromFields(
 			if col == nil {
 				return nil, nil
 			}
-			asName := col.Name
+			asName := colNameExpr.Name.Name
 			if field.AsName.L != "" {
 				asName = field.AsName
 			}
@@ -987,6 +987,7 @@ func buildSchemaFromFields(
 				DBName:      dbName,
 				OrigTblName: tbl.Name,
 				TblName:     tblName,
+				OrigColName: col.Name,
 				ColName:     asName,
 			})
 			columns = append(columns, colInfoToColumn(col, len(columns)))
