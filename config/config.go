@@ -63,8 +63,6 @@ const (
 	DefTableColumnCountLimit = 1017
 	// Def TableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
-	// DefTxnScope is the default value for TxnScope
-	DefTxnScope = "global"
 )
 
 // Valid config maps
@@ -621,7 +619,7 @@ var defaultConf = Config{
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:          true,
+		Enabled:          false,
 		Capacity:         100,
 		MemoryGuardRatio: 0.1,
 	},
@@ -703,6 +701,7 @@ var deprecatedConfig = map[string]struct{}{
 	"max-txn-time-use":               {},
 	"experimental.allow-auto-random": {},
 	"enable-redact-log":              {}, // use variable tidb_redact_log instead
+	"tikv-client.copr-cache.enable":  {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

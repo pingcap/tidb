@@ -203,8 +203,8 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		}
 
 		colHist := coll.Columns[c.UniqueID]
-		if colHist.NDV > 0 {
-			ret *= 1 / float64(colHist.NDV)
+		if colHist.Histogram.NDV > 0 {
+			ret *= 1 / float64(colHist.Histogram.NDV)
 		} else {
 			ret *= 1.0 / pseudoEqualRate
 		}

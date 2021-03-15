@@ -34,25 +34,31 @@ func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 	c.Assert(err, IsNil)
 	req := rs.NewChunk()
 	for i := 0; i < 5; i++ {
-		rs.Next(context.Background(), req)
+		// FIXME: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
+		_ = rs.Next(context.Background(), req)
 	}
-	rs.Close()
+	err = rs.Close()
+	c.Assert(err, IsNil)
 
 	rs, err = tk.Exec("select /*+ INL_HASH_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
 	c.Assert(err, IsNil)
 	req = rs.NewChunk()
 	for i := 0; i < 5; i++ {
-		rs.Next(context.Background(), req)
+		// to fix: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
+		_ = rs.Next(context.Background(), req)
 	}
-	rs.Close()
+	err = rs.Close()
+	c.Assert(err, IsNil)
 
 	rs, err = tk.Exec("select /*+ INL_MERGE_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
 	c.Assert(err, IsNil)
 	req = rs.NewChunk()
 	for i := 0; i < 5; i++ {
-		rs.Next(context.Background(), req)
+		// to fix: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
+		_ = rs.Next(context.Background(), req)
 	}
-	rs.Close()
+	err = rs.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite1) TestIndexJoinUnionScan(c *C) {

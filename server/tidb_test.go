@@ -197,6 +197,7 @@ func (ts *tidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	ts.runTestIssue3662(c)
 	ts.runTestIssue3680(c)
+	ts.runTestIssue22646(c)
 }
 
 func (ts *tidbTestSuite) TestDBNameEscape(c *C) {
@@ -944,6 +945,10 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 	cols = rs.Columns()
 	c.Assert(cols[0].OrgName, Equals, "c_bit")
 	c.Assert(cols[0].Name, Equals, columnAsName)
+}
+
+func (ts *tidbTestSuite) TestClientErrors(c *C) {
+	ts.runTestInfoschemaClientErrors(c)
 }
 
 func (ts *tidbTestSuite) TestSumAvg(c *C) {
