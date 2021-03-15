@@ -316,22 +316,6 @@ enable-telemetry = false
 	c.Assert(conf.EnableTelemetry, Equals, false)
 
 	_, err = f.WriteString(`
-enable-forwarding = true
-`)
-	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
-	c.Assert(conf.Load(configFile), IsNil)
-	c.Assert(conf.EnableForwarding, Equals, true)
-
-	_, err = f.WriteString(`
-enable-forwarding = false
-`)
-	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
-	c.Assert(conf.Load(configFile), IsNil)
-	c.Assert(conf.EnableForwarding, Equals, false)
-
-	_, err = f.WriteString(`
 [security]
 spilled-file-encryption-method = "aes128-ctr"
 `)
