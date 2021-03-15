@@ -16,6 +16,7 @@ package kv
 import (
 	"context"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -133,6 +134,14 @@ func (t *mockTxn) GetVars() *Variables {
 	return nil
 }
 
+func (t *mockTxn) CacheTableInfo(id int64, info *model.TableInfo) {
+
+}
+
+func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
+	return nil
+}
+
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{
@@ -149,22 +158,12 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
-func (s *mockStorage) BeginWithTxnScope(txnScope string) (Transaction, error) {
+func (s *mockStorage) BeginWithOption(option TransactionOption) (Transaction, error) {
 	return newMockTxn(), nil
 }
 
 func (*mockTxn) IsPessimistic() bool {
 	return false
-}
-
-// BeginWithStartTS begins transaction with given txnScope and startTS.
-func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
-	return s.Begin()
-}
-
-// BeginWithExactStaleness begins transaction with given exact staleness
-func (s *mockStorage) BeginWithExactStaleness(txnScope string, prevSec uint64) (Transaction, error) {
-	return s.Begin()
 }
 
 func (s *mockStorage) GetSnapshot(ver Version) Snapshot {

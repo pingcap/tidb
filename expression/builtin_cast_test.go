@@ -223,7 +223,8 @@ func (s *testEvaluatorSuite) TestCastXXX(c *C) {
 	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	resDecimal := new(types.MyDecimal)
-	resDecimal.FromString([]byte("99999.99"))
+	err = resDecimal.FromString([]byte("99999.99"))
+	c.Assert(err, IsNil)
 	c.Assert(res.GetMysqlDecimal().Compare(resDecimal), Equals, 0)
 
 	warnings = sc.GetWarnings()

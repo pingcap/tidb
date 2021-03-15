@@ -690,13 +690,14 @@ func (s *testIntegrationSuite2) TestUpdateMultipleTable(c *C) {
 	}
 	t1Info.Columns = append(t1Info.Columns, newColumn)
 
-	kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
 		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
 		return nil
 	})
+	c.Assert(err, IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
 
@@ -706,13 +707,14 @@ func (s *testIntegrationSuite2) TestUpdateMultipleTable(c *C) {
 
 	newColumn.State = model.StatePublic
 
-	kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
 		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
 		return nil
 	})
+	c.Assert(err, IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
 
@@ -2223,7 +2225,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
-	defer config.RestoreFunc()
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
 		conf.AlterPrimaryKey = true
@@ -2638,6 +2640,7 @@ func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
 			restoreConfig := config.RestoreFunc()
 			config.UpdateGlobal(func(conf *config.Config) {
 				conf.EnableGlobalIndex = globalIndex
+				conf.AlterPrimaryKey = false
 			})
 			for _, clusteredIndex := range []bool{false, true} {
 				tk.Se.GetSessionVars().EnableClusteredIndex = clusteredIndex
