@@ -27,7 +27,7 @@ import (
 
 // Scanner support tikv scan
 type Scanner struct {
-	snapshot     *tikvSnapshot
+	snapshot     *KVSnapshot
 	batchSize    int
 	cache        []*pb.KvPair
 	idx          int
@@ -42,7 +42,7 @@ type Scanner struct {
 	eof   bool
 }
 
-func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int, reverse bool) (*Scanner, error) {
+func newScanner(snapshot *KVSnapshot, startKey []byte, endKey []byte, batchSize int, reverse bool) (*Scanner, error) {
 	// It must be > 1. Otherwise scanner won't skipFirst.
 	if batchSize <= 1 {
 		batchSize = scanBatchSize
