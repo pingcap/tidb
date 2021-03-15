@@ -1077,7 +1077,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		case
 			tipb.ScalarFuncSig_RoundReal,
 			tipb.ScalarFuncSig_RoundInt,
-			tipb.ScalarFuncSig_RoundDec:
+			tipb.ScalarFuncSig_RoundDec,
+			tipb.ScalarFuncSig_RoundWithFracDec:
 			ret = true
 		}
 	case
@@ -1213,7 +1214,7 @@ func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client k
 
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 	switch function.FuncName.L {
-	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
+	case ast.Substr, ast.Substring, ast.TimestampDiff,
 		ast.FromUnixTime:
 		return false
 	default:
