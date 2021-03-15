@@ -105,7 +105,6 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
 	c.Assert(vars.AnalyzeVersion, Equals, DefTiDBAnalyzeVersion)
-	c.Assert(vars.EnableTiFlashFallbackTiKV, Equals, DefTiDBEnableTiFlashFallbackTiKV)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -289,6 +288,14 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "ON")
 	c.Assert(v.EnableTablePartition, Equals, "ON")
+
+	c.Assert(v.EnableListTablePartition, Equals, false)
+	err = SetSessionSystemVar(v, TiDBEnableListTablePartition, types.NewStringDatum("on"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBEnableListTablePartition)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ON")
+	c.Assert(v.EnableListTablePartition, Equals, true)
 
 	c.Assert(v.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
 	err = SetSessionSystemVar(v, TiDBOptJoinReorderThreshold, types.NewIntDatum(5))
@@ -541,6 +548,9 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBEnableTablePartition, "OFF", false},
 		{TiDBEnableTablePartition, "AUTO", false},
 		{TiDBEnableTablePartition, "UN", true},
+		{TiDBEnableListTablePartition, "ON", false},
+		{TiDBEnableListTablePartition, "OFF", false},
+		{TiDBEnableListTablePartition, "list", true},
 		{TiDBOptCorrelationExpFactor, "a", true},
 		{TiDBOptCorrelationExpFactor, "-10", true},
 		{TiDBOptCorrelationThreshold, "a", true},
@@ -586,6 +596,12 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBEnableAmendPessimisticTxn, "0", false},
 		{TiDBEnableAmendPessimisticTxn, "1", false},
 		{TiDBEnableAmendPessimisticTxn, "256", true},
+		{TiDBAllowFallbackToTiKV, "", false},
+		{TiDBAllowFallbackToTiKV, "tiflash", false},
+		{TiDBAllowFallbackToTiKV, "  tiflash  ", false},
+		{TiDBAllowFallbackToTiKV, "tikv", true},
+		{TiDBAllowFallbackToTiKV, "tidb", true},
+		{TiDBAllowFallbackToTiKV, "tiflash,tikv,tidb", true},
 	}
 
 	for _, t := range tests {
