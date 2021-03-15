@@ -206,7 +206,7 @@ func DumpPreparedStmts(label string, sctx sessionctx.Context) {
 
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
-	DumpPreparedStmts("2", sctx)
+	DumpPreparedStmts("OptimizePreparedPlan", sctx)
 	vars := sctx.GetSessionVars()
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
@@ -234,6 +234,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			param.Datum = val
 			param.InExecute = true
 		}
+		DumpPreparedStmts("OptimizePreparedPlan.1", sctx)
 	} else {
 		// for `execute stmt using @a, @b, @c`, using value in e.UsingVars
 		if len(prepared.Params) != len(e.UsingVars) {
@@ -249,6 +250,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			param.Datum = val
 			param.InExecute = true
 			vars.PreparedParams = append(vars.PreparedParams, val)
+			DumpPreparedStmts("OptimizePreparedPlan.2", sctx)
 		}
 	}
 
@@ -421,6 +423,7 @@ REBUILD:
 		}
 	}
 	err = e.setFoundInPlanCache(sctx, false)
+	DumpPreparedStmts("PlanCached", sctx)
 	return err
 }
 
