@@ -1070,6 +1070,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.TimestampDiff,
 		ast.DateAdd,
 		ast.FromUnixTime,
+		ast.Extract,
 
 		// encryption functions.
 		ast.MD5,
@@ -1243,7 +1244,7 @@ func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client k
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
-		ast.FromUnixTime:
+		ast.FromUnixTime, ast.Extract:
 		return false
 	default:
 		return true
@@ -1291,6 +1292,13 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal,
 			tipb.ScalarFuncSig_RoundDec:
+			return true
+		default:
+			return false
+		}
+	case ast.Extract:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_ExtractDatetime:
 			return true
 		default:
 			return false

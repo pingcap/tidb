@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 type tiflashTestSuite struct {
@@ -43,7 +42,6 @@ type tiflashTestSuite struct {
 }
 
 func (s *tiflashTestSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	var err error
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c cluster.Cluster) {
@@ -280,6 +278,23 @@ func (s *tiflashTestSuite) TestPartitionTable(c *C) {
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkUseMPP")
 }
 
+func (s *tiflashTestSuite) TestMppEnum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b enum('aca','bca','zca'))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1,'aca')")
+	tk.MustExec("insert into t values(2,'bca')")
+	tk.MustExec("insert into t values(3,'zca')")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustQuery("select t1.b from t t1 join t t2 on t1.a = t2.a order by t1.b").Check(testkit.Rows("aca", "bca", "zca"))
+}
+
 func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
 	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
 	tk := testkit.NewTestKit(c, s.store)
@@ -314,7 +329,6 @@ func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
 
 // all goroutines exit if one goroutine hangs but another return errors
 func (s *tiflashTestSuite) TestMppGoroutinesExitFromErrors(c *C) {
-	defer testleak.AfterTest(c)()
 	// mock non-root tasks return error
 	var mppNonRootTaskError = "github.com/pingcap/tidb/store/copr/mppNonRootTaskError"
 	// mock root tasks hang
