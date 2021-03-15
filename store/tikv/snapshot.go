@@ -49,12 +49,13 @@ var (
 const (
 	scanBatchSize = 256
 	batchGetSize  = 5120
+	maxTimestamp  = math.MaxUint64
 )
 
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
 	store           *KVStore
-	version         kv.Version
+	version         uint64
 	isolationLevel  kv.IsoLevel
 	priority        pb.CommandPri
 	notFillCache    bool
@@ -88,15 +89,15 @@ type tikvSnapshot struct {
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
-func newTiKVSnapshot(store *KVStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
+func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *tikvSnapshot {
 	// Sanity check for snapshot version.
-	if ver.Ver >= math.MaxInt64 && ver.Ver != math.MaxUint64 {
-		err := errors.Errorf("try to get snapshot with a large ts %d", ver.Ver)
+	if ts >= math.MaxInt64 && ts != math.MaxUint64 {
+		err := errors.Errorf("try to get snapshot with a large ts %d", ts)
 		panic(err)
 	}
 	return &tikvSnapshot{
 		store:           store,
-		version:         ver,
+		version:         ts,
 		priority:        pb.CommandPri_Normal,
 		vars:            kv.DefaultVars,
 		replicaReadSeed: replicaReadSeed,
@@ -111,7 +112,7 @@ func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
 		panic(err)
 	}
 	// Invalidate cache if the snapshotTS change!
-	s.version.Ver = ts
+	s.version = ts
 	s.mu.Lock()
 	s.mu.cached = nil
 	s.mu.Unlock()
@@ -147,7 +148,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
-	ctx = context.WithValue(ctx, TxnStartKey, s.version.Ver)
+	ctx = context.WithValue(ctx, TxnStartKey, s.version)
 	bo := NewBackofferWithVars(ctx, batchGetMaxBackoff, s.vars)
 
 	// Create a map to collect key-values from region servers.
@@ -166,7 +167,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		return nil, errors.Trace(err)
 	}
 
-	err = s.store.CheckVisibility(s.version.Ver)
+	err = s.store.CheckVisibility(s.version)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -257,7 +258,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		if e := <-ch; e != nil {
 			logutil.BgLogger().Debug("snapshot batchGet failed",
 				zap.Error(e),
-				zap.Uint64("txnStartTS", s.version.Ver))
+				zap.Uint64("txnStartTS", s.version))
 			err = e
 		}
 	}
@@ -282,7 +283,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		s.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
-			Version: s.version.Ver,
+			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
@@ -350,7 +351,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			s.mergeExecDetail(batchGetResp.ExecDetailsV2)
 		}
 		if len(lockedKeys) > 0 {
-			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, locks)
+			msBeforeExpired, err := cli.ResolveLocks(bo, s.version, locks)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -378,14 +379,14 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 		metrics.TxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
 	}(time.Now())
 
-	ctx = context.WithValue(ctx, TxnStartKey, s.version.Ver)
+	ctx = context.WithValue(ctx, TxnStartKey, s.version)
 	bo := NewBackofferWithVars(ctx, getMaxBackoff, s.vars)
 	val, err := s.get(ctx, bo, k)
 	s.recordBackoffInfo(bo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = s.store.CheckVisibility(s.version.Ver)
+	err = s.store.CheckVisibility(s.version)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -423,7 +424,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 	// Secondary locks or async commit locks cannot be ignored when getting using the max version.
 	// So we concurrently get a TS from PD and use it in retries to avoid unnecessary blocking.
 	var tsFuture oracle.Future
-	if s.version == kv.MaxVersion {
+	if s.version == maxTimestamp {
 		tsFuture = s.store.oracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.txnScope})
 	}
 	failpoint.Inject("snapshotGetTSAsync", nil)
@@ -440,7 +441,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
 		&pb.GetRequest{
 			Key:     k,
-			Version: s.version.Ver,
+			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
@@ -490,13 +491,13 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 				return nil, errors.Trace(err)
 			}
 
-			snapVer := s.version.Ver
-			if s.version == kv.MaxVersion {
+			snapVer := s.version
+			if s.version == maxTimestamp {
 				newTS, err := tsFuture.Wait()
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				s.version = kv.NewVersion(newTS)
+				s.version = newTS
 				req.Req.(*pb.GetRequest).Version = newTS
 				// skip lock resolving and backoff if the lock does not block the read
 				if newTS < lock.TxnID || newTS < lock.MinCommitTS {

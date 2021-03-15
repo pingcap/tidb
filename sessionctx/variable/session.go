@@ -816,8 +816,9 @@ type SessionVars struct {
 	// TiDBEnableExchangePartition indicates whether to enable exchange partition
 	TiDBEnableExchangePartition bool
 
-	// EnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
-	EnableTiFlashFallbackTiKV bool
+	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
+	// Now we only support TiFlash.
+	AllowFallbackToTiKV map[kv.StoreType]struct{}
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -998,7 +999,7 @@ func NewSessionVars() *SessionVars {
 		GuaranteeLinearizability:    DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:              DefTiDBAnalyzeVersion,
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
-		EnableTiFlashFallbackTiKV:   DefTiDBEnableTiFlashFallbackTiKV,
+		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1750,8 +1751,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MultiStatementMode = TiDBOptMultiStmt(val)
 	case TiDBEnableExchangePartition:
 		s.TiDBEnableExchangePartition = TiDBOptOn(val)
-	case TiDBEnableTiFlashFallbackTiKV:
-		s.EnableTiFlashFallbackTiKV = TiDBOptOn(val)
+	case TiDBAllowFallbackToTiKV:
+		s.AllowFallbackToTiKV = make(map[kv.StoreType]struct{})
+		for _, engine := range strings.Split(val, ",") {
+			switch engine {
+			case kv.TiFlash.Name():
+				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
+			}
+		}
 	}
 	s.systems[name] = val
 	return nil

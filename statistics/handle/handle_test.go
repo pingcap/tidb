@@ -1309,6 +1309,184 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 	c.Assert(rs[2][7].(string), Equals, "0")
 }
 
+func (s *testStatsSuite) TestGlobalStatsData3(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@tidb_analyze_version=2")
+
+	// index(int, int)
+	tk.MustExec("drop table if exists tintint")
+	tk.MustExec("create table tintint (a int, b int, key(a, b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec(`insert into tintint values ` +
+		`(1, 1), (1, 2), (2, 1), (2, 2), (2, 3), (2, 3), (3, 1), (3, 1), (3, 1),` + // values in p0
+		`(11, 1), (12, 1), (12, 2), (13, 1), (13, 1), (13, 2), (13, 2), (13, 2)`) // values in p1
+	tk.MustExec("analyze table tintint with 2 topn, 2 buckets")
+
+	rs := tk.MustQuery("show stats_meta where table_name='tintint'").Rows()
+	c.Assert(rs[0][5].(string), Equals, "17") // g.total = p0.total + p1.total
+	c.Assert(rs[1][5].(string), Equals, "9")
+	c.Assert(rs[2][5].(string), Equals, "8")
+
+	tk.MustQuery("show stats_topn where table_name='tintint' and is_index=1").Check(testkit.Rows(
+		"test tintint global a 1 (3, 1) 3",
+		"test tintint global a 1 (13, 2) 3",
+		"test tintint p0 a 1 (2, 3) 2",
+		"test tintint p0 a 1 (3, 1) 3",
+		"test tintint p1 a 1 (13, 1) 2",
+		"test tintint p1 a 1 (13, 2) 3"))
+
+	tk.MustQuery("show stats_buckets where table_name='tintint' and is_index=1").Check(testkit.Rows(
+		"test tintint global a 1 0 6 0 (1, 1) (3, 1) 5",   // (2, 3) is popped into it
+		"test tintint global a 1 1 11 0 (3, 1) (13, 2) 4", // (13, 1) is popped into it
+		"test tintint p0 a 1 0 4 1 (1, 1) (2, 2) 4",
+		"test tintint p0 a 1 1 4 0 (2, 3) (3, 1) 0",
+		"test tintint p1 a 1 0 3 0 (11, 1) (13, 1) 3",
+		"test tintint p1 a 1 1 3 0 (13, 2) (13, 2) 0"))
+
+	rs = tk.MustQuery("show stats_histograms where table_name='tintint' and is_index=1").Rows()
+	c.Assert(rs[0][6].(string), Equals, "11") // g.ndv = p0.ndv + p1.ndv
+	c.Assert(rs[1][6].(string), Equals, "6")
+	c.Assert(rs[2][6].(string), Equals, "5")
+
+	// index(int, string)
+	tk.MustExec("drop table if exists tintstr")
+	tk.MustExec("create table tintstr (a int, b varchar(32), key(a, b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec(`insert into tintstr values ` +
+		`(1, '1'), (1, '2'), (2, '1'), (2, '2'), (2, '3'), (2, '3'), (3, '1'), (3, '1'), (3, '1'),` + // values in p0
+		`(11, '1'), (12, '1'), (12, '2'), (13, '1'), (13, '1'), (13, '2'), (13, '2'), (13, '2')`) // values in p1
+	tk.MustExec("analyze table tintstr with 2 topn, 2 buckets")
+
+	rs = tk.MustQuery("show stats_meta where table_name='tintstr'").Rows()
+	c.Assert(rs[0][5].(string), Equals, "17") // g.total = p0.total + p1.total
+	c.Assert(rs[1][5].(string), Equals, "9")
+	c.Assert(rs[2][5].(string), Equals, "8")
+
+	tk.MustQuery("show stats_topn where table_name='tintstr' and is_index=1").Check(testkit.Rows(
+		"test tintstr global a 1 (3, 1) 3",
+		"test tintstr global a 1 (13, 2) 3",
+		"test tintstr p0 a 1 (2, 3) 2",
+		"test tintstr p0 a 1 (3, 1) 3",
+		"test tintstr p1 a 1 (13, 1) 2",
+		"test tintstr p1 a 1 (13, 2) 3"))
+
+	tk.MustQuery("show stats_buckets where table_name='tintstr' and is_index=1").Check(testkit.Rows(
+		"test tintstr global a 1 0 6 0 (1, 1) (3, 1) 5",   // (2, 3) is popped into it
+		"test tintstr global a 1 1 11 0 (3, 1) (13, 2) 4", // (13, 1) is popped into it
+		"test tintstr p0 a 1 0 4 1 (1, 1) (2, 2) 4",
+		"test tintstr p0 a 1 1 4 0 (2, 3) (3, 1) 0",
+		"test tintstr p1 a 1 0 3 0 (11, 1) (13, 1) 3",
+		"test tintstr p1 a 1 1 3 0 (13, 2) (13, 2) 0"))
+
+	rs = tk.MustQuery("show stats_histograms where table_name='tintstr' and is_index=1").Rows()
+	c.Assert(rs[0][6].(string), Equals, "11") // g.ndv = p0.ndv + p1.ndv
+	c.Assert(rs[1][6].(string), Equals, "6")
+	c.Assert(rs[2][6].(string), Equals, "5")
+
+	// index(int, double)
+	tk.MustExec("drop table if exists tintdouble")
+	tk.MustExec("create table tintdouble (a int, b double, key(a, b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec(`insert into tintdouble values ` +
+		`(1, 1), (1, 2), (2, 1), (2, 2), (2, 3), (2, 3), (3, 1), (3, 1), (3, 1),` + // values in p0
+		`(11, 1), (12, 1), (12, 2), (13, 1), (13, 1), (13, 2), (13, 2), (13, 2)`) // values in p1
+	tk.MustExec("analyze table tintdouble with 2 topn, 2 buckets")
+
+	rs = tk.MustQuery("show stats_meta where table_name='tintdouble'").Rows()
+	c.Assert(rs[0][5].(string), Equals, "17") // g.total = p0.total + p1.total
+	c.Assert(rs[1][5].(string), Equals, "9")
+	c.Assert(rs[2][5].(string), Equals, "8")
+
+	tk.MustQuery("show stats_topn where table_name='tintdouble' and is_index=1").Check(testkit.Rows(
+		"test tintdouble global a 1 (3, 1) 3",
+		"test tintdouble global a 1 (13, 2) 3",
+		"test tintdouble p0 a 1 (2, 3) 2",
+		"test tintdouble p0 a 1 (3, 1) 3",
+		"test tintdouble p1 a 1 (13, 1) 2",
+		"test tintdouble p1 a 1 (13, 2) 3"))
+
+	tk.MustQuery("show stats_buckets where table_name='tintdouble' and is_index=1").Check(testkit.Rows(
+		"test tintdouble global a 1 0 6 0 (1, 1) (3, 1) 5",   // (2, 3) is popped into it
+		"test tintdouble global a 1 1 11 0 (3, 1) (13, 2) 4", // (13, 1) is popped into it
+		"test tintdouble p0 a 1 0 4 1 (1, 1) (2, 2) 4",
+		"test tintdouble p0 a 1 1 4 0 (2, 3) (3, 1) 0",
+		"test tintdouble p1 a 1 0 3 0 (11, 1) (13, 1) 3",
+		"test tintdouble p1 a 1 1 3 0 (13, 2) (13, 2) 0"))
+
+	rs = tk.MustQuery("show stats_histograms where table_name='tintdouble' and is_index=1").Rows()
+	c.Assert(rs[0][6].(string), Equals, "11") // g.ndv = p0.ndv + p1.ndv
+	c.Assert(rs[1][6].(string), Equals, "6")
+	c.Assert(rs[2][6].(string), Equals, "5")
+
+	// index(double, decimal)
+	tk.MustExec("drop table if exists tdoubledecimal")
+	tk.MustExec("create table tdoubledecimal (a int, b decimal(30, 2), key(a, b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec(`insert into tdoubledecimal values ` +
+		`(1, 1), (1, 2), (2, 1), (2, 2), (2, 3), (2, 3), (3, 1), (3, 1), (3, 1),` + // values in p0
+		`(11, 1), (12, 1), (12, 2), (13, 1), (13, 1), (13, 2), (13, 2), (13, 2)`) // values in p1
+	tk.MustExec("analyze table tdoubledecimal with 2 topn, 2 buckets")
+
+	rs = tk.MustQuery("show stats_meta where table_name='tdoubledecimal'").Rows()
+	c.Assert(rs[0][5].(string), Equals, "17") // g.total = p0.total + p1.total
+	c.Assert(rs[1][5].(string), Equals, "9")
+	c.Assert(rs[2][5].(string), Equals, "8")
+
+	tk.MustQuery("show stats_topn where table_name='tdoubledecimal' and is_index=1").Check(testkit.Rows(
+		"test tdoubledecimal global a 1 (3, 1.00) 3",
+		"test tdoubledecimal global a 1 (13, 2.00) 3",
+		"test tdoubledecimal p0 a 1 (2, 3.00) 2",
+		"test tdoubledecimal p0 a 1 (3, 1.00) 3",
+		"test tdoubledecimal p1 a 1 (13, 1.00) 2",
+		"test tdoubledecimal p1 a 1 (13, 2.00) 3"))
+
+	tk.MustQuery("show stats_buckets where table_name='tdoubledecimal' and is_index=1").Check(testkit.Rows(
+		"test tdoubledecimal global a 1 0 6 0 (1, 1.00) (3, 1.00) 5",   // (2, 3) is popped into it
+		"test tdoubledecimal global a 1 1 11 0 (3, 1.00) (13, 2.00) 4", // (13, 1) is popped into it
+		"test tdoubledecimal p0 a 1 0 4 1 (1, 1.00) (2, 2.00) 4",
+		"test tdoubledecimal p0 a 1 1 4 0 (2, 3.00) (3, 1.00) 0",
+		"test tdoubledecimal p1 a 1 0 3 0 (11, 1.00) (13, 1.00) 3",
+		"test tdoubledecimal p1 a 1 1 3 0 (13, 2.00) (13, 2.00) 0"))
+
+	rs = tk.MustQuery("show stats_histograms where table_name='tdoubledecimal' and is_index=1").Rows()
+	c.Assert(rs[0][6].(string), Equals, "11") // g.ndv = p0.ndv + p1.ndv
+	c.Assert(rs[1][6].(string), Equals, "6")
+	c.Assert(rs[2][6].(string), Equals, "5")
+
+	// index(string, datetime)
+	tk.MustExec("drop table if exists tstrdt")
+	tk.MustExec("create table tstrdt (a int, b datetime, key(a, b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec(`insert into tstrdt values ` +
+		`(1, '2000-01-01'), (1, '2000-01-02'), (2, '2000-01-01'), (2, '2000-01-02'), (2, '2000-01-03'), (2, '2000-01-03'), (3, '2000-01-01'), (3, '2000-01-01'), (3, '2000-01-01'),` + // values in p0
+		`(11, '2000-01-01'), (12, '2000-01-01'), (12, '2000-01-02'), (13, '2000-01-01'), (13, '2000-01-01'), (13, '2000-01-02'), (13, '2000-01-02'), (13, '2000-01-02')`) // values in p1
+	tk.MustExec("analyze table tstrdt with 2 topn, 2 buckets")
+
+	rs = tk.MustQuery("show stats_meta where table_name='tstrdt'").Rows()
+	c.Assert(rs[0][5].(string), Equals, "17") // g.total = p0.total + p1.total
+	c.Assert(rs[1][5].(string), Equals, "9")
+	c.Assert(rs[2][5].(string), Equals, "8")
+
+	tk.MustQuery("show stats_topn where table_name='tstrdt' and is_index=1").Check(testkit.Rows(
+		"test tstrdt global a 1 (3, 2000-01-01 00:00:00) 3",
+		"test tstrdt global a 1 (13, 2000-01-02 00:00:00) 3",
+		"test tstrdt p0 a 1 (2, 2000-01-03 00:00:00) 2",
+		"test tstrdt p0 a 1 (3, 2000-01-01 00:00:00) 3",
+		"test tstrdt p1 a 1 (13, 2000-01-01 00:00:00) 2",
+		"test tstrdt p1 a 1 (13, 2000-01-02 00:00:00) 3"))
+
+	tk.MustQuery("show stats_buckets where table_name='tstrdt' and is_index=1").Check(testkit.Rows(
+		"test tstrdt global a 1 0 6 0 (1, 2000-01-01 00:00:00) (3, 2000-01-01 00:00:00) 5",   // (2, 3) is popped into it
+		"test tstrdt global a 1 1 11 0 (3, 2000-01-01 00:00:00) (13, 2000-01-02 00:00:00) 4", // (13, 1) is popped into it
+		"test tstrdt p0 a 1 0 4 1 (1, 2000-01-01 00:00:00) (2, 2000-01-02 00:00:00) 4",
+		"test tstrdt p0 a 1 1 4 0 (2, 2000-01-03 00:00:00) (3, 2000-01-01 00:00:00) 0",
+		"test tstrdt p1 a 1 0 3 0 (11, 2000-01-01 00:00:00) (13, 2000-01-01 00:00:00) 3",
+		"test tstrdt p1 a 1 1 3 0 (13, 2000-01-02 00:00:00) (13, 2000-01-02 00:00:00) 0"))
+
+	rs = tk.MustQuery("show stats_histograms where table_name='tstrdt' and is_index=1").Rows()
+	c.Assert(rs[0][6].(string), Equals, "11") // g.ndv = p0.ndv + p1.ndv
+	c.Assert(rs[1][6].(string), Equals, "6")
+	c.Assert(rs[2][6].(string), Equals, "5")
+}
+
 func (s *testStatsSuite) TestGlobalStatsVersion(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -1326,18 +1504,18 @@ partition by range (a) (
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
-	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("set @@session.tidb_analyze_version=1")
 	tk.MustExec("analyze table t") // both p0 and p1 are in ver1
 	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 2)
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("set @@session.tidb_analyze_version=1")
 	err := tk.ExecToErr("analyze table t") // try to build global-stats on ver1
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[stats]: some partition level statistics are not in statistics version 2, please set tidb_analyze_version to 2 and analyze the this table")
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
 	err = tk.ExecToErr("analyze table t partition p1") // only analyze p1 to let it in ver2 while p0 is in ver1
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[stats]: some partition level statistics are not in statistics version 2, please set tidb_analyze_version to 2 and analyze the this table")
@@ -1345,11 +1523,43 @@ partition by range (a) (
 	tk.MustExec("analyze table t") // both p0 and p1 are in ver2
 	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 3)
 
+	// If we already have global-stats, we can get the latest global-stats by analyzing the newly added partition.
 	tk.MustExec("alter table t add partition (partition p2 values less than (30))")
-	tk.MustExec("insert t values (13), (14)")
+	tk.MustExec("insert t values (13), (14), (22), (23)")
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	tk.MustExec("analyze table t partition p2")                      // it will success since p0 and p1 are both in ver2
-	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 4) // p0, p1, p2 and global
+	tk.MustExec("analyze table t partition p2") // it will success since p0 and p1 are both in ver2
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	do := s.do
+	is := do.InfoSchema()
+	h := do.StatsHandle()
+	c.Assert(h.Update(is), IsNil)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	globalStats := h.GetTableStats(tableInfo)
+	// global.count = p0.count(3) + p1.count(2) + p2.count(2)
+	// We did not analyze partition p1, so the value here has not changed
+	c.Assert(globalStats.Count, Equals, int64(7))
+
+	tk.MustExec("analyze table t partition p1;")
+	globalStats = h.GetTableStats(tableInfo)
+	// global.count = p0.count(3) + p1.count(4) + p2.count(4)
+	// The value of p1.Count is correct now.
+	c.Assert(globalStats.Count, Equals, int64(9))
+	c.Assert(globalStats.ModifyCount, Equals, int64(0))
+
+	tk.MustExec("alter table t drop partition p2;")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	globalStats = h.GetTableStats(tableInfo)
+	// The value of global.count will be updated the next time analyze.
+	c.Assert(globalStats.Count, Equals, int64(9))
+	c.Assert(globalStats.ModifyCount, Equals, int64(0))
+
+	tk.MustExec("analyze table t;")
+	globalStats = h.GetTableStats(tableInfo)
+	// global.count = p0.count(3) + p1.count(4)
+	// The value of global.Count is correct now.
+	c.Assert(globalStats.Count, Equals, int64(7))
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
@@ -1514,6 +1724,38 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 		}
 	}
 	c.Assert(foundS1 && foundS2, IsTrue)
+}
+
+func (s *testStatsSuite) TestSyncStatsExtendedRemoval(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustExec("analyze table t")
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
+	item := statsTbl.ExtendedStats.Stats["s1"]
+	c.Assert(item, NotNil)
+	result := tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 1)
+
+	tk.MustExec("alter table t drop stats_extended s1")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
+	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 0)
 }
 
 func (s *testStatsSuite) TestStaticPartitionPruneMode(c *C) {

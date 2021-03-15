@@ -1278,12 +1278,12 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 			if err != nil {
 				// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
 				if terror.ErrorEqual(kv.ErrWriteConflict, err) {
-					newForUpdateTSVer, err := c.store.CurrentVersion(oracle.GlobalTxnScope)
+					newForUpdateTSVer, err := c.store.CurrentTimestamp(oracle.GlobalTxnScope)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					lCtx.ForUpdateTS = newForUpdateTSVer.Ver
-					c.forUpdateTS = newForUpdateTSVer.Ver
+					lCtx.ForUpdateTS = newForUpdateTSVer
+					c.forUpdateTS = newForUpdateTSVer
 					logutil.Logger(ctx).Info("amend pessimistic lock pessimistic retry lock",
 						zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS),
 						zap.Uint64("newForUpdateTS", c.forUpdateTS))
