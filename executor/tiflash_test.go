@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/testleak"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 type tiflashTestSuite struct {
