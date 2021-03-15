@@ -131,6 +131,14 @@ func InitZapLogger(cfg *LogConfig) error {
 		gzap.ReplaceGrpcLoggerV2(gl)
 	}
 
+	// init logger for grpc debugging
+	if len(os.Getenv("GRPC_DEBUG")) > 0 {
+		// more information for verbosity: https://github.com/google/glog#verbose-logging
+		gzap.ReplaceGrpcLoggerV2WithVerbosity(gl, 99)
+	} else {
+		gzap.ReplaceGrpcLoggerV2(gl)
+	}
+
 	return nil
 }
 
