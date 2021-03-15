@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/storeutil"
@@ -152,6 +151,16 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 	}
 }
 
+// GetRegionCache returns the region cache.
+func (s *RegionRequestSender) GetRegionCache() *RegionCache {
+	return s.regionCache
+}
+
+// GetClient returns the RPC client.
+func (s *RegionRequestSender) GetClient() Client {
+	return s.client
+}
+
 // SetStoreAddr specifies the dest store address.
 func (s *RegionRequestSender) SetStoreAddr(addr string) {
 	s.storeAddr = addr
@@ -183,6 +192,7 @@ func (s *RegionRequestSender) getRPCContext(
 	req *tikvrpc.Request,
 	regionID RegionVerID,
 	sType kv.StoreType,
+	opts ...StoreSelectorOption,
 ) (*RPCContext, error) {
 	switch sType {
 	case kv.TiKV:
@@ -190,7 +200,7 @@ func (s *RegionRequestSender) getRPCContext(
 		if req.ReplicaReadSeed != nil {
 			seed = *req.ReplicaReadSeed
 		}
-		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed)
+		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed, opts...)
 	case kv.TiFlash:
 		return s.regionCache.GetTiFlashRPCContext(bo, regionID)
 	case kv.TiDB:
@@ -207,6 +217,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	regionID RegionVerID,
 	timeout time.Duration,
 	sType kv.StoreType,
+	opts ...StoreSelectorOption,
 ) (
 	resp *tikvrpc.Response,
 	rpcCtx *RPCContext,
@@ -243,6 +254,10 @@ func (s *RegionRequestSender) SendReqCtx(
 			if sType == kv.TiDB {
 				failpoint.Return(nil, nil, ErrTiKVServerTimeout)
 			}
+		case "requestTiFlashError":
+			if sType == kv.TiFlash {
+				failpoint.Return(nil, nil, ErrTiFlashServerTimeout)
+			}
 		}
 	})
 
@@ -252,7 +267,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
 
-		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType)
+		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType, opts...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -492,7 +507,7 @@ func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 		st.tokenCount.Add(1)
 		return nil
 	}
-	tidbmetrics.GetStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
+	metrics.TiKVStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
 	return ErrTokenLimit.GenWithStackByArgs(st.storeID)
 
 }
@@ -540,7 +555,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
-	if ctx.Store != nil && ctx.Store.storeType == kv.TiFlash {
+	if ctx.Store != nil && ctx.Store.storeType == TiFlash {
 		err = bo.Backoff(BoTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctx: %v, try next peer later", err, ctx))
 	} else {
 		err = bo.Backoff(BoTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
@@ -614,7 +629,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 
 	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
 		// store not match
-		logutil.BgLogger().Warn("tikv reports `StoreNotMatch` retry later",
+		logutil.BgLogger().Debug("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
 		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
@@ -635,7 +650,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		logutil.BgLogger().Warn("tikv reports `ServerIsBusy` retry later",
 			zap.String("reason", regionErr.GetServerIsBusy().GetReason()),
 			zap.Stringer("ctx", ctx))
-		if ctx != nil && ctx.Store != nil && ctx.Store.storeType == kv.TiFlash {
+		if ctx != nil && ctx.Store != nil && ctx.Store.storeType == TiFlash {
 			err = bo.Backoff(boTiFlashServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
 		} else {
 			err = bo.Backoff(boTiKVServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
