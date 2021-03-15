@@ -7828,7 +7828,7 @@ func (s *testSuite) TestIssue23304(c *C) {
 	tk.MustExec("drop table if exists t_issue_23304")
 	tk.MustExec("CREATE TABLE t_issue_23304(col102 bigint(20),col1 bigint(20) GENERATED ALWAYS AS (col102 ^ 10) STORED NOT NULL,PRIMARY KEY (col1) USING BTREE);")
 	tk.MustExec("INSERT INTO `t_issue_23304` VALUES (11111, DEFAULT), (22222, DEFAULT), (33333, DEFAULT);")
-	tk.MustExec("prepare stmt1 from 'select col1 from t1 where col1 in (?, ?, ?);';")
+	tk.MustExec("prepare stmt1 from 'select col1 from t_issue_23304 where col1 in (?, ?, ?);';")
 	tk.MustExec("set @a=11117, @b=22212, @c=33343;")
 	tk.MustQuery("execute stmt1 using@a,@b,@c;").Check(testkit.Rows("11117", "22212", "33343"))
 	tk.MustExec("set @a=11117, @b=11117, @c=22212;")
@@ -7836,7 +7836,7 @@ func (s *testSuite) TestIssue23304(c *C) {
 	tk.MustExec("set @a=11117, @b=11117, @c=11117;")
 	tk.MustQuery("execute stmt1 using@a,@b,@c;").Check(testkit.Rows("11117"))
 
-	tk.MustExec("prepare stmt2 from 'select col1 from t1 where col1 in (?, ?, ?);';")
+	tk.MustExec("prepare stmt2 from 'select col1 from t_issue_23304 where col1 in (?, ?, ?);';")
 	tk.MustExec("set @a=11117, @b=11117, @c=11117;")
 	tk.MustQuery("execute stmt2 using@a,@b,@c;").Check(testkit.Rows("11117"))
 	tk.MustExec("set @a=11117, @b=11117, @c=22212;")
