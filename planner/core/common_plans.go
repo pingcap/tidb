@@ -514,6 +514,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
+					if len(ranges) > 1 {
+						return errors.New("Should not use PointGet plan")
+					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
 				}
 			}
@@ -563,9 +566,14 @@ func (e *Execute) rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
-					for i := range ranges {
-						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
+					if len(ranges) <= 1 {
+						return errors.New("Should not use BatchPointGet plan")
 					}
+					newHandles := make([]kv.Handle, 0, len(ranges))
+					for i := range ranges {
+						newHandles = append(newHandles, kv.IntHandle(ranges[i].LowVal[0].GetInt64()))
+					}
+					x.Handles = newHandles
 				}
 			}
 		}

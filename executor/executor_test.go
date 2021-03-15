@@ -7813,3 +7813,26 @@ func (s *testSuiteP1) TestIssue22941(c *C) {
 	rs = tk.MustQuery(`SELECT  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
 	rs.Check(testkit.Rows("<nil> 1 0"))
 }
+
+func (s *testSuite) TestIssue23304(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_issue_23304")
+	tk.MustExec("CREATE TABLE t_issue_23304(col102 bigint(20),col1 bigint(20) GENERATED ALWAYS AS (col102 ^ 10) STORED NOT NULL,PRIMARY KEY (col1) USING BTREE);")
+	tk.MustExec("INSERT INTO `t_issue_23304` VALUES (11111, DEFAULT), (22222, DEFAULT), (33333, DEFAULT);")
+	tk.MustExec("prepare stmt1 from 'select col1 from t1 where col1 in (?, ?, ?);';")
+	tk.MustExec("set @a=11117, @b=22212, @c=33343;")
+	tk.MustQuery("execute stmt1 using@a,@b,@c;").Check(testkit.Rows("11117", "22212", "33343"))
+	tk.MustExec("set @a=11117, @b=11117, @c=22212;")
+	tk.MustQuery("execute stmt1 using@a,@b,@c;").Check(testkit.Rows("11117", "22212"))
+	tk.MustExec("set @a=11117, @b=11117, @c=11117;")
+	tk.MustQuery("execute stmt1 using@a,@b,@c;").Check(testkit.Rows("11117"))
+
+	tk.MustExec("prepare stmt2 from 'select col1 from t1 where col1 in (?, ?, ?);';")
+	tk.MustExec("set @a=11117, @b=11117, @c=11117;")
+	tk.MustQuery("execute stmt2 using@a,@b,@c;").Check(testkit.Rows("11117"))
+	tk.MustExec("set @a=11117, @b=11117, @c=22212;")
+	tk.MustQuery("execute stmt2 using@a,@b,@c;").Check(testkit.Rows("11117", "22212"))
+	tk.MustExec("set @a=11117, @b=22212, @c=33343;")
+	tk.MustQuery("execute stmt2 using@a,@b,@c;").Check(testkit.Rows("11117", "22212", "33343"))
+}

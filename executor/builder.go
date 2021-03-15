@@ -657,6 +657,9 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
 	}
+	logutil.BgLogger().Info("[DEBUG]", zap.Reflect("usingVars", v.UsingVars),
+		zap.Reflect("name", v.Name),
+		zap.Reflect("plan", v.Plan))
 	return e
 }
 
