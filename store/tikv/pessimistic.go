@@ -147,8 +147,8 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		for _, keyErr := range keyErrs {
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
-				key := alreadyExist.GetKey()
-				return c.extractKeyExistsErr(key)
+				e := &ErrKeyExist{AlreadyExist: alreadyExist}
+				return c.extractKeyExistsErr(e)
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
 				return &ErrDeadlock{Deadlock: deadlock}
