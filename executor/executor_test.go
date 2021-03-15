@@ -4851,9 +4851,9 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and (100.0, 'aaa') regions 10;", errMsg)
 
 	// lower bound >= upper bound.
-	errMsg = "Split table `t` region lower value (aaa,0) should less than the upper value (aaa,0)"
+	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (aaa,0) should less than the upper value (aaa,0)"
 	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
-	errMsg = "Split table `t` region lower value (bbb,0) should less than the upper value (aaa,0)"
+	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (bbb,0) should less than the upper value (aaa,0)"
 	tk.MustGetErrMsg("split table t between ('bbb', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
 
 	// Exceed limit 1000.

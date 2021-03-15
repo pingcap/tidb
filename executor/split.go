@@ -237,13 +237,8 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64
 	}
 
 	if bytes.Compare(lowerIdxKey, upperIdxKey) >= 0 {
-		lowerStr, err1 := datumSliceToString(e.lower)
-		upperStr, err2 := datumSliceToString(e.upper)
-		if err1 != nil || err2 != nil {
-			errMsg := fmt.Sprintf("Split index `%v` region lower value %v should less than the upper value %v",
-				e.indexInfo.Name, e.lower, e.upper)
-			return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
-		}
+		lowerStr := datumSliceToString(e.lower)
+		upperStr := datumSliceToString(e.upper)
 		errMsg := fmt.Sprintf("Split index `%v` region lower value %v should less than the upper value %v",
 			e.indexInfo.Name, lowerStr, upperStr)
 		return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
@@ -307,12 +302,12 @@ func getUint64FromBytes(bs []byte, pad byte) uint64 {
 	return binary.BigEndian.Uint64(buf)
 }
 
-func datumSliceToString(ds []types.Datum) (string, error) {
+func datumSliceToString(ds []types.Datum) string {
 	str := "("
 	for i, d := range ds {
 		s, err := d.ToString()
 		if err != nil {
-			return str, err
+			return fmt.Sprintf("%v", ds)
 		}
 		if i > 0 {
 			str += ","
@@ -320,7 +315,7 @@ func datumSliceToString(ds []types.Datum) (string, error) {
 		str += s
 	}
 	str += ")"
-	return str, nil
+	return str
 }
 
 // SplitTableRegionExec represents a split table regions executor.
@@ -602,13 +597,8 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int
 		return nil, err
 	}
 	if lowerHandle.Compare(upperHandle) >= 0 {
-		lowerStr, err1 := datumSliceToString(e.lower)
-		upperStr, err2 := datumSliceToString(e.upper)
-		if err1 != nil || err2 != nil {
-			errMsg := fmt.Sprintf("Split table `%v` region lower value %v should less than the upper value %v",
-				e.tableInfo.Name.O, e.lower, e.upper)
-			return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
-		}
+		lowerStr := datumSliceToString(e.lower)
+		upperStr := datumSliceToString(e.upper)
 		errMsg := fmt.Sprintf("Split table `%v` region lower value %v should less than the upper value %v",
 			e.tableInfo.Name.O, lowerStr, upperStr)
 		return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
