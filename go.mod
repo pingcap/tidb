@@ -86,5 +86,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/pingcap/br => github.com/tangenta/br v4.0.0-beta.2.0.20210303063657-f838d8fbe7ac+incompatible
