@@ -220,6 +220,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 }
 
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, float64, error) {
+	plannercore.DumpPreparedStmts("1", sctx)
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0

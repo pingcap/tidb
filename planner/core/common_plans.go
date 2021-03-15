@@ -187,8 +187,26 @@ type Execute struct {
 	Plan          Plan
 }
 
+func DumpPreparedStmts(label string, sctx sessionctx.Context) {
+
+	vars := sctx.GetSessionVars()
+	for k, v := range vars.PreparedStmts {
+		switch val := v.(type) {
+
+		case *CachedPrepareStmt:
+			if val.PreparedAst.CachedPlan != nil {
+				logutil.BgLogger().Info(fmt.Sprintf("[DEBUG] %s", label),
+					zap.Reflect("PreparedStmts.Key", fmt.Sprintf("%+v", k)),
+					zap.Reflect("PreparedStmts.PrepareAst.CachedPlan", fmt.Sprintf("%+v", val.PreparedAst.CachedPlan.(Plan))),
+				)
+			}
+		}
+	}
+}
+
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
+	DumpPreparedStmts("2", sctx)
 	vars := sctx.GetSessionVars()
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
