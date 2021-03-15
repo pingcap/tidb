@@ -249,6 +249,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
+	logutil.BgLogger().Info("[DEBUG]", zap.Reflect("preparedObj", fmt.Sprintf("%+v", preparedObj)))
 	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
@@ -291,12 +292,17 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		}
 	}
 	if prepared.CachedPlan != nil {
+		logutil.BgLogger().Info("[DEBUG] prepared.CachedPlan != nil")
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
 		// the expression in the where condition will not be evaluated,
 		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
 		names := prepared.CachedNames.(types.NameSlice)
+		logutil.BgLogger().Info("[DEBUG]",
+			zap.Reflect("plan", fmt.Sprintf("%+v", plan)),
+			zap.Reflect("names", fmt.Sprintf("%+v", names)),
+		)
 		err := e.rebuildRange(plan)
 		if err != nil {
 			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
@@ -317,6 +323,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		return nil
 	}
 	if prepared.UseCache {
+		logutil.BgLogger().Info("[DEBUG] prepared.UseCache")
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
