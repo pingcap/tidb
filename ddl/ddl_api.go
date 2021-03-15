@@ -39,6 +39,7 @@ import (
 	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -54,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -1425,7 +1427,11 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			if ShouldBuildClusteredIndex(ctx, constr.Option) {
+			clustered, err := ShouldBuildClusteredIndex(ctx, constr.Option)
+			if err != nil {
+				return nil, err
+			}
+			if clustered {
 				if isSingleIntPK(constr, lastCol) {
 					tbInfo.PKIsHandle = true
 				} else {
@@ -1507,24 +1513,23 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 }
 
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
-func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption) bool {
+func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption) (bool, error) {
 	if opt == nil || opt.PrimaryKeyTp == model.PrimaryKeyTypeDefault {
-		return ctx.GetSessionVars().EnableClusteredIndex
+		return ctx.GetSessionVars().EnableClusteredIndex, nil
 	}
 	switch opt.PrimaryKeyTp {
 	case model.PrimaryKeyTypeClustered:
 		hasBinlog := ctx.GetSessionVars().BinlogClient != nil
 		if hasBinlog {
-			errMsg := "cannot build clustered index table because the binlog is ON"
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf(errMsg))
-			return false
+			msg := mysql.Message("Cannot create clustered index table when the binlog is ON", nil)
+			return false, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
 		}
-		return true
+		return true, nil
 	case model.PrimaryKeyTypeNonClustered:
-		return false
+		return false, nil
 	default: // should never reach here
 		logutil.BgLogger().Error("Unknown primary key type")
-		return false
+		return false, nil
 	}
 }
 
