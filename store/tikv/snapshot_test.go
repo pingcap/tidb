@@ -72,7 +72,7 @@ func (s *testSnapshotSuite) beginTxn(c *C) *KVTxn {
 
 func (s *testSnapshotSuite) checkAll(keys []kv.Key, c *C) {
 	txn := s.beginTxn(c)
-	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn.StartTS()}, 0)
+	snapshot := newTiKVSnapshot(s.store, txn.StartTS(), 0)
 	m, err := snapshot.BatchGet(context.Background(), keys)
 	c.Assert(err, IsNil)
 
@@ -132,7 +132,7 @@ func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	txn = s.beginTxn(c)
-	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn.StartTS()}, 0)
+	snapshot := newTiKVSnapshot(s.store, txn.StartTS(), 0)
 	_, err := snapshot.BatchGet(context.Background(), []kv.Key{kv.Key("x"), kv.Key("y")})
 	c.Assert(err, IsNil)
 
@@ -258,7 +258,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	committer.lockTTL = 3000
 	c.Assert(committer.prewriteMutations(bo, committer.mutations), IsNil)
 
-	snapshot := newTiKVSnapshot(s.store, kv.MaxVersion, 0)
+	snapshot := newTiKVSnapshot(s.store, maxTimestamp, 0)
 	start := time.Now()
 	c.Assert(committer.primary(), BytesEquals, []byte(x))
 	// Point get secondary key. Shouldn't be blocked by the lock and read old data.
@@ -271,7 +271,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	err = committer.commitMutations(bo, committer.mutationsOfKeys([][]byte{committer.primary()}))
 	c.Assert(err, IsNil)
 
-	snapshot = newTiKVSnapshot(s.store, kv.MaxVersion, 0)
+	snapshot = newTiKVSnapshot(s.store, maxTimestamp, 0)
 	start = time.Now()
 	// Point get secondary key. Should read committed data.
 	value, err := snapshot.Get(ctx, y)
@@ -288,7 +288,7 @@ func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
 	err := txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	snapshot := newTiKVSnapshot(s.store, kv.MaxVersion, 0)
+	snapshot := newTiKVSnapshot(s.store, maxTimestamp, 0)
 	var wg sync.WaitGroup
 	wg.Add(5)
 	for i := 0; i < 5; i++ {
@@ -309,7 +309,7 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	reqStats := NewRegionRequestRuntimeStats()
 	RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Second)
 	RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Millisecond)
-	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: 0}, 0)
+	snapshot := newTiKVSnapshot(s.store, 0, 0)
 	snapshot.SetOption(kv.CollectRuntimeStats, &SnapshotRuntimeStats{})
 	snapshot.mergeRegionRequestStats(reqStats.Stats)
 	snapshot.mergeRegionRequestStats(reqStats.Stats)
