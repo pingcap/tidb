@@ -145,6 +145,15 @@ All tables will be hidden, including the schema itself.
 * `SHOW CONFIG` is disabled.
 * `SET CONFIG` is disabled by the `CONFIG` Privilege (no change necessary)
 
+### Restricted Dynamic Privileges
+
+TiDB currently permits the `SUPER` privilege as a substitute for any dynamic privilege. This is not 100% MySQL compatible - MySQL accepts SUPER in most cases, but not in GRANT context. However, TiDB requires this extension because:
+
+* The visitorInfo framework does not permit OR conditions
+* GRANT ALL in TiDB does not actually grant each of the individual privileges (historical difference)
+
+When SEM is enabled, `SUPER` will no longer be permitted as a substitute for any `RESTRICTED_*` privilege. The distinction that this only applies when SEM is enabled, helps continue to work around the current server limitations.
+
 ## Test Design
 
 ### Functional Tests
