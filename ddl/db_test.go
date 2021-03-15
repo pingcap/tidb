@@ -4990,7 +4990,7 @@ func (s *testSerialDBSuite) TestColumnTypeChangeIgnoreDisplayLength(c *C) {
 }
 
 // Close issue #23202
-func (s *testDBSuite7) TestDDLExitWhenCancelMeetPanic(c *C) {
+func (s *testSerialDBSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
