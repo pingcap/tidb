@@ -38,7 +38,7 @@ func (s *testHexSuite) TestHex(c *C) {
 	region.StartKey = []byte{'t', 200, '\\', 000, 000, 000, '\\', 000, 000, 000, 37, '-', 000, 000, 000, 000, 000, 000, 000, 37}
 	region.EndKey = []byte("3asg3asd")
 
-	c.Assert(logutil.Hex(&region).String(), Equals, "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[]}")
+	c.Assert(logutil.Hex(&region).String(), Equals, "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil>}")
 }
 
 func (s *testHexSuite) TestPrettyPrint(c *C) {

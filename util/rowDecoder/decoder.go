@@ -17,6 +17,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -37,14 +38,13 @@ type Column struct {
 
 // RowDecoder decodes a byte slice into datums and eval the generated column value.
 type RowDecoder struct {
-	tbl           table.Table
-	mutRow        chunk.MutRow
-	colMap        map[int64]Column
-	colTypes      map[int64]*types.FieldType
-	haveGenColumn bool
-	defaultVals   []types.Datum
-	cols          []*table.Column
-	pkCols        []int64
+	tbl         table.Table
+	mutRow      chunk.MutRow
+	colMap      map[int64]Column
+	colTypes    map[int64]*types.FieldType
+	defaultVals []types.Datum
+	cols        []*table.Column
+	pkCols      []int64
 }
 
 // NewRowDecoder returns a new RowDecoder.
@@ -57,7 +57,14 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 
 	tps := make([]*types.FieldType, len(cols))
 	for _, col := range cols {
-		tps[col.Offset] = &col.FieldType
+		if col.ChangeStateInfo == nil {
+			tps[col.Offset] = &col.FieldType
+		} else {
+			// Since changing column in the mutRow will be set with relative column's old value in the process of column-type-change,
+			// we should set fieldType as the relative column does. Otherwise it may get a panic, take change json to int as an example,
+			// setting json value to a int type column in mutRow will panic because it lacks of offset array.
+			tps[col.Offset] = &cols[col.ChangeStateInfo.DependencyColumnOffset].FieldType
+		}
 	}
 	var pkCols []int64
 	switch {
@@ -65,6 +72,8 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 		pkCols = tables.TryGetCommonPkColumnIds(tbl.Meta())
 	case tblInfo.PKIsHandle:
 		pkCols = []int64{tblInfo.GetPkColInfo().ID}
+	default: // support decoding _tidb_rowid.
+		pkCols = []int64{model.ExtraHandleID}
 	}
 	return &RowDecoder{
 		tbl:         tbl,
@@ -110,8 +119,8 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		}
 		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 	}
-	keys := make([]int, 0)
-	ids := make(map[int]int)
+	keys := make([]int, 0, len(rd.colMap))
+	ids := make(map[int]int, len(rd.colMap))
 	for k, col := range rd.colMap {
 		keys = append(keys, col.Col.Offset)
 		ids[col.Col.Offset] = int(k)
@@ -159,4 +168,10 @@ func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[
 		}
 	}
 	return decodeColMap
+}
+
+// CurrentRowWithDefaultVal returns current decoding row with default column values set properly.
+// Please make sure calling DecodeAndEvalRowWithMap first.
+func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
+	return rd.mutRow.ToRow()
 }

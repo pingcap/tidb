@@ -81,7 +81,8 @@ func (s *Server) listenStatusHTTPServer() error {
 	}
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
-	tlsConfig, err := s.cfg.Security.ToTLSConfig()
+	clusterSecurity := s.cfg.Security.ClusterSecurity()
+	tlsConfig, err := clusterSecurity.ToTLSConfig()
 	if err != nil {
 		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
 		return errors.Trace(err)
@@ -115,10 +116,10 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
-	router.Handle("/settings", settingsHandler{}).Name("Settings")
+	tikvHandlerTool := s.newTikvHandlerTool()
+	router.Handle("/settings", settingsHandler{tikvHandlerTool}).Name("Settings")
 	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
 
-	tikvHandlerTool := s.newTikvHandlerTool()
 	router.Handle("/schema", schemaHandler{tikvHandlerTool}).Name("Schema")
 	router.Handle("/schema/{db}", schemaHandler{tikvHandlerTool})
 	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
@@ -142,6 +143,7 @@ func (s *Server) startHTTPServer() {
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})
+		router.Handle("/tables/{db}/{table}/ranges", tableHandler{tikvHandlerTool, opTableRanges})
 		router.Handle("/tables/{db}/{table}/scatter", tableHandler{tikvHandlerTool, opTableScatter})
 		router.Handle("/tables/{db}/{table}/stop-scatter", tableHandler{tikvHandlerTool, opStopTableScatter})
 		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandlerTool, opTableDiskUsage})
@@ -151,6 +153,7 @@ func (s *Server) startHTTPServer() {
 	}
 
 	// HTTP path for get MVCC info
+	router.Handle("/mvcc/key/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByClusteredKey})
 	router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
 	router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
 	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
@@ -389,7 +392,13 @@ type status struct {
 
 func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-
+	// If the server is in the process of shutting down, return a non-200 status.
+	// It is important not to return status{} as acquiring the s.ConnectionCount()
+	// acquires a lock that may already be held by the shutdown process.
+	if s.inShutdownMode {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	st := status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
@@ -399,8 +408,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		logutil.BgLogger().Error("encode json failed", zap.Error(err))
-	} else {
-		_, err = w.Write(js)
-		terror.Log(errors.Trace(err))
+		return
 	}
+	_, err = w.Write(js)
+	terror.Log(errors.Trace(err))
 }

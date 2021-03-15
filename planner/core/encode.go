@@ -38,11 +38,14 @@ type planEncoder struct {
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
 func EncodePlan(p Plan) string {
-	pn := encoderPool.Get().(*planEncoder)
-	defer encoderPool.Put(pn)
+	if explain, ok := p.(*Explain); ok {
+		p = explain.TargetPlan
+	}
 	if p == nil || p.SCtx() == nil {
 		return ""
 	}
+	pn := encoderPool.Get().(*planEncoder)
+	defer encoderPool.Put(pn)
 	selectPlan := getSelectPlan(p)
 	if selectPlan != nil {
 		failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
@@ -181,6 +184,8 @@ func getSelectPlan(p Plan) PhysicalPlan {
 			selectPlan = x.SelectPlan
 		case *Insert:
 			selectPlan = x.SelectPlan
+		case *Explain:
+			selectPlan = getSelectPlan(x.TargetPlan)
 		}
 	}
 	return selectPlan

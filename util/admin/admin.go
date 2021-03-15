@@ -16,15 +16,14 @@ package admin
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"math"
 	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -43,7 +43,7 @@ import (
 // DDLInfo is for DDL information.
 type DDLInfo struct {
 	SchemaVer   int64
-	ReorgHandle kv.Handle    // It's only used for DDL information.
+	ReorgHandle kv.Key       // It's only used for DDL information.
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
@@ -77,12 +77,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	tbl, err := t.GetTable(addIdxJob.SchemaID, addIdxJob.TableID)
-	if err != nil {
-		return info, nil
-	}
-
-	_, info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob, tbl.IsCommonHandle)
+	_, info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil
@@ -295,13 +290,13 @@ type RecordData struct {
 	Values []types.Datum
 }
 
-func getCount(ctx sessionctx.Context, sql string) (int64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(sql)
+func getCount(exec sqlexec.RestrictedSQLExecutor, stmt ast.StmtNode, snapshot uint64) (int64, error) {
+	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	if len(rows) != 1 {
-		return 0, errors.Errorf("can not get count, sql %s result rows %d", sql, len(rows))
+		return 0, errors.Errorf("can not get count, rows count = %d", len(rows))
 	}
 	return rows[0].GetInt64(0), nil
 }
@@ -322,14 +317,34 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	// Here we need check all indexes, includes invisible index
 	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	// Add `` for some names like `table name`.
-	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX()", dbName, tableName)
-	tblCnt, err := getCount(ctx, sql)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
+	var snapshot uint64
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return 0, 0, err
+	}
+	if txn.Valid() {
+		snapshot = txn.StartTS()
+	}
+	if ctx.GetSessionVars().SnapshotTS != 0 {
+		snapshot = ctx.GetSessionVars().SnapshotTS
+	}
+
+	tblCnt, err := getCount(exec, stmt, snapshot)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	for i, idx := range indices {
-		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
-		idxCnt, err := getCount(ctx, sql)
+		stmt, err := exec.ParseWithParams(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
+		if err != nil {
+			return 0, i, errors.Trace(err)
+		}
+		idxCnt, err := getCount(exec, stmt, snapshot)
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}
@@ -358,7 +373,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
+	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
 	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
@@ -454,7 +469,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle)
+		rk := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)
@@ -466,13 +481,13 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 
 var (
 	// ErrDataInConsistent indicate that meets inconsistent data.
-	ErrDataInConsistent = terror.ClassAdmin.New(errno.ErrDataInConsistent, errno.MySQLErrName[errno.ErrDataInConsistent])
+	ErrDataInConsistent = dbterror.ClassAdmin.NewStd(errno.ErrDataInConsistent)
 	// ErrDDLJobNotFound indicates the job id was not found.
-	ErrDDLJobNotFound = terror.ClassAdmin.New(errno.ErrDDLJobNotFound, errno.MySQLErrName[errno.ErrDDLJobNotFound])
+	ErrDDLJobNotFound = dbterror.ClassAdmin.NewStd(errno.ErrDDLJobNotFound)
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
-	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(errno.ErrCancelFinishedDDLJob, errno.MySQLErrName[errno.ErrCancelFinishedDDLJob])
+	ErrCancelFinishedDDLJob = dbterror.ClassAdmin.NewStd(errno.ErrCancelFinishedDDLJob)
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
-	ErrCannotCancelDDLJob = terror.ClassAdmin.New(errno.ErrCannotCancelDDLJob, errno.MySQLErrName[errno.ErrCannotCancelDDLJob])
+	ErrCannotCancelDDLJob = dbterror.ClassAdmin.NewStd(errno.ErrCannotCancelDDLJob)
 	// ErrAdminCheckTable returns when the table records is inconsistent with the index values.
-	ErrAdminCheckTable = terror.ClassAdmin.New(errno.ErrAdminCheckTable, errno.MySQLErrName[errno.ErrAdminCheckTable])
+	ErrAdminCheckTable = dbterror.ClassAdmin.NewStd(errno.ErrAdminCheckTable)
 )

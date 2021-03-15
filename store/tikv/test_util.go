@@ -16,17 +16,16 @@ package tikv
 import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/tikv/pd/client"
+	pd "github.com/tikv/pd/client"
 )
 
 // NewTestTiKVStore creates a test store with Option
-func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Client) Client, pdClientHijack func(pd.Client) pd.Client, txnLocalLatches uint) (kv.Storage, error) {
+func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Client) Client, pdClientHijack func(pd.Client) pd.Client, txnLocalLatches uint) (*KVStore, error) {
 	if clientHijack != nil {
 		client = clientHijack(client)
 	}
 
-	pdCli := pd.Client(&codecPDClient{pdClient})
+	pdCli := pd.Client(&CodecPDClient{pdClient})
 	if pdClientHijack != nil {
 		pdCli = pdClientHijack(pdCli)
 	}
@@ -34,7 +33,7 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 	// Make sure the uuid is unique.
 	uid := uuid.New().String()
 	spkv := NewMockSafePointKV()
-	tikvStore, err := newTikvStore(uid, pdCli, spkv, client, false, nil)
+	tikvStore, err := NewKVStore(uid, pdCli, spkv, client)
 
 	if txnLocalLatches > 0 {
 		tikvStore.EnableTxnLocalLatches(txnLocalLatches)

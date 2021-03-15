@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -53,14 +54,14 @@ var (
 	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
-	_ PhysicalPlan = &PhysicalBroadCastJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
 	_ PhysicalPlan = &PhysicalShuffle{}
-	_ PhysicalPlan = &PhysicalShuffleDataSourceStub{}
+	_ PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
+	_ PhysicalPlan = &PhysicalTableSample{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
@@ -73,6 +74,9 @@ type PhysicalTableReader struct {
 
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
+
+	// BatchCop = true means the cop task in the physical table reader will be executed in batch mode(use in TiFlash only)
+	BatchCop bool
 
 	IsCommonHandle bool
 
@@ -103,7 +107,7 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 		} else if chCnt == 1 {
 			curPlan = curPlan.Children()[0]
 		} else {
-			join := curPlan.(*PhysicalBroadCastJoin)
+			join := curPlan.(*PhysicalHashJoin)
 			curPlan = join.children[1-join.globalChildIndex]
 		}
 	}
@@ -142,6 +146,7 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.StoreType = p.StoreType
+	cloned.BatchCop = p.BatchCop
 	cloned.IsCommonHandle = p.IsCommonHandle
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
@@ -466,6 +471,10 @@ type PhysicalTableScan struct {
 	Desc      bool
 
 	isChildOfIndexLookUp bool
+
+	PartitionInfo PartitionInfo
+
+	SampleInfo *TableSampleInfo
 }
 
 // Clone implements PhysicalPlan interface.
@@ -544,7 +553,7 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	return copyColumn
 }
 
-//SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
+// SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
 func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
 	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
 }
@@ -715,6 +724,10 @@ type PhysicalHashJoin struct {
 
 	// use the outer table to build a hash table when the outer table is smaller.
 	UseOuterToBuild bool
+
+	// on which store the join executes.
+	storeTp          kv.StoreType
+	globalChildIndex int
 }
 
 // Clone implements PhysicalPlan interface.
@@ -778,8 +791,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
-	outerSchema *expression.Schema
-	innerTask   task
+	innerTask task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges []*ranger.Range
@@ -793,6 +805,12 @@ type PhysicalIndexJoin struct {
 	//      need to be evaluated after we fetch the data of t1.
 	// This struct stores them and evaluate them to ranges.
 	CompareFilters *ColWithCmpFuncManager
+	// OuterHashKeys indicates the outer keys used to build hash table during
+	// execution. OuterJoinKeys is the prefix of OuterHashKeys.
+	OuterHashKeys []*expression.Column
+	// InnerHashKeys indicates the inner keys used to build hash table during
+	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
+	InnerHashKeys []*expression.Column
 }
 
 // PhysicalIndexMergeJoin represents the plan of index look up merge join.
@@ -829,10 +847,25 @@ type PhysicalMergeJoin struct {
 	Desc bool
 }
 
-// PhysicalBroadCastJoin only works for TiFlash Engine, which broadcast the small table to every replica of probe side of tables.
-type PhysicalBroadCastJoin struct {
-	basePhysicalJoin
-	globalChildIndex int
+// PhysicalExchangeReceiver accepts connection and receives data passively.
+type PhysicalExchangeReceiver struct {
+	basePhysicalPlan
+
+	Tasks   []*kv.MPPTask
+	ChildPf *Fragment
+}
+
+// PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
+type PhysicalExchangeSender struct {
+	basePhysicalPlan
+
+	TargetTasks  []*kv.MPPTask
+	ExchangeType tipb.ExchangeType
+	HashCols     []*expression.Column
+	// Tasks is the mpp task for current PhysicalExchangeSender
+	Tasks []*kv.MPPTask
+
+	Fragment *Fragment
 }
 
 // Clone implements PhysicalPlan interface.
@@ -862,7 +895,7 @@ type PhysicalLock struct {
 
 // PhysicalLimit is the physical operator of Limit.
 type PhysicalLimit struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	Offset uint64
 	Count  uint64
@@ -872,11 +905,11 @@ type PhysicalLimit struct {
 func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalLimit)
 	*cloned = *p
-	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.physicalSchemaProducer = *base
 	return cloned, nil
 }
 
@@ -885,11 +918,35 @@ type PhysicalUnionAll struct {
 	physicalSchemaProducer
 }
 
+// AggMppRunMode defines the running mode of aggregation in MPP
+type AggMppRunMode int
+
+const (
+	// NoMpp means the default value which does not run in MPP
+	NoMpp AggMppRunMode = iota
+	// Mpp1Phase runs only 1 phase but requires its child's partition property
+	Mpp1Phase
+	// Mpp2Phase runs partial agg + final agg with hash partition
+	Mpp2Phase
+	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)
+	MppTiDB
+)
+
 type basePhysicalAgg struct {
 	physicalSchemaProducer
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
+	MppRunMode   AggMppRunMode
+}
+
+func (p *basePhysicalAgg) isFinalAgg() bool {
+	if len(p.AggFuncs) > 0 {
+		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg, error) {
@@ -1117,8 +1174,8 @@ type PhysicalWindow struct {
 	physicalSchemaProducer
 
 	WindowFuncDescs []*aggregation.WindowFuncDesc
-	PartitionBy     []property.Item
-	OrderBy         []property.Item
+	PartitionBy     []property.SortItem
+	OrderBy         []property.SortItem
 	Frame           *WindowFrame
 }
 
@@ -1146,7 +1203,7 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 }
 
 // PhysicalShuffle represents a shuffle plan.
-// `Tail` and `DataSource` are the last plan within and the first plan following the "shuffle", respectively,
+// `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
 //  to build the child executors chain.
 // Take `Window` operator for example:
 //  Shuffle -> Window -> Sort -> DataSource, will be separated into:
@@ -1157,11 +1214,11 @@ type PhysicalShuffle struct {
 	basePhysicalPlan
 
 	Concurrency int
-	Tail        PhysicalPlan
-	DataSource  PhysicalPlan
+	Tails       []PhysicalPlan
+	DataSources []PhysicalPlan
 
 	SplitterType PartitionSplitterType
-	HashByItems  []expression.Expression
+	ByItemArrays [][]expression.Expression
 }
 
 // PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
@@ -1170,15 +1227,17 @@ type PartitionSplitterType int
 const (
 	// PartitionHashSplitterType is the splitter splits by hash.
 	PartitionHashSplitterType = iota
+	// PartitionRangeSplitterType is the splitter that split sorted data into the same range
+	PartitionRangeSplitterType
 )
 
-// PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`,
+// PhysicalShuffleReceiverStub represents a receiver stub of `PhysicalShuffle`,
 // and actually, is executed by `executor.shuffleWorker`.
-type PhysicalShuffleDataSourceStub struct {
+type PhysicalShuffleReceiverStub struct {
 	physicalSchemaProducer
 
-	// Worker points to `executor.shuffleWorker`.
-	Worker unsafe.Pointer
+	// Worker points to `executor.shuffleReceiver`.
+	Receiver unsafe.Pointer
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
@@ -1237,4 +1296,32 @@ func SafeClone(v PhysicalPlan) (_ PhysicalPlan, err error) {
 		}
 	}()
 	return v.Clone()
+}
+
+// PhysicalTableSample represents a table sample plan.
+// It returns the sample rows to its parent operand.
+type PhysicalTableSample struct {
+	physicalSchemaProducer
+	TableSampleInfo *TableSampleInfo
+	TableInfo       table.Table
+	Desc            bool
+}
+
+// TableSampleInfo contains the information for PhysicalTableSample.
+type TableSampleInfo struct {
+	AstNode    *ast.TableSample
+	FullSchema *expression.Schema
+	Partitions []table.PartitionedTable
+}
+
+// NewTableSampleInfo creates a new TableSampleInfo.
+func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
+	if node == nil {
+		return nil
+	}
+	return &TableSampleInfo{
+		AstNode:    node,
+		FullSchema: fullSchema,
+		Partitions: pt,
+	}
 }

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -91,17 +90,15 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil {
 				return err
 			}
-
+			sessionVars.UsersLock.Lock()
 			if value.IsNull() {
 				delete(sessionVars.Users, name)
+				delete(sessionVars.UserVarTypes, name)
 			} else {
-				svalue, err1 := value.ToString()
-				if err1 != nil {
-					return err1
-				}
-
-				sessionVars.SetUserVar(name, stringutil.Copy(svalue), value.Collation())
+				sessionVars.Users[name] = value
+				sessionVars.UserVarTypes[name] = v.Expr.GetType()
 			}
+			sessionVars.UsersLock.Unlock()
 			continue
 		}
 
@@ -183,10 +180,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
-		if name == variable.TiDBFoundInPlanCache {
-			sessionVars.StmtCtx.AppendWarning(fmt.Errorf("Set operation for '%s' will not take effect", variable.TiDBFoundInPlanCache))
-			return nil
-		}
 		err = variable.SetSessionSystemVar(sessionVars, name, value)
 		if err != nil {
 			return err
@@ -220,6 +213,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		logutil.BgLogger().Debug(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
 
+	valStrToBoolStr := variable.BoolToOnOff(variable.TiDBOptOn(valStr))
+
 	switch name {
 	case variable.TiDBEnableStmtSummary:
 		return stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
@@ -234,7 +229,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	case variable.TiDBStmtSummaryMaxSQLLength:
 		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
-		variable.CapturePlanBaseline.Set(strings.ToLower(valStr), !v.IsGlobal)
+		variable.CapturePlanBaseline.Set(valStrToBoolStr, !v.IsGlobal)
 	}
 
 	return nil

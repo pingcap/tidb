@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	. "github.com/pingcap/tidb/util/testutil"
 )
 
 type testCtxKeyType int
@@ -36,7 +35,10 @@ const testCtxKey testCtxKeyType = 0
 
 func (s *testDDLSuite) TestReorg(c *C) {
 	store := testCreateStore(c, "test_reorg")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	d := testNewDDLAndStart(
 		context.Background(),
@@ -44,7 +46,10 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	time.Sleep(testLease)
 
@@ -76,7 +81,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	handle := s.NewHandle().Int(100).Common("a", 100, "string")
 	f := func() error {
 		d.generalWorker().reorgCtx.setRowCount(rowCount)
-		d.generalWorker().reorgCtx.setNextHandle(handle)
+		d.generalWorker().reorgCtx.setNextKey(handle.Encoded())
 		time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
 		return nil
 	}
@@ -94,7 +99,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		Job:         job,
 		currElement: e,
 	}
-	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: s.IsCommonHandle})
+	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: s.IsCommonHandle, CommonHandleVersion: 1})
 	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
 	c.Assert(err, NotNil)
 
@@ -115,9 +120,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			m = meta.NewMeta(txn)
 			info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl, nil)
 			c.Assert(err1, IsNil)
-			c.Assert(info.StartHandle, HandleEquals, handle)
+			c.Assert(info.StartKey, DeepEquals, kv.Key(handle.Encoded()))
 			c.Assert(info.currElement, DeepEquals, e)
-			_, doneHandle := d.generalWorker().reorgCtx.getRowCountAndHandle()
+			_, doneHandle, _ := d.generalWorker().reorgCtx.getRowCountAndKey()
 			c.Assert(doneHandle, IsNil)
 			break
 		}
@@ -137,11 +142,11 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		Job:             job,
 		d:               d.ddlCtx,
 		currElement:     element,
-		StartHandle:     s.NewHandle().Int(1).Common(100, "string"),
-		EndHandle:       s.NewHandle().Int(0).Common(101, "string"),
+		StartKey:        s.NewHandle().Int(1).Common(100, "string").Encoded(),
+		EndKey:          s.NewHandle().Int(0).Common(101, "string").Encoded(),
 		PhysicalTableID: 456,
 	}
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		_, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
@@ -151,21 +156,22 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	})
 	c.Assert(err, IsNil)
 	job.SnapshotVer = uint64(1)
-	err = info.UpdateReorgMeta(info.StartHandle)
+	err = info.UpdateReorgMeta(info.StartKey)
 	c.Assert(err, IsNil)
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		info1, err1 := getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
 		c.Assert(err1, IsNil)
 		c.Assert(info1.currElement, DeepEquals, info.currElement)
-		c.Assert(info1.StartHandle, HandleEquals, info.StartHandle)
-		c.Assert(info1.EndHandle, HandleEquals, info.EndHandle)
+		c.Assert(info1.StartKey, DeepEquals, info.StartKey)
+		c.Assert(info1.EndKey, DeepEquals, info.EndKey)
 		c.Assert(info1.PhysicalTableID, Equals, info.PhysicalTableID)
 		return nil
 	})
 	c.Assert(err, IsNil)
 
-	d.Stop()
+	err = d.Stop()
+	c.Assert(err, IsNil)
 	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, func() error {
 		time.Sleep(4 * testLease)
 		return nil
@@ -180,7 +186,10 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 func (s *testDDLSuite) TestReorgOwner(c *C) {
 	store := testCreateStore(c, "test_reorg_owner")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	d1 := testNewDDLAndStart(
 		context.Background(),
@@ -188,7 +197,10 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d1.Stop()
+	defer func() {
+		err := d1.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	ctx := testNewContext(d1)
 
@@ -200,7 +212,10 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d2.Stop()
+	defer func() {
+		err := d2.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	dbInfo := testSchemaInfo(c, d1, "test")
 	testCreateSchema(c, ctx, d1, dbInfo)
@@ -223,7 +238,8 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	tc := &TestDDLCallback{}
 	tc.onJobRunBefore = func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteReorganization {
-			d1.Stop()
+			err = d1.Stop()
+			c.Assert(err, IsNil)
 		}
 	}
 
@@ -231,7 +247,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	testDropSchema(c, ctx, d1, dbInfo)
 
-	err = kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), d1.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		db, err1 := t.GetDatabase(dbInfo.ID)
 		c.Assert(err1, IsNil)

@@ -17,6 +17,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 var _ = Suite(testMockSuite{})
@@ -28,10 +29,9 @@ func (s testMockSuite) TestInterface(c *C) {
 	storage := newMockStorage()
 	storage.GetClient()
 	storage.UUID()
-	version, err := storage.CurrentVersion()
+	version, err := storage.CurrentVersion(oracle.GlobalTxnScope)
 	c.Check(err, IsNil)
-	snapshot, err := storage.GetSnapshot(version)
-	c.Check(err, IsNil)
+	snapshot := storage.GetSnapshot(version)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
 	snapshot.SetOption(Priority, PriorityNormal)
@@ -80,7 +80,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Assert(storage.Describe(), Equals, "KVMockStorage is a mock Store implementation, only for unittests in KV package")
 	c.Assert(storage.SupportDeleteRange(), IsFalse)
 
-	status, err := storage.ShowStatus(nil, "")
+	status, err := storage.ShowStatus(context.Background(), "")
 	c.Assert(status, IsNil)
 	c.Assert(err, IsNil)
 

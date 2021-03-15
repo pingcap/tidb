@@ -120,6 +120,15 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	}
 }
 
+// NewTestKitWithSession returns a new *TestKit with a session.
+func NewTestKitWithSession(c *check.C, store kv.Storage, se session.Session) *TestKit {
+	return &TestKit{
+		c:     c,
+		store: store,
+		Se:    se,
+	}
+}
+
 // NewTestKitWithInit returns a new *TestKit and creates a session.
 func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
 	tk := NewTestKit(c, store)
@@ -138,7 +147,7 @@ func (tk *TestKit) GetConnectionID() {
 	}
 }
 
-// Exec executes a sql statement.
+// Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
@@ -222,6 +231,30 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+func containGloabl(rs *Result) bool {
+	partitionNameCol := 2
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][partitionNameCol], "global") {
+			return true
+		}
+	}
+	return false
+}
+
+// MustNoGlobalStats checks if there is no global stats.
+func (tk *TestKit) MustNoGlobalStats(table string) bool {
+	if containGloabl(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
+		return false
+	}
+	if containGloabl(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
+		return false
+	}
+	if containGloabl(tk.MustQuery("show stats_histograms where table_name like '" + table + "'")) {
+		return false
+	}
+	return true
+}
+
 // MustUseIndex checks if the result execution plan contains specific index(es).
 func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
@@ -296,7 +329,7 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	tk.c.Assert(err, check.NotNil)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
-	tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T'", originErr))
+	tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T': %v", originErr, originErr))
 	sqlErr := terror.ToSQLError(tErr)
 	tk.c.Assert(int(sqlErr.Code), check.Equals, errCode, check.Commentf("Assertion failed, origin err:\n  %v", sqlErr))
 }
@@ -310,7 +343,7 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.Comment
 // ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
 func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
 	sRows, err := session.ResultSetToStringSlice(ctx, tk.Se, rs)
-	tk.c.Check(err, check.IsNil, comment)
+	tk.c.Check(errors.ErrorStack(err), check.Equals, "", comment)
 	return &Result{rows: sRows, c: tk.c, comment: comment}
 }
 

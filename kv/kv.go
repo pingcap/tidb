@@ -15,9 +15,12 @@ package kv
 
 import (
 	"context"
+	"crypto/tls"
 	"sync"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -58,6 +61,18 @@ const (
 	SampleStep
 	// CommitHook is a callback function called right after the transaction gets committed
 	CommitHook
+	// EnableAsyncCommit indicates whether async commit is enabled
+	EnableAsyncCommit
+	// Enable1PC indicates whether one-phase commit is enabled
+	Enable1PC
+	// GuaranteeLinearizability indicates whether to guarantee linearizability at the cost of an extra tso request before prewrite
+	GuaranteeLinearizability
+	// TxnScope indicates which @@txn_scope this transaction will work with.
+	TxnScope
+	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
+	IsStalenessReadOnly
+	// MatchStoreLabels indicates the labels the store should be matched
+	MatchStoreLabels
 )
 
 // Priority value for transaction priority.
@@ -170,6 +185,7 @@ type MemBufferIterator interface {
 	HasValue() bool
 	Flags() KeyFlags
 	UpdateFlags(...FlagsOp)
+	Handle() MemKeyHandle
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
@@ -194,6 +210,11 @@ type MemBuffer interface {
 	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// UpdateFlags update the flags associated with key.
 	UpdateFlags(Key, ...FlagsOp)
+	// DeleteWithFlags delete key with the given KeyFlags
+	DeleteWithFlags(Key, ...FlagsOp) error
+
+	GetKeyByHandle(MemKeyHandle) []byte
+	GetValueByHandle(MemKeyHandle) ([]byte, bool)
 
 	// Reset reset the MemBuffer to initial states.
 	Reset()
@@ -249,6 +270,8 @@ type Transaction interface {
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
+	// GetOption returns the option
+	GetOption(opt Option) interface{}
 	// DelOption deletes an option.
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
@@ -273,6 +296,12 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
+	// CacheIndexName caches the index name.
+	// PresumeKeyNotExists will use this to help decode error message.
+	CacheTableInfo(id int64, info *model.TableInfo)
+	// GetIndexName returns the cached index name.
+	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
+	GetTableInfo(id int64) *model.TableInfo
 }
 
 // LockCtx contains information for LockKeys method.
@@ -300,7 +329,7 @@ type ReturnedValue struct {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker) Response
+	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -390,6 +419,12 @@ type Request struct {
 	BatchCop bool
 	// TaskID is an unique ID for an execution of a statement
 	TaskID uint64
+	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
+	TiDBServerID uint64
+	// IsStaleness indicates whether the request read staleness data
+	IsStaleness bool
+	// MatchStoreLabels indicates the labels the store should be matched
+	MatchStoreLabels []*metapb.StoreLabel
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -439,24 +474,51 @@ type Driver interface {
 	Open(path string) (Storage, error)
 }
 
+// TransactionOption indicates the option when beginning a transaction
+type TransactionOption struct {
+	TxnScope string
+	StartTS  *uint64
+	PrevSec  *uint64
+}
+
+// SetStartTs set startTS
+func (to TransactionOption) SetStartTs(startTS uint64) TransactionOption {
+	to.StartTS = &startTS
+	return to
+}
+
+// SetPrevSec set prevSec
+func (to TransactionOption) SetPrevSec(prevSec uint64) TransactionOption {
+	to.PrevSec = &prevSec
+	return to
+}
+
+// SetTxnScope set txnScope
+func (to TransactionOption) SetTxnScope(txnScope string) TransactionOption {
+	to.TxnScope = txnScope
+	return to
+}
+
 // Storage defines the interface for storage.
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
-	// Begin transaction
+	// Begin a global transaction
 	Begin() (Transaction, error)
-	// BeginWithStartTS begins transaction with startTS.
-	BeginWithStartTS(startTS uint64) (Transaction, error)
+	// Begin a transaction with given option
+	BeginWithOption(option TransactionOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-	GetSnapshot(ver Version) (Snapshot, error)
+	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
+	// GetMPPClient gets a mpp client instance.
+	GetMPPClient() MPPClient
 	// Close store
 	Close() error
 	// UUID return a unique ID which represents a Storage.
 	UUID() string
-	// CurrentVersion returns current max committed version.
-	CurrentVersion() (Version, error)
+	// CurrentVersion returns current max committed version with the given txnScope (local or global).
+	CurrentVersion(txnScope string) (Version, error)
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
@@ -467,6 +529,15 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
+	// GetMemCache return memory manager of the storage.
+	GetMemCache() MemManager
+}
+
+// EtcdBackend is used for judging a storage is a real TiKV.
+type EtcdBackend interface {
+	EtcdAddrs() ([]string, error)
+	TLSConfig() *tls.Config
+	StartGCWorker() error
 }
 
 // FnKeyCmp is the function for iterator the keys

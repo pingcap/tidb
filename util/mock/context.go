@@ -20,11 +20,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -56,14 +58,41 @@ func (txn *wrapTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
 }
 
+// GetUnionStore implements GetUnionStore
+func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
+	if txn.Transaction == nil {
+		return nil
+	}
+	return txn.Transaction.GetUnionStore()
+}
+
+func (txn *wrapTxn) CacheTableInfo(id int64, info *model.TableInfo) {
+	if txn.Transaction == nil {
+		return
+	}
+	txn.Transaction.CacheTableInfo(id, info)
+}
+
+func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
+	if txn.Transaction == nil {
+		return nil
+	}
+	return txn.Transaction.GetTableInfo(id)
+}
+
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Support.")
+	return nil, errors.Errorf("Not Supported.")
+}
+
+// ExecuteStmt implements sqlexec.SQLExecutor ExecuteStmt interface.
+func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	return nil, errors.Errorf("Not Supported.")
 }
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
-func (c *Context) ExecuteInternal(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Support.")
+func (c *Context) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+	return nil, errors.Errorf("Not Supported.")
 }
 
 type mockDDLOwnerChecker struct{}
@@ -112,6 +141,14 @@ func (c *Context) GetClient() kv.Client {
 		return nil
 	}
 	return c.Store.GetClient()
+}
+
+// GetMPPClient implements sessionctx.Context GetMPPClient interface.
+func (c *Context) GetMPPClient() kv.MPPClient {
+	if c.Store == nil {
+		return nil
+	}
+	return c.Store.GetMPPClient()
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
@@ -174,13 +211,18 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithStartTS(startTS)
+		txn, err := c.Store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(oracle.GlobalTxnScope).SetStartTs(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		c.txn.Transaction = txn
 	}
 	return nil
+}
+
+// NewTxnWithStalenessOption implements the sessionctx.Context interface.
+func (c *Context) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
+	return c.NewTxn(ctx)
 }
 
 // GetStore gets the store of session.
@@ -211,6 +253,9 @@ func (c *Context) GoCtx() context.Context {
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
+// StoreIndexUsage strores the index usage information.
+func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
+
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit() {}
 
@@ -221,10 +266,6 @@ func (c *Context) StmtRollback() {
 // StmtGetMutation implements the sessionctx.Context interface.
 func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return nil
-}
-
-// StmtAddDirtyTableOP implements the sessionctx.Context interface.
-func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle kv.Handle) {
 }
 
 // AddTableLock implements the sessionctx.Context interface.

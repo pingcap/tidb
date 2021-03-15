@@ -49,15 +49,15 @@ func (s *testSuite1) TestExplainPrivileges(c *C) {
 
 	tk1.MustExec("use explaindatabase")
 	tk1.MustQuery("select * from v")
-	err = tk1.ExecToErr("explain select * from v")
+	err = tk1.ExecToErr("explain format = 'brief' select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrViewNoExplain.Error())
 
 	tk.MustExec(`grant show view on explaindatabase.v to 'explain'@'%'`)
-	tk1.MustQuery("explain select * from v")
+	tk1.MustQuery("explain format = 'brief' select * from v")
 
 	tk.MustExec(`revoke select on explaindatabase.v from 'explain'@'%'`)
 
-	err = tk1.ExecToErr("explain select * from v")
+	err = tk1.ExecToErr("explain format = 'brief' select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error())
 }
 
@@ -70,10 +70,10 @@ func (s *testSuite1) TestExplainCartesianJoin(c *C) {
 		sql             string
 		isCartesianJoin bool
 	}{
-		{"explain select * from t t1, t t2", true},
-		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v)", true},
-		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2))", true},
-		{"explain select * from t t1, t t2 where t1.v = t2.v", false},
+		{"explain format = 'brief' select * from t t1, t t2", true},
+		{"explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v)", true},
+		{"explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2))", true},
+		{"explain format = 'brief' select * from t t1, t t2 where t1.v = t2.v", false},
 	}
 	for _, ca := range cases {
 		rows := tk.MustQuery(ca.sql).Rows()
@@ -93,14 +93,15 @@ func (s *testSuite1) TestExplainWrite(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
-	tk.MustExec("explain analyze insert into t select 1")
+	tk.MustQuery("explain analyze insert into t select 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
-	tk.MustExec("explain analyze update t set a=2 where a=1")
+	tk.MustQuery("explain analyze update t set a=2 where a=1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
-	tk.MustExec("explain insert into t select 1")
+	tk.MustQuery("explain format = 'brief' insert into t select 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
-	tk.MustExec("explain analyze insert into t select 1")
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("explain analyze insert into t select 1")
+	tk.MustQuery("explain analyze replace into t values (3)")
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1", "2", "3"))
 }
 
 func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
@@ -256,5 +257,72 @@ func (s *testSuite2) checkActRowsNotEmpty(c *C, tk *testkit.TestKit, sql string)
 		}
 
 		c.Assert(strs[actRowsCol], Not(Equals), "")
+	}
+}
+
+func checkActRows(c *C, tk *testkit.TestKit, sql string, expected []string) {
+	actRowsCol := 2
+	rows := tk.MustQuery("explain analyze " + sql).Rows()
+	c.Assert(len(rows), Equals, len(expected))
+	for id, row := range rows {
+		strs := make([]string, len(row))
+		for i, c := range row {
+			strs[i] = c.(string)
+		}
+
+		c.Assert(strs[actRowsCol], Equals, expected[id])
+	}
+}
+
+func (s *testSuite1) TestCheckActRowsWithUnistore(c *C) {
+	// testSuite1 use default mockstore which is unistore
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t_unistore_act_rows")
+	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
+	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
+	tk.MustExec("analyze table t_unistore_act_rows")
+
+	type testStruct struct {
+		sql      string
+		expected []string
+	}
+
+	tests := []testStruct{
+		{
+			sql:      "select * from t_unistore_act_rows",
+			expected: []string{"4", "4"},
+		},
+		{
+			sql:      "select * from t_unistore_act_rows where a > 1",
+			expected: []string{"2", "2"},
+		},
+		{
+			sql:      "select * from t_unistore_act_rows where a > 1 and b > 0",
+			expected: []string{"1", "1", "2"},
+		},
+		{
+			sql:      "select b from t_unistore_act_rows",
+			expected: []string{"4", "4"},
+		},
+		{
+			sql:      "select * from t_unistore_act_rows where b > 0",
+			expected: []string{"1", "1", "4"},
+		},
+		{
+			sql:      "select count(*) from t_unistore_act_rows",
+			expected: []string{"1", "1", "1", "4"},
+		},
+		{
+			sql:      "select count(*) from t_unistore_act_rows group by a",
+			expected: []string{"2", "2", "2", "4"},
+		},
+		{
+			sql:      "select count(*) from t_unistore_act_rows group by b",
+			expected: []string{"2", "2", "2", "4"},
+		},
+	}
+
+	for _, test := range tests {
+		checkActRows(c, tk, test.sql, test.expected)
 	}
 }

@@ -38,7 +38,6 @@ func interestingGoroutines() (gs []string) {
 		"check.(*suiteRunner).runFunc",
 		"check.(*suiteRunner).parallelRun",
 		"localstore.(*dbStore).scheduler",
-		"tikv.(*noGCHandler).Start",
 		"ddl.(*ddl).start",
 		"ddl.(*delRange).startEmulator",
 		"domain.NewDomain",
@@ -51,6 +50,7 @@ func interestingGoroutines() (gs []string) {
 		"interestingGoroutines",
 		"runtime.MHeap_Scavenger",
 		"created by os/signal.init",
+		"gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun",
 		// these go routines are async terminated, so they may still alive after test end, thus cause
 		// false positive leak failures
 		"google.golang.org/grpc.(*addrConn).resetTransport",
@@ -61,7 +61,7 @@ func interestingGoroutines() (gs []string) {
 		"go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop",
 		"go.etcd.io/etcd/v3/pkg/logutil.(*MergeLogger).outputLoop",
 		"oracles.(*pdOracle).updateTS",
-		"tikv.(*tikvStore).runSafePointChecker",
+		"tikv.(*KVStore).runSafePointChecker",
 		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
 		"github.com/pingcap/badger",
 		"github.com/ngaut/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop",

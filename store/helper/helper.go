@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
@@ -43,14 +44,43 @@ import (
 	"go.uber.org/zap"
 )
 
+// Storage represents a storage that connects TiKV.
+// Methods copied from kv.Storage and tikv.Storage due to limitation of go1.13.
+type Storage interface {
+	Begin() (kv.Transaction, error)
+	BeginWithOption(option kv.TransactionOption) (kv.Transaction, error)
+	GetSnapshot(ver kv.Version) kv.Snapshot
+	GetClient() kv.Client
+	GetMPPClient() kv.MPPClient
+	Close() error
+	UUID() string
+	CurrentVersion(txnScope string) (kv.Version, error)
+	CurrentTimestamp(txnScop string) (uint64, error)
+	GetOracle() oracle.Oracle
+	SupportDeleteRange() (supported bool)
+	Name() string
+	Describe() string
+	ShowStatus(ctx context.Context, key string) (interface{}, error)
+	GetMemCache() kv.MemManager
+	GetRegionCache() *tikv.RegionCache
+	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
+	GetLockResolver() *tikv.LockResolver
+	GetSafePointKV() tikv.SafePointKV
+	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
+	SetOracle(oracle oracle.Oracle)
+	SetTiKVClient(client tikv.Client)
+	GetTiKVClient() tikv.Client
+	Closed() <-chan struct{}
+}
+
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
 type Helper struct {
-	Store       tikv.Storage
+	Store       Storage
 	RegionCache *tikv.RegionCache
 }
 
-// NewHelper get a Helper from Storage
-func NewHelper(store tikv.Storage) *Helper {
+// NewHelper gets a Helper from Storage
+func NewHelper(store Storage) *Helper {
 	return &Helper{
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
@@ -118,7 +148,7 @@ func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) ([]HotTabl
 
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
@@ -204,6 +234,7 @@ type HotTableIndex struct {
 func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
+		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {
@@ -571,6 +602,22 @@ func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 	}
 }
 
+func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitionID int64) tableInfoWithKeyRange {
+	sk, ek := tablecodec.GetTableHandleKeyRange(partitionID)
+	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	return tableInfoWithKeyRange{
+		&TableInfo{
+			DB:      db,
+			Table:   table,
+			IsIndex: false,
+			Index:   nil,
+		},
+		startKey,
+		endKey,
+	}
+}
+
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
@@ -586,7 +633,13 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.
 	tables := []tableInfoWithKeyRange{}
 	for _, db := range schemas {
 		for _, table := range db.Tables {
-			tables = append(tables, newTableWithKeyRange(db, table))
+			if table.Partition != nil {
+				for _, partition := range table.Partition.Definitions {
+					tables = append(tables, newPartitionTableWithKeyRange(db, table, partition.ID))
+				}
+			} else {
+				tables = append(tables, newTableWithKeyRange(db, table))
+			}
 			for _, index := range table.Indices {
 				tables = append(tables, newIndexWithKeyRange(db, table, index))
 			}
@@ -638,7 +691,7 @@ func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
 
 // request PD API, decode the response body into res
 func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) error {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return errors.WithStack(errors.New("not implemented"))
 	}
@@ -724,7 +777,7 @@ type StoreDetailStat struct {
 
 // GetStoresStat gets the TiKV store information by accessing PD's api.
 func (h *Helper) GetStoresStat() (*StoresStat, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
@@ -759,7 +812,7 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 
 // GetPDAddr return the PD Address.
 func (h *Helper) GetPDAddr() ([]string, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}

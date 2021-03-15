@@ -15,6 +15,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -216,9 +217,9 @@ func (p PhysicalShuffle) Init(ctx sessionctx.Context, stats *property.StatsInfo,
 	return &p
 }
 
-// Init initializes PhysicalShuffleDataSourceStub.
-func (p PhysicalShuffleDataSourceStub) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleDataSourceStub {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffleDataSourceStub, &p, offset)
+// Init initializes PhysicalShuffleReceiverStub.
+func (p PhysicalShuffleReceiverStub) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleReceiverStub {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffleReceiver, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -239,6 +240,12 @@ func (p Delete) Init(ctx sessionctx.Context) *Delete {
 // Init initializes Insert.
 func (p Insert) Init(ctx sessionctx.Context) *Insert {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeInsert, 0)
+	return &p
+}
+
+// Init initializes LoadData.
+func (p LoadData) Init(ctx sessionctx.Context) *LoadData {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeLoadData, 0)
 	return &p
 }
 
@@ -316,16 +323,6 @@ func (p PhysicalHashJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
-}
-
-// Init initializes BatchPointGetPlan.
-func (p PhysicalBroadCastJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalBroadCastJoin {
-	tp := plancodec.TypeBroadcastJoin
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, tp, &p, offset)
-	p.childrenReqProps = props
-	p.stats = stats
-	return &p
-
 }
 
 // Init initializes PhysicalMergeJoin.
@@ -422,7 +419,29 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
+		if p.StoreType == kv.TiFlash && !p.GetTableScan().KeepOrder {
+			// When allow batch cop is 1, only agg / topN uses batch cop.
+			// When allow batch cop is 2, every query uses batch cop.
+			switch ctx.GetSessionVars().AllowBatchCop {
+			case 1:
+				for _, plan := range p.TablePlans {
+					switch plan.(type) {
+					case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
+						p.BatchCop = true
+					}
+				}
+			case 2:
+				p.BatchCop = true
+			}
+		}
 	}
+	return &p
+}
+
+// Init initializes PhysicalTableSample.
+func (p PhysicalTableSample) Init(ctx sessionctx.Context, offset int) *PhysicalTableSample {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableSample, &p, offset)
+	p.stats = &property.StatsInfo{RowCount: 1}
 	return &p
 }
 
@@ -474,6 +493,20 @@ func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, of
 	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.stats = stats
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
+	return &p
+}
+
+// Init only assigns type and context.
+func (p PhysicalExchangeSender) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalExchangeSender {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeExchangeSender, 0)
+	p.stats = stats
+	return &p
+}
+
+// Init only assigns type and context.
+func (p PhysicalExchangeReceiver) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalExchangeReceiver {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeExchangeReceiver, 0)
+	p.stats = stats
 	return &p
 }
 

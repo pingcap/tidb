@@ -14,13 +14,15 @@
 package cophandler
 
 import (
+	"bytes"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/juju/errors"
 	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/badger/y"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/twmb/murmur3"
 	"golang.org/x/net/context"
 )
 
@@ -62,8 +65,10 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 		resp, err = handleAnalyzeIndexReq(dbReader, ranges, analyzeReq, req.StartTs)
 	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeCommonHandle {
 		resp, err = handleAnalyzeCommonHandleReq(dbReader, ranges, analyzeReq, req.StartTs)
-	} else {
+	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeColumn {
 		resp, err = handleAnalyzeColumnsReq(dbReader, ranges, analyzeReq, req.StartTs)
+	} else {
+		resp, err = handleAnalyzeMixedReq(dbReader, ranges, analyzeReq, req.StartTs)
 	}
 	if err != nil {
 		resp = &coprocessor.Response{
@@ -74,9 +79,17 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 }
 
 func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+	statsVer := int32(statistics.Version1)
+	if analyzeReq.IdxReq.Version != nil {
+		statsVer = *analyzeReq.IdxReq.Version
+	}
 	processor := &analyzeIndexProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
+		statsVer:     statsVer,
+	}
+	if analyzeReq.IdxReq.TopNSize != nil {
+		processor.topNCount = *analyzeReq.IdxReq.TopNSize
 	}
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
@@ -87,10 +100,32 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 			return nil, err
 		}
 	}
+	if statsVer == statistics.Version2 {
+		if processor.topNCurValuePair.Count != 0 {
+			processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
+		}
+		sort.Slice(processor.topNValuePairs, func(i, j int) bool {
+			if processor.topNValuePairs[i].Count > processor.topNValuePairs[j].Count {
+				return true
+			} else if processor.topNValuePairs[i].Count < processor.topNValuePairs[j].Count {
+				return false
+			}
+			return bytes.Compare(processor.topNValuePairs[i].Encoded, processor.topNValuePairs[j].Encoded) < 0
+		})
+		if len(processor.topNValuePairs) > int(processor.topNCount) {
+			processor.topNValuePairs = processor.topNValuePairs[:processor.topNCount]
+		}
+	}
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {
-		cm = statistics.CMSketchToProto(processor.cms)
+		if statsVer == statistics.Version2 {
+			for _, valueCnt := range processor.topNValuePairs {
+				h1, h2 := murmur3.Sum128(valueCnt.Encoded)
+				processor.cms.SubValue(h1, h2, valueCnt.Count)
+			}
+		}
+		cm = statistics.CMSketchToProto(processor.cms, &statistics.TopN{TopN: processor.topNValuePairs})
 	}
 	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {
@@ -100,9 +135,13 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 }
 
 func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+	statsVer := statistics.Version1
+	if analyzeReq.IdxReq.Version != nil {
+		statsVer = int(*analyzeReq.IdxReq.Version)
+	}
 	processor := &analyzeCommonHandleProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), statsVer),
 	}
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
@@ -116,7 +155,7 @@ func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRang
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {
-		cm = statistics.CMSketchToProto(processor.cms)
+		cm = statistics.CMSketchToProto(processor.cms, nil)
 	}
 	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {
@@ -132,18 +171,35 @@ type analyzeIndexProcessor struct {
 	statsBuilder *statistics.SortedBuilder
 	cms          *statistics.CMSketch
 	rowBuf       []byte
+
+	statsVer         int32
+	topNCount        int32
+	topNValuePairs   []statistics.TopNMeta
+	topNCurValuePair statistics.TopNMeta
 }
 
-func (p *analyzeIndexProcessor) Process(key, value []byte) error {
+func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
 	values, _, err := tablecodec.CutIndexKeyNew(key, p.colLen)
 	if err != nil {
 		return err
 	}
 	p.rowBuf = p.rowBuf[:0]
+
 	for _, val := range values {
 		p.rowBuf = append(p.rowBuf, val...)
 		if p.cms != nil {
 			p.cms.InsertBytes(p.rowBuf)
+		}
+	}
+	if p.statsVer == statistics.Version2 {
+		if bytes.Equal(p.topNCurValuePair.Encoded, p.rowBuf) {
+			p.topNCurValuePair.Count++
+		} else {
+			if p.topNCurValuePair.Count > 0 {
+				p.topNValuePairs = append(p.topNValuePairs, p.topNCurValuePair)
+			}
+			p.topNCurValuePair.Encoded = safeCopy(p.rowBuf)
+			p.topNCurValuePair.Count = 1
 		}
 	}
 	rowData := safeCopy(p.rowBuf)
@@ -199,7 +255,7 @@ type analyzeColumnsExec struct {
 	fields  []*ast.ResultField
 }
 
-func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+func buildBaseAnalyzeColumnsExec(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*analyzeColumnsExec, *statistics.SampleBuilder, int64, error) {
 	sc := flagsToStatementContext(analyzeReq.Flags)
 	sc.TimeZone = time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
 	evalCtx := &evalContext{sc: sc}
@@ -208,9 +264,9 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, an
 	if len(analyzeReq.ColReq.PrimaryColumnIds) > 0 {
 		evalCtx.primaryCols = analyzeReq.ColReq.PrimaryColumnIds
 	}
-	decoder, err := evalCtx.newRowDecoder()
+	decoder, err := newRowDecoder(evalCtx.columnInfos, evalCtx.fieldTps, evalCtx.primaryCols, evalCtx.sc.TimeZone)
 	if err != nil {
-		return nil, err
+		return nil, nil, -1, err
 	}
 	e := &analyzeColumnsExec{
 		reader:  dbReader,
@@ -250,7 +306,6 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, an
 	colReq := analyzeReq.ColReq
 	builder := statistics.SampleBuilder{
 		Sc:              sc,
-		RecordSet:       e,
 		ColLen:          numCols,
 		MaxBucketSize:   colReq.BucketSize,
 		MaxFMSketchSize: colReq.SketchSize,
@@ -258,13 +313,26 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, an
 		Collators:       collators,
 		ColsFieldType:   fts,
 	}
+	statsVer := statistics.Version1
+	if analyzeReq.ColReq.Version != nil {
+		statsVer = int(*analyzeReq.ColReq.Version)
+	}
 	if pkID != -1 {
-		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob))
+		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob), statsVer)
 	}
 	if colReq.CmsketchWidth != nil && colReq.CmsketchDepth != nil {
 		builder.CMSketchWidth = *colReq.CmsketchWidth
 		builder.CMSketchDepth = *colReq.CmsketchDepth
 	}
+	return e, &builder, pkID, nil
+}
+
+func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+	recordSet, builder, pkID, err := buildBaseAnalyzeColumnsExec(dbReader, rans, analyzeReq, startTS)
+	if err != nil {
+		return nil, err
+	}
+	builder.RecordSet = recordSet
 	collectors, pkBuilder, err := builder.CollectColumnStats()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -348,5 +416,144 @@ func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
 
 // Close implements the sqlexec.RecordSet Close interface.
 func (e *analyzeColumnsExec) Close() error {
+	return nil
+}
+
+func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+	statsVer := int32(statistics.Version1)
+	if analyzeReq.IdxReq.Version != nil {
+		statsVer = *analyzeReq.IdxReq.Version
+	}
+	colExec, builder, _, err := buildBaseAnalyzeColumnsExec(dbReader, rans, analyzeReq, startTS)
+	if err != nil {
+		return nil, err
+	}
+	e := &analyzeMixedExec{
+		analyzeColumnsExec: *colExec,
+		colLen:             int(analyzeReq.IdxReq.NumColumns),
+		statsBuilder:       statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
+		statsVer:           statsVer,
+	}
+	builder.RecordSet = e
+	if analyzeReq.IdxReq.TopNSize != nil {
+		e.topNCount = *analyzeReq.IdxReq.TopNSize
+	}
+	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
+		e.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
+	}
+	collectors, _, err := builder.CollectColumnStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// columns
+	colResp := &tipb.AnalyzeColumnsResp{}
+	for _, c := range collectors {
+		colResp.Collectors = append(colResp.Collectors, statistics.SampleCollectorToProto(c))
+	}
+	// common handle
+	if statsVer == statistics.Version2 {
+		if e.topNCurValuePair.Count != 0 {
+			e.topNValuePairs = append(e.topNValuePairs, e.topNCurValuePair)
+		}
+		sort.Slice(e.topNValuePairs, func(i, j int) bool {
+			if e.topNValuePairs[i].Count > e.topNValuePairs[j].Count {
+				return true
+			} else if e.topNValuePairs[i].Count < e.topNValuePairs[j].Count {
+				return false
+			}
+			return bytes.Compare(e.topNValuePairs[i].Encoded, e.topNValuePairs[j].Encoded) < 0
+		})
+		if len(e.topNValuePairs) > int(e.topNCount) {
+			e.topNValuePairs = e.topNValuePairs[:e.topNCount]
+		}
+	}
+	hg := statistics.HistogramToProto(e.statsBuilder.Hist())
+	var cm *tipb.CMSketch
+	if e.cms != nil {
+		if statsVer == statistics.Version2 {
+			for _, valueCnt := range e.topNValuePairs {
+				h1, h2 := murmur3.Sum128(valueCnt.Encoded)
+				e.cms.SubValue(h1, h2, valueCnt.Count)
+			}
+		}
+		cm = statistics.CMSketchToProto(e.cms, &statistics.TopN{TopN: e.topNValuePairs})
+	}
+	commonHandleResp := &tipb.AnalyzeIndexResp{Hist: hg, Cms: cm}
+	resp := &tipb.AnalyzeMixedResp{
+		ColumnsResp: colResp,
+		IndexResp:   commonHandleResp,
+	}
+	data, err := proto.Marshal(resp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &coprocessor.Response{Data: data}, nil
+}
+
+type analyzeMixedExec struct {
+	analyzeColumnsExec
+
+	colLen       int
+	statsBuilder *statistics.SortedBuilder
+	cms          *statistics.CMSketch
+	rowBuf       []byte
+
+	statsVer         int32
+	topNCount        int32
+	topNValuePairs   []statistics.TopNMeta
+	topNCurValuePair statistics.TopNMeta
+}
+
+func (e *analyzeMixedExec) Process(key, value []byte) error {
+	// common handle
+	values, _, err := tablecodec.CutCommonHandle(key, e.colLen)
+	if err != nil {
+		return err
+	}
+	e.rowBuf = e.rowBuf[:0]
+	for _, val := range values {
+		e.rowBuf = append(e.rowBuf, val...)
+		if e.cms != nil {
+			e.cms.InsertBytes(e.rowBuf)
+		}
+	}
+	if e.statsVer == statistics.Version2 {
+		if bytes.Equal(e.topNCurValuePair.Encoded, e.rowBuf) {
+			e.topNCurValuePair.Count++
+		} else {
+			if e.topNCurValuePair.Count > 0 {
+				e.topNValuePairs = append(e.topNValuePairs, e.topNCurValuePair)
+			}
+			e.topNCurValuePair.Encoded = safeCopy(e.rowBuf)
+			e.topNCurValuePair.Count = 1
+		}
+	}
+	rowData := safeCopy(e.rowBuf)
+	err = e.statsBuilder.Iterate(types.NewBytesDatum(rowData))
+	if err != nil {
+		return err
+	}
+
+	// columns
+	err = e.analyzeColumnsExec.Process(key, value)
+	return err
+}
+
+func (e *analyzeMixedExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	e.req = req
+	err := e.reader.Scan(e.seekKey, e.endKey, math.MaxInt64, e.startTS, e)
+	if err != nil {
+		return err
+	}
+	if req.NumRows() < req.Capacity() {
+		if e.curRan == len(e.ranges)-1 {
+			e.seekKey = e.endKey
+		} else {
+			e.curRan++
+			e.seekKey = e.ranges[e.curRan].StartKey
+			e.endKey = e.ranges[e.curRan].EndKey
+		}
+	}
 	return nil
 }
