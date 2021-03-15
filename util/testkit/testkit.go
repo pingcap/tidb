@@ -293,6 +293,7 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	return tk.query(false, sql, args)
 }
 
+// MustQueryWithFields query the statements and returns fields and result rows.
 func (tk *TestKit) MustQueryWithFields(sql string, args ...interface{}) *Result {
 	return tk.query(true, sql, args)
 }
