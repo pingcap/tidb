@@ -5292,6 +5292,8 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
 	tk.MustExec("set @@tidb_mem_quota_query=244;")
 	_, err = tk.Exec("delete t, t1 from t join t1 on t.a = t1.a")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 
 	tk.MustExec("set @@tidb_mem_quota_query=100000;")
 	tk.MustExec("truncate table t")
@@ -6431,27 +6433,18 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	tk.MustExec("insert into t1 partition(p0, p1) values(3, 'c'), (4, 'd')")
 	tk.MustQuery("select * from t1 partition(p1)").Check(testkit.Rows())
 
-	err := tk.ExecToErr("insert into t1 values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx_a'")
-
-	err = tk.ExecToErr("insert into t1 partition(p0, p_non_exist) values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
-
-	err = tk.ExecToErr("insert into t1 partition(p0, p1) values(40, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	tk.MustGetErrMsg("insert into t1 values(1, 'a')", "[kv:1062]Duplicate entry '1' for key 'idx_a'")
+	tk.MustGetErrMsg("insert into t1 partition(p0, p_non_exist) values(1, 'a')", "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+	tk.MustGetErrMsg("insert into t1 partition(p0, p1) values(40, 'a')", "[table:1748]Found a row not matching the given partition set")
 
 	// replace into
 	tk.MustExec("replace into t1 partition(p0) values(1, 'replace')")
 	tk.MustExec("replace into t1 partition(p0, p1) values(3, 'replace'), (4, 'replace')")
-
-	err = tk.ExecToErr("replace into t1 values(1, 'a')")
+	tk.MustExec("replace into t1 values(1, 'a')")
 	tk.MustQuery("select * from t1 partition (p0) order by a").Check(testkit.Rows("1 a", "2 b", "3 replace", "4 replace"))
 
-	err = tk.ExecToErr("replace into t1 partition(p0, p_non_exist) values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
-
-	err = tk.ExecToErr("replace into t1 partition(p0, p1) values(40, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	tk.MustGetErrMsg("replace into t1 partition(p0, p_non_exist) values(1, 'a')", "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+	tk.MustGetErrMsg("replace into t1 partition(p0, p1) values(40, 'a')", "[table:1748]Found a row not matching the given partition set")
 
 	tk.MustExec("truncate table t1")
 
@@ -6460,8 +6453,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	defer tk.MustExec("drop table if exists t")
 
 	// insert into general table
-	err = tk.ExecToErr("insert into t partition(p0, p1) values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[planner:1747]PARTITION () clause on non partitioned table")
+	tk.MustGetErrMsg("insert into t partition(p0, p1) values(1, 'a')", "[planner:1747]PARTITION () clause on non partitioned table")
 
 	// insert into from select
 	tk.MustExec("insert into t values(1, 'a'), (2, 'b')")
@@ -6474,14 +6466,9 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	tk.MustQuery("select * from t1 partition(p1) order by a").Check(testkit.Rows())
 	tk.MustQuery("select * from t1 partition(p0) order by a").Check(testkit.Rows("1 a", "2 b", "3 c", "4 d"))
 
-	err = tk.ExecToErr("insert into t1 select 1, 'a'")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx_a'")
-
-	err = tk.ExecToErr("insert into t1 partition(p0, p_non_exist) select 1, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
-
-	err = tk.ExecToErr("insert into t1 partition(p0, p1) select 40, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	tk.MustGetErrMsg("insert into t1 select 1, 'a'", "[kv:1062]Duplicate entry '1' for key 'idx_a'")
+	tk.MustGetErrMsg("insert into t1 partition(p0, p_non_exist) select 1, 'a'", "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+	tk.MustGetErrMsg("insert into t1 partition(p0, p1) select 40, 'a'", "[table:1748]Found a row not matching the given partition set")
 
 	// replace into from select
 	tk.MustExec("replace into t1 partition(p0) select 1, 'replace'")
@@ -6489,14 +6476,10 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	tk.MustExec("insert into t values(3, 'replace'), (4, 'replace')")
 	tk.MustExec("replace into t1 partition(p0, p1) select * from t")
 
-	err = tk.ExecToErr("replace into t1 values select 1, 'a'")
-	tk.MustQuery("select * from t1 partition (p0) order by a").Check(testkit.Rows("1 replace", "2 b", "3 replace", "4 replace"))
-
-	err = tk.ExecToErr("replace into t1 partition(p0, p_non_exist) select 1, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
-
-	err = tk.ExecToErr("replace into t1 partition(p0, p1) select 40, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	tk.MustExec("replace into t1 select 1, 'a'")
+	tk.MustQuery("select * from t1 partition (p0) order by a").Check(testkit.Rows("1 a", "2 b", "3 replace", "4 replace"))
+	tk.MustGetErrMsg("replace into t1 partition(p0, p_non_exist) select 1, 'a'", "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+	tk.MustGetErrMsg("replace into t1 partition(p0, p1) select 40, 'a'", "[table:1748]Found a row not matching the given partition set")
 }
 
 func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
@@ -7522,7 +7505,10 @@ func (s *testSuite) TestIssue15563(c *C) {
 	tk.MustQuery("select distinct 0.7544678906163867 /  0.68234634;").Check(testkit.Rows("1.10569639842486251190"))
 }
 
-func (s *testSuite) TestStalenessTransaction(c *C) {
+func (s *testSerialSuite) TestStalenessTransaction(c *C) {
+	defer func() {
+		config.GetGlobalConfig().Labels["zone"] = ""
+	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	testcases := []struct {
@@ -7533,6 +7519,7 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 		expectPhysicalTS int64
 		preSec           int64
 		txnScope         string
+		zone             string
 	}{
 		{
 			name:             "TimestampBoundExactStaleness",
@@ -7540,7 +7527,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1599321600000,
-			txnScope:         "sh",
+			txnScope:         "local",
+			zone:             "sh",
 		},
 		{
 			name:             "TimestampBoundReadTimestamp",
@@ -7548,7 +7536,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1599321600000,
-			txnScope:         "bj",
+			txnScope:         "local",
+			zone:             "bj",
 		},
 		{
 			name:        "TimestampBoundExactStaleness",
@@ -7556,7 +7545,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
 			IsStaleness: true,
 			preSec:      20,
-			txnScope:    "sh",
+			txnScope:    "local",
+			zone:        "sh",
 		},
 		{
 			name:        "TimestampBoundExactStaleness",
@@ -7564,7 +7554,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
 			IsStaleness: true,
 			preSec:      20,
-			txnScope:    "sz",
+			txnScope:    "local",
+			zone:        "sz",
 		},
 		{
 			name:        "begin",
@@ -7572,12 +7563,16 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:         "begin",
 			IsStaleness: false,
 			txnScope:    oracle.GlobalTxnScope,
+			zone:        "",
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		config.GetGlobalConfig().Labels = map[string]string{
+			"zone": testcase.zone,
+		}
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)

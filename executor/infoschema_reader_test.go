@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -727,18 +726,20 @@ func (sm *mockSessionManager) SetServerID(serverID uint64) {
 }
 
 type mockStore struct {
-	tikv.Storage
+	helper.Storage
 	host string
 }
 
 func (s *mockStore) EtcdAddrs() ([]string, error) { return []string{s.host}, nil }
 func (s *mockStore) TLSConfig() *tls.Config       { panic("not implemented") }
 func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
+func (s *mockStore) Name() string                 { return "mockStore" }
+func (s *mockStore) Describe() string             { return "" }
 
 func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	mockAddr := s.mockAddr
 	store := &mockStore{
-		s.store.(tikv.Storage),
+		s.store.(helper.Storage),
 		mockAddr,
 	}
 
@@ -811,7 +812,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	c.Assert(err.Error(), Equals, "pd unavailable")
 	mockAddr := s.mockAddr
 	store := &mockStore{
-		s.store.(tikv.Storage),
+		s.store.(helper.Storage),
 		mockAddr,
 	}
 

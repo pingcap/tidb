@@ -161,6 +161,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...DriverOption) (kv.St
 		KVStore:   s,
 		etcdAddrs: etcdAddrs,
 		tlsConfig: tlsConfig,
+		memCache:  kv.NewCacheDB(),
 		pdClient:  &pdClient,
 		enableGC:  !disableGC,
 	}
@@ -173,9 +174,20 @@ type tikvStore struct {
 	*tikv.KVStore
 	etcdAddrs []string
 	tlsConfig *tls.Config
+	memCache  kv.MemManager // this is used to query from memory
 	pdClient  pd.Client
 	enableGC  bool
 	gcWorker  *gcworker.GCWorker
+}
+
+// Name gets the name of the storage engine
+func (s *tikvStore) Name() string {
+	return "TiKV"
+}
+
+// Describe returns of brief introduction of the storage
+func (s *tikvStore) Describe() string {
+	return "TiKV is a distributed transactional key-value database"
 }
 
 var (
@@ -254,4 +266,9 @@ func (s *tikvStore) Close() error {
 		s.gcWorker.Close()
 	}
 	return s.KVStore.Close()
+}
+
+// GetMemCache return memory manager of the storage
+func (s *tikvStore) GetMemCache() kv.MemManager {
+	return s.memCache
 }

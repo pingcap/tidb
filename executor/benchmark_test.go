@@ -1528,10 +1528,8 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, 
 		innerJoinKeys = append(innerJoinKeys, innerCols[keyIdx])
 	}
 	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
-	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	for i := range outerJoinKeys {
 		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
-		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
 	defaultValues := make([]types.Datum, len(innerCols))
