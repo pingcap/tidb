@@ -1522,6 +1522,43 @@
           "            └─Selection 9960.06 cop[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2)), not(isnull(test.t.c3)), not(isnull(test.t.c5))",
           "              └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "desc format = 'brief' select * from t t1 join t t2 on t1.c1 + t1.c2 = t2.c2 / t2.c3",
+        "Plan": [
+          "Projection 12500.00 root  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5",
+          "└─TableReader 12500.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 12500.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 12500.00 cop[tiflash]  inner join, equal:[eq(Column#17, Column#14)]",
+          "      ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: Column#17",
+          "      │   └─Projection 10000.00 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, Column#13, cast(Column#13, decimal(17,9))->Column#17",
+          "      │     └─Projection 10000.00 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, plus(test.t.c1, test.t.c2)->Column#13",
+          "      │       └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─ExchangeReceiver(Probe) 10000.00 cop[tiflash]  ",
+          "        └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: Column#14",
+          "          └─Projection 10000.00 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, div(test.t.c2, test.t.c3)->Column#14",
+          "            └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select * from t t1 where exists (select * from t t2 where t1.c1 = t2.c2 and t1.c2 = t2.c3 and t1.c3 = t2.c1 and t1.c4 = t2.c3 and t1.c1 = t2.c5)",
+        "Plan": [
+          "Projection 7968.05 root  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5",
+          "└─TableReader 7968.05 root  data:ExchangeSender",
+          "  └─ExchangeSender 7968.05 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 7968.05 cop[tiflash]  semi join, equal:[eq(test.t.c1, test.t.c2) eq(Column#13, Column#14) eq(Column#15, Column#16) eq(test.t.c4, test.t.c3) eq(Column#17, test.t.c5)]",
+          "      ├─ExchangeReceiver(Build) 9960.06 cop[tiflash]  ",
+          "      │ └─ExchangeSender 9960.06 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.c2, Column#14, Column#16, test.t.c3, test.t.c5",
+          "      │   └─Projection 9960.06 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c5, cast(test.t.c3, decimal(10,5))->Column#14, cast(test.t.c1, decimal(10,5))->Column#16",
+          "      │     └─Selection 9960.06 cop[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2)), not(isnull(test.t.c3)), not(isnull(test.t.c5))",
+          "      │       └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      └─ExchangeReceiver(Probe) 9960.06 cop[tiflash]  ",
+          "        └─ExchangeSender 9960.06 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.c1, Column#13, Column#15, test.t.c4, Column#17",
+          "          └─Projection 9960.06 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, cast(test.t.c2, decimal(10,5))->Column#13, cast(test.t.c3, decimal(10,5))->Column#15, cast(test.t.c1, decimal(40,20))->Column#17",
+          "            └─Selection 9960.06 cop[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2)), not(isnull(test.t.c3)), not(isnull(test.t.c4))",
+          "              └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
