@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/server"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -289,11 +290,25 @@ func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
+	return tk.query(false, sql, args)
+}
+
+func (tk *TestKit) MustQueryWithFields(sql string, args ...interface{}) *Result {
+	return tk.query(true, sql, args)
+}
+
+func (tk *TestKit) query(withField bool, sql string, args ...interface{}) *Result {
 	comment := check.Commentf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
-	return tk.ResultSetToResult(rs, comment)
+	result := tk.ResultSetToResult(rs, comment)
+	if withField {
+		result.rows = append(result.rows, []string{})
+		copy(result.rows[1:], result.rows)
+		result.rows[0] = server.GetFieldsSlice(rs)
+	}
+	return result
 }
 
 // QueryToErr executes a sql statement and discard results.

@@ -421,3 +421,15 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	}
 	return
 }
+
+// GetFieldsSlice gets the fields of query, only used for test.
+func GetFieldsSlice(rs sqlexec.RecordSet) []string {
+	trs := tidbResultSet{recordSet: rs}
+	columns := trs.Columns()
+	nameSlice := make([]string, 0, len(columns))
+	for _, col := range columns {
+		nameSlice = append(nameSlice, col.Name)
+	}
+
+	return nameSlice
+}
