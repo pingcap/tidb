@@ -42,18 +42,14 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	_ kv.Snapshot = (*tikvSnapshot)(nil)
-)
-
 const (
 	scanBatchSize = 256
 	batchGetSize  = 5120
 	maxTimestamp  = math.MaxUint64
 )
 
-// tikvSnapshot implements the kv.Snapshot interface.
-type tikvSnapshot struct {
+// KVSnapshot implements the Snapshot interface.
+type KVSnapshot struct {
 	store           *KVStore
 	version         uint64
 	isolationLevel  kv.IsoLevel
@@ -89,13 +85,13 @@ type tikvSnapshot struct {
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
-func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *tikvSnapshot {
+func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnapshot {
 	// Sanity check for snapshot version.
 	if ts >= math.MaxInt64 && ts != math.MaxUint64 {
 		err := errors.Errorf("try to get snapshot with a large ts %d", ts)
 		panic(err)
 	}
-	return &tikvSnapshot{
+	return &KVSnapshot{
 		store:           store,
 		version:         ts,
 		priority:        pb.CommandPri_Normal,
@@ -105,7 +101,7 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *tikvSna
 	}
 }
 
-func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
+func (s *KVSnapshot) setSnapshotTS(ts uint64) {
 	// Sanity check for snapshot version.
 	if ts >= math.MaxInt64 && ts != math.MaxUint64 {
 		err := errors.Errorf("try to get snapshot with a large ts %d", ts)
@@ -122,7 +118,7 @@ func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
 
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
-func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (s *KVSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	// Check the cached value first.
 	m := make(map[string][]byte)
 	s.mu.RLock()
@@ -223,7 +219,7 @@ func appendBatchKeysBySize(b []batchKeys, region RegionVerID, keys [][]byte, siz
 	return b
 }
 
-func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
+func (s *KVSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
 	defer func(start time.Time) {
 		metrics.TxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
 	}(time.Now())
@@ -265,7 +261,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 	return errors.Trace(err)
 }
 
-func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
+func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
 	cli := NewClientHelper(s.store, s.resolvedLocks)
 	s.mu.RLock()
 	if s.mu.stats != nil {
@@ -373,7 +369,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 }
 
 // Get gets the value for key k from snapshot.
-func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+func (s *KVSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 
 	defer func(start time.Time) {
 		metrics.TxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
@@ -397,7 +393,7 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
-func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte, error) {
+func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte, error) {
 	// Check the cached values first.
 	s.mu.RLock()
 	if s.mu.cached != nil {
@@ -524,7 +520,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 	}
 }
 
-func (s *tikvSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
+func (s *KVSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if detail == nil || s.mu.stats == nil {
@@ -541,20 +537,20 @@ func (s *tikvSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
 }
 
 // Iter return a list of key-value pair after `k`.
-func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+func (s *KVSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	scanner, err := newScanner(s, k, upperBound, scanBatchSize, false)
 	return scanner, errors.Trace(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
+func (s *KVSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	scanner, err := newScanner(s, nil, k, scanBatchSize, true)
 	return scanner, errors.Trace(err)
 }
 
 // SetOption sets an option with a value, when val is nil, uses the default
 // value of this option. Only ReplicaRead is supported for snapshot
-func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
+func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
 	case option.IsolationLevel:
 		s.isolationLevel = val.(kv.IsoLevel)
@@ -596,7 +592,7 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 }
 
 // ClearFollowerRead disables follower read on current transaction
-func (s *tikvSnapshot) DelOption(opt int) {
+func (s *KVSnapshot) DelOption(opt int) {
 	switch opt {
 	case option.ReplicaRead:
 		s.mu.Lock()
@@ -610,23 +606,15 @@ func (s *tikvSnapshot) DelOption(opt int) {
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count.
-func SnapCacheHitCount(snap kv.Snapshot) int {
-	tikvSnap, ok := snap.(*tikvSnapshot)
-	if !ok {
-		return 0
-	}
-	return int(atomic.LoadInt64(&tikvSnap.mu.hitCnt))
+func SnapCacheHitCount(snap *KVSnapshot) int {
+	return int(atomic.LoadInt64(&snap.mu.hitCnt))
 }
 
 // SnapCacheSize gets the snapshot cache size.
-func SnapCacheSize(snap kv.Snapshot) int {
-	tikvSnap, ok := snap.(*tikvSnapshot)
-	if !ok {
-		return 0
-	}
-	tikvSnap.mu.RLock()
-	defer tikvSnap.mu.RLock()
-	return len(tikvSnap.mu.cached)
+func SnapCacheSize(snap *KVSnapshot) int {
+	snap.mu.RLock()
+	defer snap.mu.RLock()
+	return len(snap.mu.cached)
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
@@ -741,7 +729,7 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 	}
 }
 
-func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
+func (s *KVSnapshot) recordBackoffInfo(bo *Backoffer) {
 	s.mu.RLock()
 	if s.mu.stats == nil || bo.totalSleep == 0 {
 		s.mu.RUnlock()
@@ -766,7 +754,7 @@ func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
 	}
 }
 
-func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
+func (s *KVSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.mu.stats == nil {

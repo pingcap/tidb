@@ -225,7 +225,7 @@ func (s *testClusteredSuite) TestClusteredInsertIgnoreBatchGetKeyCount(c *C) {
 	tk.MustExec("insert ignore t values ('a', 1)")
 	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
-	snapSize := tikv.SnapCacheSize(txn.GetSnapshot())
+	snapSize := tikv.SnapCacheSize(txn.GetSnapshot().(*tikv.KVSnapshot))
 	c.Assert(snapSize, Equals, 1)
 	tk.MustExec("rollback")
 }
