@@ -545,7 +545,8 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("regionRequest.onSendFail", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		bo = bo.Clone()
+		// TODO: Make sure trace works without cloning the backoffer.
+		// bo = bo.Clone()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 	// If it failed because the context is cancelled by ourself, don't retry.
