@@ -290,12 +290,12 @@ func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
-	return tk.query(false, sql, args)
+	return tk.query(false, sql, args...)
 }
 
 // MustQueryWithFields query the statements and returns fields and result rows.
 func (tk *TestKit) MustQueryWithFields(sql string, args ...interface{}) *Result {
-	return tk.query(true, sql, args)
+	return tk.query(true, sql, args...)
 }
 
 func (tk *TestKit) query(withField bool, sql string, args ...interface{}) *Result {
