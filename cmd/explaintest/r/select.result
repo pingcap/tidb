@@ -399,7 +399,7 @@ drop table if exists s;
 create table s(a varchar(20), b varchar(20));
 explain format = 'brief' select a in (select a from s where s.b = t.b) from t;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		left outer semi join, equal:[eq(Column#8, Column#9)], other cond:eq(cast(test.t.a), cast(test.s.a))
+HashJoin	10000.00	root		left outer semi join, equal:[eq(Column#8, Column#9)], other cond:eq(cast(test.t.a, double BINARY), cast(test.s.a, double BINARY))
 ├─Projection(Build)	10000.00	root		test.s.a, cast(test.s.b, double BINARY)->Column#9
 │ └─TableReader	10000.00	root		data:TableFullScan
 │   └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
