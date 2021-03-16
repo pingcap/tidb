@@ -1425,10 +1425,10 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk.Se.GetSessionVars().InitChunkSize = 2
 	tk.Se.GetSessionVars().MaxChunkSize = 2
 	tk.MustExec("set @@tidb_index_join_batch_size=2")
-	tk.MustQuery("desc sformat = 'brief' select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
+	tk.MustQuery("desc format = 'brief' select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
 		"Sort 7.20 root  schema:[test.t.l_orderkey test.t.l_linenumber test.t.l_partkey test.t.l_suppkey], items:test.t.l_orderkey, test.t.l_linenumber",
-		"└─IndexHashJoin 7.20 root  semi join, inner:IndexLookUp_15, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
-		"  ├─TableReader(Build) 9.00 root  data:Selection_19",
+		"└─IndexHashJoin 7.20 root  semi join, inner:IndexLookUp, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"  ├─TableReader(Build) 9.00 root  data:Selection",
 		"  │ └─Selection 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
 		"  │   └─TableFullScan 9.00 cop[tikv] table:l1 keep order:false",
 		"  └─IndexLookUp(Probe) 3.00 root  ",
@@ -2229,10 +2229,10 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 		"Sort 12487.50 root  schema:[test.t.a test.t.a test.t.c], items:test.t.a, test.t.c",
 		"└─Projection 12487.50 root  test.t.a, test.t.a, test.t.c",
 		"  └─HashJoin 12487.50 root  inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
-		"    ├─TableReader(Build) 9990.00 root  data:Selection_16",
+		"    ├─TableReader(Build) 9990.00 root  data:Selection",
 		"    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
 		"    │   └─TableFullScan 10000.00 cop[tikv] table:T keep order:false, stats:pseudo",
-		"    └─TableReader(Probe) 9990.00 root  data:Selection_13",
+		"    └─TableReader(Probe) 9990.00 root  data:Selection",
 		"      └─Selection 9990.00 cop[tikv]  not(isnull(test.s.b))",
 		"        └─TableFullScan 10000.00 cop[tikv] table:S keep order:false, stats:pseudo"))
 }
