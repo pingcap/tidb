@@ -17,10 +17,12 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -43,7 +45,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-	case model.ActionAddTablePartition, model.ActionTruncateTablePartition:
+	case model.ActionAddTablePartition:
 		pruneMode := h.CurrentPruneMode()
 		if pruneMode == variable.Static {
 			for _, def := range t.PartInfo.Definitions {
@@ -52,13 +54,53 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				}
 			}
 		}
-		if pruneMode == variable.Dynamic {
-			// TODO: need trigger full analyze
-		}
-	case model.ActionDropTablePartition:
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		pruneMode := h.CurrentPruneMode()
-		if pruneMode == variable.Dynamic {
-			// TODO: need trigger full analyze
+		if pruneMode == variable.Static {
+			for _, def := range t.PartInfo.Definitions {
+				if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+					return err
+				}
+			}
+		} else {
+			// We need to merge the partition-level stats to global-stats when we truncate or drop table partition in dynamic mode.
+			tableID := t.TableInfo.ID
+			is := infoschema.GetInfoSchema(h.mu.ctx)
+			h.mu.Lock()
+			globalTable, ok := h.getTableByPhysicalID(is, tableID)
+			h.mu.Unlock()
+			if !ok {
+				err := errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", tableID)
+				return err
+			}
+			globalTableInfo := globalTable.Meta()
+			globalStats, err := h.TableStatsFromStorage(globalTableInfo, tableID, false, 0)
+			if err != nil {
+				return err
+			}
+			if globalStats != nil {
+				var opts map[ast.AnalyzeOptionType]uint64
+				// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats`.
+				for _, colID := range globalStats.Columns {
+					opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Columns[colID.ID].TopN.TopN))
+					opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalStats.Columns[colID.ID].Buckets))
+					break
+				}
+				h.MergePartitionStats2GlobalStats(h.mu.ctx, opts, infoschema.GetInfoSchema(h.mu.ctx), tableID, 0, 0)
+				for _, idx := range t.TableInfo.Indices {
+					opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Indices[idx.ID].TopN.TopN))
+					opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalStats.Indices[idx.ID].Buckets))
+					h.MergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tableID, 1, idx.ID)
+				}
+				if err := h.insertTableStats2KV(t.TableInfo, tableID); err != nil {
+					return err
+				}
+			}
+			for _, def := range t.PartInfo.Definitions {
+				if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil

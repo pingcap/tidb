@@ -1551,8 +1551,8 @@ partition by range (a) (
 	tk.MustExec("alter table t drop partition p2;")
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	globalStats = h.GetTableStats(tableInfo)
-	// The value of global.count will be updated the next time analyze.
-	c.Assert(globalStats.Count, Equals, int64(9))
+	// The value of global.count will be updated automatically after we drop or truncate the table partition.
+	c.Assert(globalStats.Count, Equals, int64(7))
 	c.Assert(globalStats.ModifyCount, Equals, int64(0))
 
 	tk.MustExec("analyze table t;")
@@ -1560,6 +1560,69 @@ partition by range (a) (
 	// global.count = p0.count(3) + p1.count(4)
 	// The value of global.Count is correct now.
 	c.Assert(globalStats.Count, Equals, int64(7))
+}
+
+func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (a int) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30),
+		partition p3 values less than (40),
+		partition p4 values less than (50),
+		partition p5 values less than (60)
+	)`)
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), " +
+		"(11), (21), (31), (41), (51)," +
+		"(12), (22), (32), (42), (52);")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	tk.MustExec("analyze table t")
+	c.Assert(len(tk.MustQuery("show stats_meta where table_name = 't';").Rows()), Equals, 7)
+	do := s.do
+	is := do.InfoSchema()
+	h := do.StatsHandle()
+	c.Assert(h.Update(is), IsNil)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	globalStats := h.GetTableStats(tableInfo)
+	c.Assert(globalStats.Count, Equals, int64(15))
+
+	tk.MustExec("alter table t drop partition p4, p5;")
+	is = s.do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(len(tk.MustQuery("show stats_meta where table_name = 't';").Rows()), Equals, 5)
+	globalStats = h.GetTableStats(tableInfo)
+	// The value of global.count will be updated automatically after we drop or truncate the table partition.
+	c.Assert(globalStats.Count, Equals, int64(11))
+	c.Assert(globalStats.ModifyCount, Equals, int64(0))
+
+	tk.MustExec("alter table t truncate partition p2, p3;")
+	is = s.do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	// Only delete the data from the partition p2 and p3. It will not delete the partition-stats.
+	c.Assert(len(tk.MustQuery("show stats_meta where table_name = 't';").Rows()), Equals, 5)
+	globalStats = h.GetTableStats(tableInfo)
+	// The value of global.count will be updated automatically after we drop or truncate the table partition.
+	c.Assert(globalStats.Count, Equals, int64(7))
+	c.Assert(globalStats.ModifyCount, Equals, int64(0))
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
