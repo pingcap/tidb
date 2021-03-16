@@ -707,6 +707,7 @@ var FeatureSwitchVariables = []string{
 	TiDBGuaranteeLinearizability,
 	TiDBEnableClusteredIndex,
 	TiDBTrackAggregateMemoryUsage,
+	TiDBAnalyzeVersion,
 	TiDBPartitionPruneMode,
 }
 
