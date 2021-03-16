@@ -710,7 +710,7 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	snap := txn.GetSnapshot()
-	c.Assert(tikv.SnapCacheHitCount(snap), Equals, 4)
+	c.Assert(snap.(*tikv.KVSnapshot).SnapCacheHitCount(), Equals, 4)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
 
@@ -761,22 +761,28 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 	// test COM_STMT_EXECUTE
 	ctx := context.Background()
-	tk.MustExec("set @@tidb_enable_tiflash_fallback_tikv=1")
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
 	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 	// test COM_STMT_FETCH (cursor mode)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	c.Assert(cc.handleStmtFetch(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), NotNil)
-	tk.MustExec("set @@tidb_enable_tiflash_fallback_tikv=0")
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"), IsNil)
 
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/fetchNextErr", "return(\"firstNext\")"), IsNil)
+	// test COM_STMT_EXECUTE (cursor mode)
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/fetchNextErr"), IsNil)
+
 	// test that TiDB would not retry if the first execution already sends data to client
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/secondNextErr", "return(true)"), IsNil)
-	tk.MustExec("set @@tidb_enable_tiflash_fallback_tikv=1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/fetchNextErr", "return(\"secondNext\")"), IsNil)
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
 	c.Assert(cc.handleQuery(ctx, "select * from t t1 join t t2 on t1.a = t2.a"), NotNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/secondNextErr"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/fetchNextErr"), IsNil)
 
 	// simple TiFlash query (unary + non-streaming)
 	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=0;")
@@ -809,9 +815,9 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 
 func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
 	ctx := context.Background()
-	tk.MustExec("set @@tidb_enable_tiflash_fallback_tikv=0")
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
 	c.Assert(tk.QueryToErr(sql), NotNil)
-	tk.MustExec("set @@tidb_enable_tiflash_fallback_tikv=1")
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
 
 	c.Assert(cc.handleQuery(ctx, sql), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))

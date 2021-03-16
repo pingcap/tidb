@@ -101,6 +101,18 @@ func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transacti
 	return newTiKVTxn(txn, err)
 }
 
+// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
+// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+func (s *mockStorage) GetSnapshot(ver kv.Version) kv.Snapshot {
+	return s.KVStore.GetSnapshot(ver.Ver)
+}
+
+// CurrentVersion returns current max committed version with the given txnScope (local or global).
+func (s *mockStorage) CurrentVersion(txnScope string) (kv.Version, error) {
+	ver, err := s.KVStore.CurrentTimestamp(txnScope)
+	return kv.NewVersion(ver), err
+}
+
 func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
 	if err != nil {
 		return nil, err
