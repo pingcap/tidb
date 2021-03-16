@@ -56,13 +56,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		}
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		pruneMode := h.CurrentPruneMode()
-		if pruneMode == variable.Static {
-			for _, def := range t.PartInfo.Definitions {
-				if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
-					return err
-				}
-			}
-		} else {
+		if pruneMode == variable.Dynamic {
 			// We need to merge the partition-level stats to global-stats when we truncate or drop table partition in dynamic mode.
 			tableID := t.TableInfo.ID
 			is := infoschema.GetInfoSchema(h.mu.ctx)
@@ -78,9 +72,10 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			if err != nil {
 				return err
 			}
+			// If we do not currently have global-stats, no new global-stats will be generated.
 			if globalStats != nil {
 				var opts map[ast.AnalyzeOptionType]uint64
-				// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats`.
+				// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
 				for _, colID := range globalStats.Columns {
 					opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Columns[colID.ID].TopN.TopN))
 					opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalStats.Columns[colID.ID].Buckets))
@@ -96,10 +91,11 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 					return err
 				}
 			}
-			for _, def := range t.PartInfo.Definitions {
-				if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
-					return err
-				}
+		}
+		// We should update the partition-stats in both static and dynamic mode.
+		for _, def := range t.PartInfo.Definitions {
+			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+				return err
 			}
 		}
 	}
