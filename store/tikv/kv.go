@@ -213,7 +213,7 @@ func (s *KVStore) beginWithExactStaleness(txnScope string, prevSec uint64) (*KVT
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 // if ts is MaxVersion or > current max committed version, we will use current version for this snapshot.
-func (s *KVStore) GetSnapshot(ts uint64) kv.Snapshot {
+func (s *KVStore) GetSnapshot(ts uint64) *KVSnapshot {
 	snapshot := newTiKVSnapshot(s, ts, s.nextReplicaReadSeed())
 	return snapshot
 }

@@ -47,7 +47,7 @@ type SchemaAmender interface {
 
 // KVTxn contains methods to interact with a TiKV transaction.
 type KVTxn struct {
-	snapshot  *tikvSnapshot
+	snapshot  *KVSnapshot
 	us        kv.UnionStore
 	store     *KVStore // for connection to region.
 	startTS   uint64
@@ -617,6 +617,6 @@ func (txn *KVTxn) GetMemBuffer() kv.MemBuffer {
 }
 
 // GetSnapshot returns the Snapshot binding to this transaction.
-func (txn *KVTxn) GetSnapshot() kv.Snapshot {
+func (txn *KVTxn) GetSnapshot() *KVSnapshot {
 	return txn.snapshot
 }
