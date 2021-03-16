@@ -1724,6 +1724,21 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 		}
 	}
 	c.Assert(foundS1 && foundS2, IsTrue)
+
+	// Check that table with NULLs won't cause panic
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values(1,null,2), (2,null,null)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"2 [1,2] 0.000000 1",
+		"2 [1,3] 1.000000 1",
+	))
+	tk.MustExec("insert into t values(3,3,3)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"2 [1,2] 1.000000 1",
+		"2 [1,3] 1.000000 1",
+	))
 }
 
 func (s *testStatsSuite) TestSyncStatsExtendedRemoval(c *C) {
