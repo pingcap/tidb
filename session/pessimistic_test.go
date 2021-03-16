@@ -2484,7 +2484,7 @@ func (s *testPessimisticSuite) TestAsyncCommitCalTSFail(c *C) {
 	c.Assert(tk.ExecToErr("commit"), NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/failCheckSchemaValid"), IsNil)
 
-	// The DDL should not be blocked.
+	// The lock should not be blocked.
 	tk2.MustExec("set innodb_lock_wait_timeout = 5")
 	tk2.MustExec("begin pessimistic")
 	tk2.MustExec("update tk set c2 = c2 + 1")
