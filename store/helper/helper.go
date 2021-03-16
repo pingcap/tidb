@@ -55,6 +55,7 @@ type Storage interface {
 	Close() error
 	UUID() string
 	CurrentVersion(txnScope string) (kv.Version, error)
+	CurrentTimestamp(txnScop string) (uint64, error)
 	GetOracle() oracle.Oracle
 	SupportDeleteRange() (supported bool)
 	Name() string

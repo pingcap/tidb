@@ -225,7 +225,10 @@ func (s *testClusteredSuite) TestClusteredInsertIgnoreBatchGetKeyCount(c *C) {
 	tk.MustExec("insert ignore t values ('a', 1)")
 	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
-	snapSize := tikv.SnapCacheSize(txn.GetSnapshot())
+	snapSize := 0
+	if t, ok := txn.GetSnapshot().(*tikv.KVSnapshot); ok {
+		snapSize = t.SnapCacheSize()
+	}
 	c.Assert(snapSize, Equals, 1)
 	tk.MustExec("rollback")
 }
@@ -435,6 +438,24 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 		assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", clustered)
 		assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] clustered */);", clustered)
 	}
+}
+
+func (s *testClusteredSerialSuite) TestPrefixClusteredIndexAddIndexAndRecover(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test;")
+	tk1.MustExec("drop table if exists t;")
+	defer func() {
+		tk1.MustExec("drop table if exists t;")
+	}()
+
+	tk1.MustExec("create table t(a char(3), b char(3), primary key(a(1)) clustered)")
+	tk1.MustExec("insert into t values ('aaa', 'bbb')")
+	tk1.MustExec("alter table t add index idx(b)")
+	tk1.MustQuery("select * from t use index(idx)").Check(testkit.Rows("aaa bbb"))
+	tk1.MustExec("admin check table t")
+	tk1.MustExec("admin recover index t idx")
+	tk1.MustQuery("select * from t use index(idx)").Check(testkit.Rows("aaa bbb"))
+	tk1.MustExec("admin check table t")
 }
 
 // https://github.com/pingcap/tidb/issues/23106
