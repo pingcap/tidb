@@ -70,6 +70,7 @@ The following system variables will be hidden:
 * variable.TiDBSlowLogThreshold,
 * variable.TiDBEnableCollectExecutionInfo,
 * variable.TiDBMemoryUsageAlarmRatio,
+* variable.TiDBRedactLog
 
 The following system variables will be reset to defaults:
 
@@ -183,7 +184,6 @@ We will need to consider the impact on tools. When SEM is disabled, no impact is
 ### Benchmark Tests
 
 No performance impact is expected.
-
 
 #### Documentation Plan
 
