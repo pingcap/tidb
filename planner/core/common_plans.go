@@ -187,26 +187,8 @@ type Execute struct {
 	Plan          Plan
 }
 
-func DumpPreparedStmts(label string, sctx sessionctx.Context) {
-
-	vars := sctx.GetSessionVars()
-	for k, v := range vars.PreparedStmts {
-		switch val := v.(type) {
-
-		case *CachedPrepareStmt:
-			if val.PreparedAst.CachedPlan != nil {
-				logutil.BgLogger().Info(fmt.Sprintf("[DEBUG] %s", label),
-					zap.Reflect("PreparedStmts.Key", fmt.Sprintf("%+v", k)),
-					zap.Reflect("PreparedStmts.PrepareAst.CachedPlan", fmt.Sprintf("%+v", val.PreparedAst.CachedPlan.(Plan))),
-				)
-			}
-		}
-	}
-}
-
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
-	DumpPreparedStmts("OptimizePreparedPlan", sctx)
 	vars := sctx.GetSessionVars()
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
@@ -234,7 +216,6 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			param.Datum = val
 			param.InExecute = true
 		}
-		DumpPreparedStmts("OptimizePreparedPlan.1", sctx)
 	} else {
 		// for `execute stmt using @a, @b, @c`, using value in e.UsingVars
 		if len(prepared.Params) != len(e.UsingVars) {
@@ -250,7 +231,6 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			param.Datum = val
 			param.InExecute = true
 			vars.PreparedParams = append(vars.PreparedParams, val)
-			DumpPreparedStmts("OptimizePreparedPlan.2", sctx)
 		}
 	}
 
@@ -269,7 +249,6 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
-	logutil.BgLogger().Info("[DEBUG]", zap.Reflect("preparedObj", fmt.Sprintf("%+v", preparedObj)))
 	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
@@ -312,17 +291,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		}
 	}
 	if prepared.CachedPlan != nil {
-		logutil.BgLogger().Info("[DEBUG] prepared.CachedPlan != nil")
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
 		// the expression in the where condition will not be evaluated,
 		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
 		names := prepared.CachedNames.(types.NameSlice)
-		logutil.BgLogger().Info("[DEBUG]",
-			zap.Reflect("plan", fmt.Sprintf("%+v", plan)),
-			zap.Reflect("names", fmt.Sprintf("%+v", names)),
-		)
 		err := e.rebuildRange(plan)
 		if err != nil {
 			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
@@ -343,7 +317,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		return nil
 	}
 	if prepared.UseCache {
-		logutil.BgLogger().Info("[DEBUG] prepared.UseCache")
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
@@ -389,7 +362,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
-	logutil.BgLogger().Info("[DEBUG] REBUILD")
 	stmt := TryAddExtraLimit(sctx, prepared.Stmt)
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
@@ -402,7 +374,6 @@ REBUILD:
 	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
-	logutil.BgLogger().Info("[DEBUG] prepared", zap.Reflect("UseCache", prepared.UseCache))
 	if !isTableDual && prepared.UseCache && !stmtCtx.OptimDependOnMutableConst {
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
@@ -425,7 +396,6 @@ REBUILD:
 		}
 	}
 	err = e.setFoundInPlanCache(sctx, false)
-	DumpPreparedStmts("PlanCached", sctx)
 	return err
 }
 

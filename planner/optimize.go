@@ -77,7 +77,6 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
-	plannercore.DumpPreparedStmts("Optimize", sctx)
 	sessVars := sctx.GetSessionVars()
 
 	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
@@ -221,7 +220,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 }
 
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, float64, error) {
-	plannercore.DumpPreparedStmts("optimize", sctx)
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
