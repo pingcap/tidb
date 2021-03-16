@@ -740,18 +740,20 @@ func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
 }
 
 func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
-	store, err := c.Cluster.GetAndCheckStoreByAddr(addr)
+	stores, err := c.Cluster.GetAndCheckStoreByAddr(addr)
 	if err != nil {
 		return nil, err
 	}
-	if store == nil {
+	if len(stores) == 0 {
 		return nil, errors.New("connect fail")
 	}
-	if store.GetState() == metapb.StoreState_Offline ||
-		store.GetState() == metapb.StoreState_Tombstone {
-		return nil, errors.New("connection refused")
+	for _, store := range stores {
+		if store.GetState() != metapb.StoreState_Offline &&
+			store.GetState() != metapb.StoreState_Tombstone {
+			return store, nil
+		}
 	}
-	return store, nil
+	return nil, errors.New("connection refused")
 }
 
 func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, error) {
