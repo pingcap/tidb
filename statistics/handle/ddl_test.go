@@ -257,20 +257,5 @@ PARTITION BY RANGE ( a ) (
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			c.Assert(statsTbl.Pseudo, IsFalse)
 		}
-
-		dropPartition := "alter table t drop partition p4"
-		testKit.MustExec(dropPartition)
-		is = s.do.InfoSchema()
-		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		c.Assert(err, IsNil)
-		tableInfo = tbl.Meta()
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		c.Assert(err, IsNil)
-		c.Assert(h.Update(is), IsNil)
-		pi = tableInfo.GetPartitionInfo()
-		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			c.Assert(statsTbl.Pseudo, IsFalse)
-		}
 	})
 }
