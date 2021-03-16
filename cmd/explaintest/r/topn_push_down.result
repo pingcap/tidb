@@ -173,7 +173,7 @@ Limit	0.00	root		offset:0; count:5
   │ └─IndexJoin	0.00	root		inner join; inner:IndexLookUp; outer key:test.tr.id; inner key:test.te.trade_id; equal cond:eq(test.tr.id, test.te.trade_id)
   │   ├─IndexLookUp(Build)	0.00	root		
   │   │ ├─Selection(Build)	0.00	cop[tikv]		eq(test.tr.business_type, 18), eq(test.tr.trade_type, 1)
-  │   │ │ └─IndexRangeScan	10.00	cop[tikv]	table:tr; index:idx_shop_identy_trade_status_business_type(shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date)	range:[810094178, 810094178]; keep order:false; stats:pseudo
+  │   │ │ └─IndexRangeScan	10.00	cop[tikv]	table:tr; index:idx_shop_identy_trade_status_business_type(shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date)	range:[810094178,810094178]; keep order:false; stats:pseudo
   │   │ └─Selection(Probe)	0.00	cop[tikv]		eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
   │   │   └─TableRowIDScan	0.00	cop[tikv]	table:tr	keep order:false; stats:pseudo
   │   └─IndexLookUp(Probe)	1.25	root		

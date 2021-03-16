@@ -7,7 +7,7 @@
         "Plan": [
           "TableReader 8000.67 root  data:Selection",
           "└─Selection 8000.67 cop[tiflash]  or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -15,29 +15,29 @@
         "Plan": [
           "Selection 10000.00 root  eq(plus(cast(test.t.a, float BINARY), 3), 5.1)",
           "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where b > 'a' order by convert(b, unsigned) limit 2",
         "Plan": [
           "Projection 2.00 root  test.t.a, test.t.b",
-          "└─TopN 2.00 root  Column#3, offset:0, count:2",
+          "└─TopN 2.00 root  Column#3; offset:0; count:2",
           "  └─Projection 2.00 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
           "    └─TableReader 2.00 root  data:TopN",
-          "      └─TopN 2.00 batchCop[tiflash]  cast(test.t.b, bigint(22) UNSIGNED BINARY), offset:0, count:2",
+          "      └─TopN 2.00 batchCop[tiflash]  cast(test.t.b, bigint(22) UNSIGNED BINARY); offset:0; count:2",
           "        └─Selection 3333.33 batchCop[tiflash]  gt(test.t.b, \"a\")",
-          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where b > 'a' order by b limit 2",
         "Plan": [
-          "TopN 2.00 root  test.t.b, offset:0, count:2",
+          "TopN 2.00 root  test.t.b; offset:0; count:2",
           "└─TableReader 2.00 root  data:TopN",
-          "  └─TopN 2.00 batchCop[tiflash]  test.t.b, offset:0, count:2",
+          "  └─TopN 2.00 batchCop[tiflash]  test.t.b; offset:0; count:2",
           "    └─Selection 3333.33 batchCop[tiflash]  gt(test.t.b, \"a\")",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       }
     ]
@@ -52,7 +52,7 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "      └─HashJoin 8.00 batchCop[tiflash]  inner join; equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
           "        ├─ExchangeReceiver(Build) 2.00 batchCop[tiflash]  ",
           "        │ └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "        │   └─Selection 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
@@ -68,17 +68,17 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#18",
-          "      └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
+          "      └─HashJoin 8.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
           "        ├─ExchangeReceiver(Build) 2.00 batchCop[tiflash]  ",
           "        │ └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "        │   └─Selection 2.00 batchCop[tiflash]  not(isnull(test.d3_t.d3_k))",
           "        │     └─TableFullScan 2.00 batchCop[tiflash] table:d3_t keep order:false",
-          "        └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
+          "        └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
           "          ├─ExchangeReceiver(Build) 2.00 batchCop[tiflash]  ",
           "          │ └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "          │   └─Selection 2.00 batchCop[tiflash]  not(isnull(test.d2_t.d2_k))",
           "          │     └─TableFullScan 2.00 batchCop[tiflash] table:d2_t keep order:false",
-          "          └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "          └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join; equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
           "            ├─ExchangeReceiver(Build) 2.00 batchCop[tiflash]  ",
           "            │ └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "            │   └─Selection 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
@@ -94,7 +94,7 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "      └─HashJoin 8.00 batchCop[tiflash]  inner join; equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
           "        ├─ExchangeReceiver(Build) 2.00 batchCop[tiflash]  ",
           "        │ └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "        │   └─Selection 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
@@ -109,7 +109,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─TableReader 8.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 8.00 cop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "    └─HashJoin 8.00 cop[tiflash]  left outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
@@ -123,7 +123,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─TableReader 8.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 8.00 cop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "    └─HashJoin 8.00 cop[tiflash]  right outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "      ├─ExchangeReceiver(Build) 8.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 8.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
@@ -138,7 +138,7 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "      └─HashJoin 8.00 batchCop[tiflash]  inner join; equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]; other cond:gt(test.fact_t.col1, test.d1_t.value)",
           "        ├─ExchangeReceiver(Build) 2.00 batchCop[tiflash]  ",
           "        │ └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "        │   └─Selection 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
@@ -153,7 +153,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─TableReader 8.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 8.00 cop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col1, 10)]",
+          "    └─HashJoin 8.00 cop[tiflash]  left outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; left cond:[gt(test.fact_t.col1, 10)]",
           "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
@@ -167,7 +167,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─TableReader 8.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 8.00 cop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col2, 10)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "    └─HashJoin 8.00 cop[tiflash]  left outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; left cond:[gt(test.fact_t.col2, 10)]; other cond:gt(test.fact_t.col1, test.d1_t.value)",
           "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
@@ -181,7 +181,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─TableReader 8.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 8.00 cop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10)",
+          "    └─HashJoin 8.00 cop[tiflash]  right outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; right cond:gt(test.d1_t.value, 10)",
           "      ├─ExchangeReceiver(Build) 8.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 8.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
@@ -195,7 +195,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─TableReader 8.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 8.00 cop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10), other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "    └─HashJoin 8.00 cop[tiflash]  right outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; right cond:gt(test.d1_t.value, 10); other cond:gt(test.fact_t.col1, test.d1_t.value)",
           "      ├─ExchangeReceiver(Build) 8.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 8.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection 8.00 cop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
@@ -209,7 +209,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#12",
           "└─TableReader 6.40 root  data:ExchangeSender",
           "  └─ExchangeSender 6.40 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 6.40 cop[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "    └─HashJoin 6.40 cop[tiflash]  semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
@@ -224,7 +224,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#12",
           "└─TableReader 6.40 root  data:ExchangeSender",
           "  └─ExchangeSender 6.40 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 6.40 cop[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "    └─HashJoin 6.40 cop[tiflash]  semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; other cond:gt(test.d1_t.value, test.fact_t.col1)",
           "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
@@ -239,7 +239,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#12",
           "└─TableReader 6.40 root  data:ExchangeSender",
           "  └─ExchangeSender 6.40 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 6.40 cop[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "    └─HashJoin 6.40 cop[tiflash]  anti semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─TableFullScan 2.00 cop[tiflash] table:d1_t keep order:false",
@@ -252,7 +252,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#12",
           "└─TableReader 6.40 root  data:ExchangeSender",
           "  └─ExchangeSender 6.40 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 6.40 cop[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "    └─HashJoin 6.40 cop[tiflash]  anti semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; other cond:gt(test.d1_t.value, test.fact_t.col1)",
           "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─TableFullScan 2.00 cop[tiflash] table:d1_t keep order:false",
@@ -271,13 +271,13 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 32.00 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "      └─HashJoin 32.00 batchCop[tiflash]  inner join; equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "            └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "              └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -289,27 +289,27 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#18",
-          "      └─HashJoin 128.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
+          "      └─HashJoin 128.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d3_t.d3_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d3_t.d3_k",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d3_t.d3_k))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d3_t keep order:false",
           "        └─ExchangeReceiver(Probe) 64.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 64.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d3_k",
-          "            └─HashJoin 64.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
+          "          └─ExchangeSender 64.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d3_k",
+          "            └─HashJoin 64.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
           "              ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "              │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d2_t.d2_k",
+          "              │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d2_t.d2_k",
           "              │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d2_t.d2_k))",
           "              │     └─TableFullScan 4.00 batchCop[tiflash] table:d2_t keep order:false",
           "              └─ExchangeReceiver(Probe) 32.00 batchCop[tiflash]  ",
-          "                └─ExchangeSender 32.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d2_k",
-          "                  └─HashJoin 32.00 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "                └─ExchangeSender 32.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d2_k",
+          "                  └─HashJoin 32.00 batchCop[tiflash]  inner join; equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
           "                    ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "                    │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "                    │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "                    │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "                    │     └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "                    └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "                      └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "                      └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "                        └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
           "                          └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -321,13 +321,13 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 32.00 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "      └─HashJoin 32.00 batchCop[tiflash]  inner join; equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "            └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "              └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -339,23 +339,23 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#18",
-          "      └─HashJoin 128.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d3_t.value)]",
+          "      └─HashJoin 128.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d1_k, test.d3_t.value)]",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d3_t.value",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d3_t.value",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d3_t.value))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d3_t keep order:false",
-          "        └─HashJoin(Probe) 64.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d2_t.value)]",
+          "        └─HashJoin(Probe) 64.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d1_k, test.d2_t.value)]",
           "          ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "          │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d2_t.value",
+          "          │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d2_t.value",
           "          │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d2_t.value))",
           "          │     └─TableFullScan 4.00 batchCop[tiflash] table:d2_t keep order:false",
-          "          └─HashJoin(Probe) 32.00 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "          └─HashJoin(Probe) 32.00 batchCop[tiflash]  inner join; equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
           "            ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "            │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "            │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "            │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "            │     └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "            └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "              └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "              └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "                └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "                  └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -367,13 +367,13 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 32.00 batchCop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      └─HashJoin 32.00 batchCop[tiflash]  left outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "            └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -384,13 +384,13 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 32.00 batchCop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      └─HashJoin 32.00 batchCop[tiflash]  right outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "        ├─ExchangeReceiver(Build) 16.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "        │ └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "        │   └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "        │     └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false",
           "        └─ExchangeReceiver(Probe) 4.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "          └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "            └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false"
         ]
       },
@@ -401,13 +401,13 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 32.00 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "      └─HashJoin 32.00 batchCop[tiflash]  inner join; equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]; other cond:gt(test.fact_t.col1, test.d1_t.value)",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "            └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
           "              └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -419,13 +419,13 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 32.00 batchCop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col1, 10)]",
+          "      └─HashJoin 32.00 batchCop[tiflash]  left outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; left cond:[gt(test.fact_t.col1, 10)]",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "            └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -436,20 +436,20 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#22",
-          "      └─HashJoin 204.80 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "      └─HashJoin 204.80 batchCop[tiflash]  inner join; equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "        └─Projection(Probe) 102.40 batchCop[tiflash]  test.fact_t.d1_k",
           "          └─Selection 102.40 batchCop[tiflash]  gt(case(isnull(test.fact_t.col1), plus(test.fact_t.col1, 5), 10), 5)",
-          "            └─HashJoin 128.00 batchCop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.fact_t.d1_k)]",
+          "            └─HashJoin 128.00 batchCop[tiflash]  right outer join; equal:[eq(test.fact_t.d1_k, test.fact_t.d1_k)]",
           "              ├─ExchangeReceiver(Build) 16.00 batchCop[tiflash]  ",
-          "              │ └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "              │ └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "              │   └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "              │     └─TableFullScan 16.00 batchCop[tiflash] table:t1 keep order:false",
           "              └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "                └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "                └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "                  └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "                    └─TableFullScan 16.00 batchCop[tiflash] table:t2 keep order:false"
         ]
@@ -461,13 +461,13 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 32.00 batchCop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col2, 10)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "      └─HashJoin 32.00 batchCop[tiflash]  left outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; left cond:[gt(test.fact_t.col2, 10)]; other cond:gt(test.fact_t.col1, test.d1_t.value)",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "            └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -478,13 +478,13 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 32.00 batchCop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10)",
+          "      └─HashJoin 32.00 batchCop[tiflash]  right outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; right cond:gt(test.d1_t.value, 10)",
           "        ├─ExchangeReceiver(Build) 16.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "        │ └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "        │   └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "        │     └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false",
           "        └─ExchangeReceiver(Probe) 4.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "          └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "            └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false"
         ]
       },
@@ -495,13 +495,13 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "      └─HashJoin 32.00 batchCop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10), other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "      └─HashJoin 32.00 batchCop[tiflash]  right outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; right cond:gt(test.d1_t.value, 10); other cond:gt(test.fact_t.col1, test.d1_t.value)",
           "        ├─ExchangeReceiver(Build) 16.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "        │ └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "        │   └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
           "        │     └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false",
           "        └─ExchangeReceiver(Probe) 4.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "          └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "            └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false"
         ]
       },
@@ -512,13 +512,13 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 12.80 batchCop[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      └─HashJoin 12.80 batchCop[tiflash]  semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "            └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "              └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -530,13 +530,13 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 12.80 batchCop[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "      └─HashJoin 12.80 batchCop[tiflash]  semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; other cond:gt(test.d1_t.value, test.fact_t.col1)",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "            └─Selection 16.00 batchCop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
           "              └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -548,12 +548,12 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 12.80 batchCop[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      └─HashJoin 12.80 batchCop[tiflash]  anti semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "        │   └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "            └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -564,12 +564,12 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "      └─HashJoin 12.80 batchCop[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "      └─HashJoin 12.80 batchCop[tiflash]  anti semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; other cond:gt(test.d1_t.value, test.fact_t.col1)",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.d1_t.d1_k",
           "        │   └─TableFullScan 4.00 batchCop[tiflash] table:d1_t keep order:false",
           "        └─ExchangeReceiver(Probe) 16.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "          └─ExchangeSender 16.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.fact_t.d1_k",
           "            └─TableFullScan 16.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
       }
@@ -584,9 +584,9 @@
           "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "    └─HashJoin 8.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
+          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false; global read",
           "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -597,15 +597,15 @@
           "HashAgg 1.00 root  funcs:count(Column#18)->Column#17",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#18",
-          "    └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
+          "    └─HashJoin 8.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
           "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d3_t.d3_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d3_t keep order:false, global read",
-          "      └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
+          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d3_t keep order:false; global read",
+          "      └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
           "        ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d2_t.d2_k))",
-          "        │ └─TableFullScan 2.00 batchCop[tiflash] table:d2_t keep order:false, global read",
-          "        └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "        │ └─TableFullScan 2.00 batchCop[tiflash] table:d2_t keep order:false; global read",
+          "        └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "          ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "          │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
+          "          │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false; global read",
           "          └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
           "            └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -616,11 +616,11 @@
           "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "    └─HashJoin 8.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false",
           "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false, global read"
+          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false; global read"
         ]
       },
       {
@@ -629,17 +629,17 @@
           "HashAgg 1.00 root  funcs:count(Column#18)->Column#17",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#18",
-          "    └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
+          "    └─HashJoin 8.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
           "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d3_t.d3_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d3_t keep order:false, global read",
-          "      └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
+          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d3_t keep order:false; global read",
+          "      └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
           "        ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d2_t.d2_k))",
           "        │ └─TableFullScan 2.00 batchCop[tiflash] table:d2_t keep order:false",
-          "        └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "        └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "          ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "          │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
+          "          │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false; global read",
           "          └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
-          "            └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false, global read"
+          "            └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false; global read"
         ]
       },
       {
@@ -648,9 +648,9 @@
           "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "    └─HashJoin 8.00 batchCop[tiflash]  left outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
+          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false; global read",
           "      └─TableFullScan(Probe) 8.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -660,10 +660,10 @@
           "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "    └─HashJoin 8.00 batchCop[tiflash]  right outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "      ├─TableFullScan(Build) 2.00 batchCop[tiflash] table:d1_t keep order:false",
           "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false, global read"
+          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false; global read"
         ]
       },
       {
@@ -672,9 +672,9 @@
           "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "    └─HashJoin 8.00 batchCop[tiflash]  inner join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; other cond:gt(test.fact_t.col1, test.d1_t.value)",
           "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
+          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false; global read",
           "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
           "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -685,9 +685,9 @@
           "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col1, 10)]",
+          "    └─HashJoin 8.00 batchCop[tiflash]  left outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; left cond:[gt(test.fact_t.col1, 10)]",
           "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
+          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false; global read",
           "      └─TableFullScan(Probe) 8.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -697,9 +697,9 @@
           "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col2, 10)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "    └─HashJoin 8.00 batchCop[tiflash]  left outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; left cond:[gt(test.fact_t.col2, 10)]; other cond:gt(test.fact_t.col1, test.d1_t.value)",
           "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
+          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false; global read",
           "      └─TableFullScan(Probe) 8.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -709,10 +709,10 @@
           "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10)",
+          "    └─HashJoin 8.00 batchCop[tiflash]  right outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; right cond:gt(test.d1_t.value, 10)",
           "      ├─TableFullScan(Build) 2.00 batchCop[tiflash] table:d1_t keep order:false",
           "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false, global read"
+          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false; global read"
         ]
       },
       {
@@ -721,9 +721,9 @@
           "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10), other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "    └─HashJoin 8.00 batchCop[tiflash]  right outer join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; right cond:gt(test.d1_t.value, 10); other cond:gt(test.fact_t.col1, test.d1_t.value)",
           "      ├─Selection(Build) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "      │ └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false, global read",
+          "      │ └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false; global read",
           "      └─TableFullScan(Probe) 2.00 batchCop[tiflash] table:d1_t keep order:false"
         ]
       },
@@ -733,9 +733,9 @@
           "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "    └─HashJoin 6.40 batchCop[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "    └─HashJoin 6.40 batchCop[tiflash]  semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
+          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false; global read",
           "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -746,9 +746,9 @@
           "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "    └─HashJoin 6.40 batchCop[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "    └─HashJoin 6.40 batchCop[tiflash]  semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; other cond:gt(test.d1_t.value, test.fact_t.col1)",
           "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
+          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false; global read",
           "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
           "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
@@ -759,8 +759,8 @@
           "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "    └─HashJoin 6.40 batchCop[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "      ├─TableFullScan(Build) 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
+          "    └─HashJoin 6.40 batchCop[tiflash]  anti semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      ├─TableFullScan(Build) 2.00 batchCop[tiflash] table:d1_t keep order:false; global read",
           "      └─TableFullScan(Probe) 8.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
       },
@@ -770,8 +770,8 @@
           "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "    └─HashJoin 6.40 batchCop[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
-          "      ├─TableFullScan(Build) 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
+          "    └─HashJoin 6.40 batchCop[tiflash]  anti semi join; equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]; other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "      ├─TableFullScan(Build) 2.00 batchCop[tiflash] table:d1_t keep order:false; global read",
           "      └─TableFullScan(Probe) 8.00 batchCop[tiflash] table:fact_t keep order:false"
         ]
       }
@@ -783,7 +783,7 @@
       {
         "SQL": "explain format = 'brief' select * from table_1 a, table_1 b where a.bit_col = b.bit_col",
         "Plan": [
-          "HashJoin 2.00 root  inner join, equal:[eq(test.table_1.bit_col, test.table_1.bit_col)]",
+          "HashJoin 2.00 root  inner join; equal:[eq(test.table_1.bit_col, test.table_1.bit_col)]",
           "├─TableReader(Build) 2.00 root  data:TableFullScan",
           "│ └─TableFullScan 2.00 cop[tiflash] table:b keep order:false",
           "└─TableReader(Probe) 2.00 root  data:TableFullScan",
@@ -793,7 +793,7 @@
       {
         "SQL": "explain format = 'brief' select * from table_1 a left join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > 100",
         "Plan": [
-          "HashJoin 2.00 root  left outer join, equal:[eq(test.table_1.id, test.table_1.id)], left cond:[gt(dayofmonth(test.table_1.datetime_col), 100)]",
+          "HashJoin 2.00 root  left outer join; equal:[eq(test.table_1.id, test.table_1.id)]; left cond:[gt(dayofmonth(test.table_1.datetime_col), 100)]",
           "├─TableReader(Build) 2.00 root  data:TableFullScan",
           "│ └─TableFullScan 2.00 cop[tiflash] table:b keep order:false",
           "└─TableReader(Probe) 2.00 root  data:TableFullScan",
@@ -803,7 +803,7 @@
       {
         "SQL": "explain format = 'brief' select * from table_1 a right join table_1 b on a.id = b.id and dayofmonth(b.datetime_col) > 100",
         "Plan": [
-          "HashJoin 2.00 root  right outer join, equal:[eq(test.table_1.id, test.table_1.id)], right cond:gt(dayofmonth(test.table_1.datetime_col), 100)",
+          "HashJoin 2.00 root  right outer join; equal:[eq(test.table_1.id, test.table_1.id)]; right cond:gt(dayofmonth(test.table_1.datetime_col), 100)",
           "├─TableReader(Build) 2.00 root  data:TableFullScan",
           "│ └─TableFullScan 2.00 cop[tiflash] table:a keep order:false",
           "└─TableReader(Probe) 2.00 root  data:TableFullScan",
@@ -813,7 +813,7 @@
       {
         "SQL": "explain format = 'brief' select * from table_1 a join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > dayofmonth(b.datetime_col)",
         "Plan": [
-          "HashJoin 2.00 root  inner join, equal:[eq(test.table_1.id, test.table_1.id)], other cond:gt(dayofmonth(test.table_1.datetime_col), dayofmonth(test.table_1.datetime_col))",
+          "HashJoin 2.00 root  inner join; equal:[eq(test.table_1.id, test.table_1.id)]; other cond:gt(dayofmonth(test.table_1.datetime_col), dayofmonth(test.table_1.datetime_col))",
           "├─TableReader(Build) 2.00 root  data:TableFullScan",
           "│ └─TableFullScan 2.00 cop[tiflash] table:b keep order:false",
           "└─TableReader(Probe) 2.00 root  data:TableFullScan",
@@ -828,7 +828,7 @@
       {
         "SQL": "explain format = 'brief' select * from table_1 a, table_1 b where a.id = b.id",
         "Plan": [
-          "HashJoin 2.00 root  inner join, equal:[eq(test.table_1.id, test.table_1.id)]",
+          "HashJoin 2.00 root  inner join; equal:[eq(test.table_1.id, test.table_1.id)]",
           "├─TableReader(Build) 2.00 root  data:TableFullScan",
           "│ └─TableFullScan 2.00 cop[tiflash] table:b keep order:false",
           "└─TableReader(Probe) 2.00 root  data:TableFullScan",
@@ -838,9 +838,9 @@
       {
         "SQL": "explain format = 'brief' select /*+ agg_to_cop() */ count(*), id from table_1 group by id",
         "Plan": [
-          "HashAgg 2.00 root  group by:test.table_1.id, funcs:count(Column#5)->Column#4, funcs:firstrow(test.table_1.id)->test.table_1.id",
+          "HashAgg 2.00 root  group by:test.table_1.id; funcs:count(Column#5)->Column#4; funcs:firstrow(test.table_1.id)->test.table_1.id",
           "└─TableReader 2.00 root  data:HashAgg",
-          "  └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_1.id, funcs:count(1)->Column#5",
+          "  └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_1.id; funcs:count(1)->Column#5",
           "    └─TableFullScan 2.00 batchCop[tiflash] table:table_1 keep order:false"
         ]
       }
@@ -854,8 +854,8 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(test.t.a)->Column#7; funcs:sum(test.t.a)->Column#8",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
@@ -864,8 +864,8 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(test.t.a)->Column#7; funcs:sum(test.t.a)->Column#8",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
@@ -875,7 +875,7 @@
           "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
           "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(test.t.a)->Column#6",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
@@ -885,7 +885,7 @@
           "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
           "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(plus(test.t.a, 1))->Column#6",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
@@ -895,33 +895,33 @@
           "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
           "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(isnull(test.t.a))->Column#6",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "desc format = 'brief' select /*+ READ_FROM_STORAGE(TIKV[t1], TIKV[t2]) */ * from t t1, t t2 where t1.a = t2.a",
         "Plan": [
-          "HashJoin 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "HashJoin 12487.50 root  inner join; equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false; stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "desc format = 'brief' select /*+ READ_FROM_STORAGE(TIKV[t1], TIFLASH[t2]) */ * from t t1, t t2 where t1.a = t2.a",
         "Plan": [
-          "HashJoin 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "HashJoin 12487.50 root  inner join; equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "│   └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "│   └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false; stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
@@ -929,7 +929,7 @@
         "SQL": "desc format = 'brief' select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
         "Plan": [
           "TableReader 44.00 root  data:TableRangeScan",
-          "└─TableRangeScan 44.00 cop[tiflash] table:tt range:(1,20), [30,55), keep order:false, stats:pseudo"
+          "└─TableRangeScan 44.00 cop[tiflash] table:tt range:(1,20) | [30,55); keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
@@ -937,7 +937,7 @@
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
         "Plan": [
           "TableReader 44.00 root  data:TableRangeScan",
-          "└─TableRangeScan 44.00 cop[tiflash] table:tt range:(1,20), [30,55), keep order:false, stats:pseudo"
+          "└─TableRangeScan 44.00 cop[tiflash] table:tt range:(1,20) | [30,55); keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
@@ -945,7 +945,7 @@
         "SQL": "desc format = 'brief' select * from ttt order by ttt.a desc",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:ttt keep order:true, desc, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tikv] table:ttt keep order:true; desc; stats:pseudo"
         ],
         "Warn": null
       },
@@ -954,7 +954,7 @@
         "Plan": [
           "Sort 10000.00 root  test.ttt.a:desc",
           "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:ttt keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tiflash] table:ttt keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
@@ -962,7 +962,7 @@
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tiflash] table:ttt keep order:true, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tiflash] table:ttt keep order:true; stats:pseudo"
         ],
         "Warn": null
       },
@@ -970,7 +970,7 @@
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tikv[t, ttt]) */ * from ttt",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:ttt keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tikv] table:ttt keep order:false; stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]There are no matching table names for (t) in optimizer hint /*+ READ_FROM_STORAGE(tikv[t, ttt]) */. Maybe you can use the table alias name"
@@ -980,7 +980,7 @@
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[t, ttt], tikv[tt]) */ * from ttt",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tiflash] table:ttt keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tiflash] table:ttt keep order:false; stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]There are no matching table names for (t, tt) in optimizer hint /*+ READ_FROM_STORAGE(tiflash[t, ttt], tikv[tt]) */. Maybe you can use the table alias name"
@@ -996,8 +996,8 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─IndexReader 1.00 root  index:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
-          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7; funcs:sum(test.t.a)->Column#8",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t; index:ia(a) keep order:false; stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]Storage hints are conflict, you can only specify one storage type of table test.t"
@@ -1008,8 +1008,8 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─IndexReader 1.00 root  index:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
-          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7; funcs:sum(test.t.a)->Column#8",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t; index:ia(a) keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
@@ -1018,8 +1018,8 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─IndexReader 1.00 root  index:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
-          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7; funcs:sum(test.t.a)->Column#8",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t; index:ia(a) keep order:false; stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"
@@ -1046,7 +1046,7 @@
         "SQL": "desc format = 'brief' select * from mysql.stats_meta",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tikv] table:stats_meta keep order:false; stats:pseudo"
         ]
       }
     ]
@@ -1058,14 +1058,14 @@
         "SQL": "explain format = 'brief' select * from t where t.a = 1",
         "Result": [
           "TableReader 1.00 root  data:TableRangeScan",
-          "└─TableRangeScan 1.00 cop[tiflash] table:t range:[1,1], keep order:false, stats:pseudo"
+          "└─TableRangeScan 1.00 cop[tiflash] table:t range:[1,1]; keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where t.a in (1, 2)",
         "Result": [
           "TableReader 2.00 root  data:TableRangeScan",
-          "└─TableRangeScan 2.00 cop[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan 2.00 cop[tiflash] table:t range:[1,1] | [2,2]; keep order:false; stats:pseudo"
         ]
       }
     ]
@@ -1077,7 +1077,7 @@
         "SQL": "explain format = 'brief' select * from t",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
@@ -1085,7 +1085,7 @@
         "SQL": "explain format = 'brief' select * from t use index();",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ],
         "Warn": null
       },
@@ -1093,7 +1093,7 @@
         "SQL": "explain format = 'brief' select /*+ use_index(t, idx)*/ * from t",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ],
         "Warn": [
           "TiDB doesn't support index in the isolation read engines(value: 'tiflash')"
@@ -1103,7 +1103,7 @@
         "SQL": "explain format = 'brief' select /*+ use_index(t)*/ * from t",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ],
         "Warn": null
       }
@@ -1115,83 +1115,83 @@
       {
         "SQL": "explain format = 'brief' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.b",
         "Plan": [
-          "IndexJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.b)",
+          "IndexJoin 12475.01 root  inner join; inner:IndexLookUp; outer key:test.t.a; inner key:test.s.a; equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.b)",
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
           "└─IndexLookUp(Probe) 1.25 root  ",
           "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
-          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s; index:a(a) range: decided by [eq(test.s.a, test.t.a)]; keep order:false; stats:pseudo",
           "  └─Selection(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
-          "    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
         "Plan": [
-          "IndexJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.a)",
+          "IndexJoin 12475.01 root  inner join; inner:IndexLookUp; outer key:test.t.a; inner key:test.s.a; equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.a)",
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
           "└─IndexLookUp(Probe) 1.25 root  ",
           "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
-          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s; index:a(a) range: decided by [eq(test.s.a, test.t.a)]; keep order:false; stats:pseudo",
+          "  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:s keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b",
         "Plan": [
-          "IndexJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.a, test.s.b)",
+          "IndexJoin 12475.01 root  inner join; inner:IndexLookUp; outer key:test.t.a; inner key:test.s.a; equal cond:eq(test.t.a, test.s.a), eq(test.t.a, test.s.b)",
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
           "└─IndexLookUp(Probe) 1.25 root  ",
           "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
-          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s; index:a(a) range: decided by [eq(test.s.a, test.t.a)]; keep order:false; stats:pseudo",
           "  └─Selection(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
-          "    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.b",
         "Plan": [
-          "IndexHashJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.b)",
+          "IndexHashJoin 12475.01 root  inner join; inner:IndexLookUp; outer key:test.t.a; inner key:test.s.a; equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.b)",
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
           "└─IndexLookUp(Probe) 1.25 root  ",
           "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
-          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s; index:a(a) range: decided by [eq(test.s.a, test.t.a)]; keep order:false; stats:pseudo",
           "  └─Selection(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
-          "    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
         "Plan": [
-          "IndexHashJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.a)",
+          "IndexHashJoin 12475.01 root  inner join; inner:IndexLookUp; outer key:test.t.a; inner key:test.s.a; equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.a)",
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
           "└─IndexLookUp(Probe) 1.25 root  ",
           "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
-          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s; index:a(a) range: decided by [eq(test.s.a, test.t.a)]; keep order:false; stats:pseudo",
+          "  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:s keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b",
         "Plan": [
-          "IndexHashJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.a, test.s.b)",
+          "IndexHashJoin 12475.01 root  inner join; inner:IndexLookUp; outer key:test.t.a; inner key:test.s.a; equal cond:eq(test.t.a, test.s.a), eq(test.t.a, test.s.b)",
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
           "└─IndexLookUp(Probe) 1.25 root  ",
           "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
-          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s; index:a(a) range: decided by [eq(test.s.a, test.t.a)]; keep order:false; stats:pseudo",
           "  └─Selection(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
-          "    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false; stats:pseudo"
         ]
       }
     ]
@@ -1206,7 +1206,7 @@
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#4)->Column#7",
           "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1215,7 +1215,7 @@
           "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1225,7 +1225,7 @@
           "└─TableReader 1.00 root  data:HashAgg",
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#4)->Column#7",
           "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1234,7 +1234,7 @@
           "StreamAgg 1.00 root  funcs:count(Column#4)->Column#5",
           "└─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
           "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1243,7 +1243,7 @@
           "StreamAgg 1.00 root  funcs:count(Column#6)->Column#5",
           "└─TableReader 1.00 root  data:StreamAgg",
           "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1253,54 +1253,54 @@
           "└─Projection 10000.00 root  cast(Column#4, decimal(41,0) BINARY)->Column#7",
           "  └─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
           "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
         "Plan": [
           "TableReader 10000.00 root  data:HashJoin",
-          "└─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
+          "└─HashJoin 10000.00 cop[tiflash]  inner join; equal:[eq(Column#4, Column#8)]",
           "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
           "  │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo; global read",
           "  └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
           "    └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select * from t join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
           "TableReader 10000.00 root  data:HashJoin",
-          "└─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(test.t.id, Column#7)]",
+          "└─HashJoin 10000.00 cop[tiflash]  inner join; equal:[eq(test.t.id, Column#7)]",
           "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
           "  │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo; global read",
           "  └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select * from t left join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
           "TableReader 10000.00 root  data:HashJoin",
-          "└─HashJoin 10000.00 cop[tiflash]  left outer join, equal:[eq(test.t.id, Column#7)]",
+          "└─HashJoin 10000.00 cop[tiflash]  left outer join; equal:[eq(test.t.id, Column#7)]",
           "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
           "  │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "  └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo; global read",
+          "  └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
           "TableReader 12487.50 root  data:HashJoin",
-          "└─HashJoin 12487.50 cop[tiflash]  right outer join, equal:[eq(test.t.id, Column#7)]",
+          "└─HashJoin 12487.50 cop[tiflash]  right outer join; equal:[eq(test.t.id, Column#7)]",
           "  ├─Selection(Build) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "  │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "  │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo; global read",
           "  └─Projection(Probe) 10000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1308,33 +1308,33 @@
         "Plan": [
           "Projection 10000.00 root  Column#8, Column#4",
           "└─TableReader 10000.00 root  data:HashJoin",
-          "  └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
+          "  └─HashJoin 10000.00 cop[tiflash]  inner join; equal:[eq(Column#4, Column#8)]",
           "    ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
           "    │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "    │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "    │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo; global read",
           "    └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
           "      └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "        └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id)",
         "Plan": [
           "TableReader 7992.00 root  data:HashJoin",
-          "└─HashJoin 7992.00 cop[tiflash]  semi join, equal:[eq(test.t.id, test.t.id)]",
+          "└─HashJoin 7992.00 cop[tiflash]  semi join; equal:[eq(test.t.id, test.t.id)]",
           "  ├─Selection(Build) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "  │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "  │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo; global read",
           "  └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tiflash] table:A keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)",
         "Plan": [
           "TableReader 8000.00 root  data:HashJoin",
-          "└─HashJoin 8000.00 cop[tiflash]  anti semi join, equal:[eq(test.t.id, test.t.id)]",
-          "  ├─TableFullScan(Build) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "  └─TableFullScan(Probe) 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
+          "└─HashJoin 8000.00 cop[tiflash]  anti semi join; equal:[eq(test.t.id, test.t.id)]",
+          "  ├─TableFullScan(Build) 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo; global read",
+          "  └─TableFullScan(Probe) 10000.00 cop[tiflash] table:A keep order:false; stats:pseudo"
         ]
       }
     ]
@@ -1350,7 +1350,7 @@
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#4)->Column#7",
           "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1360,7 +1360,7 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#7",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1371,7 +1371,7 @@
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#4)->Column#7",
           "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1380,7 +1380,7 @@
           "StreamAgg 1.00 root  funcs:count(Column#4)->Column#5",
           "└─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
           "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1389,7 +1389,7 @@
           "StreamAgg 1.00 root  funcs:count(Column#6)->Column#5",
           "└─TableReader 1.00 root  data:StreamAgg",
           "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1399,7 +1399,7 @@
           "└─Projection 10000.00 root  cast(Column#4, decimal(41,0) BINARY)->Column#7",
           "  └─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
           "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1407,15 +1407,15 @@
         "Plan": [
           "TableReader 10000.00 root  data:ExchangeSender",
           "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
+          "  └─HashJoin 10000.00 cop[tiflash]  inner join; equal:[eq(Column#4, Column#8)]",
           "    ├─ExchangeReceiver(Build) 8000.00 cop[tiflash]  ",
           "    │ └─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: Broadcast",
           "    │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
           "    │     └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "    │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
           "      └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "        └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1423,14 +1423,14 @@
         "Plan": [
           "TableReader 10000.00 root  data:ExchangeSender",
           "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(test.t.id, Column#7)]",
+          "  └─HashJoin 10000.00 cop[tiflash]  inner join; equal:[eq(test.t.id, Column#7)]",
           "    ├─ExchangeReceiver(Build) 8000.00 cop[tiflash]  ",
           "    │ └─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: Broadcast",
           "    │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
           "    │     └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "    │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1438,13 +1438,13 @@
         "Plan": [
           "TableReader 10000.00 root  data:ExchangeSender",
           "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 10000.00 cop[tiflash]  left outer join, equal:[eq(test.t.id, Column#7)]",
+          "  └─HashJoin 10000.00 cop[tiflash]  left outer join; equal:[eq(test.t.id, Column#7)]",
           "    ├─ExchangeReceiver(Build) 8000.00 cop[tiflash]  ",
           "    │ └─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: Broadcast",
           "    │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
           "    │     └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "    │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "    │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1452,13 +1452,13 @@
         "Plan": [
           "TableReader 12487.50 root  data:ExchangeSender",
           "└─ExchangeSender 12487.50 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 cop[tiflash]  right outer join, equal:[eq(test.t.id, Column#7)]",
+          "  └─HashJoin 12487.50 cop[tiflash]  right outer join; equal:[eq(test.t.id, Column#7)]",
           "    ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
           "    │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─Projection(Probe) 10000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1467,15 +1467,15 @@
           "Projection 10000.00 root  Column#8, Column#4",
           "└─TableReader 10000.00 root  data:ExchangeSender",
           "  └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
+          "    └─HashJoin 10000.00 cop[tiflash]  inner join; equal:[eq(Column#4, Column#8)]",
           "      ├─ExchangeReceiver(Build) 8000.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
           "      │     └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "      │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "      │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo",
           "      └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
           "        └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "          └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1483,13 +1483,13 @@
         "Plan": [
           "TableReader 7992.00 root  data:ExchangeSender",
           "└─ExchangeSender 7992.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 7992.00 cop[tiflash]  semi join, equal:[eq(test.t.id, test.t.id)]",
+          "  └─HashJoin 7992.00 cop[tiflash]  semi join; equal:[eq(test.t.id, test.t.id)]",
           "    ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
           "    │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 cop[tiflash] table:A keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1497,11 +1497,11 @@
         "Plan": [
           "TableReader 8000.00 root  data:ExchangeSender",
           "└─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 8000.00 cop[tiflash]  anti semi join, equal:[eq(test.t.id, test.t.id)]",
+          "  └─HashJoin 8000.00 cop[tiflash]  anti semi join; equal:[eq(test.t.id, test.t.id)]",
           "    ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
           "    │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
-          "    │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─TableFullScan(Probe) 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
+          "    │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 cop[tiflash] table:A keep order:false; stats:pseudo"
         ]
       }
     ]
@@ -1517,7 +1517,7 @@
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#4)->Column#7",
           "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1527,7 +1527,7 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#7",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1538,7 +1538,7 @@
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#4)->Column#7",
           "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1548,7 +1548,7 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1557,11 +1557,11 @@
           "TableReader 8000.00 root  data:ExchangeSender",
           "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 batchCop[tiflash]  Column#4, test.t.id",
-          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#7)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#7)->Column#4; funcs:firstrow(test.t.id)->test.t.id",
           "      └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
-          "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:count(1)->Column#7",
-          "            └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:count(1)->Column#7",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1571,11 +1571,11 @@
           "└─TableReader 8000.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 8000.00 batchCop[tiflash]  Column#4, test.t.id",
-          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#10, funcs:sum(Column#11)->Column#4, funcs:firstrow(Column#12)->test.t.id",
+          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#10; funcs:sum(Column#11)->Column#4; funcs:firstrow(Column#12)->test.t.id",
           "        └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: Column#10",
-          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:plus(test.t.id, 1), funcs:count(1)->Column#11, funcs:firstrow(test.t.id)->Column#12",
-          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: Column#10",
+          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:plus(test.t.id, 1); funcs:count(1)->Column#11; funcs:firstrow(test.t.id)->Column#12",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1583,32 +1583,32 @@
         "Plan": [
           "TableReader 9990.00 root  data:ExchangeSender",
           "└─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 9990.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "  └─HashJoin 9990.00 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "    ├─Projection(Build) 7992.00 batchCop[tiflash]  Column#7, test.t.id",
-          "    │ └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#8)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
+          "    │ └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#8)->Column#7; funcs:firstrow(test.t.id)->test.t.id",
           "    │   └─ExchangeReceiver 7992.00 batchCop[tiflash]  ",
-          "    │     └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "    │       └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:count(1)->Column#8",
+          "    │     └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "    │       └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:count(1)->Column#8",
           "    │         └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "    │           └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │           └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 batchCop[tiflash]  ",
-          "      └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "      └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
           "        └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
         "Plan": [
-          "HashJoin 1.25 root  inner join, equal:[eq(test.t.id, Column#7)]",
+          "HashJoin 1.25 root  inner join; equal:[eq(test.t.id, Column#7)]",
           "├─HashAgg(Build) 1.00 root  funcs:count(Column#11)->Column#7",
           "│ └─TableReader 1.00 root  data:ExchangeSender",
           "│   └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "│     └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#11",
-          "│       └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "│       └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1617,25 +1617,25 @@
           "TableReader 8000.00 root  data:ExchangeSender",
           "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 batchCop[tiflash]  div(Column#4, cast(case(eq(Column#9, 0), 1, Column#9), decimal(20,0) BINARY))->Column#4, test.t.id",
-          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#10)->Column#9, funcs:sum(Column#11)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#10)->Column#9; funcs:sum(Column#11)->Column#4; funcs:firstrow(test.t.id)->test.t.id",
           "      └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
-          "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#10, funcs:sum(test.t.value)->Column#11",
-          "            └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:count(test.t.value)->Column#10; funcs:sum(test.t.value)->Column#11",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+hash_agg()*/ sum(b),id from (select avg(value) as b, id from t group by id)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#4)->Column#5, funcs:firstrow(test.t.id)->test.t.id",
+          "HashAgg 1.00 root  funcs:sum(Column#4)->Column#5; funcs:firstrow(test.t.id)->test.t.id",
           "└─TableReader 8000.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 8000.00 batchCop[tiflash]  div(Column#4, cast(case(eq(Column#10, 0), 1, Column#10), decimal(20,0) BINARY))->Column#4, test.t.id",
-          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#11)->Column#10, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#11)->Column#10; funcs:sum(Column#12)->Column#4; funcs:firstrow(test.t.id)->test.t.id",
           "        └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#11, funcs:sum(test.t.value)->Column#12",
-          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:count(test.t.value)->Column#11; funcs:sum(test.t.value)->Column#12",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1646,11 +1646,11 @@
           "  └─TableReader 8000.00 root  data:ExchangeSender",
           "    └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "      └─Projection 8000.00 batchCop[tiflash]  div(Column#4, cast(case(eq(Column#10, 0), 1, Column#10), decimal(20,0) BINARY))->Column#4, test.t.id",
-          "        └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#11)->Column#10, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "        └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#11)->Column#10; funcs:sum(Column#12)->Column#4; funcs:firstrow(test.t.id)->test.t.id",
           "          └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
-          "            └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "              └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#11, funcs:sum(test.t.value)->Column#12",
-          "                └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "            └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "              └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:count(test.t.value)->Column#11; funcs:sum(test.t.value)->Column#12",
+          "                └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1660,11 +1660,11 @@
           "└─TableReader 8000.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 8000.00 batchCop[tiflash]  div(Column#4, cast(case(eq(Column#11, 0), 1, Column#11), decimal(20,0) BINARY))->Column#4, test.t.id",
-          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#12)->Column#11, funcs:sum(Column#13)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#12)->Column#11; funcs:sum(Column#13)->Column#4; funcs:firstrow(test.t.id)->test.t.id",
           "        └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#12, funcs:sum(test.t.value)->Column#13",
-          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:count(test.t.value)->Column#12; funcs:sum(test.t.value)->Column#13",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1674,11 +1674,11 @@
           "└─TableReader 8000.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 8000.00 batchCop[tiflash]  div(Column#4, cast(case(eq(Column#11, 0), 1, Column#11), decimal(20,0) BINARY))->Column#4, test.t.id",
-          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#12)->Column#11, funcs:sum(Column#13)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#12)->Column#11; funcs:sum(Column#13)->Column#4; funcs:firstrow(test.t.id)->test.t.id",
           "        └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#12, funcs:sum(test.t.value)->Column#13",
-          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:count(test.t.value)->Column#12; funcs:sum(test.t.value)->Column#13",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1687,16 +1687,16 @@
           "TableReader 7992.00 root  data:ExchangeSender",
           "└─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 7992.00 batchCop[tiflash]  Column#7",
-          "    └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(test.t.id)->Column#7",
-          "      └─HashJoin 12487.50 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "    └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(test.t.id)->Column#7",
+          "      └─HashJoin 12487.50 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "        ├─ExchangeReceiver(Build) 9990.00 batchCop[tiflash]  ",
-          "        │ └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "        │ └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
           "        │   └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "        │     └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "        └─ExchangeReceiver(Probe) 9990.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "          └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
           "            └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t1 keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t1 keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1704,26 +1704,26 @@
         "Plan": [
           "TableReader 7992.00 root  data:ExchangeSender",
           "└─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 7992.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "  └─HashJoin 7992.00 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "    ├─Projection(Build) 7992.00 batchCop[tiflash]  test.t.id",
-          "    │ └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
+          "    │ └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:firstrow(test.t.id)->test.t.id",
           "    │   └─ExchangeReceiver 9990.00 batchCop[tiflash]  ",
-          "    │     └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "    │     └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
           "    │       └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "    │         └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │         └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─Projection(Probe) 7992.00 batchCop[tiflash]  Column#11, test.t.id",
-          "      └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(test.t.id)->Column#11, funcs:firstrow(test.t.id)->test.t.id",
-          "        └─HashJoin 9990.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "      └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(test.t.id)->Column#11; funcs:firstrow(test.t.id)->test.t.id",
+          "        └─HashJoin 9990.00 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "          ├─Projection(Build) 7992.00 batchCop[tiflash]  test.t.id",
-          "          │ └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
+          "          │ └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:firstrow(test.t.id)->test.t.id",
           "          │   └─ExchangeReceiver 9990.00 batchCop[tiflash]  ",
-          "          │     └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "          │     └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
           "          │       └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "          │         └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "          │         └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "          └─ExchangeReceiver(Probe) 9990.00 batchCop[tiflash]  ",
-          "            └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "            └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
           "              └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "                └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "                └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1732,19 +1732,19 @@
           "TableReader 8000.00 root  data:ExchangeSender",
           "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 batchCop[tiflash]  Column#4, test.t.id",
-          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:count(distinct test.t.value)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:count(distinct test.t.value)->Column#4; funcs:firstrow(test.t.id)->test.t.id",
           "      └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
-          "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, test.t.value, ",
-          "            └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, test.t.value",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select count(distinct value),sum(distinct value),id from t group by id",
         "Plan": [
-          "HashAgg 8000.00 root  group by:test.t.id, funcs:count(distinct test.t.value)->Column#4, funcs:sum(distinct test.t.value)->Column#5, funcs:firstrow(test.t.id)->test.t.id",
+          "HashAgg 8000.00 root  group by:test.t.id; funcs:count(distinct test.t.value)->Column#4; funcs:sum(distinct test.t.value)->Column#5; funcs:firstrow(test.t.id)->test.t.id",
           "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1752,18 +1752,18 @@
         "Plan": [
           "TableReader 9990.00 root  data:ExchangeSender",
           "└─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 9990.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "  └─HashJoin 9990.00 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "    ├─Projection(Build) 7992.00 batchCop[tiflash]  Column#7, test.t.id",
-          "    │ └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:count(distinct test.t.value)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
+          "    │ └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:count(distinct test.t.value)->Column#7; funcs:firstrow(test.t.id)->test.t.id",
           "    │   └─ExchangeReceiver 7992.00 batchCop[tiflash]  ",
-          "    │     └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "    │       └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, test.t.value, ",
+          "    │     └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "    │       └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, test.t.value",
           "    │         └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "    │           └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │           └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 batchCop[tiflash]  ",
-          "      └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "      └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
           "        └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1771,18 +1771,18 @@
         "Plan": [
           "TableReader 9990.00 root  data:ExchangeSender",
           "└─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 9990.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "  └─HashJoin 9990.00 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "    ├─Projection(Build) 7992.00 batchCop[tiflash]  Column#7, test.t.id",
-          "    │ └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#8)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
+          "    │ └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#8)->Column#7; funcs:firstrow(test.t.id)->test.t.id",
           "    │   └─ExchangeReceiver 7992.00 batchCop[tiflash]  ",
-          "    │     └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "    │       └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:count(div(1, test.t.value))->Column#8",
+          "    │     └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "    │       └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:count(div(1, test.t.value))->Column#8",
           "    │         └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "    │           └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │           └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 batchCop[tiflash]  ",
-          "      └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "      └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
           "        └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       }
     ]
@@ -1795,18 +1795,18 @@
         "Plan": [
           "TableReader 9990.00 root  data:ExchangeSender",
           "└─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 9990.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "  └─HashJoin 9990.00 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "    ├─ExchangeReceiver(Build) 7992.00 batchCop[tiflash]  ",
           "    │ └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "    │   └─Projection 7992.00 batchCop[tiflash]  Column#7, test.t.id",
-          "    │     └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#8)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
+          "    │     └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#8)->Column#7; funcs:firstrow(test.t.id)->test.t.id",
           "    │       └─ExchangeReceiver 7992.00 batchCop[tiflash]  ",
-          "    │         └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "    │           └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:count(1)->Column#8",
+          "    │         └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "    │           └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:count(1)->Column#8",
           "    │             └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "    │               └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │               └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1814,19 +1814,19 @@
         "Plan": [
           "TableReader 8000.00 root  data:ExchangeSender",
           "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 8000.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, Column#8)]",
+          "  └─HashJoin 8000.00 batchCop[tiflash]  inner join; equal:[eq(test.t.id, Column#8)]",
           "    ├─ExchangeReceiver(Build) 6400.00 batchCop[tiflash]  ",
           "    │ └─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "    │   └─Projection 6400.00 batchCop[tiflash]  plus(Column#7, test.t.id)->Column#8",
           "    │     └─Selection 6400.00 batchCop[tiflash]  not(isnull(plus(Column#7, test.t.id)))",
           "    │       └─Projection 8000.00 batchCop[tiflash]  Column#7, test.t.id",
-          "    │         └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#11)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
+          "    │         └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#11)->Column#7; funcs:firstrow(test.t.id)->test.t.id",
           "    │           └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
-          "    │             └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "    │               └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:count(1)->Column#11",
-          "    │                 └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │             └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "    │               └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id; funcs:count(1)->Column#11",
+          "    │                 └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1835,33 +1835,33 @@
           "Projection 7992.00 root  test.t.id, test.t.value, Column#7, test.t.id",
           "└─TableReader 7992.00 root  data:ExchangeSender",
           "  └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 7992.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "    └─HashJoin 7992.00 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "      ├─ExchangeReceiver(Build) 6393.60 batchCop[tiflash]  ",
           "      │ └─ExchangeSender 6393.60 batchCop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection 6393.60 batchCop[tiflash]  lt(plus(test.t.value, cast(Column#7, decimal(20,0) BINARY)), 10)",
           "      │     └─Projection 7992.00 batchCop[tiflash]  Column#7, test.t.id, test.t.value",
-          "      │       └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, test.t.value, funcs:sum(Column#10)->Column#7, funcs:firstrow(test.t.id)->test.t.id, funcs:firstrow(test.t.value)->test.t.value",
+          "      │       └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, test.t.value; funcs:sum(Column#10)->Column#7; funcs:firstrow(test.t.id)->test.t.id; funcs:firstrow(test.t.value)->test.t.value",
           "      │         └─ExchangeReceiver 7992.00 batchCop[tiflash]  ",
-          "      │           └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.value, test.t.id",
-          "      │             └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, test.t.value, funcs:count(1)->Column#10",
+          "      │           └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.value, test.t.id",
+          "      │             └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, test.t.value; funcs:count(1)->Column#10",
           "      │               └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "      │                 └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "      │                 └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "      └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
         "Plan": [
-          "HashJoin 1.25 root  inner join, equal:[eq(test.t.id, Column#7)]",
+          "HashJoin 1.25 root  inner join; equal:[eq(test.t.id, Column#7)]",
           "├─HashAgg(Build) 1.00 root  funcs:count(Column#10)->Column#7",
           "│ └─TableReader 1.00 root  data:ExchangeSender",
           "│   └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "│     └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#10",
-          "│       └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "│       └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1870,17 +1870,17 @@
           "TableReader 7992.00 root  data:ExchangeSender",
           "└─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 7992.00 batchCop[tiflash]  Column#7",
-          "    └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#8)->Column#7",
+          "    └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#8)->Column#7",
           "      └─ExchangeReceiver 7992.00 batchCop[tiflash]  ",
-          "        └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "          └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(test.t.id)->Column#8",
-          "            └─HashJoin 12487.50 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "        └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "          └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(test.t.id)->Column#8",
+          "            └─HashJoin 12487.50 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "              ├─ExchangeReceiver(Build) 9990.00 batchCop[tiflash]  ",
           "              │ └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "              │   └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "              │     └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "              │     └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "              └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "                └─TableFullScan 10000.00 batchCop[tiflash] table:t1 keep order:false, stats:pseudo"
+          "                └─TableFullScan 10000.00 batchCop[tiflash] table:t1 keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1888,22 +1888,22 @@
         "Plan": [
           "TableReader 7992.00 root  data:ExchangeSender",
           "└─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 7992.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "  └─HashJoin 7992.00 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "    ├─ExchangeReceiver(Build) 7992.00 batchCop[tiflash]  ",
           "    │ └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "    │   └─Projection 7992.00 batchCop[tiflash]  test.t.id",
-          "    │     └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
+          "    │     └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:firstrow(test.t.id)->test.t.id",
           "    │       └─ExchangeReceiver 9990.00 batchCop[tiflash]  ",
-          "    │         └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "    │         └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
           "    │           └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "    │             └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │             └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─Projection(Probe) 7992.00 batchCop[tiflash]  Column#7, test.t.id",
-          "      └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#9)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
+          "      └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#9)->Column#7; funcs:firstrow(test.t.id)->test.t.id",
           "        └─ExchangeReceiver 7992.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "            └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(test.t.value)->Column#9",
+          "          └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "            └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(test.t.value)->Column#9",
           "              └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "                └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "                └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -1911,31 +1911,31 @@
         "Plan": [
           "TableReader 7992.00 root  data:ExchangeSender",
           "└─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 7992.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "  └─HashJoin 7992.00 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "    ├─ExchangeReceiver(Build) 7992.00 batchCop[tiflash]  ",
           "    │ └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "    │   └─Projection 7992.00 batchCop[tiflash]  test.t.id",
-          "    │     └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
+          "    │     └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:firstrow(test.t.id)->test.t.id",
           "    │       └─ExchangeReceiver 9990.00 batchCop[tiflash]  ",
-          "    │         └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "    │         └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
           "    │           └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "    │             └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "    │             └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "    └─Projection(Probe) 7992.00 batchCop[tiflash]  Column#11, test.t.id",
-          "      └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#14)->Column#11, funcs:firstrow(test.t.id)->test.t.id",
+          "      └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(Column#14)->Column#11; funcs:firstrow(test.t.id)->test.t.id",
           "        └─ExchangeReceiver 7992.00 batchCop[tiflash]  ",
-          "          └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "            └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(test.t.id)->Column#14",
-          "              └─HashJoin 9990.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "          └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
+          "            └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:sum(test.t.id)->Column#14",
+          "              └─HashJoin 9990.00 batchCop[tiflash]  inner join; equal:[eq(test.t.id, test.t.id)]",
           "                ├─ExchangeReceiver(Build) 7992.00 batchCop[tiflash]  ",
           "                │ └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "                │   └─Projection 7992.00 batchCop[tiflash]  test.t.id",
-          "                │     └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
+          "                │     └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id; funcs:firstrow(test.t.id)->test.t.id",
           "                │       └─ExchangeReceiver 9990.00 batchCop[tiflash]  ",
-          "                │         └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "                │         └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition; Hash Cols: test.t.id",
           "                │           └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "                │             └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "                │             └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo",
           "                └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
-          "                  └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "                  └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"
         ]
       }
     ]

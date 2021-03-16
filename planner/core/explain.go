@@ -824,10 +824,14 @@ func (p *LogicalAggregation) ExplainInfo() string {
 			expression.SortedExplainExpressionList(p.GroupByItems))
 	}
 	if len(p.AggFuncs) > 0 {
-		for _, agg := range p.AggFuncs {
-			builder.Append("funcs:")
-			builder.WriteString(aggregation.ExplainAggFunc(agg, false))
+		builder.Append("funcs:")
+		builder.StartScope(itemsSeparator)
+		{
+			for _, agg := range p.AggFuncs {
+				builder.Append(aggregation.ExplainAggFunc(agg, false))
+			}
 		}
+		builder.EndScope()
 	}
 	return builder.String()
 }

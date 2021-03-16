@@ -12,14 +12,14 @@
         "SQL": "explain format = 'brief' select * from t where a is not null",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > -1",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -38,7 +38,7 @@
         "SQL": "explain format = 'brief' select * from t where a >= 0",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -57,7 +57,7 @@
         "SQL": "explain format = 'brief' select * from t where a != -1",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -70,14 +70,14 @@
         "SQL": "explain format = 'brief' select * from t where 0 <= a",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where -1 < a",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -102,7 +102,7 @@
         "SQL": "explain format = 'brief' select * from t where -1 != a",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -110,7 +110,7 @@
         "Plan": [
           "TableReader 3333.33 root  data:Selection",
           "└─Selection 3333.33 cop[tikv]  ge(test.t.b, 0)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -118,7 +118,7 @@
         "Plan": [
           "TableReader 3333.33 root  data:Selection",
           "└─Selection 3333.33 cop[tikv]  ne(test.t.b, -1)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
         ]
       },
       {
@@ -126,7 +126,7 @@
         "Plan": [
           "TableReader 10.00 root  data:Selection",
           "└─Selection 10.00 cop[tikv]  eq(test.t.a, 18446744073709551615)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
         ]
       }
     ]

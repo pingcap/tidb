@@ -126,13 +126,13 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain format = 'brief' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"HashJoin 7.49 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+		"HashJoin 7.49 root  inner join; equal:[eq(test.t1.a, test.t2.a)]",
 		"├─TableReader(Build) 5.99 root  data:Selection",
 		"│ └─Selection 5.99 cop[tikv]  not(isnull(test.t2.a))",
-		"│   └─TableFullScan 6.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"│   └─TableFullScan 6.00 cop[tikv] table:t2 keep order:false; stats:pseudo",
 		"└─TableReader(Probe) 5.99 root  data:Selection",
 		"  └─Selection 5.99 cop[tikv]  not(isnull(test.t1.a))",
-		"    └─TableFullScan 6.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"    └─TableFullScan 6.00 cop[tikv] table:t1 keep order:false; stats:pseudo",
 	))
 	testKit.MustQuery("explain format = 'hint' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"))
@@ -218,9 +218,9 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain format = 'brief' select count(*) from t group by a").Check(testkit.Rows(
-		"HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
+		"HashAgg 2.00 root  group by:test.t.a; funcs:count(Column#4)->Column#3",
 		"└─TableReader 2.00 root  data:HashAgg",
-		"  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
+		"  └─HashAgg 2.00 cop[tikv]  group by:test.t.a; funcs:count(1)->Column#4",
 		"    └─TableFullScan 8.00 cop[tikv] table:t keep order:false",
 	))
 }
@@ -429,7 +429,7 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	testKit.MustQuery("explain format = 'brief' select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableReader 8.84 root  data:Selection",
 		"└─Selection 8.84 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-		"  └─TableFullScan 80.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"  └─TableFullScan 80.00 cop[tikv] table:t keep order:false; stats:pseudo",
 	))
 }
 
@@ -560,7 +560,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	tk.MustQuery("explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5").
 		Check(testkit.Rows(
 			"IndexLookUp 10.00 root  ",
-			"├─IndexRangeScan(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",
+			"├─IndexRangeScan(Build) 12.50 cop[tikv] table:t; index:ab(a, b) range:[5,5]; keep order:false",
 			"└─Selection(Probe) 10.00 cop[tikv]  eq(test.t.c, 5)",
 			"  └─TableRowIDScan 12.50 cop[tikv] table:t keep order:false",
 		))

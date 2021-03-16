@@ -149,7 +149,7 @@ func (ran *Range) String() string {
 	if ran.HighExclude {
 		r = ")"
 	}
-	return l + strings.Join(lowStrs, " ") + ", " + strings.Join(highStrs, " ") + r
+	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
 }
 
 // Encode encodes the range to its encoded value.

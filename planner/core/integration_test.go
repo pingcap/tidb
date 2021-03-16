@@ -319,7 +319,7 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 	// Don't filter mysql.SystemDB by isolation read.
 	tk.MustQuery("explain format = 'brief' select * from mysql.stats_meta").Check(testkit.Rows(
 		"TableReader 10000.00 root  data:TableFullScan",
-		"└─TableFullScan 10000.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"))
+		"└─TableFullScan 10000.00 cop[tikv] table:stats_meta keep order:false; stats:pseudo"))
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
@@ -693,14 +693,14 @@ func (s *testIntegrationSerialSuite) TestAggPushDownEngine(c *C) {
 		"StreamAgg_16 1.00 root  funcs:approx_count_distinct(Column#5)->Column#3",
 		"└─TableReader_17 1.00 root  data:StreamAgg_8",
 		"  └─StreamAgg_8 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#5",
-		"    └─TableFullScan_15 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+		"    └─TableFullScan_15 10000.00 batchCop[tiflash] table:t keep order:false; stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
 
 	tk.MustQuery("desc select approx_count_distinct(a) from t").Check(testkit.Rows(
 		"HashAgg_5 1.00 root  funcs:approx_count_distinct(test.t.a)->Column#3",
 		"└─TableReader_11 10000.00 root  data:TableFullScan_10",
-		"  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
@@ -1259,14 +1259,14 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 	tk.MustExec("set session tidb_opt_agg_push_down=1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort 16000.00 root  test.t.b:desc",
-		"└─HashAgg 16000.00 root  group by:test.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.b",
+		"└─HashAgg 16000.00 root  group by:test.t.b; funcs:approx_count_distinct(Column#5)->Column#4; funcs:firstrow(Column#6)->test.t.b",
 		"  └─PartitionUnion 16000.00 root  ",
-		"    ├─HashAgg 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+		"    ├─HashAgg 8000.00 root  group by:test.t.b; funcs:approx_count_distinct(test.t.a)->Column#5; funcs:firstrow(test.t.b)->Column#6; funcs:firstrow(test.t.b)->test.t.b",
 		"    │ └─TableReader 10000.00 root  data:TableFullScan",
-		"    │   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-		"    └─HashAgg 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+		"    │   └─TableFullScan 10000.00 cop[tikv] table:t; partition:p0 keep order:false; stats:pseudo",
+		"    └─HashAgg 8000.00 root  group by:test.t.b; funcs:approx_count_distinct(test.t.a)->Column#5; funcs:firstrow(test.t.b)->Column#6; funcs:firstrow(test.t.b)->test.t.b",
 		"      └─TableReader 10000.00 root  data:TableFullScan",
-		"        └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"))
+		"        └─TableFullScan 10000.00 cop[tikv] table:t; partition:p1 keep order:false; stats:pseudo"))
 	tk.MustQuery("select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("1 2", "3 1"))
 }
 
@@ -1511,10 +1511,10 @@ func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows(
 		"Projection 10.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e",
 		"└─IndexMerge 0.01 root  ",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_ab(a, b) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:c(c) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t; index:idx_ab(a, b) range:[1,1]; keep order:false; stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t; index:c(c) range:[1,1]; keep order:false; stats:pseudo",
 		"  └─Selection(Probe) 0.01 cop[tikv]  or(eq(test.t.a, 1), and(eq(test.t.e, 1), eq(test.t.c, 1)))",
-		"    └─TableRowIDScan 11.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"    └─TableRowIDScan 11.00 cop[tikv] table:t keep order:false; stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("insert into t values (2, 1, 1, 1, 2)")
 	tk.MustQuery("select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows())
@@ -1528,39 +1528,39 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and b+2>1)").Check(testkit.Rows(
 		"Projection 8000.00 root  test.t.a, test.t.b",
 		"└─IndexMerge 2.00 root  ",
-		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t; index:a(a) range:[1,1]; keep order:false; stats:pseudo",
 		"  ├─Selection(Build) 0.80 cop[tikv]  1",
-		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t; index:b(b) range:[1,1]; keep order:false; stats:pseudo",
+		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false; stats:pseudo",
 	))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1)").Check(testkit.Rows(
 		"Projection 1.80 root  test.t.a, test.t.b",
 		"└─IndexMerge 2.00 root  ",
-		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t; index:a(a) range:[1,1]; keep order:false; stats:pseudo",
 		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
-		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t; index:b(b) range:[1,1]; keep order:false; stats:pseudo",
+		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false; stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)").Check(testkit.Rows(
 		"Projection 1.60 root  test.t.a, test.t.b",
 		"└─IndexMerge 2.00 root  ",
 		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
-		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t; index:a(a) range:[1,1]; keep order:false; stats:pseudo",
 		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
-		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t; index:b(b) range:[1,1]; keep order:false; stats:pseudo",
+		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false; stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(b)=1) or (b=1 and length(a)=1)").Check(testkit.Rows(
 		"Projection 1.60 root  test.t.a, test.t.b",
 		"└─IndexMerge 0.00 root  ",
-		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t; index:a(a) range:[1,1]; keep order:false; stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t; index:b(b) range:[1,1]; keep order:false; stats:pseudo",
 		"  └─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b, var_string(20))), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a, var_string(20))), 1)))",
-		"    └─TableRowIDScan 2.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"    └─TableRowIDScan 2.00 cop[tikv] table:t keep order:false; stats:pseudo",
 	))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
@@ -1573,10 +1573,10 @@ func (s *testIntegrationSerialSuite) TestIssue16407(c *C) {
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or b='x'").Check(testkit.Rows(
 		"Projection 19.99 root  test.t.a, test.t.b",
 		"└─IndexMerge 0.04 root  ",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[\"x\",\"x\"], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t; index:a(a) range:[10,10]; keep order:false; stats:pseudo",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t; index:b(b) range:[\"x\",\"x\"]; keep order:false; stats:pseudo",
 		"  └─Selection(Probe) 0.04 cop[tikv]  or(eq(test.t.a, 10), eq(test.t.b, \"x\"))",
-		"    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false; stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("insert into t values (1, 'xx')")
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where a=10 or b='x'").Check(testkit.Rows())
@@ -2109,7 +2109,7 @@ func (s *testIntegrationSuite) TestIssue20139(c *C) {
 	plan.Check(testkit.Rows(
 		"TableReader 0.01 root partition:p0 data:Selection",
 		"└─Selection 0.01 cop[tikv]  eq(test.t.c, 1), eq(test.t.id, 1)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
 	))
 	tk.MustExec("drop table t")
 }
@@ -2282,20 +2282,20 @@ func (s *testIntegrationSuite) TestExtendedStatsSwitch(c *C) {
 	))
 	// Estimated index scan count is 4 using extended stats.
 	tk.MustQuery("explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1").Check(testkit.Rows(
-		"Limit 1.00 root  offset:0, count:1",
+		"Limit 1.00 root  offset:0; count:1",
 		"└─Projection 1.00 root  test.t.a, test.t.b",
 		"  └─IndexLookUp 1.00 root  ",
-		"    ├─IndexFullScan(Build) 4.00 cop[tikv] table:t, index:b(b) keep order:true",
+		"    ├─IndexFullScan(Build) 4.00 cop[tikv] table:t; index:b(b) keep order:true",
 		"    └─Selection(Probe) 1.00 cop[tikv]  gt(test.t.a, 3)",
 		"      └─TableRowIDScan 4.00 cop[tikv] table:t keep order:false",
 	))
 	tk.MustExec("set session tidb_enable_extended_stats = off")
 	// Estimated index scan count is 2 using independent assumption.
 	tk.MustQuery("explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1").Check(testkit.Rows(
-		"Limit 1.00 root  offset:0, count:1",
+		"Limit 1.00 root  offset:0; count:1",
 		"└─Projection 1.00 root  test.t.a, test.t.b",
 		"  └─IndexLookUp 1.00 root  ",
-		"    ├─IndexFullScan(Build) 2.00 cop[tikv] table:t, index:b(b) keep order:true",
+		"    ├─IndexFullScan(Build) 2.00 cop[tikv] table:t; index:b(b) keep order:true",
 		"    └─Selection(Probe) 1.00 cop[tikv]  gt(test.t.a, 3)",
 		"      └─TableRowIDScan 2.00 cop[tikv] table:t keep order:false",
 	))
@@ -2861,10 +2861,10 @@ func (s *testIntegrationSuite) TestIndexMergeTableFilter(c *C) {
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or (b=10 and c=10)").Check(testkit.Rows(
 		"Projection 10.01 root  test.t.a, test.t.b, test.t.c, test.t.d",
 		"└─IndexMerge 0.02 root  ",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[10,10], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t; index:a(a) range:[10,10]; keep order:false; stats:pseudo",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t; index:b(b) range:[10,10]; keep order:false; stats:pseudo",
 		"  └─Selection(Probe) 0.02 cop[tikv]  or(eq(test.t.a, 10), and(eq(test.t.b, 10), eq(test.t.c, 10)))",
-		"    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo",
+		"    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false; stats:pseudo",
 	))
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where a=10 or (b=10 and c=10)").Check(testkit.Rows(
 		"10 1 1 10",
@@ -2872,10 +2872,10 @@ func (s *testIntegrationSuite) TestIndexMergeTableFilter(c *C) {
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10)").Check(testkit.Rows(
 		"Projection 0.02 root  test.t.a, test.t.b, test.t.c, test.t.d",
 		"└─IndexMerge 0.00 root  ",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[10,10], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t; index:a(a) range:[10,10]; keep order:false; stats:pseudo",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t; index:b(b) range:[10,10]; keep order:false; stats:pseudo",
 		"  └─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.t.a, 10), eq(test.t.d, 10)), and(eq(test.t.b, 10), eq(test.t.c, 10)))",
-		"    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo",
+		"    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false; stats:pseudo",
 	))
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10)").Check(testkit.Rows(
 		"10 1 1 10",

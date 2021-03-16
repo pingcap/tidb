@@ -258,10 +258,10 @@ type testTablePartitionInfo struct {
 //          "└─HashJoin_9 80.00 root  CARTESIAN inner join",
 //          "  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
 //          "  │ └─Selection_11 8.00 cop[tikv]  1, eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
-//          "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+//          "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false; stats:pseudo",
 //          "  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
 //          "    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
-//          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+//          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false; stats:pseudo"
 //
 // The return table partition info is: t1: p0; t2: p1
 func (s *testPartitionPruneSuit) getPartitionInfoFromPlan(plan []string) string {
@@ -300,8 +300,12 @@ func (s *testPartitionPruneSuit) getFieldValue(prefix, row string) string {
 		start := idx + len(prefix)
 		end := strings.Index(row[start:], " ")
 		if end > 0 {
-			value := row[start : start+end]
-			value = strings.Trim(value, ",")
+			end = start + end
+			for row[end-1] == ',' {
+				end += strings.Index(row[end+1:], " ") + 1
+			}
+			value := row[start:end]
+			value = strings.Trim(value, ";")
 			return value
 		}
 	}

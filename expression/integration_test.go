@@ -3736,7 +3736,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows(
 		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#3",
 		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
-		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
 	))
 
 	// for interval
@@ -5315,7 +5315,7 @@ func (s *testIntegrationSuite) TestTimestampDatumEncode(c *C) {
 	tk.MustQuery(`explain format = 'brief' select * from t where b = (select max(b) from t)`).Check(testkit.Rows(
 		"TableReader 10.00 root  data:Selection",
 		"└─Selection 10.00 cop[tikv]  eq(test.t.b, 2019-04-29 11:56:12)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
 	))
 	tk.MustQuery(`select * from t where b = (select max(b) from t)`).Check(testkit.Rows(`1 2019-04-29 11:56:12`))
 }

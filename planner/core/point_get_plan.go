@@ -14,8 +14,6 @@
 package core
 
 import (
-	"bytes"
-	"fmt"
 	math2 "math"
 
 	"github.com/pingcap/errors"
@@ -105,7 +103,10 @@ func (p *PointGetPlan) ExplainInfo() string {
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
-	return accessObject + ", " + operatorInfo
+	return stringutil.NewSeparatedString(entriesSeparator).
+		Append(accessObject).
+		Append(operatorInfo).
+		String()
 }
 
 // ExplainNormalizedInfo implements Plan interface.
@@ -114,63 +115,65 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
-	return accessObject + ", " + operatorInfo
+	return stringutil.NewSeparatedString(entriesSeparator).
+		Append(accessObject).
+		Append(operatorInfo).
+		String()
 }
 
 // AccessObject implements dataAccesser interface.
 func (p *PointGetPlan) AccessObject(normalized bool) string {
-	buffer := bytes.NewBufferString("")
-	tblName := p.TblInfo.Name.O
-	fmt.Fprintf(buffer, "table:%s", tblName)
+	builder := stringutil.NewSeparatedString(entriesSeparator)
+	builder.AppendF("table:%s", p.TblInfo.Name.O)
 	if p.PartitionInfo != nil {
 		if normalized {
-			fmt.Fprintf(buffer, ", partition:?")
+			builder.Append("partition:?")
 		} else {
-			fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+			builder.AppendF("partition:%s", p.PartitionInfo.Name.L)
 		}
 	}
 	if p.IndexInfo != nil {
+		builder.StartNext()
 		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
-			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
+			builder.WriteString("clustered index:")
 		} else {
-			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+			builder.WriteString("index:")
 		}
-		for i, idxCol := range p.IndexInfo.Columns {
-			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				buffer.WriteString(tblCol.GeneratedExprString)
-			} else {
-				buffer.WriteString(idxCol.Name.O)
-			}
-			if i+1 < len(p.IndexInfo.Columns) {
-				buffer.WriteString(", ")
+		builder.WriteString(p.IndexInfo.Name.O + "(")
+		builder.StartScope(itemsSeparator)
+		{
+			for _, idxCol := range p.IndexInfo.Columns {
+				if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+					builder.Append(tblCol.GeneratedExprString)
+				} else {
+					builder.Append(idxCol.Name.O)
+				}
 			}
 		}
-		buffer.WriteString(")")
+		builder.EndScope()
+		builder.WriteString(")")
 	}
-	return buffer.String()
+	return builder.String()
 }
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PointGetPlan) OperatorInfo(normalized bool) string {
-	buffer := bytes.NewBufferString("")
+	builder := stringutil.NewSeparatedString(entriesSeparator)
 	if p.Handle != nil {
 		if normalized {
-			fmt.Fprintf(buffer, "handle:?, ")
+			builder.Append("handle:?")
 		} else {
 			if p.UnsignedHandle {
-				fmt.Fprintf(buffer, "handle:%d, ", uint64(p.Handle.IntValue()))
+				builder.AppendF("handle:%d", uint64(p.Handle.IntValue()))
 			} else {
-				fmt.Fprintf(buffer, "handle:%s, ", p.Handle)
+				builder.AppendF("handle:%s", p.Handle)
 			}
 		}
 	}
 	if p.Lock {
-		fmt.Fprintf(buffer, "lock, ")
+		builder.Append("lock")
 	}
-	if buffer.Len() >= 2 {
-		buffer.Truncate(buffer.Len() - 2)
-	}
-	return buffer.String()
+	return builder.String()
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -286,59 +289,64 @@ func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 
 // ExplainInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainInfo() string {
-	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+	return stringutil.NewSeparatedString(entriesSeparator).
+		Append(p.AccessObject(false)).
+		Append(p.OperatorInfo(false)).
+		String()
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
+	return stringutil.NewSeparatedString(entriesSeparator).
+		Append(p.AccessObject(true)).
+		Append(p.OperatorInfo(true)).
+		String()
 }
 
 // AccessObject implements physicalScan interface.
 func (p *BatchPointGetPlan) AccessObject(_ bool) string {
-	buffer := bytes.NewBufferString("")
-	tblName := p.TblInfo.Name.O
-	fmt.Fprintf(buffer, "table:%s", tblName)
+	builder := stringutil.NewSeparatedString(entriesSeparator)
+	builder.AppendF("table:%s", p.TblInfo.Name.O)
 	if p.IndexInfo != nil {
+		builder.StartNext()
 		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
-			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
+			builder.WriteString("clustered index:")
 		} else {
-			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+			builder.WriteString("index:")
 		}
-		for i, idxCol := range p.IndexInfo.Columns {
-			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				buffer.WriteString(tblCol.GeneratedExprString)
-			} else {
-				buffer.WriteString(idxCol.Name.O)
-			}
-			if i+1 < len(p.IndexInfo.Columns) {
-				buffer.WriteString(", ")
+		builder.WriteString(p.IndexInfo.Name.O + "(")
+		builder.StartScope(itemsSeparator)
+		{
+			for _, idxCol := range p.IndexInfo.Columns {
+				if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+					builder.Append(tblCol.GeneratedExprString)
+				} else {
+					builder.Append(idxCol.Name.O)
+				}
 			}
 		}
-		buffer.WriteString(")")
+		builder.EndScope()
+		builder.WriteString(")")
 	}
-	return buffer.String()
+	return builder.String()
 }
 
 // OperatorInfo implements dataAccesser interface.
 func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
-	buffer := bytes.NewBufferString("")
+	builder := stringutil.NewSeparatedString(entriesSeparator)
 	if p.IndexInfo == nil {
 		if normalized {
-			fmt.Fprintf(buffer, "handle:?, ")
+			builder.Append("handle:?")
 		} else {
-			fmt.Fprintf(buffer, "handle:%v, ", p.Handles)
+			builder.AppendF("handle:%v", p.Handles)
 		}
 	}
-	fmt.Fprintf(buffer, "keep order:%v, ", p.KeepOrder)
-	fmt.Fprintf(buffer, "desc:%v, ", p.Desc)
+	builder.AppendF("keep order:%v", p.KeepOrder)
+	builder.AppendF("desc:%v", p.Desc)
 	if p.Lock {
-		fmt.Fprintf(buffer, "lock, ")
+		builder.Append("lock")
 	}
-	if buffer.Len() >= 2 {
-		buffer.Truncate(buffer.Len() - 2)
-	}
-	return buffer.String()
+	return builder.String()
 }
 
 // GetChildReqProps gets the required property by child index.

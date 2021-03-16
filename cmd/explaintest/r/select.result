@@ -471,7 +471,7 @@ Projection	10000.00	root		minus(Column#5, test.t.x)->Column#7
 └─Window	10000.00	root		row_number()->Column#5 over(partition by test.t.i)
   └─Sort	10000.00	root		test.t.i
     └─TableReader	10000.00	root		data:TableRangeScan
-      └─TableRangeScan	10000.00	cop[tikv]	table:t	range:[0, +inf]; keep order:false; stats:pseudo
+      └─TableRangeScan	10000.00	cop[tikv]	table:t	range:[0,+inf]; keep order:false; stats:pseudo
 create table precise_types (
 a BIGINT UNSIGNED NOT NULL,
 b BIGINT NOT NULL,

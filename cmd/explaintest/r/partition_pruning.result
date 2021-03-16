@@ -17,15 +17,15 @@ INSERT INTO t1 VALUES (-1),(0),(1),(2),(3),(4),(5),(6),(7),(8);
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 1;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 1]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,1]; keep order:false; stats:pseudo
 explain format = 'brief' SELECT * FROM t1 WHERE a < 7;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:all	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 7); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,7); keep order:false; stats:pseudo
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 1;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 1]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,1]; keep order:false; stats:pseudo
 DROP TABLE t1;
 #
 # Bug#49742: Partition Pruning not working correctly for RANGE
@@ -47,7 +47,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 1;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 1); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,1); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a < 2 order by a;
 a
 -1
@@ -56,7 +56,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 2;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 2); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,2); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a < 3 order by a;
 a
 -1
@@ -66,7 +66,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 3;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 3); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,3); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a < 4 order by a;
 a
 -1
@@ -77,7 +77,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 4;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2, p3	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 4); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,4); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a < 5 order by a;
 a
 -1
@@ -89,7 +89,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 5;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2, p3, p4	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 5); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,5); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a < 6 order by a;
 a
 -1
@@ -102,7 +102,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 6;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2, p3, p4, p5	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 6); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,6); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a < 7 order by a;
 a
 -1
@@ -116,7 +116,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 7;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:all	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 7); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,7); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 1 order by a;
 a
 -1
@@ -125,7 +125,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 1;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 1]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,1]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 2 order by a;
 a
 -1
@@ -135,7 +135,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 2;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 2]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,2]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 3 order by a;
 a
 -1
@@ -146,7 +146,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 3;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2, p3	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 3]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,3]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 4 order by a;
 a
 -1
@@ -158,7 +158,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 4;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2, p3, p4	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 4]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,4]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 5 order by a;
 a
 -1
@@ -171,7 +171,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 5;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2, p3, p4, p5	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 5]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,5]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 6 order by a;
 a
 -1
@@ -185,7 +185,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 6;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:all	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 6]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,6]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 7 order by a;
 a
 -1
@@ -200,56 +200,56 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 7;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:all	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 7]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,7]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 1 order by a;
 a
 1
 explain format = 'brief' SELECT * FROM t1 WHERE a = 1;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p1	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1, 1]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1,1]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 2 order by a;
 a
 2
 explain format = 'brief' SELECT * FROM t1 WHERE a = 2;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p2	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[2, 2]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[2,2]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 3 order by a;
 a
 3
 explain format = 'brief' SELECT * FROM t1 WHERE a = 3;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p3	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[3, 3]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[3,3]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 4 order by a;
 a
 4
 explain format = 'brief' SELECT * FROM t1 WHERE a = 4;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p4	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[4, 4]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[4,4]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 5 order by a;
 a
 5
 explain format = 'brief' SELECT * FROM t1 WHERE a = 5;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p5	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[5, 5]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[5,5]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 6 order by a;
 a
 6
 explain format = 'brief' SELECT * FROM t1 WHERE a = 6;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:max	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[6, 6]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[6,6]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 7 order by a;
 a
 7
 explain format = 'brief' SELECT * FROM t1 WHERE a = 7;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:max	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[7, 7]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[7,7]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 1 order by a;
 a
 1
@@ -263,7 +263,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 1;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p1, p2, p3, p4, p5, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[1, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[1,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 2 order by a;
 a
 2
@@ -276,7 +276,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 2;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p2, p3, p4, p5, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[2, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[2,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 3 order by a;
 a
 3
@@ -288,7 +288,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 3;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p3, p4, p5, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[3, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[3,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 4 order by a;
 a
 4
@@ -299,7 +299,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 4;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p4, p5, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[4, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[4,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 5 order by a;
 a
 5
@@ -309,7 +309,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 5;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p5, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[5, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[5,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 6 order by a;
 a
 6
@@ -318,7 +318,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 6;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[6, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[6,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 7 order by a;
 a
 7
@@ -326,7 +326,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 7;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[7, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[7,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 1 order by a;
 a
 2
@@ -339,7 +339,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a > 1;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p2, p3, p4, p5, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(1, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(1,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 2 order by a;
 a
 3
@@ -351,7 +351,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a > 2;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p3, p4, p5, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(2, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(2,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 3 order by a;
 a
 4
@@ -362,7 +362,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a > 3;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p4, p5, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(3, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(3,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 4 order by a;
 a
 5
@@ -372,7 +372,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a > 4;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p5, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(4, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(4,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 5 order by a;
 a
 6
@@ -381,7 +381,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a > 5;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(5, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(5,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 6 order by a;
 a
 7
@@ -389,14 +389,14 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a > 6;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(6, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(6,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 7 order by a;
 a
 8
 explain format = 'brief' SELECT * FROM t1 WHERE a > 7;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(7, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(7,+inf]; keep order:false; stats:pseudo
 DROP TABLE t1;
 CREATE TABLE t1 (a INT PRIMARY KEY)
 PARTITION BY RANGE (a) (
@@ -414,7 +414,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 1;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 1); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,1); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a < 2 order by a;
 a
 -1
@@ -423,7 +423,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 2;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 2); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,2); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a < 3 order by a;
 a
 -1
@@ -433,7 +433,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 3;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 3); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,3); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a < 4 order by a;
 a
 -1
@@ -444,7 +444,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 4;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2, p3	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 4); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,4); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a < 5 order by a;
 a
 -1
@@ -456,7 +456,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 5;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2, p3, p4	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 5); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,5); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a < 6 order by a;
 a
 -1
@@ -469,7 +469,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a < 6;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:all	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 6); keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,6); keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 1 order by a;
 a
 -1
@@ -478,7 +478,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 1;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 1]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,1]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 2 order by a;
 a
 -1
@@ -488,7 +488,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 2;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 2]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,2]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 3 order by a;
 a
 -1
@@ -499,7 +499,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 3;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2, p3	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 3]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,3]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 4 order by a;
 a
 -1
@@ -511,7 +511,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 4;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p0, p1, p2, p3, p4	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 4]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,4]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 5 order by a;
 a
 -1
@@ -524,7 +524,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 5;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:all	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 5]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,5]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a <= 6 order by a;
 a
 -1
@@ -538,49 +538,49 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a <= 6;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:all	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf, 6]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[-inf,6]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 1;
 a
 1
 explain format = 'brief' SELECT * FROM t1 WHERE a = 1;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p1	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1, 1]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1,1]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 2;
 a
 2
 explain format = 'brief' SELECT * FROM t1 WHERE a = 2;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p2	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[2, 2]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[2,2]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 3;
 a
 3
 explain format = 'brief' SELECT * FROM t1 WHERE a = 3;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p3	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[3, 3]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[3,3]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 4;
 a
 4
 explain format = 'brief' SELECT * FROM t1 WHERE a = 4;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p4	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[4, 4]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[4,4]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 5;
 a
 5
 explain format = 'brief' SELECT * FROM t1 WHERE a = 5;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:max	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[5, 5]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[5,5]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a = 6;
 a
 6
 explain format = 'brief' SELECT * FROM t1 WHERE a = 6;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:max	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[6, 6]; keep order:false; stats:pseudo
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[6,6]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 1 order by a;
 a
 1
@@ -593,7 +593,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 1;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p1, p2, p3, p4, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[1, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[1,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 2 order by a;
 a
 2
@@ -605,7 +605,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 2;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p2, p3, p4, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[2, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[2,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 3 order by a;
 a
 3
@@ -616,7 +616,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 3;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p3, p4, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[3, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[3,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 4 order by a;
 a
 4
@@ -626,7 +626,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 4;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p4, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[4, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[4,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 5 order by a;
 a
 5
@@ -635,7 +635,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 5;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[5, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[5,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a >= 6 order by a;
 a
 6
@@ -643,7 +643,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a >= 6;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[6, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:[6,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 1 order by a;
 a
 2
@@ -655,7 +655,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a > 1;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p2, p3, p4, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(1, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(1,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 2 order by a;
 a
 3
@@ -666,7 +666,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a > 2;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p3, p4, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(2, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(2,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 3 order by a;
 a
 4
@@ -676,7 +676,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a > 3;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p4, max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(3, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(3,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 4 order by a;
 a
 5
@@ -685,7 +685,7 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a > 4;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(4, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(4,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 5 order by a;
 a
 6
@@ -693,14 +693,14 @@ a
 explain format = 'brief' SELECT * FROM t1 WHERE a > 5;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(5, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(5,+inf]; keep order:false; stats:pseudo
 SELECT * FROM t1 WHERE a > 6 order by a;
 a
 7
 explain format = 'brief' SELECT * FROM t1 WHERE a > 6;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:max	data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(6, +inf]; keep order:false; stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(6,+inf]; keep order:false; stats:pseudo
 DROP TABLE t1;
 # test of RANGE and index
 CREATE TABLE t1 (a DATE, KEY(a))
@@ -2138,27 +2138,27 @@ TableReader	250.00	root	partition:p0, p1, p2	data:Selection
 explain format = 'brief' select * from t2 where b = 4;
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root	partition:all	
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2; index:b(b)	range:[4, 4]; keep order:false; stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2; index:b(b)	range:[4,4]; keep order:false; stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t2	keep order:false; stats:pseudo
 explain format = 'brief' select * from t2 where b = 6;
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root	partition:all	
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2; index:b(b)	range:[6, 6]; keep order:false; stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2; index:b(b)	range:[6,6]; keep order:false; stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t2	keep order:false; stats:pseudo
 explain format = 'brief' select * from t2 where b in (1,3,5);
 id	estRows	task	access object	operator info
 IndexLookUp	30.00	root	partition:all	
-├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t2; index:b(b)	range:[1, 1] | [3, 3] | [5, 5]; keep order:false; stats:pseudo
+├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t2; index:b(b)	range:[1,1] | [3,3] | [5,5]; keep order:false; stats:pseudo
 └─TableRowIDScan(Probe)	30.00	cop[tikv]	table:t2	keep order:false; stats:pseudo
 explain format = 'brief' select * from t2 where b in (2,4,6);
 id	estRows	task	access object	operator info
 IndexLookUp	30.00	root	partition:all	
-├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t2; index:b(b)	range:[2, 2] | [4, 4] | [6, 6]; keep order:false; stats:pseudo
+├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t2; index:b(b)	range:[2,2] | [4,4] | [6,6]; keep order:false; stats:pseudo
 └─TableRowIDScan(Probe)	30.00	cop[tikv]	table:t2	keep order:false; stats:pseudo
 explain format = 'brief' select * from t2 where b in (7,8,9);
 id	estRows	task	access object	operator info
 IndexLookUp	30.00	root	partition:all	
-├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t2; index:b(b)	range:[7, 7] | [8, 8] | [9, 9]; keep order:false; stats:pseudo
+├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t2; index:b(b)	range:[7,7] | [8,8] | [9,9]; keep order:false; stats:pseudo
 └─TableRowIDScan(Probe)	30.00	cop[tikv]	table:t2	keep order:false; stats:pseudo
 explain format = 'brief' select * from t2 where b > 5;
 id	estRows	task	access object	operator info
@@ -2168,17 +2168,17 @@ TableReader	3333.33	root	partition:all	data:Selection
 explain format = 'brief' select * from t2 where b > 5 and b < 8;
 id	estRows	task	access object	operator info
 IndexLookUp	250.00	root	partition:all	
-├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t2; index:b(b)	range:(5, 8); keep order:false; stats:pseudo
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t2; index:b(b)	range:(5,8); keep order:false; stats:pseudo
 └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:t2	keep order:false; stats:pseudo
 explain format = 'brief' select * from t2 where b > 5 and b < 7;
 id	estRows	task	access object	operator info
 IndexLookUp	312.50	root	partition:all	
-├─IndexRangeScan(Build)	312.50	cop[tikv]	table:t2; index:b(b)	range:[6, 6]; keep order:false; stats:pseudo
+├─IndexRangeScan(Build)	312.50	cop[tikv]	table:t2; index:b(b)	range:[6,6]; keep order:false; stats:pseudo
 └─TableRowIDScan(Probe)	312.50	cop[tikv]	table:t2	keep order:false; stats:pseudo
 explain format = 'brief' select * from t2 where b > 0 and b < 5;
 id	estRows	task	access object	operator info
 IndexLookUp	250.00	root	partition:all	
-├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t2; index:b(b)	range:(0, 5); keep order:false; stats:pseudo
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t2; index:b(b)	range:(0,5); keep order:false; stats:pseudo
 └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:t2	keep order:false; stats:pseudo
 flush status;
 update t2 set a = 111 where b = 10;

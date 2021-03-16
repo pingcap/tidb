@@ -27,7 +27,7 @@ func (s *testIntegrationSuite) TestFoldIfNull(c *C) {
 	tk.MustQuery(`desc select ifnull("aaaa", a) from t;`).Check(testkit.Rows(
 		`Projection_3 10000.00 root  aaaa->Column#4`,
 		`└─TableReader_5 10000.00 root  data:TableFullScan_4`,
-		`  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`,
+		`  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false; stats:pseudo`,
 	))
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
 	tk.MustQuery(`select ifnull("aaaa", a) from t;`).Check(testkit.Rows("aaaa"))

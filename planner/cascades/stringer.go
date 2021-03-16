@@ -79,7 +79,7 @@ func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
 			}
 			ukStrs = append(ukStrs, strings.Join(ukColStrs, ","))
 		}
-		fmt.Fprintf(groupLine, ", UniqueKey:[%s]", strings.Join(ukStrs, ","))
+		fmt.Fprintf(groupLine, "; UniqueKey:[%s]", strings.Join(ukStrs, ","))
 	}
 
 	result := make([]string, 0, g.Equivalents.Len()+1)
@@ -102,7 +102,7 @@ func groupExprToString(expr *memo.GroupExpr, idMap map[*memo.Group]int) string {
 		fmt.Fprintf(buffer, " %s", getChildrenGroupID(expr, idMap))
 		explainInfo := expr.ExprNode.ExplainInfo()
 		if len(explainInfo) != 0 {
-			fmt.Fprintf(buffer, ", %s", explainInfo)
+			fmt.Fprintf(buffer, "; %s", explainInfo)
 		}
 	}
 	return buffer.String()
