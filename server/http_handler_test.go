@@ -971,7 +971,13 @@ func (ts *HTTPHandlerTestSuite) TestGetSettings(c *C) {
 	var settings *config.Config
 	err = decoder.Decode(&settings)
 	c.Assert(err, IsNil)
-	c.Assert(settings, DeepEquals, config.GetGlobalConfig())
+	var configBytes []byte
+	configBytes, err = json.Marshal(config.GetGlobalConfig())
+	c.Assert(err, IsNil)
+	var settingBytes []byte
+	settingBytes, err = json.Marshal(settings)
+	c.Assert(err, IsNil)
+	c.Assert(settingBytes, DeepEquals, configBytes)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
@@ -1104,9 +1110,14 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
+	se, err := session.CreateSession(ts.store.(kv.Storage))
+	c.Assert(err, IsNil)
+
 	form := make(url.Values)
 	form.Set("log_level", "error")
 	form.Set("tidb_general_log", "1")
+	form.Set("tidb_enable_async_commit", "1")
+	form.Set("tidb_enable_1pc", "1")
 	resp, err := ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -1114,9 +1125,18 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
 	c.Assert(variable.ProcessGeneralLog.Load(), IsTrue)
+	val, err := variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.BoolOn)
+	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.BoolOn)
+
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
 	form.Set("tidb_general_log", "0")
+	form.Set("tidb_enable_async_commit", "0")
+	form.Set("tidb_enable_1pc", "0")
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -1124,6 +1144,12 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(log.GetLevel(), Equals, log.FatalLevel)
 	c.Assert(zaplog.GetLevel(), Equals, zap.FatalLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
+	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.BoolOff)
+	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.BoolOff)
 	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold
