@@ -69,6 +69,22 @@
     ]
   },
   {
+    "name": "TestJoinNotSupportedByTiFlash",
+    "cases": [
+      "explain format = 'brief' select * from table_1 a, table_1 b where a.bit_col = b.bit_col",
+      "explain format = 'brief' select * from table_1 a left join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > 100",
+      "explain format = 'brief' select * from table_1 a right join table_1 b on a.id = b.id and dayofmonth(b.datetime_col) > 100",
+      "explain format = 'brief' select * from table_1 a join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > dayofmonth(b.datetime_col)"
+    ]
+  },
+  {
+    "name": "TestMPPNotSupportedInNewCollation",
+    "cases": [
+      "explain format = 'brief' select * from table_1 a, table_1 b where a.id = b.id",
+      "explain format = 'brief' select /*+ agg_to_cop() */ count(*), id from table_1 group by id"
+    ]
+  },
+  {
     "name": "TestReadFromStorageHint",
     "cases": [
       "desc format = 'brief' select avg(a) from t",
@@ -174,6 +190,7 @@
       "desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
       "desc format = 'brief' select count(*) from t",
       "desc format = 'brief' select count(*), id from t group by id",
+      "desc format = 'brief' select count(*), id + 1 from t group by id + 1",
       "desc format = 'brief' select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
       "desc format = 'brief' select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
       "desc format = 'brief' select avg(value) as b,id from t group by id",
@@ -184,6 +201,7 @@
       "desc format = 'brief' select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
       "desc format = 'brief' select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id",
       "desc format = 'brief' select count(distinct value),id from t group by id",
+      "desc format = 'brief' select count(distinct value),sum(distinct value),id from t group by id",
       "desc format = 'brief' select * from t join ( select count(distinct value), id from t group by id) as A on A.id = t.id",
       "desc format = 'brief' select * from t join ( select count(1/value), id from t group by id) as A on A.id = t.id"
     ]

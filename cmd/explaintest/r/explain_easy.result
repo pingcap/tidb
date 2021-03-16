@@ -467,7 +467,7 @@ insert tb values ('1');
 explain format = 'brief' select * from ta where a = 1;
 id	estRows	task	access object	operator info
 TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		eq(cast(test.ta.a), 1)
+└─Selection	8000.00	cop[tikv]		eq(cast(test.ta.a, double BINARY), 1)
   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 rollback;
 drop table if exists t1, t2;
@@ -507,7 +507,7 @@ StreamAgg	1.00	root		funcs:count(1)->Column#22
         ├─TableDual	8000.00	root		rows:0
         └─Projection	0.01	root		test.test01.stat_date, test.test01.show_date, test.test01.region_id
           └─TableReader	0.01	root		data:Selection
-            └─Selection	0.01	cop[tikv]		eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num), 0), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
+            └─Selection	0.01	cop[tikv]		eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num, bigint(20) BINARY), 0), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
               └─TableFullScan	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
@@ -613,14 +613,15 @@ HashJoin	8002.00	root		right outer join, equal:[eq(test.t.nb, test.t.nb)]
 explain format = 'brief' select ifnull(t.a, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#14
-└─Apply	10000.00	root		CARTESIAN left outer semi join, other cond:eq(ifnull(test.t.a, 1), Column#13)
-  ├─TableReader(Build)	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	1.00	root		funcs:count(Column#15)->Column#13
+└─Apply	10000.00	root		left outer semi join, equal:[eq(Column#15, Column#13)]
+  ├─Projection(Build)	10000.00	root		test.t.a, ifnull(test.t.a, 1)->Column#15
+  │ └─TableReader	10000.00	root		data:TableFullScan
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	1.00	root		funcs:count(Column#17)->Column#13
     └─HashJoin	9.99	root		inner join, equal:[eq(test.t.a, test.t.a)]
-      ├─HashAgg(Build)	7.99	root		group by:test.t.a, funcs:count(Column#16)->Column#15, funcs:firstrow(test.t.a)->test.t.a
+      ├─HashAgg(Build)	7.99	root		group by:test.t.a, funcs:count(Column#18)->Column#17, funcs:firstrow(test.t.a)->test.t.a
       │ └─TableReader	7.99	root		data:HashAgg
-      │   └─HashAgg	7.99	cop[tikv]		group by:test.t.a, funcs:count(1)->Column#16
+      │   └─HashAgg	7.99	cop[tikv]		group by:test.t.a, funcs:count(1)->Column#18
       │     └─Selection	9.99	cop[tikv]		eq(test.t.a, test.t.a), not(isnull(test.t.a))
       │       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
       └─TableReader(Probe)	9.99	root		data:Selection
@@ -743,7 +744,7 @@ create table t(a int, b int);
 explain format = 'brief' select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;
 id	estRows	task	access object	operator info
 Projection	2666.67	root		test.t.a, test.t.b
-└─Selection	2666.67	root		gt(cast(test.t.a), Column#5), lt(test.t.b, 10)
+└─Selection	2666.67	root		gt(cast(test.t.a, decimal(20,0) BINARY), Column#5), lt(test.t.b, 10)
   └─Window	3333.33	root		avg(cast(test.t.b, decimal(15,4) BINARY))->Column#5 over(partition by test.t.a)
     └─Sort	3333.33	root		test.t.a
       └─TableReader	3333.33	root		data:Selection

@@ -96,26 +96,6 @@ func getExecutorList(dagReq *tipb.DAGRequest) ([]*tipb.Executor, error) {
 	return getExecutorListFromRootExec(dagReq.RootExecutor)
 }
 
-func buildClosureExecutorForTiFlash(dagCtx *dagContext, rootExecutor *tipb.Executor) (*closureExecutor, error) {
-	scanExec, err := getScanExecFromRootExec(rootExecutor)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	ce, err := newClosureExecutor(dagCtx, nil, scanExec, false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	executors, err := getExecutorListFromRootExec(rootExecutor)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	err = buildClosureExecutorFromExecutorList(dagCtx, executors, ce)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return ce, nil
-}
-
 func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.Executor, ce *closureExecutor) error {
 	scanExec := executors[0]
 	if scanExec.Tp == tipb.ExecType_TypeTableScan {
@@ -532,12 +512,9 @@ type closureProcessor interface {
 }
 
 type scanCtx struct {
-	count            int
-	limit            int
-	chk              *chunk.Chunk
-	desc             bool
-	decoder          *rowcodec.ChunkDecoder
-	primaryColumnIds []int64
+	chk     *chunk.Chunk
+	desc    bool
+	decoder *rowcodec.ChunkDecoder
 
 	newCollationRd  *rowcodec.BytesDecoder
 	newCollationIds map[int64]int

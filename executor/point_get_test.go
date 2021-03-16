@@ -91,7 +91,7 @@ func (s *testPointGetSuite) TestPointGet(c *C) {
 	c.Assert(err, IsNil)
 	fields := result.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "ident")
-	result.Close()
+	c.Assert(result.Close(), IsNil)
 
 	tk.MustExec("CREATE TABLE tab3(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
 	tk.MustExec("CREATE UNIQUE INDEX idx_tab3_0 ON tab3 (col4);")
@@ -131,6 +131,25 @@ func (s *testPointGetSuite) TestPointGetOverflow(c *C) {
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=-128").Check(testkit.Rows("-128"))
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=128").Check(testkit.Rows())
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=127").Check(testkit.Rows("127"))
+}
+
+// Close issue #22839
+func (s *testPointGetSuite) TestPointGetDataTooLong(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists PK_1389;")
+	tk.MustExec("CREATE TABLE `PK_1389` ( " +
+		"  `COL1` bit(1) NOT NULL," +
+		"  `COL2` varchar(20) DEFAULT NULL," +
+		"  `COL3` datetime DEFAULT NULL," +
+		"  `COL4` bigint(20) DEFAULT NULL," +
+		"  `COL5` float DEFAULT NULL," +
+		"  PRIMARY KEY (`COL1`)" +
+		");")
+	tk.MustExec("insert into PK_1389 values(0, \"皟钹糁泅埞礰喾皑杏灚暋蛨歜檈瓗跾咸滐梀揉\", \"7701-12-27 23:58:43\", 4806951672419474695, -1.55652e38);")
+	tk.MustQuery("select count(1) from PK_1389 where col1 = 0x30;").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(1) from PK_1389 where col1 in ( 0x30);").Check(testkit.Rows("0"))
+	tk.MustExec("drop table if exists PK_1389;")
 }
 
 func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
@@ -464,7 +483,8 @@ func (s *testPointGetSuite) TestIssue10677(c *C) {
 
 func (s *testPointGetSuite) TestForUpdateRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Exec("drop table if exists t")
+	_, err := tk.Exec("drop table if exists t")
+	c.Assert(err, IsNil)
 	tk.MustExec("create table t(pk int primary key, c int)")
 	tk.MustExec("insert into t values (1, 1), (2, 2)")
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
@@ -473,7 +493,7 @@ func (s *testPointGetSuite) TestForUpdateRetry(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("update t set c = c + 1 where pk = 1")
 	tk.MustExec("update t set c = c + 1 where pk = 2")
-	_, err := tk.Exec("commit")
+	_, err = tk.Exec("commit")
 	c.Assert(session.ErrForUpdateCantRetry.Equal(err), IsTrue)
 }
 
