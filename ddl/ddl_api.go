@@ -1427,14 +1427,15 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			clustered, err := ShouldBuildClusteredIndex(ctx, constr.Option)
-			if err != nil {
-				return nil, err
-			}
-			if clustered {
+			if ShouldBuildClusteredIndex(ctx, constr.Option) {
 				if isSingleIntPK(constr, lastCol) {
 					tbInfo.PKIsHandle = true
 				} else {
+					hasBinlog := ctx.GetSessionVars().BinlogClient != nil
+					if hasBinlog {
+						msg := mysql.Message("Cannot create clustered index table when the binlog is ON", nil)
+						return nil, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
+					}
 					tbInfo.IsCommonHandle = true
 					tbInfo.CommonHandleVersion = 1
 				}
@@ -1513,24 +1514,11 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 }
 
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
-func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption) (bool, error) {
+func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption) bool {
 	if opt == nil || opt.PrimaryKeyTp == model.PrimaryKeyTypeDefault {
-		return ctx.GetSessionVars().EnableClusteredIndex, nil
+		return ctx.GetSessionVars().EnableClusteredIndex
 	}
-	switch opt.PrimaryKeyTp {
-	case model.PrimaryKeyTypeClustered:
-		hasBinlog := ctx.GetSessionVars().BinlogClient != nil
-		if hasBinlog {
-			msg := mysql.Message("Cannot create clustered index table when the binlog is ON", nil)
-			return false, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
-		}
-		return true, nil
-	case model.PrimaryKeyTypeNonClustered:
-		return false, nil
-	default: // should never reach here
-		logutil.BgLogger().Error("Unknown primary key type")
-		return false, nil
-	}
+	return opt.PrimaryKeyTp == model.PrimaryKeyTypeClustered
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
