@@ -1672,3 +1672,16 @@ func (c *twoPhaseCommitter) getUndeterminedErr() error {
 	defer c.mu.RUnlock()
 	return c.mu.undeterminedErr
 }
+
+func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
+	var res PlainMutations
+	for i := 0; i < c.mutations.Len(); i++ {
+		for _, key := range keys {
+			if bytes.Equal(c.mutations.GetKey(i), key) {
+				res.Push(c.mutations.GetOp(i), c.mutations.GetKey(i), c.mutations.GetValue(i), c.mutations.IsPessimisticLock(i))
+				break
+			}
+		}
+	}
+	return &res
+}
