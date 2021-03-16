@@ -670,7 +670,31 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableFastAnalyze, Value: BoolToOnOff(DefTiDBUseFastAnalyze), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipIsolationLevelCheck, Value: BoolToOnOff(DefTiDBSkipIsolationLevelCheck), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableRateLimitAction, Value: BoolToOnOff(DefTiDBEnableRateLimitAction), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashFallbackTiKV, Value: BoolToOnOff(DefTiDBEnableTiFlashFallbackTiKV), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowFallbackToTiKV, Value: "", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if normalizedValue == "" {
+			return "", nil
+		}
+		engines := strings.Split(normalizedValue, ",")
+		var formatVal string
+		storeTypes := make(map[kv.StoreType]struct{})
+		for i, engine := range engines {
+			engine = strings.TrimSpace(engine)
+			switch {
+			case strings.EqualFold(engine, kv.TiFlash.Name()):
+				if _, ok := storeTypes[kv.TiFlash]; !ok {
+					if i != 0 {
+						formatVal += ","
+					}
+					formatVal += kv.TiFlash.Name()
+					storeTypes[kv.TiFlash] = struct{}{}
+				}
+			default:
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBAllowFallbackToTiKV, normalizedValue)
+			}
+		}
+		return formatVal, nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIntPrimaryKeyDefaultAsClustered, Value: BoolToOnOff(false), Type: TypeBool},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{Scope: ScopeSession, Name: TiDBGeneralLog, Value: BoolToOnOff(DefTiDBGeneralLog), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(DefTiDBPProfSQLCPU), Type: TypeInt, MinValue: 0, MaxValue: 1},

@@ -585,6 +585,10 @@ OUTER:
 			if !ok {
 				continue
 			}
+			if table.Meta().Partition != nil {
+				// If the table is partition table, the feedback will not work.
+				continue
+			}
 			tblStats := h.GetPartitionStats(table.Meta(), fb.PhysicalID)
 			newTblStats := tblStats.Copy()
 			if fb.Tp == statistics.IndexType {
@@ -623,8 +627,12 @@ OUTER:
 				newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 				newTblStats.Columns[fb.Hist.ID] = &newCol
 			}
-			oldCache := h.statsCache.Load().(statsCache)
-			h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version))
+			for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
+				oldCache := h.statsCache.Load().(statsCache)
+				if h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version)) {
+					break
+				}
+			}
 		}
 	}
 }
@@ -656,8 +664,12 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		delete(h.mu.rateMap, id)
 	}
 	h.mu.Unlock()
-	oldCache := h.statsCache.Load().(statsCache)
-	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version))
+	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
+		oldCache := h.statsCache.Load().(statsCache)
+		if h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version)) {
+			break
+		}
+	}
 }
 
 // HandleUpdateStats update the stats using feedback.
