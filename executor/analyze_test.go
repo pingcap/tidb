@@ -458,13 +458,13 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain format = 'brief' select a from t1 where a = 1").Check(testkit.Rows(
 		"IndexReader 4.00 root  index:IndexRangeScan",
-		"└─IndexRangeScan 4.00 cop[tikv] table:t1, index:idx(a, b) range:[1,1], keep order:false"))
+		"└─IndexRangeScan 4.00 cop[tikv] table:t1; index:idx(a, b) range:[1,1]; keep order:false"))
 	tk.MustQuery("explain format = 'brief' select a, b from t1 where a = 1 and b = 1").Check(testkit.Rows(
 		"IndexReader 2.00 root  index:IndexRangeScan",
-		"└─IndexRangeScan 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 1,1 1], keep order:false"))
+		"└─IndexRangeScan 2.00 cop[tikv] table:t1; index:idx(a, b) range:[1 1,1 1]; keep order:false"))
 	tk.MustQuery("explain format = 'brief' select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
 		"IndexReader 2.00 root  index:IndexRangeScan",
-		"└─IndexRangeScan 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 2,1 2], keep order:false"))
+		"└─IndexRangeScan 2.00 cop[tikv] table:t1; index:idx(a, b) range:[1 2,1 2]; keep order:false"))
 
 	tk.MustExec("create table t2 (a bigint unsigned, primary key(a))")
 	tk.MustExec("insert into t2 values (0), (18446744073709551615)")
@@ -479,7 +479,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec(`analyze table t3`)
 	tk.MustQuery(`explain format = 'brief' select v from t3 partition(p1) where v = 3`).Check(testkit.Rows(
 		"IndexReader 2.00 root  index:IndexRangeScan",
-		"└─IndexRangeScan 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t3; partition:p1; index:k(v) range:[3,3]; keep order:false",
 	))
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Dynamic) + `'`)
 
@@ -893,9 +893,9 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 	tk.MustQuery("select @@session.tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t with 0 topn;")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader_6 512.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
+		"└─IndexRangeScan_5 512.00 cop[tikv] table:t; index:a(a) range:[1,1]; keep order:false"))
 	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader_6 0.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
+		"└─IndexRangeScan_5 0.00 cop[tikv] table:t; index:a(a) range:[999,999]; keep order:false"))
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, key(a));")
@@ -907,7 +907,7 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 	}
 	tk.MustExec("analyze table t with 0 topn;")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
+		"└─IndexRangeScan_5 1.00 cop[tikv] table:t; index:a(a) range:[1,1]; keep order:false"))
 }
 
 func (s *testSerialSuite2) TestIssue20874(c *C) {

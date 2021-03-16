@@ -988,7 +988,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("create table p(a int primary key, b int)")
 	for i := 1; i < 3; i++ {
 		tk.MustQuery("select b from p where a=1")
-		expectedResult := fmt.Sprintf("%d \tid         \ttask\testRows\toperator info\n\tPoint_Get_1\troot\t1      \ttable:p, handle:1 %s", i, "test.p")
+		expectedResult := fmt.Sprintf("%d \tid         \ttask\testRows\toperator info\n\tPoint_Get_1\troot\t1      \ttable:p; handle:1 %s", i, "test.p")
 		// Also make sure that the plan digest is not empty
 		sql = "select exec_count, plan, table_names from information_schema.statements_summary " +
 			"where digest_text like 'select `b` from `p`%' and plan_digest != ''"
@@ -1003,7 +1003,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	rows := tk.MustQuery("select tidb_decode_plan('" + p1 + "');").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(len(rows[0]), Equals, 1)
-	c.Assert(rows[0][0], Matches, ".*\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME.*")
+	c.Assert(rows[0][0], Matches, ".*\n.*Point_Get.*table.tidb; index.PRIMARY.VARIABLE_NAME.*")
 
 	sql = "select table_names from information_schema.statements_summary " +
 		"where digest_text like 'select `variable_value`%' and `schema_name`='test'"

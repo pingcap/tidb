@@ -250,23 +250,23 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 	// And we should get the result that global-stats is used instead of pseudo-stats.
 	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
 		"IndexReader 4.00 root partition:all index:IndexRangeScan",
-		"└─IndexRangeScan 4.00 cop[tikv] table:t, index:a(a) range:(5,+inf], keep order:false"))
+		"└─IndexRangeScan 4.00 cop[tikv] table:t; index:a(a) range:(5,+inf]; keep order:false"))
 	// On the table with global-stats, we use explain to query a single-partition query.
 	// And we should get the result that global-stats is used instead of pseudo-stats.
 	tk.MustQuery("explain format = 'brief' select * from t partition(p1) where a > 15;").Check(testkit.Rows(
 		"IndexReader 2.00 root partition:p1 index:IndexRangeScan",
-		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(15,+inf], keep order:false"))
+		"└─IndexRangeScan 2.00 cop[tikv] table:t; index:a(a) range:(15,+inf]; keep order:false"))
 
 	// Even if we have global-stats, we will not use it when the switch is set to `static`.
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
 		"PartitionUnion 4.00 root  ",
 		"├─IndexReader 0.00 root  index:IndexRangeScan",
-		"│ └─IndexRangeScan 0.00 cop[tikv] table:t, partition:p0, index:a(a) range:(5,+inf], keep order:false",
+		"│ └─IndexRangeScan 0.00 cop[tikv] table:t; partition:p0; index:a(a) range:(5,+inf]; keep order:false",
 		"├─IndexReader 2.00 root  index:IndexRangeScan",
-		"│ └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) range:(5,+inf], keep order:false",
+		"│ └─IndexRangeScan 2.00 cop[tikv] table:t; partition:p1; index:a(a) range:(5,+inf]; keep order:false",
 		"└─IndexReader 2.00 root  index:IndexRangeScan",
-		"  └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p2, index:a(a) range:(5,+inf], keep order:false"))
+		"  └─IndexRangeScan 2.00 cop[tikv] table:t; partition:p2; index:a(a) range:(5,+inf]; keep order:false"))
 
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	tk.MustExec("drop table t;")
@@ -282,15 +282,15 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
 		"PartitionUnion 2.00 root  ",
 		"├─IndexReader 1.00 root  index:IndexRangeScan",
-		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p0, index:a(a) range:(3,+inf], keep order:false",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t; partition:p0; index:a(a) range:(3,+inf]; keep order:false",
 		"└─IndexReader 1.00 root  index:IndexRangeScan",
-		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t; partition:p1; index:a(a) range:(3,+inf]; keep order:false"))
 
 	// When we turned on the switch, we found that pseudo-stats will be used in the plan instead of `Union`.
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
 		"IndexReader 3333.33 root partition:all index:IndexRangeScan",
-		"└─IndexRangeScan 3333.33 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false, stats:pseudo"))
+		"└─IndexRangeScan 3333.33 cop[tikv] table:t; index:a(a) range:(3,+inf]; keep order:false; stats:pseudo"))
 
 	// Execute analyze again without error and can generate global-stats.
 	// And when executing related queries, neither Union nor pseudo-stats are used.
@@ -302,7 +302,7 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 	c.Assert(result.Rows()[2][5], Equals, "3")
 	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
 		"IndexReader 2.00 root partition:all index:IndexRangeScan",
-		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false"))
+		"└─IndexRangeScan 2.00 cop[tikv] table:t; index:a(a) range:(3,+inf]; keep order:false"))
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, b int, c int)  PARTITION BY HASH(a) PARTITIONS 2;")
@@ -315,11 +315,11 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 		"Projection 2.67 root  test.t.b",
 		"└─IndexReader 2.67 root partition:all index:Selection",
 		"  └─Selection 2.67 cop[tikv]  gt(test.t.b, 10)",
-		"    └─IndexRangeScan 4.00 cop[tikv] table:t, index:idx_ab(a, b) range:(5,+inf], keep order:false"))
+		"    └─IndexRangeScan 4.00 cop[tikv] table:t; index:idx_ab(a, b) range:(5,+inf]; keep order:false"))
 	// test the indexLookUp
 	tk.MustQuery("explain format = 'brief' select * from t use index(idx_ab) where a > 1;").Check(testkit.Rows(
 		"IndexLookUp 5.00 root partition:all ",
-		"├─IndexRangeScan(Build) 5.00 cop[tikv] table:t, index:idx_ab(a, b) range:(1,+inf], keep order:false",
+		"├─IndexRangeScan(Build) 5.00 cop[tikv] table:t; index:idx_ab(a, b) range:(1,+inf]; keep order:false",
 		"└─TableRowIDScan(Probe) 5.00 cop[tikv] table:t keep order:false"))
 	// test the tableScan
 	tk.MustQuery("explain format = 'brief' select * from t;").Check(testkit.Rows(

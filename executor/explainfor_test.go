@@ -87,7 +87,7 @@ func (s *testSerialSuite) TestExplainFor(c *C) {
 	tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
 		"TableReader_5 10000.00 root  data:TableFullScan_4",
-		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false; stats:pseudo",
 	))
 	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=1;")
 	check := func() {
@@ -112,7 +112,7 @@ func (s *testSerialSuite) TestExplainFor(c *C) {
 		}
 		c.Assert(buf.String(), Matches, ""+
 			"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task: {num:.*, max:.*, proc_keys: 0, rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
-			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0}, scan_detail:.* keep order:false, stats:pseudo N/A N/A")
+			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0}, scan_detail:.* keep order:false; stats:pseudo N/A N/A")
 	}
 	tkRoot.MustQuery("select * from t1;")
 	check()
@@ -239,7 +239,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	explainResult := testkit.Rows(
 		"TableReader_7 8000.00 root  data:Selection_6",
 		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a, double BINARY), 1)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
 	)
 
 	// Now the ProcessInfo held by mockSessionManager1 will not be updated in real time.

@@ -814,7 +814,7 @@ func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64", `return(100000)`), IsNil)
 	tk.MustQuery("explain select * from t where a = 1 and b = 2").Check(testkit.Rows(
 		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
+		"└─IndexRangeScan_5 1.00 cop[tikv] table:t; index:a(a, b) range:[1 2,1 2]; keep order:false"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"), IsNil)
 
 	// Test issue 22466

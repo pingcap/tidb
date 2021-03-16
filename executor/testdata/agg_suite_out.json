@@ -7,7 +7,7 @@
         "└─Sort 10000.00 root  Column#3",
         "  └─Projection 10000.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
         "    └─TableReader 10000.00 root  data:TableFullScan",
-        "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
       ],
       [
         "1",
@@ -22,11 +22,11 @@
       ],
       [
         "Projection 2.00 root  test.t.i",
-        "└─TopN 2.00 root  Column#3, offset:0, count:2",
+        "└─TopN 2.00 root  Column#3; offset:0; count:2",
         "  └─Projection 2.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
         "    └─TableReader 2.00 root  data:TopN",
-        "      └─TopN 2.00 cop[tikv]  plus(test.t.i, 1), offset:0, count:2",
-        "        └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        "      └─TopN 2.00 cop[tikv]  plus(test.t.i, 1); offset:0; count:2",
+        "        └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo"
       ],
       [
         "1",
@@ -53,28 +53,28 @@
         "└─Apply 1.00 root  CARTESIAN left outer join",
         "  ├─Apply(Build) 1.00 root  CARTESIAN left outer join",
         "  │ ├─Apply(Build) 1.00 root  CARTESIAN left outer join",
-        "  │ │ ├─HashAgg(Build) 1.00 root  funcs:sum(Column#22)->Column#9, funcs:firstrow(Column#23)->test.test.a",
+        "  │ │ ├─HashAgg(Build) 1.00 root  funcs:sum(Column#22)->Column#9; funcs:firstrow(Column#23)->test.test.a",
         "  │ │ │ └─Projection 10000.00 root  cast(test.test.a, decimal(32,0) BINARY)->Column#22, test.test.a",
         "  │ │ │   └─TableReader 10000.00 root  data:TableFullScan",
-        "  │ │ │     └─TableFullScan 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo",
+        "  │ │ │     └─TableFullScan 10000.00 cop[tikv] table:tt keep order:false; stats:pseudo",
         "  │ │ └─Projection(Probe) 1.00 root  <nil>->Column#10",
-        "  │ │   └─Limit 1.00 root  offset:0, count:1",
+        "  │ │   └─Limit 1.00 root  offset:0; count:1",
         "  │ │     └─TableReader 1.00 root  data:Limit",
-        "  │ │       └─Limit 1.00 cop[tikv]  offset:0, count:1",
+        "  │ │       └─Limit 1.00 cop[tikv]  offset:0; count:1",
         "  │ │         └─Selection 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
-        "  │ │           └─TableFullScan 1000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+        "  │ │           └─TableFullScan 1000.00 cop[tikv] table:test keep order:false; stats:pseudo",
         "  │ └─Projection(Probe) 1.00 root  <nil>->Column#11",
-        "  │   └─Limit 1.00 root  offset:0, count:1",
+        "  │   └─Limit 1.00 root  offset:0; count:1",
         "  │     └─TableReader 1.00 root  data:Limit",
-        "  │       └─Limit 1.00 cop[tikv]  offset:0, count:1",
+        "  │       └─Limit 1.00 cop[tikv]  offset:0; count:1",
         "  │         └─Selection 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
-        "  │           └─TableFullScan 1000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+        "  │           └─TableFullScan 1000.00 cop[tikv] table:test keep order:false; stats:pseudo",
         "  └─Projection(Probe) 1.00 root  <nil>->Column#12",
-        "    └─Limit 1.00 root  offset:0, count:1",
+        "    └─Limit 1.00 root  offset:0; count:1",
         "      └─TableReader 1.00 root  data:Limit",
-        "        └─Limit 1.00 cop[tikv]  offset:0, count:1",
+        "        └─Limit 1.00 cop[tikv]  offset:0; count:1",
         "          └─Selection 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
-        "            └─TableFullScan 1000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        "            └─TableFullScan 1000.00 cop[tikv] table:test keep order:false; stats:pseudo"
       ]
     ]
   }

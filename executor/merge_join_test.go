@@ -411,9 +411,9 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 		"Sort 100000000.00 root  test.t.a, test.t.a",
 		"└─MergeJoin 100000000.00 root  inner join",
 		"  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-		"  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false; stats:pseudo",
 		"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false; stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
 		"1 1",
@@ -429,11 +429,11 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table s(a int, b int)")
 	tk.MustExec("insert into s values(1,1)")
 	tk.MustQuery("explain format = 'brief' select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
-		"MergeJoin 10000.00 root  left outer semi join, other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
+		"MergeJoin 10000.00 root  left outer semi join; other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
 		"├─TableReader(Build) 10000.00 root  data:TableFullScan",
-		"│ └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"│ └─TableFullScan 10000.00 cop[tikv] table:s keep order:false; stats:pseudo",
 		"└─TableReader(Probe) 10000.00 root  data:TableFullScan",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
 		"1",
@@ -461,15 +461,15 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table s (a int)")
 	tk.MustExec("insert into s values (4), (1), (3), (2)")
 	tk.MustQuery("explain format = 'brief' select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
-		"MergeJoin 12487.50 root  inner join, left key:test.s.a, right key:test.s.a",
+		"MergeJoin 12487.50 root  inner join; left key:test.s.a; right key:test.s.a",
 		"├─Sort(Build) 9990.00 root  test.s.a:desc",
 		"│ └─TableReader 9990.00 root  data:Selection",
 		"│   └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))",
-		"│     └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"│     └─TableFullScan 10000.00 cop[tikv] table:s keep order:false; stats:pseudo",
 		"└─Sort(Probe) 9990.00 root  test.s.a:desc",
 		"  └─TableReader 9990.00 root  data:Selection",
 		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))",
-		"      └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"      └─TableFullScan 10000.00 cop[tikv] table:s keep order:false; stats:pseudo",
 	))
 	tk.MustQuery("select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
 		"4", "3", "2", "1"))
@@ -572,9 +572,9 @@ func (s *testSuite2) TestShuffleMergeJoin(c *C) {
 		"Sort 100000000.00 root  test.t.a, test.t.a",
 		"└─MergeJoin 100000000.00 root  inner join",
 		"  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-		"  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false; stats:pseudo",
 		"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false; stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
 		"1 1",
@@ -590,11 +590,11 @@ func (s *testSuite2) TestShuffleMergeJoin(c *C) {
 	tk.MustExec("create table s(a int, b int)")
 	tk.MustExec("insert into s values(1,1)")
 	tk.MustQuery("explain format = 'brief' select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
-		"MergeJoin 10000.00 root  left outer semi join, other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
+		"MergeJoin 10000.00 root  left outer semi join; other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
 		"├─TableReader(Build) 10000.00 root  data:TableFullScan",
-		"│ └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"│ └─TableFullScan 10000.00 cop[tikv] table:s keep order:false; stats:pseudo",
 		"└─TableReader(Probe) 10000.00 root  data:TableFullScan",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false; stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
 		"1",
@@ -622,15 +622,15 @@ func (s *testSuite2) TestShuffleMergeJoin(c *C) {
 	tk.MustExec("create table s (a int)")
 	tk.MustExec("insert into s values (4), (1), (3), (2)")
 	tk.MustQuery("explain format = 'brief' select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
-		"MergeJoin 12487.50 root  inner join, left key:test.s.a, right key:test.s.a",
+		"MergeJoin 12487.50 root  inner join; left key:test.s.a; right key:test.s.a",
 		"├─Sort(Build) 9990.00 root  test.s.a:desc",
 		"│ └─TableReader 9990.00 root  data:Selection",
 		"│   └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))",
-		"│     └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"│     └─TableFullScan 10000.00 cop[tikv] table:s keep order:false; stats:pseudo",
 		"└─Sort(Probe) 9990.00 root  test.s.a:desc",
 		"  └─TableReader 9990.00 root  data:Selection",
 		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))",
-		"      └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"      └─TableFullScan 10000.00 cop[tikv] table:s keep order:false; stats:pseudo",
 	))
 	tk.MustQuery("select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
 		"4", "3", "2", "1"))
@@ -655,7 +655,7 @@ func (s *testSuite2) Test3WaysMergeJoin(c *C) {
 	result = checkPlanAndRun(tk, c, plan2, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 
-	// In below case, t1 side filled with null when no matched join, so that order is not kept and sort appended
+	// In below case, t1 side filled with null when no matched join; so that order is not kept and sort appended
 	// On the other hand, t1 order kept so no final sort appended
 	result = checkPlanAndRun(tk, c, plan3, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
@@ -681,7 +681,7 @@ func (s *testSuite2) Test3WaysShuffleMergeJoin(c *C) {
 	result = checkPlanAndRun(tk, c, plan2, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 
-	// In below case, t1 side filled with null when no matched join, so that order is not kept and sort appended
+	// In below case, t1 side filled with null when no matched join; so that order is not kept and sort appended
 	// On the other hand, t1 order kept so no final sort appended
 	result = checkPlanAndRun(tk, c, plan3, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
@@ -755,24 +755,24 @@ func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
 		insert("t2", t2)
 
 		tk.MustQuery("explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
-			`MergeJoin 4150.01 root  inner join, left key:test.t1.a, right key:test.t2.a`,
+			`MergeJoin 4150.01 root  inner join; left key:test.t1.a; right key:test.t2.a`,
 			`├─Sort(Build) 3320.01 root  test.t2.a`,
 			`│ └─TableReader 3320.01 root  data:Selection`,
 			`│   └─Selection 3320.01 cop[tikv]  lt(test.t2.b, 5), not(isnull(test.t2.a))`,
-			`│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false; stats:pseudo`,
 			`└─Sort(Probe) 3330.00 root  test.t1.a`,
 			`  └─TableReader 3330.00 root  data:Selection`,
 			`    └─Selection 3330.00 cop[tikv]  gt(test.t1.b, 5), not(isnull(test.t1.a))`,
-			`      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`,
+			`      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false; stats:pseudo`,
 		))
 		tk.MustQuery("explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
-			`HashJoin 4150.01 root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
+			`HashJoin 4150.01 root  inner join; equal:[eq(test.t1.a, test.t2.a)]`,
 			`├─TableReader(Build) 3320.01 root  data:Selection`,
 			`│ └─Selection 3320.01 cop[tikv]  lt(test.t2.b, 5), not(isnull(test.t2.a))`,
-			`│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false; stats:pseudo`,
 			`└─TableReader(Probe) 3330.00 root  data:Selection`,
 			`  └─Selection 3330.00 cop[tikv]  gt(test.t1.b, 5), not(isnull(test.t1.a))`,
-			`    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`,
+			`    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false; stats:pseudo`,
 		))
 
 		r1 := tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Sort()
@@ -854,24 +854,24 @@ func (s *testSuiteJoin3) TestVectorizedShuffleMergeJoin(c *C) {
 
 		tk.MustQuery("explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
 			`Shuffle 4150.01 root  execution info: concurrency:4, data sources:[TableReader TableReader]`,
-			`└─MergeJoin 4150.01 root  inner join, left key:test.t1.a, right key:test.t2.a`,
+			`└─MergeJoin 4150.01 root  inner join; left key:test.t1.a; right key:test.t2.a`,
 			`  ├─Sort(Build) 3320.01 root  test.t2.a`,
 			`  │ └─TableReader 3320.01 root  data:Selection`,
 			`  │   └─Selection 3320.01 cop[tikv]  lt(test.t2.b, 5), not(isnull(test.t2.a))`,
-			`  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false; stats:pseudo`,
 			`  └─Sort(Probe) 3330.00 root  test.t1.a`,
 			`    └─TableReader 3330.00 root  data:Selection`,
 			`      └─Selection 3330.00 cop[tikv]  gt(test.t1.b, 5), not(isnull(test.t1.a))`,
-			`        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`,
+			`        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false; stats:pseudo`,
 		))
 		tk.MustQuery("explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
-			`HashJoin 4150.01 root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
+			`HashJoin 4150.01 root  inner join; equal:[eq(test.t1.a, test.t2.a)]`,
 			`├─TableReader(Build) 3320.01 root  data:Selection`,
 			`│ └─Selection 3320.01 cop[tikv]  lt(test.t2.b, 5), not(isnull(test.t2.a))`,
-			`│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false; stats:pseudo`,
 			`└─TableReader(Probe) 3330.00 root  data:Selection`,
 			`  └─Selection 3330.00 cop[tikv]  gt(test.t1.b, 5), not(isnull(test.t1.a))`,
-			`    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`,
+			`    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false; stats:pseudo`,
 		))
 
 		r1 := tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Sort()
