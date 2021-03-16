@@ -617,7 +617,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		hasRecordID = true
 	} else {
 		tblInfo := t.Meta()
-		txn.GetUnionStore().CacheTableInfo(t.physicalTableID, tblInfo)
+		txn.CacheTableInfo(t.physicalTableID, tblInfo)
 		if tblInfo.PKIsHandle {
 			recordID = kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64())
 			hasRecordID = true
@@ -847,7 +847,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
 		}
 		rsData := TryGetHandleRestoredDataWrapper(t, r, nil)
-		if dupHandle, err := v.Create(sctx, txn.GetUnionStore(), indexVals, recordID, rsData, opts...); err != nil {
+		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
 			}
@@ -878,11 +878,24 @@ func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*tab
 	return v, nil
 }
 
+func containFullColInHandle(meta *model.TableInfo, col *table.Column) (containFullCol bool, idxInHandle int) {
+	pkIdx := FindPrimaryIndex(meta)
+	for i, idxCol := range pkIdx.Columns {
+		if meta.Columns[idxCol.Offset].ID == col.ID {
+			idxInHandle = i
+			containFullCol = idxCol.Length == types.UnspecifiedLength
+			return
+		}
+	}
+	return
+}
+
 // DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
 func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle, cols []*table.Column,
 	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
+	prefixCols := make(map[int64]struct{})
 	for i, col := range cols {
 		if col == nil {
 			continue
@@ -896,25 +909,20 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			continue
 		}
 		if col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType) {
-			pkIdx := FindPrimaryIndex(meta)
-			var idxOfIdx int
-			for i, idxCol := range pkIdx.Columns {
-				if meta.Columns[idxCol.Offset].ID == col.ID {
-					idxOfIdx = i
-					break
+			if containFullCol, idxInHandle := containFullColInHandle(meta, col); containFullCol {
+				dtBytes := h.EncodedCol(idxInHandle)
+				_, dt, err := codec.DecodeOne(dtBytes)
+				if err != nil {
+					return nil, nil, err
 				}
+				dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
+				if err != nil {
+					return nil, nil, err
+				}
+				v[i] = dt
+				continue
 			}
-			dtBytes := h.EncodedCol(idxOfIdx)
-			_, dt, err := codec.DecodeOne(dtBytes)
-			if err != nil {
-				return nil, nil, err
-			}
-			dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
-			if err != nil {
-				return nil, nil, err
-			}
-			v[i] = dt
-			continue
+			prefixCols[col.ID] = struct{}{}
 		}
 		colTps[col.ID] = &col.FieldType
 	}
@@ -928,7 +936,9 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			continue
 		}
 		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType)) {
-			continue
+			if _, isPrefix := prefixCols[col.ID]; !isPrefix {
+				continue
+			}
 		}
 		ri, ok := rowMap[col.ID]
 		if ok {
@@ -1146,7 +1156,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 		opts = append(opts, table.IndexIsUntouched)
 	}
 	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil)
-	if _, err := idx.Create(ctx, txn.GetUnionStore(), vals, h, rsData, opts...); err != nil {
+	if _, err := idx.Create(ctx, txn, vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)
@@ -1745,6 +1755,9 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 		TableId:          tableInfo.ID,
 		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle),
 		PrimaryColumnIds: pkColIds,
+	}
+	if tableInfo.IsCommonHandle {
+		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
 	}
 	return tsExec
 }
