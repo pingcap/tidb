@@ -140,7 +140,7 @@
               }
             ],
             "Plan": [
-              "HashJoin_38 6387.21 root  inner join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+              "HashJoin_38 6387.21 root  inner join; equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
               "├─IndexLookUp_63(Build) 99.80 root  ",
               "│ ├─Selection_62(Build) 99.80 cop[tikv]  not(isnull(test.t2.b))",
               "│ │ └─IndexRangeScan_60 99.90 cop[tikv] table:t2; index:b(b, a) range:[1 -inf,1 +inf]; keep order:false; stats:pseudo",
@@ -162,7 +162,7 @@
               }
             ],
             "Plan": [
-              "HashJoin_38 6387.21 root  inner join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+              "HashJoin_38 6387.21 root  inner join; equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
               "├─IndexLookUp_63(Build) 99.80 root  ",
               "│ ├─Selection_62(Build) 99.80 cop[tikv]  not(isnull(test.t2.b))",
               "│ │ └─IndexRangeScan_60 99.90 cop[tikv] table:t2; index:b(b, a) range:[2 -inf,2 +inf]; keep order:false; stats:pseudo",
@@ -186,7 +186,7 @@
               }
             ],
             "Plan": [
-              "HashJoin_38 63744383.74 root  inner join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+              "HashJoin_38 63744383.74 root  inner join; equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
               "├─TableReader_59(Build) 7984.01 root  data:Selection_58",
               "│ └─Selection_58 7984.01 cop[tikv]  eq(cast(test.t2.b, double BINARY), 0), not(isnull(test.t2.a)), not(isnull(test.t2.b))",
               "│   └─TableFullScan_57 10000.00 cop[tikv] table:t2 keep order:false; stats:pseudo",
