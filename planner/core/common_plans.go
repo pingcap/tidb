@@ -389,6 +389,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
+	logutil.BgLogger().Info("[DEBUG] REBUILD")
 	stmt := TryAddExtraLimit(sctx, prepared.Stmt)
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
@@ -401,6 +402,7 @@ REBUILD:
 	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
+	logutil.BgLogger().Info("[DEBUG] prepared", zap.Reflect("UseCache", prepared.UseCache))
 	if !isTableDual && prepared.UseCache && !stmtCtx.OptimDependOnMutableConst {
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
@@ -438,12 +440,14 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		names    types.NameSlice
 	)
 	switch p.(type) {
-	case *PointGetPlan:
-		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
-		names = p.OutputNames()
-		if err != nil {
-			return err
-		}
+	/*
+		case *PointGetPlan:
+			ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+			names = p.OutputNames()
+			if err != nil {
+				return err
+			}
+	*/
 	case *Update:
 		ok, err = IsPointUpdateByAutoCommit(sctx, p)
 		if err != nil {
