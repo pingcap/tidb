@@ -1161,7 +1161,7 @@ Sort	20000.00	root		tpch.supplier.s_name
   │   └─TableFullScan	500000.00	cop[tikv]	table:supplier	keep order:false
   └─HashAgg(Probe)	257492.04	root		group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey
     └─Projection	257492.04	root		tpch.partsupp.ps_suppkey
-      └─Selection	257492.04	root		gt(cast(tpch.partsupp.ps_availqty), mul(0.5, Column#44))
+      └─Selection	257492.04	root		gt(cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY), mul(0.5, Column#44))
         └─HashAgg	321865.05	root		group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
           └─HashJoin	9711455.06	root		left outer join, equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
             ├─IndexHashJoin(Build)	321865.05	root		inner join, inner:IndexLookUp, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey, equal cond:eq(tpch.part.p_partkey, tpch.partsupp.ps_partkey)
