@@ -707,11 +707,8 @@ var FeatureSwitchVariables = []string{
 	TiDBGuaranteeLinearizability,
 	TiDBEnableClusteredIndex,
 	TiDBTrackAggregateMemoryUsage,
-<<<<<<< HEAD
-=======
 	TiDBAnalyzeVersion,
 	TiDBPartitionPruneMode,
->>>>>>> 23227ea4a... statistics: hide the `tidb_analyze_version` before it's GA (#23327)
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
