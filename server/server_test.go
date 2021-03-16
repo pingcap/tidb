@@ -585,7 +585,7 @@ func (cli *testServerClient) runTestLoadDataForListPartition(c *C) {
 		config.AllowAllFiles = true
 		config.Params = map[string]string{"sql_mode": "''"}
 	}, "load_data_list_partition", func(dbt *DBTest) {
-		dbt.mustExec("set @@session.tidb_enable_table_partition = nightly")
+		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.mustExec(`create table t (id int, name varchar(10),
 		unique index idx (id)) partition by list (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -634,7 +634,7 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(c *C) {
 		config.AllowAllFiles = true
 		config.Params = map[string]string{"sql_mode": "''"}
 	}, "load_data_list_partition", func(dbt *DBTest) {
-		dbt.mustExec("set @@session.tidb_enable_table_partition = nightly")
+		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.mustExec(`create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual,
 		unique index idx (id,b)) partition by list (id*2 + b*b + b*b - b*b*2 - abs(id)) (
     	partition p0 values in (3,5,6,9,17),
@@ -683,7 +683,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(c *C) {
 		config.AllowAllFiles = true
 		config.Params = map[string]string{"sql_mode": "''"}
 	}, "load_data_list_partition", func(dbt *DBTest) {
-		dbt.mustExec("set @@session.tidb_enable_table_partition = nightly")
+		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.mustExec(`create table t (id int, name varchar(10),
 		unique index idx (id)) partition by list columns (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -732,7 +732,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
 		config.AllowAllFiles = true
 		config.Params = map[string]string{"sql_mode": "''"}
 	}, "load_data_list_partition", func(dbt *DBTest) {
-		dbt.mustExec("set @@session.tidb_enable_table_partition = nightly")
+		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.mustExec(`create table t (location varchar(10), id int, a int, unique index idx (location,id)) partition by list columns (location,id) (
     	partition p_west  values in (('w', 1),('w', 2),('w', 3),('w', 4)),
     	partition p_east  values in (('e', 5),('e', 6),('e', 7),('e', 8)),
@@ -1861,4 +1861,65 @@ func (cli *testServerClient) waitUntilServerOnline() {
 	if retry == retryTime {
 		log.Fatal("failed to connect HTTP status in every 10 ms", zap.Int("retryTime", retryTime))
 	}
+}
+
+// Client errors are only incremented when using the TiDB Server protocol,
+// and not internal SQL statements. Thus, this test is in the server-test suite.
+func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
+	cli.runTestsOnNewDB(t, nil, "clientErrors", func(dbt *DBTest) {
+
+		clientErrors := []struct {
+			stmt              string
+			incrementWarnings bool
+			incrementErrors   bool
+			errCode           int
+		}{
+			{
+				stmt:              "SELECT 0/0",
+				incrementWarnings: true,
+				errCode:           1365, // div by zero
+			},
+			{
+				stmt:            "CREATE TABLE test_client_errors2 (a int primary key, b int primary key)",
+				incrementErrors: true,
+				errCode:         1068, // multiple pkeys
+			},
+			{
+				stmt:            "gibberish",
+				incrementErrors: true,
+				errCode:         1064, // parse error
+			},
+		}
+
+		sources := []string{"client_errors_summary_global", "client_errors_summary_by_user", "client_errors_summary_by_host"}
+
+		for _, test := range clientErrors {
+			for _, tbl := range sources {
+
+				var errors, warnings int
+				rows := dbt.mustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
+				if rows.Next() {
+					rows.Scan(&errors, &warnings)
+				}
+
+				if test.incrementErrors {
+					errors++
+				}
+				if test.incrementWarnings {
+					warnings++
+				}
+
+				dbt.db.Query(test.stmt) // ignore results and errors (query table)
+				var newErrors, newWarnings int
+				rows = dbt.mustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
+				if rows.Next() {
+					rows.Scan(&newErrors, &newWarnings)
+				}
+
+				dbt.Check(newErrors, Equals, errors)
+				dbt.Check(newWarnings, Equals, warnings)
+			}
+		}
+
+	})
 }

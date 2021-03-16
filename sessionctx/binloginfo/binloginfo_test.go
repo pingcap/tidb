@@ -256,6 +256,24 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 		binlog.MutationType_Insert,
 	})
 
+	// Test cannot build clustered index tables when binlog client exists.
+	tk.MustExec("create table local_clustered_index (c1 varchar(255) primary key clustered);")
+	warnMsg := "Warning 1105 cannot build clustered index table because the binlog is ON"
+	tk.MustQuery("show warnings;").Check(testkit.Rows(warnMsg))
+	tk.MustQuery("select tidb_pk_type from information_schema.tables where table_name = 'local_clustered_index' and table_schema = 'test';").
+		Check(testkit.Rows("NON-CLUSTERED"))
+	tk.MustExec("drop table if exists local_clustered_index;")
+	// Test clustered index tables will not write binlog.
+	tk.Se.GetSessionVars().BinlogClient = nil
+	tk.MustExec("create table local_clustered_index (c1 varchar(255) primary key clustered);")
+	tk.MustQuery("select tidb_pk_type from information_schema.tables where table_name = 'local_clustered_index' and table_schema = 'test';").
+		Check(testkit.Rows("CLUSTERED"))
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	// This statement should not write binlog.
+	tk.MustExec(`insert into local_clustered_index values ("aaaaaa")`)
+	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 0)
+
 	checkBinlogCount(c, pump)
 
 	pump.mu.Lock()
@@ -597,12 +615,44 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] clustered */ );",
 		},
 		{
+			"create table t1(id int, v int, primary key(a) clustered);",
+			"create table t1(id int, v int, primary key(a) /*T![clustered_index] clustered */ );",
+		},
+		{
+			"create table t1(id int primary key clustered, v int);",
+			"create table t1(id int primary key /*T![clustered_index] clustered */ , v int);",
+		},
+		{
+			"alter table t add primary key(a) clustered;",
+			"alter table t add primary key(a) /*T![clustered_index] clustered */ ;",
+		},
+		{
 			"create table t1 (id int, a varchar(255), primary key (a, b) nonclustered);",
 			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */ );",
 		},
 		{
 			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */);",
 			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */);",
+		},
+		{
+			"create table clustered_test(id int)",
+			"create table clustered_test(id int)",
+		},
+		{
+			"create database clustered_test",
+			"create database clustered_test",
+		},
+		{
+			"create database clustered",
+			"create database clustered",
+		},
+		{
+			"create table clustered (id int)",
+			"create table clustered (id int)",
+		},
+		{
+			"create table t1 (id int, a varchar(255) key clustered);",
+			"create table t1 (id int, a varchar(255) key /*T![clustered_index] clustered */ );",
 		},
 	}
 	for _, ca := range testCase {

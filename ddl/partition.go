@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -309,8 +309,8 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			enable = true
 		}
 	case model.PartitionTypeList:
-		// Partition by list is enabled only when tidb_enable_table_partition is 'nightly'.
-		enable = strings.EqualFold(ctx.GetSessionVars().EnableTablePartition, variable.Nightly)
+		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
+		enable = ctx.GetSessionVars().EnableListTablePartition
 	}
 
 	if !enable {
@@ -583,23 +583,6 @@ func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) er
 	return nil
 }
 
-func stringSliceEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	if len(a) == 0 {
-		return true
-	}
-	// Accelerate the compare by eliminate index bound check.
-	b = b[:len(a)]
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // checkPartitionFuncValid checks partition function validly.
 func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	if expr == nil {
@@ -808,16 +791,6 @@ func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (int
 		}
 	}
 	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
-}
-
-// validRangePartitionType checks the type supported by the range partitioning key.
-func validRangePartitionType(col *model.ColumnInfo) bool {
-	switch col.FieldType.EvalType() {
-	case types.ETInt:
-		return true
-	default:
-		return false
-	}
 }
 
 // checkDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
@@ -1468,9 +1441,7 @@ func buildCheckSQLForListColumnsPartition(pi *model.PartitionInfo, index int, sc
 func getInValues(pi *model.PartitionInfo, index int) []string {
 	inValues := make([]string, 0, len(pi.Definitions[index].InValues))
 	for _, inValue := range pi.Definitions[index].InValues {
-		for _, one := range inValue {
-			inValues = append(inValues, one)
-		}
+		inValues = append(inValues, inValue...)
 	}
 	return inValues
 }
@@ -1485,13 +1456,6 @@ func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 func checkNoHashPartitions(ctx sessionctx.Context, partitionNum uint64) error {
 	if partitionNum == 0 {
 		return ast.ErrNoParts.GenWithStackByArgs("partitions")
-	}
-	return nil
-}
-
-func checkNoRangePartitions(partitionNum int) error {
-	if partitionNum == 0 {
-		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("RANGE")
 	}
 	return nil
 }
@@ -1538,7 +1502,9 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 			if index.Primary {
 				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 			}
-			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+			if !config.GetGlobalConfig().EnableGlobalIndex {
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+			}
 		}
 	}
 	// when PKIsHandle, tblInfo.Indices will not contain the primary key.
@@ -1763,7 +1729,6 @@ type partitionExprChecker struct {
 	processors []partitionExprProcessor
 	ctx        sessionctx.Context
 	tbInfo     *model.TableInfo
-	expr       ast.ExprNode
 	err        error
 
 	columns []*model.ColumnInfo

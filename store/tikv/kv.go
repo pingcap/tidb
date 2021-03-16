@@ -64,7 +64,6 @@ type KVStore struct {
 	client       Client
 	pdClient     pd.Client
 	regionCache  *RegionCache
-	coprCache    *coprCache
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
 
@@ -109,7 +108,7 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 }
 
 // NewKVStore creates a new TiKV store instance.
-func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, coprCacheConfig *config.CoprocessorCache) (*KVStore, error) {
+func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client) (*KVStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -121,7 +120,6 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		client:          reqCollapse{client},
 		pdClient:        pdClient,
 		regionCache:     NewRegionCache(pdClient),
-		coprCache:       nil,
 		kv:              spkv,
 		safePoint:       0,
 		spTime:          time.Now(),
@@ -129,12 +127,6 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		replicaReadSeed: rand.Uint32(),
 	}
 	store.lockResolver = newLockResolver(store)
-
-	coprCache, err := newCoprCache(coprCacheConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	store.coprCache = coprCache
 
 	go store.runSafePointChecker()
 
@@ -174,13 +166,26 @@ func (s *KVStore) runSafePointChecker() {
 }
 
 // Begin a global transaction.
-func (s *KVStore) Begin() (kv.Transaction, error) {
-	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
+func (s *KVStore) Begin() (*KVTxn, error) {
+	return s.beginWithTxnScope(oracle.GlobalTxnScope)
 }
 
-// BeginWithTxnScope begins a transaction with the given txnScope (local or
-// global)
-func (s *KVStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
+// BeginWithOption begins a transaction with given option
+func (s *KVStore) BeginWithOption(option kv.TransactionOption) (*KVTxn, error) {
+	txnScope := option.TxnScope
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
+	}
+	if option.StartTS != nil {
+		return s.beginWithStartTS(txnScope, *option.StartTS)
+	} else if option.PrevSec != nil {
+		return s.beginWithExactStaleness(txnScope, *option.PrevSec)
+	}
+	return s.beginWithTxnScope(txnScope)
+}
+
+// beginWithTxnScope begins a transaction with the given txnScope (local or global)
+func (s *KVStore) beginWithTxnScope(txnScope string) (*KVTxn, error) {
 	txn, err := newTiKVTxn(s, txnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -188,8 +193,8 @@ func (s *KVStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
 	return txn, nil
 }
 
-// BeginWithStartTS begins a transaction with startTS.
-func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
+// beginWithStartTS begins a transaction with startTS.
+func (s *KVStore) beginWithStartTS(txnScope string, startTS uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -197,8 +202,8 @@ func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transact
 	return txn, nil
 }
 
-// BeginWithExactStaleness begins transaction with given staleness
-func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+// beginWithExactStaleness begins transaction with given staleness
+func (s *KVStore) beginWithExactStaleness(txnScope string, prevSec uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -207,9 +212,9 @@ func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.T
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
-// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-func (s *KVStore) GetSnapshot(ver kv.Version) kv.Snapshot {
-	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
+// if ts is MaxVersion or > current max committed version, we will use current version for this snapshot.
+func (s *KVStore) GetSnapshot(ts uint64) *KVSnapshot {
+	snapshot := newTiKVSnapshot(s, ts, s.nextReplicaReadSeed())
 	return snapshot
 }
 
@@ -227,9 +232,6 @@ func (s *KVStore) Close() error {
 		s.txnLatches.Close()
 	}
 	s.regionCache.Close()
-	if s.coprCache != nil {
-		s.coprCache.cache.Close()
-	}
 
 	if err := s.kv.Close(); err != nil {
 		return errors.Trace(err)
@@ -242,14 +244,14 @@ func (s *KVStore) UUID() string {
 	return s.uuid
 }
 
-// CurrentVersion returns current max committed version with the given txnScope (local or global).
-func (s *KVStore) CurrentVersion(txnScope string) (kv.Version, error) {
+// CurrentTimestamp returns current timestamp with the given txnScope (local or global).
+func (s *KVStore) CurrentTimestamp(txnScope string) (uint64, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := s.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
-		return kv.NewVersion(0), errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	return kv.NewVersion(startTS), nil
+	return startTS, nil
 }
 
 func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64, error) {
@@ -296,21 +298,6 @@ func (s *KVStore) getStalenessTimestamp(bo *Backoffer, txnScope string, prevSec 
 
 func (s *KVStore) nextReplicaReadSeed() uint32 {
 	return atomic.AddUint32(&s.replicaReadSeed, 1)
-}
-
-// GetClient gets a client instance.
-func (s *KVStore) GetClient() kv.Client {
-	return &CopClient{
-		store:           s,
-		replicaReadSeed: s.nextReplicaReadSeed(),
-	}
-}
-
-// GetMPPClient gets a mpp client instance.
-func (s *KVStore) GetMPPClient() kv.MPPClient {
-	return &MPPClient{
-		store: s,
-	}
 }
 
 // GetOracle gets a timestamp oracle client.

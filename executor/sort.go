@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
@@ -40,8 +39,6 @@ type SortExec struct {
 	fetched bool
 	schema  *expression.Schema
 
-	keyExprs []expression.Expression
-	keyTypes []*types.FieldType
 	// keyColumns is the column index of the by items.
 	keyColumns []int
 	// keyCmpFuncs is used to compare each ByItem.
