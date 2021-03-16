@@ -199,6 +199,7 @@ skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
+enable-forwarding=true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -278,7 +279,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
-	c.Assert(conf.EnableForwarding, Equals, false)
+	c.Assert(conf.EnableForwarding, Equals, true)
 	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
 
 	_, err = f.WriteString(`
