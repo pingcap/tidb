@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -133,6 +134,7 @@ func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatte
 }
 
 func waitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regionIDs ...uint64) {
+	start := time.Now()
 	for _, regionID := range regionIDs {
 		err := store.WaitScatterRegionFinish(ctx, regionID, 0)
 		if err != nil {
@@ -143,4 +145,5 @@ func waitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regi
 			}
 		}
 	}
+	logutil.BgLogger().Info("wait scatter region finished", zap.Duration("cost-time", time.Since(start)), zap.String("action", "ddl"), zap.Int("region-numbers", len(regionIDs)))
 }

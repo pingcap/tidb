@@ -646,6 +646,7 @@ type batch struct {
 }
 
 type singleBatchResp struct {
-	resp *tikvrpc.Response
-	err  error
+	regionID RegionVerID
+	resp     *tikvrpc.Response
+	err      error
 }
