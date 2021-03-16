@@ -959,7 +959,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 				checkErr = err1
 				break
 			}
-			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES NULL"))
+			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES NULL NO"))
 		}
 	}
 
@@ -974,8 +974,8 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	result, err := s.execQuery(tk, showIndexSQL)
 	c.Assert(err, IsNil)
 	err = checkResult(result, testkit.Rows(
-		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES NULL",
-		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES NULL",
+		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES NULL NO",
+		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES NULL NO",
 	))
 	c.Assert(err, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
@@ -1003,8 +1003,40 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "show index from tr;")
 	c.Assert(err, IsNil)
-	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES NULL"))
+	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES NULL NO"))
 	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "drop table if exists tr")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table tr(id int primary key clustered, v int, key vv(v))")
+	c.Assert(err, IsNil)
+	result, err = s.execQuery(tk, "show index from tr")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES", "tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES NULL NO")), IsNil)
+
+	_, err = s.se.Execute(context.Background(), "drop table if exists tr")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table tr(id int primary key nonclustered, v int, key vv(v))")
+	c.Assert(err, IsNil)
+	result, err = s.execQuery(tk, "show index from tr")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES NULL NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO")), IsNil)
+
+	_, err = s.se.Execute(context.Background(), "drop table if exists tr")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table tr(id char(100) primary key clustered, v int, key vv(v))")
+	c.Assert(err, IsNil)
+	result, err = s.execQuery(tk, "show index from tr")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES NULL NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES")), IsNil)
+
+	_, err = s.se.Execute(context.Background(), "drop table if exists tr")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table tr(id char(100) primary key nonclustered, v int, key vv(v))")
+	c.Assert(err, IsNil)
+	result, err = s.execQuery(tk, "show index from tr")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES NULL NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO")), IsNil)
 }
 
 func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
