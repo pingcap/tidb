@@ -51,7 +51,7 @@
         "Plan": [
           "Projection_13 8000.00 root  test.t.a",
           "└─TableReader_14 8000.00 root  data:Selection_15",
-          "  └─Selection_15 8000.00 cop[tikv]  gt(cast(test.t.b), 4)",
+          "  └─Selection_15 8000.00 cop[tikv]  gt(cast(test.t.b, decimal(32,0) BINARY), 4)",
           "    └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -391,10 +391,17 @@
       {
         "SQL": "select sum(case when a <= 0 or a > 1000 then 0.0 else b end) from t",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_16 1.00 root  funcs:sum(Column#4)->Column#3",
           "└─TableReader_17 1.00 root  data:HashAgg_18",
           "  └─HashAgg_18 1.00 cop[tikv]  funcs:sum(cast(test.t.b))->Column#4",
           "    └─TableRangeScan_14 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
+=======
+          "HashAgg_18 1.00 root  funcs:sum(Column#4)->Column#3",
+          "└─TableReader_19 1.00 root  data:HashAgg_20",
+          "  └─HashAgg_20 1.00 cop[tikv]  funcs:sum(cast(test.t.b, decimal(33,1) BINARY))->Column#4",
+          "    └─TableRangeScan_17 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
+>>>>>>> 5bafb3203... planner: show cast type in EXPLAIN in coptask (#23123)
         ],
         "Result": [
           "110.0"
@@ -453,7 +460,7 @@
           "└─Projection_15 8000.00 root  if(isnull(test.t.b), 0, 1)->Column#3, cast(test.t.b, decimal(32,0) BINARY)->Column#4, cast(test.t.b, decimal(15,4) BINARY)->Column#5, test.t.b, cast(test.t.b, int(11))->Column#6, cast(test.t.b, int(11))->Column#7, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(test.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(test.t.b), 0, 1)->Column#3",
           "  └─Sort_22 8000.00 root  test.t.b:asc",
           "    └─TableReader_19 8000.00 root  data:Selection_20",
-          "      └─Selection_20 8000.00 cop[tikv]  ge(cast(test.t.b), 0), ge(if(isnull(test.t.b), 0, 1), 0)",
+          "      └─Selection_20 8000.00 cop[tikv]  ge(cast(test.t.b, decimal(32,0) BINARY), 0), ge(if(isnull(test.t.b), 0, 1), 0)",
           "        └─TableFullScan_21 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [

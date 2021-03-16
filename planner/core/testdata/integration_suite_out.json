@@ -50,6 +50,7 @@
       {
         "SQL": "explain select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);",
         "Plan": [
+<<<<<<< HEAD
           "Projection_7 9990.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
           "└─HashJoin_9 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "  ├─Selection_13(Build) 7992.00 root  from_unixtime(cast(test.t.b))",
@@ -59,6 +60,33 @@
           "  └─TableReader_16(Probe) 9990.00 root  data:Selection_15",
           "    └─Selection_15 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "      └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+=======
+          "Projection 9990.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "  ├─Selection(Build) 7992.00 root  from_unixtime(cast(test.t.b, decimal(20,0) BINARY))",
+          "  │ └─TableReader 7992.00 root  data:Selection",
+          "  │   └─Selection 7992.00 cop[tikv]  not(isnull(test.t.a))",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexJoinInnerIndexNDV",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select /*+ inl_join(t2) */ * from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c = t2.c",
+        "Plan": [
+          "IndexJoin 3.00 root  inner join, inner:IndexLookUp, outer key:test.t1.c, inner key:test.t2.c, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b), eq(test.t1.c, test.t2.c)",
+          "├─TableReader(Build) 3.00 root  data:TableFullScan",
+          "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
+          "└─IndexLookUp(Probe) 1.00 root  ",
+          "  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t2, index:idx2(c) range: decided by [eq(test.t2.c, test.t1.c)], keep order:false",
+          "  └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t2 keep order:false"
+>>>>>>> 5bafb3203... planner: show cast type in EXPLAIN in coptask (#23123)
         ]
       }
     ]
@@ -69,12 +97,21 @@
       {
         "SQL": "explain select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01'",
         "Plan": [
+<<<<<<< HEAD
           "HashJoin_8 10000.00 root  left outer join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader_11(Build) 8000.00 root  data:Selection_10",
           "│ └─Selection_10 8000.00 cop[tikv]  ge(cast(test.t.b), 2019-01-01 00:00:00.000000)",
           "│   └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
           "  └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+=======
+          "HashJoin 10000.00 root  left outer join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader(Build) 8000.00 root  data:Selection",
+          "│ └─Selection 8000.00 cop[tikv]  ge(cast(test.t.b, date BINARY), 2019-01-01 00:00:00.000000)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+>>>>>>> 5bafb3203... planner: show cast type in EXPLAIN in coptask (#23123)
         ]
       }
     ]

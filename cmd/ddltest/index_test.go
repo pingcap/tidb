@@ -102,7 +102,14 @@ func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(false)
 	c.Assert(err, IsNil)
+<<<<<<< HEAD
 	defer txn.Rollback()
+=======
+	defer func() {
+		err := txn.Rollback()
+		c.Assert(err, IsNil)
+	}()
+>>>>>>> 5bafb3203... planner: show cast type in EXPLAIN in coptask (#23123)
 
 	it, err := idx.SeekFirst(txn)
 	c.Assert(err, IsNil)

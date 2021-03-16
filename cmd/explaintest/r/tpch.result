@@ -1143,6 +1143,7 @@ and n_name = 'ALGERIA'
 order by
 s_name;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Sort_28	20000.00	root		tpch.supplier.s_name:asc
 └─HashJoin_32	20000.00	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
   ├─HashJoin_40(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
@@ -1166,6 +1167,31 @@ Sort_28	20000.00	root		tpch.supplier.s_name:asc
             └─TableReader_82(Probe)	44189356.65	root		data:Selection_81
               └─Selection_81	44189356.65	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01)
                 └─TableFullScan_80	300005811.00	cop[tikv]	table:lineitem	keep order:false
+=======
+Sort	20000.00	root		tpch.supplier.s_name
+└─HashJoin	20000.00	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
+  ├─HashJoin(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
+  │ ├─TableReader(Build)	1.00	root		data:Selection
+  │ │ └─Selection	1.00	cop[tikv]		eq(tpch.nation.n_name, "ALGERIA")
+  │ │   └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
+  │ └─TableReader(Probe)	500000.00	root		data:TableFullScan
+  │   └─TableFullScan	500000.00	cop[tikv]	table:supplier	keep order:false
+  └─HashAgg(Probe)	257492.04	root		group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey
+    └─Projection	257492.04	root		tpch.partsupp.ps_suppkey
+      └─Selection	257492.04	root		gt(cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY), mul(0.5, Column#44))
+        └─HashAgg	321865.05	root		group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
+          └─HashJoin	9711455.06	root		left outer join, equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
+            ├─IndexHashJoin(Build)	321865.05	root		inner join, inner:IndexLookUp, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey, equal cond:eq(tpch.part.p_partkey, tpch.partsupp.ps_partkey)
+            │ ├─TableReader(Build)	80007.93	root		data:Selection
+            │ │ └─Selection	80007.93	cop[tikv]		like(tpch.part.p_name, "green%", 92)
+            │ │   └─TableFullScan	10000000.00	cop[tikv]	table:part	keep order:false
+            │ └─IndexLookUp(Probe)	4.02	root		
+            │   ├─IndexRangeScan(Build)	4.02	cop[tikv]	table:partsupp, index:PRIMARY(PS_PARTKEY, PS_SUPPKEY)	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
+            │   └─TableRowIDScan(Probe)	4.02	cop[tikv]	table:partsupp	keep order:false
+            └─TableReader(Probe)	44189356.65	root		data:Selection
+              └─Selection	44189356.65	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01)
+                └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
+>>>>>>> 5bafb3203... planner: show cast type in EXPLAIN in coptask (#23123)
 /*
 Q21 Suppliers Who Kept Orders Waiting Query
 This query identifies certain suppliers who were not able to ship required parts in a timely manner.
