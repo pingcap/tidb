@@ -7844,3 +7844,20 @@ func (s *testSuite) TestIssue23304(c *C) {
 	tk.MustExec("set @a=11117, @b=22212, @c=33343;")
 	tk.MustQuery("execute stmt2 using@a,@b,@c;").Check(testkit.Rows("11117", "22212", "33343"))
 }
+
+func (s *testSuite) TestIssue23290(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_issue_23290")
+	tk.MustExec("CREATE TABLE t_issue_23290(  `COL102` mediumint(25) DEFAULT NULL,  `COL103` mediumint(25) DEFAULT NULL,  `COL1` mediumint(25) GENERATED ALWAYS AS (`COL102` / 10) STORED NOT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL4` datetime DEFAULT NULL,  `COL3` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL,  PRIMARY KEY (`COL1`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+
+	tk.MustExec("insert into t_issue_23290 (COL102,COL103,COL2,COL4,COL3,COL5) values(11,19,\"abcd\",\"9289\\-01\\-03\\ 22:36:43\",-7766341800212896104,2.335516840459477e+38);")
+	tk.MustExec("insert into t_issue_23290 (COL102,COL103,COL2,COL4,COL3,COL5) values(22,12,\"abcd\",\"0335\\-11\\-19\\ 22:51:03\",-4154892179550291056,-3.23035740051128e+38);")
+	tk.MustExec("insert into t_issue_23290 (COL102,COL103,COL2,COL4,COL3,COL5) values(33,9,\"abcd\",\"5703\\-06\\-21\\ 10:01:55\",-8469066621231379353,1.478085071191862e+38);  ")
+
+	tk.MustExec("prepare stmt from 'select col1, col2 from t_issue_23290 where col1 between ? and ?;';")
+	tk.MustExec("set @a=1, @b=1;")
+	tk.MustQuery("execute stmt using@a,@b;").Check(testkit.Rows("1 abcd"))
+	tk.MustExec("set @a=1, @b=10;")
+	tk.MustQuery("execute stmt using@a,@b;").Check(testkit.Rows("1 abcd", "2 abcd", "3 abcd"))
+}
