@@ -1610,13 +1610,13 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
+	//err = h.HandleDDLEvent(<-h.DDLEventCh())
+	//c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(len(tk.MustQuery("show stats_meta where table_name = 't';").Rows()), Equals, 5)
 	globalStats = h.GetTableStats(tableInfo)
-	// The value of global.count will be updated automatically after we drop or truncate the table partition.
+	// The value of global.count will be updated automatically after we drop the table partition.
 	c.Assert(globalStats.Count, Equals, int64(11))
 	c.Assert(globalStats.ModifyCount, Equals, int64(0))
 
@@ -1625,15 +1625,16 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
+	//err = h.HandleDDLEvent(<-h.DDLEventCh())
+	//c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	// Only delete the data from the partition p2 and p3. It will not delete the partition-stats.
 	c.Assert(len(tk.MustQuery("show stats_meta where table_name = 't';").Rows()), Equals, 5)
 	globalStats = h.GetTableStats(tableInfo)
-	// The value of global.count will be updated automatically after we drop or truncate the table partition.
-	c.Assert(globalStats.Count, Equals, int64(7))
+	// The value of global.count will not be updated automatically when we truncate the table partition.
+	// Because the partition-stats in the partition table which have been truncated has not been updated.
+	c.Assert(globalStats.Count, Equals, int64(11))
 	c.Assert(globalStats.ModifyCount, Equals, int64(0))
 }
 

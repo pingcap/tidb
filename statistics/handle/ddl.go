@@ -45,68 +45,67 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-	case model.ActionAddTablePartition, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+	case model.ActionAddTablePartition, model.ActionTruncateTablePartition:
 		pruneMode := h.CurrentPruneMode()
 		if pruneMode == variable.Static {
-			if t.Tp != model.ActionDropTablePartition {
-				for _, def := range t.PartInfo.Definitions {
-					if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
-						return err
-					}
-				}
-			}
-		} else {
-			if t.Tp != model.ActionAddTablePartition {
-				// We need to merge the partition-level stats to global-stats when we truncate or drop table partition in dynamic mode.
-				tableID := t.TableInfo.ID
-				is := infoschema.GetInfoSchema(h.mu.ctx)
-				h.mu.Lock()
-				globalTable, ok := h.getTableByPhysicalID(is, tableID)
-				h.mu.Unlock()
-				if !ok {
-					err := errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", tableID)
+			for _, def := range t.PartInfo.Definitions {
+				if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
 					return err
 				}
-				globalTableInfo := globalTable.Meta()
-				globalStats, err := h.TableStatsFromStorage(globalTableInfo, tableID, false, 0)
+			}
+		}
+	case model.ActionDropTablePartition:
+		pruneMode := h.CurrentPruneMode()
+		if pruneMode == variable.Dynamic {
+			// We need to merge the partition-level stats to global-stats when we drop table partition in dynamic mode.
+			tableID := t.TableInfo.ID
+			is := infoschema.GetInfoSchema(h.mu.ctx)
+			h.mu.Lock()
+			globalTable, ok := h.getTableByPhysicalID(is, tableID)
+			h.mu.Unlock()
+			if !ok {
+				err := errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", tableID)
+				return err
+			}
+			globalTableInfo := globalTable.Meta()
+			globalStats, err := h.TableStatsFromStorage(globalTableInfo, tableID, false, 0)
+			if err != nil {
+				return err
+			}
+			// If we do not currently have global-stats, no new global-stats will be generated.
+			if globalStats != nil {
+				var opts map[ast.AnalyzeOptionType]uint64
+				// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
+				for colID, _ := range globalStats.Columns {
+					opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Columns[colID].TopN.TopN))
+					opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalStats.Columns[colID].Buckets))
+					break
+				}
+				// Generate the new column global-stats
+				newColGlobalStats, err := h.MergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tableID, 0, 0)
 				if err != nil {
 					return err
 				}
-				// If we do not currently have global-stats, no new global-stats will be generated.
-				if globalStats != nil {
-					var opts map[ast.AnalyzeOptionType]uint64
-					// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
-					for colID, _ := range globalStats.Columns {
-						opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Columns[colID].TopN.TopN))
-						opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalStats.Columns[colID].Buckets))
-						break
-					}
-					// Generate the new column global-stats
-					newColGlobalStats, err := h.MergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tableID, 0, 0)
+				for i := 0; i < newColGlobalStats.Num; i++ {
+					hg, cms, topN, fms := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i], newColGlobalStats.Fms[i]
+					err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, fms, 2, 1)
 					if err != nil {
 						return err
 					}
-					for i := 0; i < newColGlobalStats.Num; i++ {
-						hg, cms, topN, fms := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i], newColGlobalStats.Fms[i]
-						err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, fms, 2, 1)
-						if err != nil {
-							return err
-						}
+				}
+				// Generate the new index global-stats
+				for _, idx := range t.TableInfo.Indices {
+					opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Indices[idx.ID].TopN.TopN))
+					opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalStats.Indices[idx.ID].Buckets))
+					newIndexGlobalStats, err := h.MergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tableID, 1, idx.ID)
+					if err != nil {
+						return err
 					}
-					// Generate the new index global-stats
-					for _, idx := range t.TableInfo.Indices {
-						opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Indices[idx.ID].TopN.TopN))
-						opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalStats.Indices[idx.ID].Buckets))
-						newIndexGlobalStats, err := h.MergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tableID, 1, idx.ID)
+					for i := 0; i < newIndexGlobalStats.Num; i++ {
+						hg, cms, topN, fms := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i], newIndexGlobalStats.Fms[i]
+						err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, 1, hg, cms, topN, fms, 2, 1)
 						if err != nil {
 							return err
-						}
-						for i := 0; i < newIndexGlobalStats.Num; i++ {
-							hg, cms, topN, fms := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i], newIndexGlobalStats.Fms[i]
-							err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, 1, hg, cms, topN, fms, 2, 1)
-							if err != nil {
-								return err
-							}
 						}
 					}
 				}
