@@ -50,7 +50,7 @@ func (txn TxnProbe) GetCommitTS() uint64 {
 	return txn.commitTS
 }
 
-// GetUnionStore returns transaction's embeded unionstore.
+// GetUnionStore returns transaction's embedded unionstore.
 func (txn TxnProbe) GetUnionStore() kv.UnionStore {
 	return txn.us
 }
