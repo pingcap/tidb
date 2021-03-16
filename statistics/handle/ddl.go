@@ -76,26 +76,43 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			if globalStats != nil {
 				var opts map[ast.AnalyzeOptionType]uint64
 				// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
-				for _, colID := range globalStats.Columns {
-					opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Columns[colID.ID].TopN.TopN))
-					opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalStats.Columns[colID.ID].Buckets))
+				for colID, _ := range globalStats.Columns {
+					opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Columns[colID].TopN.TopN))
+					opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalStats.Columns[colID].Buckets))
 					break
 				}
-				h.MergePartitionStats2GlobalStats(h.mu.ctx, opts, infoschema.GetInfoSchema(h.mu.ctx), tableID, 0, 0)
+				newColGlobalStats, err := h.MergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tableID, 0, 0)
+				if err != nil {
+					return err
+				}
+				for i := 0; i < newColGlobalStats.Num; i++ {
+					hg, cms, topN, fms := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i], newColGlobalStats.Fms[i]
+					err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, fms, 2, 1)
+					if err != nil {
+						return err
+					}
+				}
 				for _, idx := range t.TableInfo.Indices {
 					opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Indices[idx.ID].TopN.TopN))
 					opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalStats.Indices[idx.ID].Buckets))
-					h.MergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tableID, 1, idx.ID)
-				}
-				if err := h.insertTableStats2KV(t.TableInfo, tableID); err != nil {
-					return err
+					newIndexGlobalStats, err := h.MergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tableID, 1, idx.ID)
+					if err != nil {
+						return err
+					}
+					for i := 0; i < newIndexGlobalStats.Num; i++ {
+						hg, cms, topN, fms := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i], newIndexGlobalStats.Fms[i]
+						err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, 1, hg, cms, topN, fms, 2, 1)
+						if err != nil {
+							return err
+						}
+					}
 				}
 			}
-		}
-		// We should update the partition-stats in both static and dynamic mode.
-		for _, def := range t.PartInfo.Definitions {
-			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
-				return err
+		} else {
+			for _, def := range t.PartInfo.Definitions {
+				if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+					return err
+				}
 			}
 		}
 	}
