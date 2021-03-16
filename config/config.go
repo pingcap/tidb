@@ -206,6 +206,7 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 		StoresRefreshInterval: c.StoresRefreshInterval,
 		OpenTracingEnable:     c.OpenTracing.Enable,
 		Path:                  c.Path,
+		EnableForwarding:      c.EnableForwarding,
 	}
 }
 
@@ -666,7 +667,7 @@ var defaultConf = Config{
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
 	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
-	EnableForwarding:             false,
+	EnableForwarding:             defTiKVCfg.EnableForwarding,
 }
 
 var (

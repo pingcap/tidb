@@ -199,7 +199,7 @@ skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
-enable-forwarding=true
+enable-forwarding = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
