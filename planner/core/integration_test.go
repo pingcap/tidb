@@ -2881,3 +2881,11 @@ func (s *testIntegrationSuite) TestIndexMergeTableFilter(c *C) {
 		"10 1 1 10",
 	))
 }
+
+func (s *testIntegrationSuite) TestIssue22850(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (a int(11))")
+	tk.MustQuery("SELECT @v:=(SELECT 1 FROM t1 t2 LEFT JOIN t1 ON t1.a GROUP BY t1.a) FROM t1").Check(testkit.Rows()) // work fine
+}
