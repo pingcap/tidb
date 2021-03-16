@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"bytes"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -982,3 +983,31 @@ const (
 	OOMActionCancel = "cancel"
 	OOMActionLog    = "log"
 )
+
+var hideConfig = []string{
+	"index-usage-sync-lease",
+}
+
+func HideConfig(s string) string {
+	configs := strings.Split(s, "\n")
+	hideMap := make([]bool, len(configs))
+	for i, c := range configs {
+		for _, hc := range hideConfig{
+			if strings.Contains(c, hc) {
+				hideMap[i] = true
+				break
+			}
+		}
+	}
+	var buf bytes.Buffer
+	for i, c := range configs {
+		if hideMap[i] {
+			continue
+		}
+		if i != 0 {
+			buf.WriteString("\n")
+		}
+		buf.WriteString(c)
+	}
+	return buf.String()
+}
