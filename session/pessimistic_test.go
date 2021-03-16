@@ -2458,3 +2458,35 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		tk.MustQuery("select * from t1").Check(testkit.Rows("5 12 100"))
 	}
 }
+
+func (s *testPessimisticSuite) TestAsyncCommitCalTSFail(c *C) {
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 5000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+
+	tk := s.newAsyncCommitTestKitWithInit(c)
+	tk2 := s.newAsyncCommitTestKitWithInit(c)
+
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values (1, 1)")
+
+	tk.MustExec("set tidb_enable_1pc = true")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from tk for update").Check(testkit.Rows("1 1"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/failCheckSchemaValid", "return"), IsNil)
+	c.Assert(tk.ExecToErr("commit"), NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/failCheckSchemaValid"), IsNil)
+
+	// The DDL should not be blocked.
+	tk2.MustExec("set innodb_lock_wait_timeout = 5")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update tk set c2 = c2 + 1")
+	tk2.MustExec("commit")
+}
