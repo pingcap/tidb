@@ -669,6 +669,11 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 //    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
 //    between `start` and `end`.
 func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) (bool, string) {
+	// Tests if current time is within the time period.
+	if !timeutil.WithinDayTimePeriod(start, end, now) {
+		return false, ""
+	}
+
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
@@ -683,8 +688,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
 		return false, ""
 	}
-	// Tests if current time is within the time period.
-	return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
+	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
@@ -725,14 +729,14 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
-func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
+func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
 	if err != nil {
 		logutil.BgLogger().Error("[stats] parse auto analyze period failed", zap.Error(err))
-		return
+		return false
 	}
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
@@ -744,7 +748,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 				sql := "analyze table %n.%n"
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
-					return
+					// analyze one table at a time to let it get the freshest parameters.
+					// others will be analyzed next round which is just 3s later.
+					return true
 				}
 				continue
 			}
@@ -753,12 +759,13 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
-					return
+					return true
 				}
 				continue
 			}
 		}
 	}
+	return false
 }
 
 func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string, params ...interface{}) bool {
