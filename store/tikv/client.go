@@ -71,8 +71,8 @@ const (
 	grpcInitialConnWindowSize = 1 << 30
 )
 
-// redirectionMetaKey is the key of gRPC metadata which represents a redirection request.
-var redirectionMetaKey = "tikv_receiver_addr"
+// forwardMetadataKey is the key of gRPC metadata which represents a forwarded request.
+var forwardMetadataKey = "tikv-forwarded-host"
 
 // Client is a client that sends RPC.
 // It should not be used after calling Close().
@@ -182,14 +182,15 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 
 		if allowBatch {
 			batchClient := &batchCommandsClient{
-				target:        a.target,
-				conn:          conn,
-				batched:       sync.Map{},
-				idAlloc:       0,
-				closed:        0,
-				tikvClientCfg: cfg.TiKVClient,
-				tikvLoad:      &a.tikvTransportLayerLoad,
-				dialTimeout:   a.dialTimeout,
+				target:           a.target,
+				conn:             conn,
+				forwardedClients: make(map[string]*batchCommandsStream),
+				batched:          sync.Map{},
+				epoch:            0,
+				closed:           0,
+				tikvClientCfg:    cfg.TiKVClient,
+				tikvLoad:         &a.tikvTransportLayerLoad,
+				dialTimeout:      a.dialTimeout,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 		}
@@ -358,7 +359,6 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		c.recycleMu.Unlock()
 	}
 
-	// enableBatch means TiDB can send BatchCommands to the connection. It doesn't mean TiDB must do it.
 	// TiDB will not send batch commands to TiFlash, to resolve the conflict with Batch Cop Request.
 	enableBatch := req.StoreTp != kv.TiDB && req.StoreTp != kv.TiFlash
 	c.recycleMu.RLock()
@@ -368,16 +368,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.Trace(err)
 	}
 
-	// TiDB uses [gRPC-metadata](https://github.com/grpc/grpc-go/blob/master/Documentation/grpc-metadata.md) to
-	// indicate a request needs redirection. gRPC doesn't support setting a metadata for each request in a stream,
-	// so we can't use BatchCommands for redirection.
-	canBatch := enableBatch && req.ReceiverAddr == ""
 	// TiDB RPC server supports batch RPC, but batch connection will send heart beat, It's not necessary since
 	// request to TiDB is not high frequency.
-	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && canBatch {
+	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
-			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
+			return sendBatchRequest(ctx, addr, req.ForwardedHost, connArray.batchConn, batchReq, timeout)
 		}
 	}
 
@@ -396,9 +392,9 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	client := tikvpb.NewTikvClient(clientConn)
 
-	// Set metadata for request redirection. Needn't redirect DebugReq.
-	if req.ReceiverAddr != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, redirectionMetaKey, req.ReceiverAddr)
+	// Set metadata for forwarded request. Needn't forward DebugReq.
+	if req.ForwardedHost != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, forwardMetadataKey, req.ForwardedHost)
 	}
 	switch req.Type {
 	case tikvrpc.CmdBatchCop:

@@ -173,11 +173,11 @@ type Request struct {
 	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
 	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
 	StoreTp         kv.StoreType
-	// ReceiverAddr is the address of a store which will handle the request. It's different from
+	// ForwardedHost is the address of a store which will handle the request. It's different from
 	// the address the request sent to.
 	// If it's not empty, the store which receive the request will redirect it to
 	// the receiver address. It's useful when network partition occurs.
-	ReceiverAddr string
+	ForwardedHost string
 }
 
 // NewRequest returns new kv rpc request.

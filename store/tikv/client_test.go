@@ -100,10 +100,10 @@ func (s *testClientSuite) TestCancelTimeoutRetErr(c *C) {
 
 	ctx, cancel := context.WithCancel(context.TODO())
 	cancel()
-	_, err := sendBatchRequest(ctx, "", a, req, 2*time.Second)
+	_, err := sendBatchRequest(ctx, "", "", a, req, 2*time.Second)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 
-	_, err = sendBatchRequest(context.Background(), "", a, req, 0)
+	_, err = sendBatchRequest(context.Background(), "", "", a, req, 0)
 	c.Assert(errors.Cause(err), Equals, context.DeadlineExceeded)
 }
 
@@ -227,14 +227,14 @@ func (s *testClientSuite) TestCollapseResolveLock(c *C) {
 	}
 }
 
-func (s *testClientSuite) TestRedirectionMetadata(c *C) {
+func (s *testClientSuite) TestForwardMetadata(c *C) {
 	server, port := startMockTikvService()
 	c.Assert(port > 0, IsTrue)
 	defer server.Stop()
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
 
 	// Enable batch and limit the connection count to 1 so that
-	// there is only one BatchCommands stream.
+	// there is only one BatchCommands stream for each host or forwarded host.
 	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.MaxBatchSize = 128
 		conf.TiKVClient.GrpcConnectionCount = 1
@@ -243,56 +243,74 @@ func (s *testClientSuite) TestRedirectionMetadata(c *C) {
 	defer rpcClient.closeConns()
 
 	var checkCnt uint64
-	// Check no corresponding metadata if ReceiverAddr is empty.
+
+	prewriteReq := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{})
+	forwardedHosts := []string{"", "127.0.0.1:6666", "127.0.0.1:7777", "127.0.0.1:8888"}
+	for i, forwardedHost := range forwardedHosts {
+		if forwardedHost == "" {
+			// Check no corresponding metadata if forwardedHost is empty.
+			server.setMetaChecker(func(ctx context.Context) error {
+				atomic.AddUint64(&checkCnt, 1)
+				// gRPC may set some metadata by default, e.g. "context-type".
+				md, ok := metadata.FromIncomingContext(ctx)
+				if ok {
+					vals := md.Get(forwardMetadataKey)
+					c.Assert(len(vals), Equals, 0)
+				}
+				return nil
+			})
+		} else {
+			// Check the metadata exists.
+			server.setMetaChecker(func(ctx context.Context) error {
+				atomic.AddUint64(&checkCnt, 1)
+				// gRPC may set some metadata by default, e.g. "context-type".
+				md, ok := metadata.FromIncomingContext(ctx)
+				c.Assert(ok, IsTrue)
+				vals := md.Get(forwardMetadataKey)
+				c.Assert(vals, DeepEquals, []string{forwardedHost})
+				return nil
+			})
+		}
+
+		prewriteReq.ForwardedHost = forwardedHost
+		for i := 0; i < 3; i++ {
+			_, err := rpcClient.SendRequest(context.Background(), addr, prewriteReq, 10*time.Second)
+			c.Assert(err, IsNil)
+		}
+		// checkCnt should be i because there is a stream for each forwardedHost.
+		c.Assert(atomic.LoadUint64(&checkCnt), Equals, 1+uint64(i))
+	}
+
+	checkCnt = 0
+	// CopStream represents unary-stream call.
+	copStreamReq := tikvrpc.NewRequest(tikvrpc.CmdCopStream, &coprocessor.Request{})
+	// Check no corresponding metadata if forwardedHost is empty.
 	server.setMetaChecker(func(ctx context.Context) error {
 		atomic.AddUint64(&checkCnt, 1)
 		// gRPC may set some metadata by default, e.g. "context-type".
 		md, ok := metadata.FromIncomingContext(ctx)
 		if ok {
-			vals := md.Get(redirectionMetaKey)
+			vals := md.Get(forwardMetadataKey)
 			c.Assert(len(vals), Equals, 0)
 		}
 		return nil
 	})
-
-	// Prewrite represents unary-unary call.
-	prewriteReq := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{})
-	for i := 0; i < 3; i++ {
-		_, err := rpcClient.SendRequest(context.Background(), addr, prewriteReq, 10*time.Second)
-		c.Assert(err, IsNil)
-	}
-	// checkCnt should be 1 because BatchCommands is a stream-stream call.
-	c.Assert(atomic.LoadUint64(&checkCnt), Equals, uint64(1))
-
-	// CopStream represents unary-stream call.
-	copStreamReq := tikvrpc.NewRequest(tikvrpc.CmdCopStream, &coprocessor.Request{})
 	_, err := rpcClient.SendRequest(context.Background(), addr, copStreamReq, 10*time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(atomic.LoadUint64(&checkCnt), Equals, uint64(2))
+	c.Assert(atomic.LoadUint64(&checkCnt), Equals, uint64(1))
 
-	checkCnt = 0
-	receiverAddr := "127.0.0.1:6666"
+	copStreamReq.ForwardedHost = "127.0.0.1:6666"
 	// Check the metadata exists.
 	server.setMetaChecker(func(ctx context.Context) error {
 		atomic.AddUint64(&checkCnt, 1)
 		// gRPC may set some metadata by default, e.g. "context-type".
 		md, ok := metadata.FromIncomingContext(ctx)
 		c.Assert(ok, IsTrue)
-		vals := md.Get(redirectionMetaKey)
-		c.Assert(vals, DeepEquals, []string{receiverAddr})
+		vals := md.Get(forwardMetadataKey)
+		c.Assert(vals, DeepEquals, []string{"127.0.0.1:6666"})
 		return nil
 	})
-
-	prewriteReq.ReceiverAddr = receiverAddr
-	for i := 0; i < 3; i++ {
-		_, err = rpcClient.SendRequest(context.Background(), addr, prewriteReq, 10*time.Second)
-		c.Assert(err, IsNil)
-	}
-	// checkCnt should be 3 because we don't use BatchCommands for redirection.
-	c.Assert(atomic.LoadUint64(&checkCnt), Equals, uint64(3))
-
-	copStreamReq.ReceiverAddr = receiverAddr
 	_, err = rpcClient.SendRequest(context.Background(), addr, copStreamReq, 10*time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(atomic.LoadUint64(&checkCnt), Equals, uint64(4))
+	c.Assert(atomic.LoadUint64(&checkCnt), Equals, uint64(2))
 }
