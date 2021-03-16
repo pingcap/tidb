@@ -1403,16 +1403,9 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	}
 	// samplesX and samplesY are in order of handle, i.e, their SampleItem.Ordinals are in order.
 	samplesX := collectors[colOffsets[0]].Samples
-	if len(samplesX) == 0 {
-		return nil
-	}
 	// We would modify Ordinal of samplesY, so we make a deep copy.
 	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
-	sampleNum := len(samplesX)
-	if sampleNum == 1 {
-		item.ScalarVals = float64(1)
-		return item
-	}
+
 	h.mu.Lock()
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	h.mu.Unlock()
@@ -1421,18 +1414,21 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	if err != nil {
 		return nil
 	}
-	samplesYInXOrder := make([]*statistics.SampleItem, sampleNum)
+	samplesYInXOrder := make([]*statistics.SampleItem, 0, len(samplesX))
 	for i, itemX := range samplesX {
+		if itemX.Ordinal >= len(samplesY) {
+			continue
+		}
 		itemY := samplesY[itemX.Ordinal]
 		itemY.Ordinal = i
-		samplesYInXOrder[i] = itemY
+		samplesYInXOrder = append(samplesYInXOrder, itemY)
 	}
 	samplesYInYOrder, err := statistics.SortSampleItems(sc, samplesYInXOrder)
 	if err != nil {
 		return nil
 	}
 	var corrXYSum float64
-	for i := 1; i < sampleNum; i++ {
+	for i := 1; i < len(samplesYInYOrder); i++ {
 		corrXYSum += float64(i) * float64(samplesYInYOrder[i].Ordinal)
 	}
 	// X means the ordinal of the item in original sequence, Y means the oridnal of the item in the
@@ -1445,7 +1441,15 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	// We use "Pearson correlation coefficient" to compute the order correlation of columns,
 	// the formula is based on https://en.wikipedia.org/wiki/Pearson_correlation_coefficient.
 	// Note that (itemsCount*corrX2Sum - corrXSum*corrXSum) would never be zero when sampleNum is larger than 1.
-	itemsCount := float64(sampleNum)
+	itemsCount := float64(len(samplesYInYOrder))
+	if itemsCount == 1 {
+		item.ScalarVals = 1
+		return item
+	}
+	if itemsCount <= 0 {
+		item.ScalarVals = 0
+		return item
+	}
 	corrXSum := (itemsCount - 1) * itemsCount / 2.0
 	corrX2Sum := (itemsCount - 1) * itemsCount * (2*itemsCount - 1) / 6.0
 	item.ScalarVals = (itemsCount*corrXYSum - corrXSum*corrXSum) / (itemsCount*corrX2Sum - corrXSum*corrXSum)
