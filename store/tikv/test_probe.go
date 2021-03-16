@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -175,7 +174,6 @@ func (c CommitterProbe) Execute(ctx context.Context) error {
 
 // PrewriteMutations performs the first phase of commit.
 func (c CommitterProbe) PrewriteMutations(ctx context.Context) error {
-	fmt.Println("len=", c.mutations.Len())
 	return c.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), c.mutations)
 }
 
