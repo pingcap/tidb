@@ -971,7 +971,13 @@ func (ts *HTTPHandlerTestSuite) TestGetSettings(c *C) {
 	var settings *config.Config
 	err = decoder.Decode(&settings)
 	c.Assert(err, IsNil)
-	c.Assert(settings, DeepEquals, config.GetGlobalConfig())
+	var configBytes []byte
+	configBytes, err = json.Marshal(config.GetGlobalConfig())
+	c.Assert(err, IsNil)
+	var settingBytes []byte
+	settingBytes, err = json.Marshal(settings)
+	c.Assert(err, IsNil)
+	c.Assert(settingBytes, DeepEquals, configBytes)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {

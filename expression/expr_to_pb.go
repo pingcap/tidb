@@ -64,9 +64,6 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 		if pbExpr == nil {
 			return nil
 		}
-		if !x.Value.IsNull() {
-			pbExpr.FieldType.Flag |= uint32(mysql.NotNullFlag)
-		}
 		return pbExpr
 	case *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr)
