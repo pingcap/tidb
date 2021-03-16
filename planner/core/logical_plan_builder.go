@@ -312,20 +312,7 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 	if !useCache {
 		return b.buildResultSetNode(ctx, from.TableRefs)
 	}
-	var ok bool
-	p, ok = b.cachedResultSetNodes[from.TableRefs]
-	if ok {
-		m := b.cachedHandleHelperMap[from.TableRefs]
-		b.handleHelper.pushMap(m)
-		return
-	}
-	p, err = b.buildResultSetNode(ctx, from.TableRefs)
-	if err != nil {
-		return nil, err
-	}
-	b.cachedResultSetNodes[from.TableRefs] = p
-	b.cachedHandleHelperMap[from.TableRefs] = b.handleHelper.tailMap()
-	return
+	return b.buildResultSetNode(ctx, from.TableRefs)
 }
 
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode) (p LogicalPlan, err error) {

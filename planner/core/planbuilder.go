@@ -467,9 +467,6 @@ type PlanBuilder struct {
 	// correlatedAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
 	correlatedAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 
-	// cache ResultSetNodes and HandleHelperMap to avoid rebuilding.
-	cachedResultSetNodes  map[*ast.Join]LogicalPlan
-	cachedHandleHelperMap map[*ast.Join]map[int64][]HandleCols
 	// isForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
@@ -585,8 +582,6 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		handleHelper:          &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		hintProcessor:         processor,
 		correlatedAggMapper:   make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
-		cachedResultSetNodes:  make(map[*ast.Join]LogicalPlan),
-		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]HandleCols),
 		isForUpdateRead:       sctx.GetSessionVars().IsPessimisticReadConsistency(),
 	}, savedBlockNames
 }
