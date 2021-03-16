@@ -14,6 +14,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -23,7 +24,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"bytes"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -984,15 +984,17 @@ const (
 	OOMActionLog    = "log"
 )
 
+/// hideConfig is used to filter a single line of config for hiding.
 var hideConfig = []string{
 	"index-usage-sync-lease",
 }
 
+// HideConfig is used to filter the configs that needs to be hidden.
 func HideConfig(s string) string {
 	configs := strings.Split(s, "\n")
 	hideMap := make([]bool, len(configs))
 	for i, c := range configs {
-		for _, hc := range hideConfig{
+		for _, hc := range hideConfig {
 			if strings.Contains(c, hc) {
 				hideMap[i] = true
 				break

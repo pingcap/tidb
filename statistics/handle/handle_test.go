@@ -2101,4 +2101,3 @@ func (s *testStatsSuite) TestHideIndexUsageSyncLease(c *C) {
 		c.Assert(strings.Contains(strings.ToLower(r[0].(string)), "index-usage-sync-lease"), IsFalse)
 	}
 }
-
