@@ -1405,7 +1405,15 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	samplesX := collectors[colOffsets[0]].Samples
 	// We would modify Ordinal of samplesY, so we make a deep copy.
 	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
-
+	sampleNum := mathutil.Min(len(samplesX), len(samplesY))
+	if sampleNum == 1 {
+		item.ScalarVals = 1
+		return item
+	}
+	if sampleNum <= 0 {
+		item.ScalarVals = 0
+		return item
+	}
 	h.mu.Lock()
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	h.mu.Unlock()
@@ -1414,7 +1422,7 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	if err != nil {
 		return nil
 	}
-	samplesYInXOrder := make([]*statistics.SampleItem, 0, len(samplesX))
+	samplesYInXOrder := make([]*statistics.SampleItem, 0, sampleNum)
 	for i, itemX := range samplesX {
 		if itemX.Ordinal >= len(samplesY) {
 			continue
@@ -1441,15 +1449,7 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	// We use "Pearson correlation coefficient" to compute the order correlation of columns,
 	// the formula is based on https://en.wikipedia.org/wiki/Pearson_correlation_coefficient.
 	// Note that (itemsCount*corrX2Sum - corrXSum*corrXSum) would never be zero when sampleNum is larger than 1.
-	itemsCount := float64(len(samplesYInYOrder))
-	if itemsCount == 1 {
-		item.ScalarVals = 1
-		return item
-	}
-	if itemsCount <= 0 {
-		item.ScalarVals = 0
-		return item
-	}
+	itemsCount := float64(sampleNum)
 	corrXSum := (itemsCount - 1) * itemsCount / 2.0
 	corrX2Sum := (itemsCount - 1) * itemsCount * (2*itemsCount - 1) / 6.0
 	item.ScalarVals = (itemsCount*corrXYSum - corrXSum*corrXSum) / (itemsCount*corrX2Sum - corrXSum*corrXSum)
