@@ -65,7 +65,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("a"), []byte("b"), []byte("c"))
 	s.cluster = cluster
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
-	pdCli := &tikv.CodecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
 	spkv := tikv.NewMockSafePointKV()
 	store, err := tikv.NewKVStore("mocktikv-store", pdCli, spkv, client)
 	store.EnableTxnLocalLatches(1024000)
