@@ -261,7 +261,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	warnMsg := "Warning 1105 cannot build clustered index table because the binlog is ON"
 	tk.MustQuery("show warnings;").Check(testkit.Rows(warnMsg))
 	tk.MustQuery("select tidb_pk_type from information_schema.tables where table_name = 'local_clustered_index' and table_schema = 'test';").
-		Check(testkit.Rows("NON-CLUSTERED"))
+		Check(testkit.Rows("NONCLUSTERED"))
 	tk.MustExec("drop table if exists local_clustered_index;")
 	// Test clustered index tables will not write binlog.
 	tk.Se.GetSessionVars().BinlogClient = nil

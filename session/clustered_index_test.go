@@ -402,7 +402,7 @@ func (s *testClusteredSuite) TestClusteredIndexSelectWhereInNull(c *C) {
 func (s *testClusteredSuite) TestClusteredIndexSyntax(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	const showPKType = `select tidb_pk_type from information_schema.tables where table_schema = 'test' and table_name = 't';`
-	const nonClustered, clustered = `NON-CLUSTERED`, `CLUSTERED`
+	const nonClustered, clustered = `NONCLUSTERED`, `CLUSTERED`
 	assertPkType := func(sql string, pkType string) {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec(sql)
