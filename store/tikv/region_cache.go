@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,11 +33,15 @@ import (
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/util"
 	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/credentials"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
 )
 
 const (
@@ -1844,13 +1847,13 @@ func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
 		return unreachable
 	}
 
-	saddr := s.saddr
-	if len(saddr) == 0 {
+	if s.getResolveState() != resolved {
 		l = unknown
 		return
 	}
-	rsCh := livenessSf.DoChan(saddr, func() (interface{}, error) {
-		return invokeKVStatusAPI(saddr, StoreLivenessTimeout), nil
+	addr := s.addr
+	rsCh := livenessSf.DoChan(addr, func() (interface{}, error) {
+		return invokeKVStatusAPI(addr, StoreLivenessTimeout), nil
 	})
 	var ctx context.Context
 	if bo != nil {
@@ -1868,7 +1871,7 @@ func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
 	return
 }
 
-func invokeKVStatusAPI(saddr string, timeout time.Duration) (l livenessState) {
+func invokeKVStatusAPI(addr string, timeout time.Duration) (l livenessState) {
 	start := time.Now()
 	defer func() {
 		if l == reachable {
@@ -1876,34 +1879,91 @@ func invokeKVStatusAPI(saddr string, timeout time.Duration) (l livenessState) {
 		} else {
 			metrics.StatusCountWithError.Inc()
 		}
-		metrics.TiKVStatusDuration.WithLabelValues(saddr).Observe(time.Since(start).Seconds())
+		metrics.TiKVStatusDuration.WithLabelValues(addr).Observe(time.Since(start).Seconds())
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	url := fmt.Sprintf("%s://%s/status", util.InternalHTTPSchema(), saddr)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+
+	conn, cli, err := createKVHealthClient(ctx, addr)
 	if err != nil {
-		logutil.BgLogger().Info("[liveness] build kv status request fail", zap.String("store", saddr), zap.Error(err))
-		l = unreachable
-		return
-	}
-	resp, err := util.InternalHTTPClient().Do(req)
-	if err != nil {
-		logutil.BgLogger().Info("[liveness] request kv status fail", zap.String("store", saddr), zap.Error(err))
+		logutil.BgLogger().Info("[health check] create grpc connection failed", zap.String("store", addr), zap.Error(err))
 		l = unreachable
 		return
 	}
 	defer func() {
-		err1 := resp.Body.Close()
-		if err1 != nil {
-			logutil.BgLogger().Debug("[liveness] close kv status api body failed", zap.String("store", saddr), zap.Error(err))
+		err := conn.Close()
+		if err != nil {
+			logutil.BgLogger().Info("[health check] failed to close the grpc connection for health check", zap.String("store", addr), zap.Error(err))
 		}
 	}()
-	if resp.StatusCode != http.StatusOK {
-		logutil.BgLogger().Info("[liveness] request kv status fail", zap.String("store", saddr), zap.String("status", resp.Status))
+
+	req := &healthpb.HealthCheckRequest{}
+	resp, err := cli.Check(ctx, req)
+	if err != nil {
+		logutil.BgLogger().Info("[health check] check health error", zap.String("store", addr), zap.Error(err))
 		l = unreachable
 		return
 	}
+
+	status := resp.GetStatus()
+	if status == healthpb.HealthCheckResponse_UNKNOWN {
+		logutil.BgLogger().Info("[health check] check health returns unknown", zap.String("store", addr))
+		l = unknown
+		return
+	}
+
+	if status != healthpb.HealthCheckResponse_SERVING {
+		logutil.BgLogger().Info("[health check] service not serving", zap.Stringer("status", status))
+		l = unreachable
+		return
+	}
+
 	l = reachable
 	return
+}
+
+func createKVHealthClient(ctx context.Context, addr string) (*grpc.ClientConn, healthpb.HealthClient, error) {
+	// Temporarily directly load the config from the global config, however it's not a good idea to let RegionCache to
+	// access it.
+	// TODO: Pass the config in a better way, or use the connArray inner the client directly rather than creating new
+	// connection.
+
+	cfg := config.GetGlobalConfig()
+
+	opt := grpc.WithInsecure()
+	if len(cfg.Security.ClusterSSLCA) != 0 {
+		tlsConfig, err := cfg.Security.ToTLSConfig()
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
+	}
+	keepAlive := cfg.TiKVClient.GrpcKeepAliveTime
+	keepAliveTimeout := cfg.TiKVClient.GrpcKeepAliveTimeout
+	conn, err := grpc.DialContext(
+		ctx,
+		addr,
+		opt,
+		grpc.WithInitialWindowSize(grpcInitialWindowSize),
+		grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
+		grpc.WithConnectParams(grpc.ConnectParams{
+			Backoff: backoff.Config{
+				BaseDelay:  100 * time.Millisecond, // Default was 1s.
+				Multiplier: 1.6,                    // Default
+				Jitter:     0.2,                    // Default
+				MaxDelay:   3 * time.Second,        // Default was 120s.
+			},
+			MinConnectTimeout: 5 * time.Second,
+		}),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                time.Duration(keepAlive) * time.Second,
+			Timeout:             time.Duration(keepAliveTimeout) * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	cli := healthpb.NewHealthClient(conn)
+	return conn, cli, nil
 }
