@@ -109,8 +109,8 @@ insert into t1 values(1, 1), (2, 1);
 analyze table t1;
 explain format = 'brief' select sum(a) over(partition by b) from t1;
 id	estRows	task	access object	operator info
-Projection	2.00	root		Column#5
-└─Window	2.00	root		sum(cast(test.t1.a, decimal(32,0) BINARY))->Column#5 over(partition by test.t1.b)
+Projection	2.00	root		Column#4
+└─Window	2.00	root		sum(cast(test.t1.a, decimal(32,0) BINARY))->Column#4 over(partition by test.t1.b)
   └─Sort	2.00	root		test.t1.b
     └─TableReader	2.00	root		data:TableFullScan
       └─TableFullScan	2.00	cop[tikv]	table:t1	keep order:false
@@ -118,9 +118,9 @@ insert into t1 values(3, 3);
 analyze table t1;
 explain format = 'brief' select sum(a) over(partition by b) from t1;
 id	estRows	task	access object	operator info
-Projection	3.00	root		Column#5
+Projection	3.00	root		Column#4
 └─Shuffle	3.00	root		execution info: concurrency:2, data sources:[TableReader]
-  └─Window	3.00	root		sum(cast(test.t1.a, decimal(32,0) BINARY))->Column#5 over(partition by test.t1.b)
+  └─Window	3.00	root		sum(cast(test.t1.a, decimal(32,0) BINARY))->Column#4 over(partition by test.t1.b)
     └─Sort	3.00	root		test.t1.b
       └─TableReader	3.00	root		data:TableFullScan
         └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false

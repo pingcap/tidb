@@ -242,10 +242,9 @@ insert into t1 values(9, 10, 11);
 explain format = 'brief' select a, c from t1 use index(idx) order by a limit 5;
 id	estRows	task	access object	operator info
 TopN	5.00	root		test.t1.a, offset:0, count:5
-└─IndexLookUp	5.00	root		
-  ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t1, index:idx(b, c)	keep order:false, stats:pseudo
-  └─TopN(Probe)	5.00	cop[tikv]		test.t1.a, offset:0, count:5
-    └─TableRowIDScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexReader	5.00	root		index:TopN
+  └─TopN	5.00	cop[tikv]		test.t1.a, offset:0, count:5
+    └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx(b, c)	keep order:false, stats:pseudo
 select c, a from t1 use index(idx) order by a limit 5;
 c	a
 3	1
@@ -345,10 +344,10 @@ drop table if exists t;
 create table t(a bigint primary key, b bigint);
 desc select * from t where a = 1;
 id	estRows	task	access object	operator info
-Point_Get_1	1.00	root	table:t, index:PRIMARY(a)	
+Point_Get_1	1.00	root	table:t	handle:1
 desc select * from t where a = '1';
 id	estRows	task	access object	operator info
-Point_Get_1	1.00	root	table:t, index:PRIMARY(a)	
+Point_Get_1	1.00	root	table:t	handle:1
 desc select sysdate(), sleep(1), sysdate();
 id	estRows	task	access object	operator info
 Projection_3	1.00	root		sysdate()->Column#1, sleep(1)->Column#2, sysdate()->Column#3
@@ -468,11 +467,11 @@ PRIMARY KEY (`id`)
 );
 explain format = 'brief' select row_number() over( partition by i ) - x as rnk from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		minus(Column#6, test.t.x)->Column#8
-└─Window	10000.00	root		row_number()->Column#6 over(partition by test.t.i)
+Projection	10000.00	root		minus(Column#5, test.t.x)->Column#7
+└─Window	10000.00	root		row_number()->Column#5 over(partition by test.t.i)
   └─Sort	10000.00	root		test.t.i
-    └─TableReader	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─TableReader	10000.00	root		data:TableRangeScan
+      └─TableRangeScan	10000.00	cop[tikv]	table:t	range:[0,+inf], keep order:false, stats:pseudo
 create table precise_types (
 a BIGINT UNSIGNED NOT NULL,
 b BIGINT NOT NULL,
