@@ -165,6 +165,13 @@ func (s *testIntegrationSuite) TestFastAnalyzeOnVer2(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestHideAnalyzeVerOnShow(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	// TODO: remove this test when the version2 is GA.
+	c.Assert(len(tk.MustQuery("show variables like '%analyze_version%'").Rows()), Equals, 0)
+}
+
 func (s *testIntegrationSuite) TestIncAnalyzeOnVer2(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
