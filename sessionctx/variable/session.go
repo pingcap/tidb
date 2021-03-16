@@ -820,7 +820,7 @@ type SessionVars struct {
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
 
 	// IntPrimaryKeyDefaultAsClustered indicates whether create integer primary table as clustered
-	// when `@@tidb_enable_clustered_index=0` and create-table stmt without `clustered`, like 4.0 behavior.
+	// If it's true, the behavior is the same as the TiDB 4.0 and the below versions.
 	IntPrimaryKeyDefaultAsClustered bool
 }
 
