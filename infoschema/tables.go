@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -154,6 +155,12 @@ const (
 	TableTiFlashSegments = "TIFLASH_SEGMENTS"
 	// TablePlacementPolicy is the string constant of placement policy table.
 	TablePlacementPolicy = "PLACEMENT_POLICY"
+	// TableClientErrorsSummaryGlobal is the string constant of client errors table.
+	TableClientErrorsSummaryGlobal = "CLIENT_ERRORS_SUMMARY_GLOBAL"
+	// TableClientErrorsSummaryByUser is the string constant of client errors table.
+	TableClientErrorsSummaryByUser = "CLIENT_ERRORS_SUMMARY_BY_USER"
+	// TableClientErrorsSummaryByHost is the string constant of client errors table.
+	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
 )
 
 var tableIDMap = map[string]int64{
@@ -223,6 +230,9 @@ var tableIDMap = map[string]int64{
 	TableTiFlashTables:                      autoid.InformationSchemaDBID + 64,
 	TableTiFlashSegments:                    autoid.InformationSchemaDBID + 65,
 	TablePlacementPolicy:                    autoid.InformationSchemaDBID + 66,
+	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
+	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
+	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
 }
 
 type columnInfo struct {
@@ -276,6 +286,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 				tblInfo.PKIsHandle = true
 			default:
 				tblInfo.IsCommonHandle = true
+				tblInfo.CommonHandleVersion = 1
 				index := &model.IndexInfo{
 					Name:    model.NewCIStr("primary"),
 					State:   model.StatePublic,
@@ -500,6 +511,7 @@ var partitionsCols = []columnInfo{
 	{name: "PARTITION_COMMENT", tp: mysql.TypeVarchar, size: 80},
 	{name: "NODEGROUP", tp: mysql.TypeVarchar, size: 12},
 	{name: "TABLESPACE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -722,6 +734,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "INFO", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "DIGEST", tp: mysql.TypeVarchar, size: 64, deflt: ""},
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 }
 
@@ -1288,6 +1301,35 @@ var tablePlacementPolicyCols = []columnInfo{
 	{name: "CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024},
 }
 
+var tableClientErrorsSummaryGlobalCols = []columnInfo{
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+}
+
+var tableClientErrorsSummaryByUserCols = []columnInfo{
+	{name: "USER", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+}
+
+var tableClientErrorsSummaryByHostCols = []columnInfo{
+	{name: "HOST", tp: mysql.TypeVarchar, size: 255, flag: mysql.NotNullFlag},
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1456,7 +1498,7 @@ func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
 func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get PD servers info.
 	store := ctx.GetStore()
-	etcd, ok := store.(tikv.EtcdBackend)
+	etcd, ok := store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
@@ -1517,14 +1559,12 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-const tiflashLabel = "tiflash"
-
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
 func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	isTiFlashStore := func(store *metapb.Store) bool {
 		isTiFlash := false
 		for _, label := range store.Labels {
-			if label.GetKey() == "engine" && label.GetValue() == tiflashLabel {
+			if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
 				isTiFlash = true
 			}
 		}
@@ -1558,7 +1598,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 		var tp string
 		if isTiFlashStore(store) {
-			tp = tiflashLabel
+			tp = kv.TiFlash.Name()
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
@@ -1587,7 +1627,7 @@ func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 		return cnt, err
 	}
 	for _, store := range stores {
-		if store.ServerType == tiflashLabel {
+		if store.ServerType == kv.TiFlash.Name() {
 			cnt++
 		}
 	}
@@ -1656,6 +1696,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiFlashTables:                      tableTableTiFlashTablesCols,
 	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
 	TablePlacementPolicy:                    tablePlacementPolicyCols,
+	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
+	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
+	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -1730,11 +1773,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
+func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, cols []*table.Column,
 	fn table.RecordIterFunc) error {
-	if len(startKey) != 0 {
-		return table.ErrUnsupportedOp
-	}
 	rows, err := it.getRows(ctx, cols)
 	if err != nil {
 		return err
@@ -1749,16 +1789,6 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 		}
 	}
 	return nil
-}
-
-// RowWithCols implements table.Table RowWithCols interface.
-func (it *infoschemaTable) RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
-	return nil, table.ErrUnsupportedOp
-}
-
-// Row implements table.Table Row interface.
-func (it *infoschemaTable) Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error) {
-	return nil, table.ErrUnsupportedOp
 }
 
 // Cols implements table.Table Cols interface.
@@ -1791,33 +1821,8 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
-// WritableIndices implements table.Table WritableIndices interface.
-func (it *infoschemaTable) WritableIndices() []table.Index {
-	return nil
-}
-
-// DeletableIndices implements table.Table DeletableIndices interface.
-func (it *infoschemaTable) DeletableIndices() []table.Index {
-	return nil
-}
-
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (it *infoschemaTable) RecordPrefix() kv.Key {
-	return nil
-}
-
-// IndexPrefix implements table.Table IndexPrefix interface.
-func (it *infoschemaTable) IndexPrefix() kv.Key {
-	return nil
-}
-
-// FirstKey implements table.Table FirstKey interface.
-func (it *infoschemaTable) FirstKey() kv.Key {
-	return nil
-}
-
-// RecordKey implements table.Table RecordKey interface.
-func (it *infoschemaTable) RecordKey(h kv.Handle) kv.Key {
 	return nil
 }
 
@@ -1856,11 +1861,6 @@ func (it *infoschemaTable) GetPhysicalID() int64 {
 	return it.meta.ID
 }
 
-// Seek implements table.Table Seek interface.
-func (it *infoschemaTable) Seek(ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
-	return nil, false, table.ErrUnsupportedOp
-}
-
 // Type implements table.Table Type interface.
 func (it *infoschemaTable) Type() table.Type {
 	return it.tp
@@ -1868,25 +1868,6 @@ func (it *infoschemaTable) Type() table.Type {
 
 // VirtualTable is a dummy table.Table implementation.
 type VirtualTable struct{}
-
-// IterRecords implements table.Table IterRecords interface.
-func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
-	_ table.RecordIterFunc) error {
-	if len(startKey) != 0 {
-		return table.ErrUnsupportedOp
-	}
-	return nil
-}
-
-// RowWithCols implements table.Table RowWithCols interface.
-func (vt *VirtualTable) RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
-	return nil, table.ErrUnsupportedOp
-}
-
-// Row implements table.Table Row interface.
-func (vt *VirtualTable) Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error) {
-	return nil, table.ErrUnsupportedOp
-}
 
 // Cols implements table.Table Cols interface.
 func (vt *VirtualTable) Cols() []*table.Column {
@@ -1918,33 +1899,8 @@ func (vt *VirtualTable) Indices() []table.Index {
 	return nil
 }
 
-// WritableIndices implements table.Table WritableIndices interface.
-func (vt *VirtualTable) WritableIndices() []table.Index {
-	return nil
-}
-
-// DeletableIndices implements table.Table DeletableIndices interface.
-func (vt *VirtualTable) DeletableIndices() []table.Index {
-	return nil
-}
-
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (vt *VirtualTable) RecordPrefix() kv.Key {
-	return nil
-}
-
-// IndexPrefix implements table.Table IndexPrefix interface.
-func (vt *VirtualTable) IndexPrefix() kv.Key {
-	return nil
-}
-
-// FirstKey implements table.Table FirstKey interface.
-func (vt *VirtualTable) FirstKey() kv.Key {
-	return nil
-}
-
-// RecordKey implements table.Table RecordKey interface.
-func (vt *VirtualTable) RecordKey(h kv.Handle) kv.Key {
 	return nil
 }
 
@@ -1981,11 +1937,6 @@ func (vt *VirtualTable) Meta() *model.TableInfo {
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (vt *VirtualTable) GetPhysicalID() int64 {
 	return 0
-}
-
-// Seek implements table.Table Seek interface.
-func (vt *VirtualTable) Seek(ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
-	return nil, false, table.ErrUnsupportedOp
 }
 
 // Type implements table.Table Type interface.

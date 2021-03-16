@@ -242,7 +242,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdMPPConn:
 		resp.Resp, err = c.handleEstablishMPPConnection(ctx, req.EstablishMPPConn(), timeout, storeID)
 	case tikvrpc.CmdMPPTask:
+		failpoint.Inject("mppDispatchTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
 		resp.Resp, err = c.handleDispatchMPPTask(ctx, req.DispatchMPPTask(), storeID)
+	case tikvrpc.CmdMPPCancel:
 	case tikvrpc.CmdMvccGetByKey:
 		resp.Resp, err = c.usSvr.MvccGetByKey(ctx, req.MvccGetByKey())
 	case tikvrpc.CmdMvccGetByStartTs:
@@ -292,14 +298,16 @@ func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.Est
 	if err != nil {
 		return nil, err
 	}
-	var mockClient = mockMPPConnectionClient{mppResponses: mockServer.mppResponses, idx: 0}
+	var mockClient = mockMPPConnectionClient{mppResponses: mockServer.mppResponses, idx: 0, ctx: ctx, targetTask: r.ReceiverMeta}
 	streamResp := &tikvrpc.MPPStreamResponse{Tikv_EstablishMPPConnectionClient: &mockClient}
 	_, cancel := context.WithCancel(ctx)
 	streamResp.Lease.Cancel = cancel
 	streamResp.Timeout = timeout
 	first, err := streamResp.Recv()
 	if err != nil {
-		return nil, errors.Trace(err)
+		if errors.Cause(err) != io.EOF {
+			return nil, errors.Trace(err)
+		}
 	}
 	streamResp.MPPDataPacket = first
 	return streamResp, nil
@@ -453,6 +461,11 @@ func (mock *mockBatchCopClient) Recv() (*coprocessor.BatchResponse, error) {
 		}
 		return ret, err
 	}
+	failpoint.Inject("batchCopRecvTimeout", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, context.Canceled)
+		}
+	})
 	return nil, io.EOF
 }
 
@@ -460,6 +473,8 @@ type mockMPPConnectionClient struct {
 	mockClientStream
 	mppResponses []*mpp.MPPDataPacket
 	idx          int
+	ctx          context.Context
+	targetTask   *mpp.TaskMeta
 }
 
 func (mock *mockMPPConnectionClient) Recv() (*mpp.MPPDataPacket, error) {
@@ -468,6 +483,23 @@ func (mock *mockMPPConnectionClient) Recv() (*mpp.MPPDataPacket, error) {
 		mock.idx++
 		return ret, nil
 	}
+	failpoint.Inject("mppRecvTimeout", func(val failpoint.Value) {
+		if int64(val.(int)) == mock.targetTask.TaskId {
+			failpoint.Return(nil, context.Canceled)
+		}
+	})
+	failpoint.Inject("mppRecvHang", func(val failpoint.Value) {
+		for val.(bool) {
+			select {
+			case <-mock.ctx.Done():
+				{
+					failpoint.Return(nil, context.Canceled)
+				}
+			default:
+				time.Sleep(1 * time.Second)
+			}
+		}
+	})
 	return nil, io.EOF
 }
 

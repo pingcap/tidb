@@ -14,10 +14,13 @@
 package ddl_test
 
 import (
+	"context"
 	"errors"
 	"time"
 
 	. "github.com/pingcap/check"
+	errors2 "github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	parser_mysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -25,11 +28,11 @@ import (
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -40,9 +43,8 @@ import (
 var _ = SerialSuites(&testColumnTypeChangeSuite{})
 
 type testColumnTypeChangeSuite struct {
-	store  kv.Storage
-	dbInfo *model.DBInfo
-	dom    *domain.Domain
+	store kv.Storage
+	dom   *domain.Domain
 }
 
 func (s *testColumnTypeChangeSuite) SetUpSuite(c *C) {
@@ -1562,7 +1564,7 @@ func (s *testColumnTypeChangeSuite) TestRowFormat(c *C) {
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
 
-	h := helper.NewHelper(s.store.(tikv.Storage))
+	h := helper.NewHelper(s.store.(helper.Storage))
 	data, err := h.GetMvccByEncodedKey(encodedKey)
 	c.Assert(err, IsNil)
 	// The new format will start with CodecVer = 128 (0x80).
@@ -1601,4 +1603,173 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFlenErrorMsg(c *C) {
 	_, err = tk.Exec("ALTER TABLE t CHANGE COLUMN token token varchar(255) DEFAULT '' NOT NULL")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 255 is less than origin 512, and tidb_enable_change_column_type is false")
+}
+
+// Close issue #22395
+// Background:
+// Since the changing column is implemented as adding a new column and substitute the old one when it finished.
+// The added column with NOT-NULL option will be fetched with error when it's origin default value is not set.
+// It's good because the insert / update logic will cast the related column to changing column rather than use
+// origin default value directly.
+func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+	}()
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("insert into t values(2, 2)")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	originalHook := s.dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	var (
+		once     bool
+		checkErr error
+	)
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+			if !once {
+				once = true
+				tbl := testGetTableByName(c, tk1.Se, "test", "t")
+				if len(tbl.WritableCols()) != 3 {
+					checkErr = errors.New("assert the writable column number error")
+					return
+				}
+				if tbl.WritableCols()[2].OriginDefaultValue.(string) != "0" {
+					checkErr = errors.New("assert the write only column origin default value error")
+					return
+				}
+			}
+			// For writable column:
+			// Insert/ Update should set the column with the casted-related column value.
+			_, err := tk1.Exec("insert into t values(3, 3)")
+			if err != nil {
+				checkErr = err
+				return
+			}
+			if job.SchemaState == model.StateWriteOnly {
+				// The casted value will be inserted into changing column too.
+				_, err := tk1.Exec("update t set b = -1 where a = 1")
+				if err != nil {
+					checkErr = err
+					return
+				}
+			} else {
+				// The casted value will be inserted into changing column too.
+				_, err := tk1.Exec("update t set b = -2 where a = 2")
+				if err != nil {
+					checkErr = err
+					return
+				}
+			}
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	tk.MustExec("alter table t modify column b tinyint NOT NULL")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "3 3", "3 3"))
+	tk.MustExec("drop table if exists t")
+}
+
+// Close issue #22820
+func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	prepare := func() {
+		tk.MustExec("drop table if exists users")
+		tk.MustExec("drop table if exists orders")
+		tk.MustExec("CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);")
+		tk.MustExec("CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, doc JSON, FOREIGN KEY fk_user_id (user_id) REFERENCES users(id));")
+	}
+
+	prepare()
+	// For column with FK, alter action can be performed for changing null/not null, default value, comment and so on, but column type.
+	tk.MustExec("alter table orders modify user_id int null;")
+	tbl := testGetTableByName(c, tk.Se, "test", "orders")
+	c.Assert(parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag), Equals, false)
+
+	prepare()
+	tk.MustExec("alter table orders change user_id user_id2 int null")
+	tbl = testGetTableByName(c, tk.Se, "test", "orders")
+	c.Assert(tbl.Meta().Columns[1].Name.L, Equals, "user_id2")
+	c.Assert(parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag), Equals, false)
+
+	prepare()
+	tk.MustExec("alter table orders modify user_id int default -1 comment \"haha\"")
+	tbl = testGetTableByName(c, tk.Se, "test", "orders")
+	c.Assert(tbl.Meta().Columns[1].Comment, Equals, "haha")
+	c.Assert(tbl.Meta().Columns[1].DefaultValue.(string), Equals, "-1")
+
+	prepare()
+	tk.MustGetErrCode("alter table orders modify user_id bigint", mysql.ErrFKIncompatibleColumns)
+
+	tk.MustExec("drop table if exists orders, users")
+}
+
+// Close issue #23202
+func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("alter table t add index(b)")
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit=3")
+
+	failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit")
+	}()
+
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if jobID != 0 {
+			return
+		}
+		if job.Type == model.ActionDropIndex {
+			jobID = job.ID
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	// when it panics in write-reorg state, the job will be pulled up as a cancelling job. Since drop-index with
+	// write-reorg can't be cancelled, so it will be converted to running state and try again (dead loop).
+	_, err := tk.Exec("alter table t drop index b")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
+	c.Assert(jobID > 0, Equals, true)
+
+	// Verification of the history job state.
+	var job *model.Job
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		job, err1 = t.GetHistoryDDLJob(jobID)
+		return errors2.Trace(err1)
+	})
+	c.Assert(err, IsNil)
+	c.Assert(job.ErrorCount, Equals, int64(4))
+	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
 }

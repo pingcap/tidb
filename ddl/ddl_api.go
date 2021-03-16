@@ -628,7 +628,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionPrimaryKey:
 				// Check PriKeyFlag first to avoid extra duplicate constraints.
 				if col.Flag&mysql.PriKeyFlag == 0 {
-					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
+					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys,
+						Option: &ast.IndexOption{PrimaryKeyTp: v.PrimaryKeyTp}}
 					constraints = append(constraints, constraint)
 					col.Flag |= mysql.PriKeyFlag
 					// Add NotNullFlag early so that processColumnFlags() can see it.
@@ -1424,23 +1425,46 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			if !config.GetGlobalConfig().AlterPrimaryKey {
-				singleIntPK := isSingleIntPK(constr, lastCol)
-				clusteredIdx := ctx.GetSessionVars().EnableClusteredIndex
-				if singleIntPK || clusteredIdx {
-					// Primary key cannot be invisible.
-					if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
-						return nil, ErrPKIndexCantBeInvisible
+			pkTp := model.PrimaryKeyTypeDefault
+			if constr.Option != nil {
+				pkTp = constr.Option.PrimaryKeyTp
+			}
+			noBinlog := ctx.GetSessionVars().BinlogClient == nil
+			switch pkTp {
+			case model.PrimaryKeyTypeNonClustered:
+				break
+			case model.PrimaryKeyTypeClustered:
+				if isSingleIntPK(constr, lastCol) {
+					tbInfo.PKIsHandle = true
+				} else {
+					tbInfo.IsCommonHandle = noBinlog
+					if tbInfo.IsCommonHandle {
+						tbInfo.CommonHandleVersion = 1
+					}
+					if !noBinlog {
+						errMsg := "cannot build clustered index table because the binlog is ON"
+						ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf(errMsg))
 					}
 				}
-				if singleIntPK {
-					tbInfo.PKIsHandle = true
-					// Avoid creating index for PK handle column.
-					continue
+			case model.PrimaryKeyTypeDefault:
+				alterPKConf := config.GetGlobalConfig().AlterPrimaryKey
+				if isSingleIntPK(constr, lastCol) {
+					tbInfo.PKIsHandle = !alterPKConf
+				} else {
+					tbInfo.IsCommonHandle = !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex && noBinlog
+					if tbInfo.IsCommonHandle {
+						tbInfo.CommonHandleVersion = 1
+					}
 				}
-				if clusteredIdx {
-					tbInfo.IsCommonHandle = true
+			}
+			if tbInfo.PKIsHandle || tbInfo.IsCommonHandle {
+				// Primary key cannot be invisible.
+				if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
+					return nil, ErrPKIndexCantBeInvisible
 				}
+			}
+			if tbInfo.PKIsHandle {
+				continue
 			}
 		}
 
@@ -2495,6 +2519,10 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithoutValidation)
+		case ast.AlterTableAddStatistics:
+			err = d.AlterTableAddStatistics(ctx, ident, spec.Statistics, spec.IfNotExists)
+		case ast.AlterTableDropStatistics:
+			err = d.AlterTableDropStatistics(ctx, ident, spec.Statistics, spec.IfExists)
 		default:
 			// Nothing to do now.
 		}
@@ -3154,6 +3182,10 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 }
 
 func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if !ctx.GetSessionVars().TiDBEnableExchangePartition {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errExchangePartitionDisabled)
+		return nil
+	}
 	ptSchema, pt, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -3463,7 +3495,7 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
 	}
 	if mysql.HasUnsignedFlag(origin.Flag) != mysql.HasUnsignedFlag(to.Flag) {
-		return true, fmt.Sprintf("can't change unsigned integer to signed or vice versa")
+		return true, "can't change unsigned integer to signed or vice versa"
 	}
 	return false, ""
 }
@@ -3683,10 +3715,6 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 		}
 	}
-	// Check the column with foreign key.
-	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
-		return nil, errFKIncompatibleColumns.GenWithStackByArgs(originalColName, fkInfo.Name)
-	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
 	// which will be done by `processColumnOptions` later.
@@ -3742,6 +3770,15 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 
 	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	// Check the column with foreign key, waiting for the default flen and decimal.
+	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
+		// For now we strongly ban the all column type change for column with foreign key.
+		// Actually MySQL support change column with foreign key from varchar(m) -> varchar(m+t) and t > 0.
+		if newCol.Tp != col.Tp || newCol.Flen != col.Flen || newCol.Decimal != col.Decimal {
+			return nil, errFKIncompatibleColumns.GenWithStackByArgs(originalColName, fkInfo.Name)
+		}
 	}
 
 	// Adjust the flen for blob types after the default flen is set.
@@ -4249,6 +4286,64 @@ func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error
 	return nil
 }
 
+// AlterTableAddStatistics registers extended statistics for a table.
+func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifNotExists bool) error {
+	if !ctx.GetSessionVars().EnableExtendedStats {
+		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	}
+	// Not support Cardinality and Dependency statistics type for now.
+	if stats.StatsType == ast.StatsTypeCardinality || stats.StatsType == ast.StatsTypeDependency {
+		return errors.New("Cardinality and Dependency statistics types are not supported now")
+	}
+	_, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return err
+	}
+	tblInfo := tbl.Meta()
+	if tblInfo.GetPartitionInfo() != nil {
+		return errors.New("Extended statistics on partitioned tables are not supported now")
+	}
+	colIDs := make([]int64, 0, 2)
+	// Check whether columns exist.
+	for _, colName := range stats.Columns {
+		col := table.FindCol(tbl.VisibleCols(), colName.Name.L)
+		if col == nil {
+			return infoschema.ErrColumnNotExists.GenWithStackByArgs(colName.Name, ident.Name)
+		}
+		if stats.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("No need to create correlation statistics on the integer primary key column"))
+			return nil
+		}
+		colIDs = append(colIDs, col.ID)
+	}
+	if len(colIDs) != 2 && (stats.StatsType == ast.StatsTypeCorrelation || stats.StatsType == ast.StatsTypeDependency) {
+		return errors.New("Only support Correlation and Dependency statistics types on 2 columns")
+	}
+	if len(colIDs) < 1 && stats.StatsType == ast.StatsTypeCardinality {
+		return errors.New("Only support Cardinality statistics type on at least 2 columns")
+	}
+	// TODO: check whether covering index exists for cardinality / dependency types.
+
+	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
+	// because locking in Handle can guarantee the correctness of `version` in system tables.
+	return d.ddlCtx.statsHandle.InsertExtendedStats(stats.StatsName, colIDs, int(stats.StatsType), tblInfo.ID, ifNotExists)
+}
+
+// AlterTableDropStatistics logically deletes extended statistics for a table.
+func (d *ddl) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifExists bool) error {
+	if !ctx.GetSessionVars().EnableExtendedStats {
+		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	}
+	_, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return err
+	}
+	tblInfo := tbl.Meta()
+	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
+	// because locking in Handle can guarantee the correctness of `version` in system tables.
+	return d.ddlCtx.statsHandle.MarkExtendedStatsDeleted(stats.StatsName, tblInfo.ID, ifExists)
+}
+
 // UpdateTableReplicaInfo updates the table flash replica infos.
 func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
 	is := d.infoHandle.Get()
@@ -4482,11 +4577,8 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 		return errors.Trace(err)
 	}
-	oldTblInfo := tb.Meta()
-	if oldTblInfo.PreSplitRegions > 0 {
-		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
-			d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
-		}
+	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
+		d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
 	}
 
 	if !config.TableLockEnabled() {
@@ -4801,8 +4893,8 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		}
 		checkDependencies := make(map[string]struct{})
 		for _, colName := range findColumnNamesInExpr(idxPart.Expr) {
-			colInfo.Dependences[colName.Name.O] = struct{}{}
-			checkDependencies[colName.Name.O] = struct{}{}
+			colInfo.Dependences[colName.Name.L] = struct{}{}
+			checkDependencies[colName.Name.L] = struct{}{}
 		}
 		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)
@@ -5822,8 +5914,8 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 	}
 
 	extraCnt := map[placement.PeerRoleType]int{}
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(partitionID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(partitionID+1)))
 	newRules := bundle.Rules[:0]
 	for i, rule := range bundle.Rules {
 		// merge all empty constraints
@@ -5831,6 +5923,14 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			extraCnt[rule.Role] += rule.Count
 			continue
 		}
+		// refer to tidb#22065.
+		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
+		// placement rules in SQL is not compatible with `set tiflash replica` yet
+		rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+			Op:     placement.NotIn,
+			Key:    placement.EngineLabelKey,
+			Values: []string{placement.EngineLabelTiFlash},
+		})
 		rule.GroupID = bundle.ID
 		rule.ID = strconv.Itoa(i)
 		rule.StartKeyHex = startKey
@@ -5841,6 +5941,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		if cnt <= 0 {
 			continue
 		}
+		// refer to tidb#22065.
 		newRules = append(newRules, &placement.Rule{
 			GroupID:     bundle.ID,
 			ID:          string(role),
@@ -5848,6 +5949,11 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
+			LabelConstraints: []placement.LabelConstraint{{
+				Op:     placement.NotIn,
+				Key:    placement.EngineLabelKey,
+				Values: []string{placement.EngineLabelTiFlash},
+			}},
 		})
 	}
 	bundle.Rules = newRules

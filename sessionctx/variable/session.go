@@ -43,13 +43,13 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
@@ -164,9 +164,12 @@ type TransactionContext struct {
 	IsPessimistic  bool
 	// IsStaleness indicates whether the txn is read only staleness txn.
 	IsStaleness bool
-	Isolation   string
-	LockExpire  uint32
-	ForUpdate   uint32
+	// IsExplicit indicates whether the txn is an interactive txn, which is typically started with a BEGIN
+	// or START TRANSACTION statement, or by setting autocommit to 0.
+	IsExplicit bool
+	Isolation  string
+	LockExpire uint32
+	ForUpdate  uint32
 	// TxnScope indicates the value of txn_scope
 	TxnScope string
 
@@ -219,7 +222,7 @@ func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(logicalTableID, physicalTableID int64, delta int64, count int64, colSize map[int64]int64, saveAsLogicalTblID bool) {
+func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
 	if tc.TableDeltaMap == nil {
@@ -232,9 +235,6 @@ func (tc *TransactionContext) UpdateDeltaForTable(logicalTableID, physicalTableI
 	item.Delta += delta
 	item.Count += count
 	item.TableID = physicalTableID
-	if saveAsLogicalTblID {
-		item.TableID = logicalTableID
-	}
 	for key, val := range colSize {
 		item.ColSize[key] += val
 	}
@@ -433,6 +433,9 @@ type SessionVars struct {
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
+	// Port is the port of the connected socket
+	Port string
+
 	// CurrentDB is the default database of this session.
 	CurrentDB string
 
@@ -476,7 +479,10 @@ type SessionVars struct {
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
-	// This variable is currently not recommended to be turned on.
+	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
+	MultiStatementMode int
+
+	// AllowWriteRowID variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
 
 	// AllowBatchCop means if we should send batch coprocessor to TiFlash. Default value is 1, means to use batch cop in case of aggregation and join.
@@ -497,7 +503,6 @@ type SessionVars struct {
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
 
-	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -570,6 +575,9 @@ type SessionVars struct {
 
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
+
+	// EnableListTablePartition enables list table partition feature.
+	EnableListTablePartition bool
 
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
@@ -781,7 +789,7 @@ type SessionVars struct {
 	PartitionPruneMode atomic2.String
 
 	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
-	TxnScope string
+	TxnScope oracle.TxnScope
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
@@ -792,7 +800,8 @@ type SessionVars struct {
 	// Enable1PC indicates whether to enable the one-phase commit feature.
 	Enable1PC bool
 
-	GuaranteeExternalConsistency bool
+	// GuaranteeLinearizability indicates whether to guarantee linearizability
+	GuaranteeLinearizability bool
 
 	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
 	AnalyzeVersion int
@@ -802,6 +811,13 @@ type SessionVars struct {
 
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
+
+	// TiDBEnableExchangePartition indicates whether to enable exchange partition
+	TiDBEnableExchangePartition bool
+
+	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
+	// Now we only support TiFlash.
+	AllowFallbackToTiKV map[kv.StoreType]struct{}
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -809,12 +825,15 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
 		return oracle.GlobalTxnScope
 	}
-	return s.TxnScope
+	if s.TxnScope.GetVarValue() == oracle.LocalTxnScope {
+		return s.TxnScope.GetTxnScope()
+	}
+	return oracle.GlobalTxnScope
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
-	return PartitionPruneMode(s.PartitionPruneMode.Load()) == DynamicOnly
+	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
 // BuildParserConfig generate parser.ParserConfig for initial parser
@@ -829,21 +848,40 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 type PartitionPruneMode string
 
 const (
-	// StaticOnly indicates only prune at plan phase.
+	// Static indicates only prune at plan phase.
+	Static PartitionPruneMode = "static"
+	// Dynamic indicates only prune at execute phase.
+	Dynamic PartitionPruneMode = "dynamic"
+
+	// Don't use out-of-date mode.
+
+	// StaticOnly is out-of-date.
 	StaticOnly PartitionPruneMode = "static-only"
-	// DynamicOnly indicates only prune at execute phase.
+	// DynamicOnly is out-of-date.
 	DynamicOnly PartitionPruneMode = "dynamic-only"
-	// StaticButPrepareDynamic indicates prune at plan phase but collect stats need for dynamic prune.
+	// StaticButPrepareDynamic is out-of-date.
 	StaticButPrepareDynamic PartitionPruneMode = "static-collect-dynamic"
 )
 
 // Valid indicate PruneMode is validated.
 func (p PartitionPruneMode) Valid() bool {
 	switch p {
-	case StaticOnly, StaticButPrepareDynamic, DynamicOnly:
+	case Static, Dynamic, StaticOnly, DynamicOnly:
 		return true
 	default:
 		return false
+	}
+}
+
+// Update updates out-of-date PruneMode.
+func (p PartitionPruneMode) Update() PartitionPruneMode {
+	switch p {
+	case StaticOnly, StaticButPrepareDynamic:
+		return Static
+	case DynamicOnly:
+		return Dynamic
+	default:
+		return p
 	}
 }
 
@@ -880,86 +918,87 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                        make(map[string]types.Datum),
-		UserVarTypes:                 make(map[string]*types.FieldType),
-		systems:                      make(map[string]string),
-		stmtVars:                     make(map[string]string),
-		PreparedStmts:                make(map[uint32]interface{}),
-		PreparedStmtNameToID:         make(map[string]uint32),
-		PreparedParams:               make([]types.Datum, 0, 10),
-		TxnCtx:                       &TransactionContext{},
-		RetryInfo:                    &RetryInfo{},
-		ActiveRoles:                  make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:                true,
-		AutoIncrementIncrement:       DefAutoIncrementIncrement,
-		AutoIncrementOffset:          DefAutoIncrementOffset,
-		Status:                       mysql.ServerStatusAutocommit,
-		StmtCtx:                      new(stmtctx.StatementContext),
-		AllowAggPushDown:             false,
-		AllowBCJ:                     false,
-		BroadcastJoinThresholdSize:   DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount:  DefBroadcastJoinThresholdSize,
-		OptimizerSelectivityLevel:    DefTiDBOptimizerSelectivityLevel,
-		RetryLimit:                   DefTiDBRetryLimit,
-		DisableTxnAutoRetry:          DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:             kv.PriorityLow,
-		allowInSubqToJoinAndAgg:      DefOptInSubqToJoinAndAgg,
-		preferRangeScan:              DefOptPreferRangeScan,
-		CorrelationThreshold:         DefOptCorrelationThreshold,
-		CorrelationExpFactor:         DefOptCorrelationExpFactor,
-		CPUFactor:                    DefOptCPUFactor,
-		CopCPUFactor:                 DefOptCopCPUFactor,
-		CopTiFlashConcurrencyFactor:  DefOptTiFlashConcurrencyFactor,
-		NetworkFactor:                DefOptNetworkFactor,
-		ScanFactor:                   DefOptScanFactor,
-		DescScanFactor:               DefOptDescScanFactor,
-		SeekFactor:                   DefOptSeekFactor,
-		MemoryFactor:                 DefOptMemoryFactor,
-		DiskFactor:                   DefOptDiskFactor,
-		ConcurrencyFactor:            DefOptConcurrencyFactor,
-		EnableRadixJoin:              false,
-		EnableVectorizedExpression:   DefEnableVectorizedExpression,
-		L2CacheSize:                  cpuid.CPU.Cache.L2,
-		CommandValue:                 uint32(mysql.ComSleep),
-		TiDBOptJoinReorderThreshold:  DefTiDBOptJoinReorderThreshold,
-		SlowQueryFile:                config.GetGlobalConfig().Log.SlowQueryFile,
-		WaitSplitRegionFinish:        DefTiDBWaitSplitRegionFinish,
-		WaitSplitRegionTimeout:       DefWaitSplitRegionTimeout,
-		enableIndexMerge:             false,
-		EnableNoopFuncs:              DefTiDBEnableNoopFuncs,
-		replicaRead:                  kv.ReplicaReadLeader,
-		AllowRemoveAutoInc:           DefTiDBAllowRemoveAutoInc,
-		UsePlanBaselines:             DefTiDBUsePlanBaselines,
-		EvolvePlanBaselines:          DefTiDBEvolvePlanBaselines,
-		EnableExtendedStats:          false,
-		IsolationReadEngines:         make(map[kv.StoreType]struct{}),
-		LockWaitTimeout:              DefInnodbLockWaitTimeout * 1000,
-		MetricSchemaStep:             DefTiDBMetricSchemaStep,
-		MetricSchemaRangeDuration:    DefTiDBMetricSchemaRangeDuration,
-		SequenceState:                NewSequenceState(),
-		WindowingUseHighPrecision:    true,
-		PrevFoundInPlanCache:         DefTiDBFoundInPlanCache,
-		FoundInPlanCache:             DefTiDBFoundInPlanCache,
-		PrevFoundInBinding:           DefTiDBFoundInBinding,
-		FoundInBinding:               DefTiDBFoundInBinding,
-		SelectLimit:                  math.MaxUint64,
-		AllowAutoRandExplicitInsert:  DefTiDBAllowAutoRandExplicitInsert,
-		EnableClusteredIndex:         DefTiDBEnableClusteredIndex,
-		EnableParallelApply:          DefTiDBEnableParallelApply,
-		ShardAllocateStep:            DefTiDBShardAllocateStep,
-		EnableChangeColumnType:       DefTiDBChangeColumnType,
-		EnableChangeMultiSchema:      DefTiDBChangeMultiSchema,
-		EnablePointGetCache:          DefTiDBPointGetCache,
-		EnableAlterPlacement:         DefTiDBEnableAlterPlacement,
-		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
-		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                     config.GetGlobalConfig().TxnScope,
-		EnabledRateLimitAction:       DefTiDBEnableRateLimitAction,
-		EnableAsyncCommit:            DefTiDBEnableAsyncCommit,
-		Enable1PC:                    DefTiDBEnable1PC,
-		GuaranteeExternalConsistency: DefTiDBGuaranteeExternalConsistency,
-		AnalyzeVersion:               DefTiDBAnalyzeVersion,
-		EnableIndexMergeJoin:         DefTiDBEnableIndexMergeJoin,
+		Users:                       make(map[string]types.Datum),
+		UserVarTypes:                make(map[string]*types.FieldType),
+		systems:                     make(map[string]string),
+		stmtVars:                    make(map[string]string),
+		PreparedStmts:               make(map[uint32]interface{}),
+		PreparedStmtNameToID:        make(map[string]uint32),
+		PreparedParams:              make([]types.Datum, 0, 10),
+		TxnCtx:                      &TransactionContext{},
+		RetryInfo:                   &RetryInfo{},
+		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
+		StrictSQLMode:               true,
+		AutoIncrementIncrement:      DefAutoIncrementIncrement,
+		AutoIncrementOffset:         DefAutoIncrementOffset,
+		Status:                      mysql.ServerStatusAutocommit,
+		StmtCtx:                     new(stmtctx.StatementContext),
+		AllowAggPushDown:            false,
+		AllowBCJ:                    false,
+		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
+		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
+		RetryLimit:                  DefTiDBRetryLimit,
+		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:            kv.PriorityLow,
+		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
+		preferRangeScan:             DefOptPreferRangeScan,
+		CorrelationThreshold:        DefOptCorrelationThreshold,
+		CorrelationExpFactor:        DefOptCorrelationExpFactor,
+		CPUFactor:                   DefOptCPUFactor,
+		CopCPUFactor:                DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
+		NetworkFactor:               DefOptNetworkFactor,
+		ScanFactor:                  DefOptScanFactor,
+		DescScanFactor:              DefOptDescScanFactor,
+		SeekFactor:                  DefOptSeekFactor,
+		MemoryFactor:                DefOptMemoryFactor,
+		DiskFactor:                  DefOptDiskFactor,
+		ConcurrencyFactor:           DefOptConcurrencyFactor,
+		EnableRadixJoin:             false,
+		EnableVectorizedExpression:  DefEnableVectorizedExpression,
+		L2CacheSize:                 cpuid.CPU.Cache.L2,
+		CommandValue:                uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
+		enableIndexMerge:            false,
+		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
+		replicaRead:                 kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:            DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:         false,
+		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:            DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
+		SequenceState:               NewSequenceState(),
+		WindowingUseHighPrecision:   true,
+		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
+		FoundInPlanCache:            DefTiDBFoundInPlanCache,
+		PrevFoundInBinding:          DefTiDBFoundInBinding,
+		FoundInBinding:              DefTiDBFoundInBinding,
+		SelectLimit:                 math.MaxUint64,
+		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
+		EnableParallelApply:         DefTiDBEnableParallelApply,
+		ShardAllocateStep:           DefTiDBShardAllocateStep,
+		EnableChangeColumnType:      DefTiDBChangeColumnType,
+		EnableChangeMultiSchema:     DefTiDBChangeMultiSchema,
+		EnablePointGetCache:         DefTiDBPointGetCache,
+		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
+		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
+		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                    oracle.GetTxnScope(),
+		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
+		Enable1PC:                   DefTiDBEnable1PC,
+		GuaranteeLinearizability:    DefTiDBGuaranteeLinearizability,
+		AnalyzeVersion:              DefTiDBAnalyzeVersion,
+		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
+		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1160,6 +1199,15 @@ func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 	return s.Status&flag > 0
 }
 
+// SetInTxn sets whether the session is in transaction.
+// It also updates the IsExplicit flag in TxnCtx if val is true.
+func (s *SessionVars) SetInTxn(val bool) {
+	s.SetStatusFlag(mysql.ServerStatusInTrans, val)
+	if val {
+		s.TxnCtx.IsExplicit = true
+	}
+}
+
 // InTxn returns if the session is in transaction.
 func (s *SessionVars) InTxn() bool {
 	return s.GetStatusFlag(mysql.ServerStatusInTrans)
@@ -1348,7 +1396,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		isAutocommit := TiDBOptOn(val)
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
-			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
+			s.SetInTxn(false)
 		}
 	case AutoIncrementIncrement:
 		// AutoIncrementIncrement is valid in [1, 65535].
@@ -1494,6 +1542,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
 		s.EnableTablePartition = val
+	case TiDBEnableListTablePartition:
+		s.EnableListTablePartition = TiDBOptOn(val)
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
@@ -1575,6 +1625,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if err != nil {
 			logutil.BgLogger().Warn(err.Error())
 			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
+			if err != nil {
+				return err
+			}
 		}
 		switch name {
 		case CollationConnection:
@@ -1669,7 +1722,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:
-		s.TxnScope = val
+		switch val {
+		case oracle.GlobalTxnScope:
+			s.TxnScope = oracle.NewGlobalTxnScope()
+		case oracle.LocalTxnScope:
+			s.TxnScope = oracle.GetTxnScope()
+		default:
+			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
+		}
 	case TiDBMemoryUsageAlarmRatio:
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
 	case TiDBEnableRateLimitAction:
@@ -1678,14 +1738,26 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableAsyncCommit = TiDBOptOn(val)
 	case TiDBEnable1PC:
 		s.Enable1PC = TiDBOptOn(val)
-	case TiDBGuaranteeExternalConsistency:
-		s.GuaranteeExternalConsistency = TiDBOptOn(val)
+	case TiDBGuaranteeLinearizability:
+		s.GuaranteeLinearizability = TiDBOptOn(val)
 	case TiDBAnalyzeVersion:
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
 	case TiDBEnableIndexMergeJoin:
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 	case TiDBTrackAggregateMemoryUsage:
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
+	case TiDBMultiStatementMode:
+		s.MultiStatementMode = TiDBOptMultiStmt(val)
+	case TiDBEnableExchangePartition:
+		s.TiDBEnableExchangePartition = TiDBOptOn(val)
+	case TiDBAllowFallbackToTiKV:
+		s.AllowFallbackToTiKV = make(map[kv.StoreType]struct{})
+		for _, engine := range strings.Split(val, ",") {
+			switch engine {
+			case kv.TiFlash.Name():
+				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
+			}
+		}
 	}
 	s.systems[name] = val
 	return nil

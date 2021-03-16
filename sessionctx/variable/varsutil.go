@@ -177,6 +177,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return BoolToOnOff(s.PrevFoundInBinding), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
+	case TiDBTxnScope:
+		return s.TxnScope.GetVarValue(), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
@@ -315,6 +317,26 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
 func TiDBOptOn(opt string) bool {
 	return strings.EqualFold(opt, "ON") || opt == "1"
+}
+
+const (
+	// OffInt is used by TiDBMultiStatementMode
+	OffInt = 0
+	// OnInt is used TiDBMultiStatementMode
+	OnInt = 1
+	// WarnInt is used by TiDBMultiStatementMode
+	WarnInt = 2
+)
+
+// TiDBOptMultiStmt converts multi-stmt options to int.
+func TiDBOptMultiStmt(opt string) int {
+	switch opt {
+	case BoolOff:
+		return OffInt
+	case BoolOn:
+		return OnInt
+	}
+	return WarnInt
 }
 
 func tidbOptPositiveInt32(opt string, defaultVal int) int {

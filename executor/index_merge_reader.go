@@ -99,11 +99,9 @@ type IndexMergeReaderExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 
-	corColInIdxSide bool
 	partialPlans    [][]plannercore.PhysicalPlan
 	corColInTblSide bool
 	tblPlans        []plannercore.PhysicalPlan
-	corColInAccess  bool
 	idxCols         [][]*expression.Column
 	colLens         [][]int
 
