@@ -289,6 +289,23 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 		"frosty hodgkin 3.504000 frosty hodgkin 3.504000",
 		"serene ramanujan 6.383000 serene ramanujan 6.383000",
 		"stupefied spence 5.869000 stupefied spence 5.869000"))
+
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1  (c_int int, c_str varchar(40), primary key(c_int, c_str) clustered, key(c_int), key(c_str));`)
+	tk.MustExec(`create table t2  like t1;`)
+	tk.MustExec(`insert into t1 values (1, 'nifty elion');`)
+	tk.MustExec(`insert into t2 values (1, 'funny shaw');`)
+	tk.MustQuery(`select /*+ INL_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;`).Check(testkit.Rows("1 nifty elion 1 funny shaw"))
+	tk.MustQuery(`select /*+ INL_HASH_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;`).Check(testkit.Rows("1 nifty elion 1 funny shaw"))
+	tk.MustQuery(`select /*+ INL_MERGE_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;`).Check(testkit.Rows("1 nifty elion 1 funny shaw"))
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1  (c_int int, c_str varchar(40), primary key(c_int, c_str(4)) clustered, key(c_int), key(c_str));`)
+	tk.MustExec(`create table t2  like t1;`)
+	tk.MustExec(`insert into t1 values (1, 'nifty elion');`)
+	tk.MustExec(`insert into t2 values (1, 'funny shaw');`)
+	tk.MustQuery(`select /*+ INL_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;`).Check(testkit.Rows("1 nifty elion 1 funny shaw"))
+	tk.MustQuery(`select /*+ INL_HASH_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;`).Check(testkit.Rows("1 nifty elion 1 funny shaw"))
+	tk.MustQuery(`select /*+ INL_MERGE_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;`).Check(testkit.Rows("1 nifty elion 1 funny shaw"))
 }
 
 // Test for union scan in prefixed clustered index table.
