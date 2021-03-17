@@ -288,6 +288,7 @@ func (s *RegionRequestSender) SendReqCtx(
 
 			// TODO: Change the returned error to something like "region missing in cache",
 			// and handle this error like EpochNotMatch, which means to re-split the request and retry.
+			logutil.Logger(bo.ctx).Info("throwing pseudo region error due to region not founc in cache", zap.Stringer("region", &regionID))
 			resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
 			return resp, nil, err
 		}
@@ -399,14 +400,15 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		defer cancel()
 	}
 
-	// TODO: Uncomment this once another pr is merged
-	//sendToAddr := rpcCtx.Addr
-	//if rpcCtx.ProxyStore == nil {
-	//	req.ReceiverAddr = ""
-	//} else {
-	//	req.ReceiverAddr = rpcCtx.Addr
-	//	sendToAddr = rpcCtx.ProxyAddr
-	//}
+	// sendToAddr is the first target address that will receive the request. If proxy is used, sendToAddr will point to
+	// the proxy that will forward the request to the final target.
+	sendToAddr := rpcCtx.Addr
+	if rpcCtx.ProxyStore == nil {
+		req.ForwardedHost = ""
+	} else {
+		req.ForwardedHost = rpcCtx.Addr
+		sendToAddr = rpcCtx.ProxyAddr
+	}
 
 	var sessionID uint64
 	if v := bo.ctx.Value(util.SessionID); v != nil {
@@ -437,9 +439,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 
 	if !injectFailOnSend {
 		start := time.Now()
-		// TODO: Replace with this after another pr is merged
-		//resp, err = s.client.SendRequest(ctx, sendToAddr, req, timeout)
-		resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
+		resp, err = s.client.SendRequest(ctx, sendToAddr, req, timeout)
 		if s.Stats != nil {
 			RecordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
 			failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {

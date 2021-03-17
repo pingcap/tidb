@@ -176,6 +176,7 @@ type Request struct {
 	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
 	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
 	StoreTp         kv.StoreType
+	ForwardedHost   string
 }
 
 // NewRequest returns new kv rpc request.

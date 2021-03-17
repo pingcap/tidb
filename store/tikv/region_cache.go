@@ -415,12 +415,14 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 			}
 		}
 	})
+	isLeaderReq := false
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
 		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, options)
 	case kv.ReplicaReadMixed:
 		store, peer, accessIdx, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed, options)
 	default:
+		isLeaderReq = true
 		store, peer, accessIdx, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
 	addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
@@ -454,7 +456,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		proxyAccessIdx AccessIndex
 		proxyStoreIdx  int
 	)
-	if EnableForwarding && replicaRead == kv.ReplicaReadLeader {
+	if EnableForwarding && isLeaderReq {
 		if atomic.LoadInt32(&store.needForwarding) == 0 {
 			regionStore.unsetProxyStoreIfNeeded(cachedRegion)
 		} else {
@@ -1448,6 +1450,11 @@ func (r *RegionVerID) GetConfVer() uint64 {
 	return r.confVer
 }
 
+// String formats the RegionVerID to string
+func (r *RegionVerID) String() string {
+	return fmt.Sprintf("{ region id: %v, ver: %v, confVer: %v }", r.id, r.ver, r.confVer)
+}
+
 // VerID returns the Region's RegionVerID.
 func (r *Region) VerID() RegionVerID {
 	return RegionVerID{
@@ -1791,6 +1798,8 @@ const (
 func (s *Store) startHealthCheckLoopIfNeeded(c *RegionCache) {
 	// This mechanism doesn't support non-TiKV stores currently.
 	if s.storeType != TiKV {
+		logutil.BgLogger().Info("[health check] skip running health check loop for non-tikv store",
+			zap.Uint64("storeID", s.storeID), zap.String("addr", s.addr))
 		return
 	}
 
@@ -1816,7 +1825,7 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 
 				storeMeta, err := c.PDClient().GetStore(ctx, s.storeID)
 				if err != nil {
-					logutil.BgLogger().Warn("failed to check unhealthy store's meta from pd", zap.Error(err))
+					logutil.BgLogger().Warn("[health check] failed to check unhealthy store's meta from pd", zap.Error(err))
 				}
 				if storeMeta == nil || storeMeta.State == metapb.StoreState_Tombstone {
 					// TODO: What to do here?
@@ -1825,14 +1834,15 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 			}
 			// The store is deleted due to metadata change. No need to check its health.
 			if s.getResolveState() == deleted {
+				logutil.BgLogger().Info("[health check] store meta deleted, stop checking", zap.Uint64("storeID", s.storeID), zap.String("addr", s.addr))
 				return
 			}
 			bo := NewNoopBackoff(ctx)
 			l := s.requestLiveness(bo)
 			if l == reachable {
-				logutil.BgLogger().Info("store became reachable", zap.Uint64("storeID", s.storeID))
+				logutil.BgLogger().Info("[health check] store became reachable", zap.Uint64("storeID", s.storeID))
 				if !atomic.CompareAndSwapInt32(&s.needForwarding, 1, 0) {
-					logutil.BgLogger().Panic("unreachable")
+					logutil.BgLogger().Panic("unreachable code exectued")
 				}
 				return
 			}

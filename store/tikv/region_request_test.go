@@ -18,10 +18,12 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -48,6 +50,7 @@ type testRegionRequestToSingleStoreSuite struct {
 }
 
 type testRegionRequestToThreeStoresSuite struct {
+	OneByOneSuite
 	cluster             *mocktikv.Cluster
 	storeIDs            []uint64
 	peerIDs             []uint64
@@ -568,4 +571,76 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnMaxTimestampNotSyncedError(c
 		c.Assert(err, IsNil)
 		c.Assert(resp, NotNil)
 	}()
+}
+
+func (s *testRegionRequestToThreeStoresSuite) getLeaderStore(c *C) (*Store, string) {
+	region, err := s.regionRequestSender.regionCache.findRegionByKey(s.bo, []byte("a"), false)
+	c.Assert(err, IsNil)
+	leaderStore, leaderPeer, _, leaderStoreIdx := region.WorkStorePeer(region.getStore())
+	c.Assert(leaderPeer.Id, Equals, s.leaderPeer)
+	leaderAddr, err := s.regionRequestSender.regionCache.getStoreAddr(s.bo, region, leaderStore, leaderStoreIdx)
+	c.Assert(err, IsNil)
+	return leaderStore, leaderAddr
+}
+
+func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
+	EnableForwarding = true
+	defer func() { EnableForwarding = false }()
+
+	// First get the leader's addr from region cache
+	leaderStore, leaderAddr := s.getLeaderStore(c)
+
+	bo := NewBackoffer(context.Background(), 10000)
+
+	// Simulate that the leader is network-partitioned but can be accessed by forwarding via a follower
+	innerClient := s.regionRequestSender.client
+	s.regionRequestSender.client = &fnClient{fn: func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+		if addr == leaderAddr {
+			return nil, errors.New("simulated rpc error")
+		}
+
+		if len(req.ForwardedHost) != 0 {
+			addr = req.ForwardedHost
+		}
+		return innerClient.SendRequest(ctx, addr, req, timeout)
+	}}
+
+	loc, err := s.regionRequestSender.regionCache.LocateKey(bo, []byte("k"))
+	c.Assert(err, IsNil)
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("k"),
+		Value: []byte("v1"),
+	})
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, kv.TiKV)
+	c.Assert(err, IsNil)
+	regionErr, err := resp.GetRegionError()
+	c.Assert(err, IsNil)
+	c.Assert(regionErr, IsNil)
+	c.Assert(resp.Resp.(*kvrpcpb.RawPutResponse).Error, Equals, "")
+	c.Assert(ctx.Addr, Equals, leaderAddr)
+	c.Assert(ctx.ProxyStore, NotNil)
+	c.Assert(ctx.ProxyAddr, Not(Equals), leaderAddr)
+	c.Assert(err, IsNil)
+
+	// Simulate recovering to normal
+	s.regionRequestSender.client = innerClient
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockRequestLiveness", "return(true)"), IsNil)
+	start := time.Now()
+	for {
+		if atomic.LoadInt32(&leaderStore.needForwarding) == 0 {
+			break
+		}
+		if time.Since(start) > 3*time.Second {
+			c.Fatal("store didn't recover to normal in time")
+		}
+	}
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockRequestLiveness"), IsNil)
+
+	req = tikvrpc.NewRequest(tikvrpc.CmdRawGet, &kvrpcpb.RawGetRequest{Key: []byte("k")})
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, kv.TiKV)
+	c.Assert(err, IsNil)
+	regionErr, err = resp.GetRegionError()
+	c.Assert(err, IsNil)
+	c.Assert(regionErr, IsNil)
+	c.Assert(resp.Resp.(*kvrpcpb.RawGetResponse).Value, BytesEquals, []byte("v1"))
 }
