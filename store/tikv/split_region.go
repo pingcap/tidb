@@ -84,7 +84,6 @@ func (s *KVStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter boo
 					ch <- singleBatchResp{err: errors.Errorf("%v", r)}
 				}
 			})
-
 		}(batch1)
 	}
 
@@ -116,7 +115,6 @@ func (s *KVStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter boo
 						ch <- singleBatchResp{err: errors.Errorf("%v", r)}
 					}
 				})
-
 			}()
 		}
 	}
@@ -221,7 +219,6 @@ func (s *KVStore) scatterRegionsInBatchSplitResp(bo *Backoffer, tableID *int64, 
 	}
 	spResp := batchResp.resp.Resp.(*kvrpcpb.SplitRegionResponse)
 	for _, r := range spResp.Regions {
-
 		if err = s.scatterRegion(bo, r.Id, tableID); err == nil {
 			logutil.BgLogger().Info("batch split regions, scatter single region complete",
 				zap.Uint64("batch region ID", batchResp.regionID.id),
