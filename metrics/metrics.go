@@ -54,13 +54,6 @@ const (
 	TiKVClient   = "tikvclient"
 )
 
-type metrics struct {
-	nameSpace string
-	subSystem string
-	name      string
-	help      string
-}
-
 // RetLabel returns "ok" when err == nil and "err" when err != nil.
 // This could be useful when you need to observe the operation result.
 func RetLabel(err error) string {
