@@ -365,6 +365,14 @@ func initMetrics(namespace, subsystem string) {
 			Help:      "Counter of gRPC connection transient failure",
 		}, []string{LblAddress, LblStore})
 
+	TiKVPanicCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "panic_total",
+			Help:      "Counter of panic.",
+		}, []string{LblType})
+
 	initShortcuts()
 }
 

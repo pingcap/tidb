@@ -20,7 +20,13 @@ import (
 
 var (
 	// PanicCounter measures the count of panics.
-	PanicCounter = initMetric(panicCounter)
+	PanicCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "panic_total",
+			Help:      "Counter of panic.",
+		}, []string{LblType})
 )
 
 // metrics labels.
@@ -55,10 +61,6 @@ type metrics struct {
 	help      string
 }
 
-var (
-	panicCounter = &metrics{TiDB, Server, "panic_total", "Counter of panic."}
-)
-
 // RetLabel returns "ok" when err == nil and "err" when err != nil.
 // This could be useful when you need to observe the operation result.
 func RetLabel(err error) string {
@@ -66,27 +68,6 @@ func RetLabel(err error) string {
 		return opSucc
 	}
 	return opFailed
-}
-
-// resetMetricDomain
-func (m *metrics) resetMetricDomain(nameSpace, subSystem string) *metrics {
-	return &metrics{
-		nameSpace: nameSpace,
-		subSystem: subSystem,
-		name:      m.name,
-		help:      m.help,
-	}
-}
-
-// initMetric
-func initMetric(m *metrics) *prometheus.CounterVec {
-	return prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: m.nameSpace,
-			Subsystem: m.subSystem,
-			Name:      m.name,
-			Help:      m.help,
-		}, []string{LblType})
 }
 
 // RegisterMetrics registers the metrics which are ONLY used in TiDB server.
@@ -176,6 +157,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ConfigStatus)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
-	tikvmetrics.TiKVPanicCounter = initMetric(panicCounter.resetMetricDomain(TiDB, TiKVClient)) // reset tidb metrics for tikv metrics
 	tikvmetrics.RegisterMetrics()
+	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
 }
