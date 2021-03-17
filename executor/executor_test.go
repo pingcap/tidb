@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -4736,9 +4737,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	// Test for split index region.
 	// Check min value is more than max value.
 	tk.MustExec(`split table t index idx1 between (0) and (1000000000) regions 10`)
-	_, err = tk.Exec(`split table t index idx1 between (2,'a') and (1,'c') regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split index `idx1` region lower value (2,a) should less than the upper value (1,c)")
+	tk.MustGetErrCode(`split table t index idx1 between (2,'a') and (1,'c') regions 10`, errno.ErrInvalidSplitRegionRanges)
 
 	// Check min value is invalid.
 	_, err = tk.Exec(`split table t index idx1 between () and (1) regions 10`)
@@ -4768,9 +4767,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	// Test for split table region.
 	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
 	// Check the lower value is more than the upper value.
-	_, err = tk.Exec(`split table t between (2) and (1) regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split table `t` region lower value 2 should less than the upper value 1")
+	tk.MustGetErrCode(`split table t between (2) and (1) regions 10`, errno.ErrInvalidSplitRegionRanges)
 
 	// Check the lower value is invalid.
 	_, err = tk.Exec(`split table t between () and (1) regions 10`)
@@ -4798,9 +4795,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column '_tidb_rowid'")
 
 	// Test split table region step is too small.
-	_, err = tk.Exec(`split table t between (0) and (100) regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split table `t` region step value should more than 1000, step 10 is invalid")
+	tk.MustGetErrCode(`split table t between (0) and (100) regions 10`, errno.ErrInvalidSplitRegionRanges)
 
 	// Test split region by syntax.
 	tk.MustExec(`split table t by (0),(1000),(1000000)`)
@@ -4823,6 +4818,19 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
 }
 
+func (s *testSplitTable) TestSplitRegionEdgeCase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint(20) auto_increment primary key);")
+	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 16;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int(20) auto_increment primary key);")
+	tk.MustGetErrCode("split table t between (-9223372036854775808) and (9223372036854775807) regions 16;", errno.ErrDataOutOfRange)
+}
+
 func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_cluster_index_index_split_table_integration;")
@@ -4843,9 +4851,9 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and (100.0, 'aaa') regions 10;", errMsg)
 
 	// lower bound >= upper bound.
-	errMsg = "Split table `t` region lower value (aaa,0) should less than the upper value (aaa,0)"
+	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (aaa,0) should less than the upper value (aaa,0)"
 	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
-	errMsg = "Split table `t` region lower value (bbb,0) should less than the upper value (aaa,0)"
+	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (bbb,0) should less than the upper value (aaa,0)"
 	tk.MustGetErrMsg("split table t between ('bbb', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
 
 	// Exceed limit 1000.
@@ -7045,7 +7053,7 @@ func (s *testCoprCache) TestIntegrationCopCache(c *C) {
 
 	// Test for cop cache disabled.
 	cfg := config.NewConfig()
-	cfg.TiKVClient.CoprCache.Enable = false
+	cfg.TiKVClient.CoprCache.CapacityMB = 0
 	config.StoreGlobalConfig(cfg)
 	rows = tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
 	c.Assert(rows[0][2], Equals, "9")
@@ -7397,40 +7405,6 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 		action = action.GetFallback()
 	}
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
-}
-
-func (s *testSerialSuite) TestIssue21441(c *C) {
-	err := failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
-		c.Assert(err, IsNil)
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec(`insert into t values(1),(2),(3)`)
-	tk.Se.GetSessionVars().InitChunkSize = 1
-	tk.Se.GetSessionVars().MaxChunkSize = 1
-	sql := `
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t`
-	tk.MustQuery(sql).Sort().Check(testkit.Rows(
-		"1", "1", "1", "1", "1", "1", "1", "1",
-		"2", "2", "2", "2", "2", "2", "2", "2",
-		"3", "3", "3", "3", "3", "3", "3", "3",
-	))
-
-	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
-	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
 }
 
 func (s *testSuite) Test17780(c *C) {

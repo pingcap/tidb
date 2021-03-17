@@ -121,12 +121,15 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		CAPath:   d.security.ClusterSSLCA,
 		CertPath: d.security.ClusterSSLCert,
 		KeyPath:  d.security.ClusterSSLKey,
-	}, pd.WithGRPCDialOptions(
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
-			Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
-		}),
-	), pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second))
+	},
+		pd.WithGRPCDialOptions(
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
+				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
+			}),
+		),
+		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
+		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
 	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {
@@ -306,4 +309,16 @@ func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction
 		return nil, errors.Trace(err)
 	}
 	return txn_driver.NewTiKVTxn(txn), err
+}
+
+// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
+// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
+	return s.KVStore.GetSnapshot(ver.Ver)
+}
+
+// CurrentVersion returns current max committed version with the given txnScope (local or global).
+func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
+	ver, err := s.KVStore.CurrentTimestamp(txnScope)
+	return kv.NewVersion(ver), err
 }
