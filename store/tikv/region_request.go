@@ -227,7 +227,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("regionRequest.SendReqCtx", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		// TODO: Make sure trace works without cloning the backoffer.
+		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
 		// bo = bo.Clone()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
@@ -549,7 +549,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("regionRequest.onSendFail", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		// TODO: Make sure trace works without cloning the backoffer.
+		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
 		// bo = bo.Clone()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
@@ -637,7 +637,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikv.onRegionError", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		// TODO: Make sure trace works without cloning the backoffer.
+		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
 		// bo = bo.Clone()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}

@@ -1813,7 +1813,8 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 	ticker := time.NewTicker(time.Millisecond * 500)
 	lastCheckPDTime := time.Now()
 
-	// TODO: Set a more proper ctx here so that it can be interrupted immediately when the region cache is shutdown.
+	// TODO(MyonKeminta): Set a more proper ctx here so that it can be interrupted immediately when the RegionCache is
+	// shutdown.
 	ctx := context.Background()
 	for {
 		select {
@@ -1828,7 +1829,7 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 					logutil.BgLogger().Warn("[health check] failed to check unhealthy store's meta from pd", zap.Error(err))
 				}
 				if storeMeta == nil || storeMeta.State == metapb.StoreState_Tombstone {
-					// TODO: What to do here?
+					// TODO(MyonKeminta): Should the region meta on this store be reloaded?
 					return
 				}
 			}
