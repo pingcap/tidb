@@ -56,7 +56,7 @@
         "Plan": [
           " Projection                 root test.t1.a, test.t1.b, test.t1.c",
           " └─Apply                    root semi join, equal:eq(?, ?)",
-          "   ├─Projection             root cast(test.t1.a), test.t1.a, test.t1.b, test.t1.c",
+          "   ├─Projection             root cast(test.t1.a, decimal(20,0) BINARY), test.t1.a, test.t1.b, test.t1.c",
           "   │ └─TableReader          root ",
           "   │   └─Selection          cop  gt(test.t1.b, ?)",
           "   │     └─TableFullScan    cop  table:t1, range:[?,?], keep order:false",

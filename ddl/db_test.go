@@ -58,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -1141,7 +1140,11 @@ func (s *testDBSuite4) TestAddIndex4(c *C) {
 			      partition p4 values less than maxvalue)`, "")
 }
 
-func (s *testDBSuite5) TestAddIndex5(c *C) {
+func (s *testSerialDBSuite) TestAddIndex5(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
 	testAddIndex(c, s.store, s.lease, testClusteredIndex,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c2, c3))`, "")
 }
@@ -1303,7 +1306,7 @@ LOOP:
 
 		c.Assert(err, IsNil)
 		_, ok := handles.Get(h)
-		c.Assert(ok, IsTrue)
+		c.Assert(ok, IsTrue, Commentf("handle: %v", h.String()))
 		handles.Delete(h)
 	}
 	c.Assert(handles.Len(), Equals, 0)
@@ -1903,15 +1906,6 @@ func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo,
 	for _, col := range tblInfo.Columns {
 		tblColMap[col.ID] = &col.FieldType
 	}
-	idxColInfos := make([]rowcodec.ColInfo, 0, len(indexInfo.Columns))
-	for _, idxCol := range indexInfo.Columns {
-		col := tblInfo.Columns[idxCol.Offset]
-		idxColInfos = append(idxColInfos, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
-	}
 
 	// Check local index entry does not exist.
 	localPrefix := tablecodec.EncodeTableIndexPrefix(pid, indexInfo.ID)
@@ -1928,6 +1922,7 @@ func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo,
 	c.Assert(err, IsNil)
 	value, err := txn.Get(context.Background(), key)
 	c.Assert(err, IsNil)
+	idxColInfos := tables.BuildRowcodecColInfoForIndexColumns(indexInfo, tblInfo)
 	colVals, err := tablecodec.DecodeIndexKV(key, value, len(indexInfo.Columns), tablecodec.HandleDefault, idxColInfos)
 	c.Assert(err, IsNil)
 	c.Assert(colVals, HasLen, len(idxVals)+2)
@@ -1955,8 +1950,10 @@ func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo,
 }
 
 func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
+		conf.AlterPrimaryKey = true
 	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
@@ -2024,9 +2021,6 @@ func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
 
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = false
-	})
 }
 
 func (s *testDBSuite) showColumns(tk *testkit.TestKit, c *C, tableName string) [][]interface{} {
@@ -2678,6 +2672,10 @@ func (s *testSerialDBSuite) TestRepairTable(c *C) {
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
 	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, other_table, origin")
