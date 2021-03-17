@@ -576,12 +576,17 @@ func (e *ShowExec) fetchShowIndex() error {
 			"",               // Index_comment
 			"YES",            // Index_visible
 			"NULL",           // Expression
+			"YES",            // Clustered
 		})
 	}
 	for _, idx := range tb.Indices() {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
 			continue
+		}
+		isClustered := "NO"
+		if tb.Meta().IsCommonHandle && idxInfo.Primary {
+			isClustered = "YES"
 		}
 		for i, col := range idxInfo.Columns {
 			nonUniq := 1
@@ -628,6 +633,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				idx.Meta().Comment,     // Index_comment
 				visible,                // Index_visible
 				expression,             // Expression
+				isClustered,            // Clustered
 			})
 		}
 	}
