@@ -1382,7 +1382,8 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		er.ctxStackAppend(expression.NewNull(), types.EmptyName)
 		return
 	}
-	if leftEt == types.ETInt {
+	containMut := expression.ContainMutableConst(er.sctx, args)
+	if !containMut && leftEt == types.ETInt {
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
