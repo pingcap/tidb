@@ -105,7 +105,6 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
 	c.Assert(vars.AnalyzeVersion, Equals, DefTiDBAnalyzeVersion)
-	c.Assert(vars.EnableTiFlashFallbackTiKV, Equals, DefTiDBEnableTiFlashFallbackTiKV)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -597,6 +596,12 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBEnableAmendPessimisticTxn, "0", false},
 		{TiDBEnableAmendPessimisticTxn, "1", false},
 		{TiDBEnableAmendPessimisticTxn, "256", true},
+		{TiDBAllowFallbackToTiKV, "", false},
+		{TiDBAllowFallbackToTiKV, "tiflash", false},
+		{TiDBAllowFallbackToTiKV, "  tiflash  ", false},
+		{TiDBAllowFallbackToTiKV, "tikv", true},
+		{TiDBAllowFallbackToTiKV, "tidb", true},
+		{TiDBAllowFallbackToTiKV, "tiflash,tikv,tidb", true},
 	}
 
 	for _, t := range tests {

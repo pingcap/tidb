@@ -525,8 +525,9 @@ const (
 	// TiDBEnableExchangePartition indicates whether to enable exchange partition.
 	TiDBEnableExchangePartition = "tidb_enable_exchange_partition"
 
-	// TiDBEnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
-	TiDBEnableTiFlashFallbackTiKV = "tidb_enable_tiflash_fallback_tikv"
+	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
+	// Now we only support TiFlash.
+	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
 
 	// TiDBEnableEnancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
@@ -668,9 +669,8 @@ const (
 	DefTiDBGuaranteeLinearizability    = true
 	DefTiDBAnalyzeVersion              = 1
 	DefTiDBEnableIndexMergeJoin        = false
-	DefTiDBTrackAggregateMemoryUsage   = false
+	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
-	DefTiDBEnableTiFlashFallbackTiKV   = false
 )
 
 // Process global variables.
@@ -707,6 +707,7 @@ var FeatureSwitchVariables = []string{
 	TiDBEnable1PC,
 	TiDBGuaranteeLinearizability,
 	TiDBEnableClusteredIndex,
+	TiDBTrackAggregateMemoryUsage,
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
