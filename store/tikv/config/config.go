@@ -15,8 +15,10 @@ package config
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -47,6 +49,7 @@ type Config struct {
 	StoresRefreshInterval uint64
 	OpenTracingEnable     bool
 	Path                  string
+	EnableForwarding      bool
 }
 
 // DefaultConfig returns the default configuration.
@@ -61,6 +64,7 @@ func DefaultConfig() Config {
 		StoresRefreshInterval: DefStoresRefreshInterval,
 		OpenTracingEnable:     false,
 		Path:                  "",
+		EnableForwarding:      false,
 	}
 }
 
@@ -141,4 +145,39 @@ func ParsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 	}
 	etcdAddrs = strings.Split(u.Host, ",")
 	return
+}
+
+var (
+	internalClientInit sync.Once
+	internalHTTPClient *http.Client
+	internalHTTPSchema string
+)
+
+// InternalHTTPClient is used by TiDB-Server to request other components.
+func InternalHTTPClient() *http.Client {
+	internalClientInit.Do(initInternalClient)
+	return internalHTTPClient
+}
+
+// InternalHTTPSchema specifies use http or https to request other components.
+func InternalHTTPSchema() string {
+	internalClientInit.Do(initInternalClient)
+	return internalHTTPSchema
+}
+
+func initInternalClient() {
+	clusterSecurity := GetGlobalConfig().Security
+	tlsCfg, err := clusterSecurity.ToTLSConfig()
+	if err != nil {
+		logutil.BgLogger().Fatal("could not load cluster ssl", zap.Error(err))
+	}
+	if tlsCfg == nil {
+		internalHTTPSchema = "http"
+		internalHTTPClient = http.DefaultClient
+		return
+	}
+	internalHTTPSchema = "https"
+	internalHTTPClient = &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}
 }
