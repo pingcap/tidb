@@ -183,7 +183,7 @@ func (t *testTableSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeBlob),
-			types.NewBytesDatum([]byte{}),
+			types.NewStringDatum(""),
 		},
 		{
 			types.NewFieldType(mysql.TypeDuration),
