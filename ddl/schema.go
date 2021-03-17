@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -172,7 +174,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
 			}
 		}
-		err := infosync.PutRuleBundles(nil, bundles)
+		err := infosync.PutRuleBundles(context.TODO(), bundles)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
