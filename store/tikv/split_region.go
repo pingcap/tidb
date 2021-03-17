@@ -57,7 +57,7 @@ func (s *KVStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter boo
 	}
 	// The first time it enters this function.
 	if bo.totalSleep == 0 {
-		logutil.BgLogger().Info("split batch regions request",
+		logutil.BgLogger().Info("batch split regions request",
 			zap.Int("split key count", len(keys)),
 			zap.Int("batch count", len(batches)),
 			zap.Uint64("first batch, region ID", batches[0].regionID.id),
@@ -95,6 +95,7 @@ func (s *KVStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter boo
 			r := <-ch
 			splitResps = append(splitResps, r)
 		}
+
 		for _, r := range splitResps {
 			resp := r
 			if resp.err != nil {
@@ -149,6 +150,10 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 		}
 	}
 	start := time.Now()
+	tid := int64(0)
+	if tableID != nil {
+		tid = *tableID
+	}
 	req := tikvrpc.NewRequest(tikvrpc.CmdSplitRegion, &kvrpcpb.SplitRegionRequest{
 		SplitKeys: batch.keys,
 	}, kvrpcpb.Context{
@@ -172,7 +177,11 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			batchResp.err = errors.Trace(err)
-			logutil.BgLogger().Error("batch split regions request failed", zap.Duration("cost-time", time.Since(start)), zap.Error(err))
+			logutil.BgLogger().Error("batch split regions request failed",
+				zap.Uint64("batch region ID", batch.regionID.id),
+				zap.Int64("table ID", tid),
+				zap.Duration("cost-time", time.Since(start)),
+				zap.Error(err))
 			return batchResp
 		}
 		resp, err = s.splitBatchRegionsReq(bo, batch.keys, scatter, tableID)
@@ -194,6 +203,7 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 	}
 	logutil.BgLogger().Info("batch split regions, split regions request complete",
 		zap.Uint64("batch region ID", batch.regionID.id),
+		zap.Int64("table ID", tid),
 		zap.Duration("cost-time", time.Since(start)),
 		zap.Stringer("first at", kv.Key(batch.keys[0])),
 		zap.String("first new region left", newRegionLeft),
@@ -205,28 +215,29 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 func (s *KVStore) scatterRegionsInBatchSplitResp(bo *Backoffer, tableID *int64, batchResp singleBatchResp) singleBatchResp {
 	var err error
 	start := time.Now()
+	tid := int64(0)
+	if tableID != nil {
+		tid = *tableID
+	}
 	spResp := batchResp.resp.Resp.(*kvrpcpb.SplitRegionResponse)
 	for _, r := range spResp.Regions {
-		tid := int64(0)
-		if tableID != nil {
-			tid = *tableID
-		}
+
 		if err = s.scatterRegion(bo, r.Id, tableID); err == nil {
 			logutil.BgLogger().Info("batch split regions, scatter single region complete",
 				zap.Uint64("batch region ID", batchResp.regionID.id),
 				zap.Uint64("scatter region ID", r.GetId()),
+				zap.Int64("table ID", tid),
 				zap.Stringer("at", kv.Key(r.EndKey)),
-				zap.Stringer("new region left", logutil.Hex(r)),
-				zap.Int64("table ID", tid))
+				zap.Stringer("new region left", logutil.Hex(r)))
 			continue
 		}
 
-		logutil.BgLogger().Info("batch split regions, scatter region failed",
+		logutil.BgLogger().Warn("batch split regions, scatter region failed",
 			zap.Uint64("batch region ID", batchResp.regionID.id),
-			zap.Stringer("at", kv.Key(r.EndKey)),
 			zap.Uint64("scatter region ID", r.GetId()),
-			zap.Stringer("new region left", logutil.Hex(r)),
 			zap.Int64("table ID", tid),
+			zap.Stringer("at", kv.Key(r.EndKey)),
+			zap.Stringer("new region left", logutil.Hex(r)),
 			zap.Error(err))
 		if batchResp.err == nil {
 			batchResp.err = err
@@ -235,10 +246,7 @@ func (s *KVStore) scatterRegionsInBatchSplitResp(bo *Backoffer, tableID *int64, 
 			break
 		}
 	}
-	tid := int64(0)
-	if tableID != nil {
-		tid = *tableID
-	}
+
 	logutil.BgLogger().Info("batch split regions, scatter all region complete",
 		zap.Uint64("batch region ID", batchResp.regionID.id),
 		zap.Duration("cost-time", time.Since(start)),
@@ -249,6 +257,7 @@ func (s *KVStore) scatterRegionsInBatchSplitResp(bo *Backoffer, tableID *int64, 
 
 // SplitRegions splits regions by splitKeys.
 func (s *KVStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool, tableID *int64) (regionIDs []uint64, err error) {
+	start := time.Now()
 	bo := NewBackofferWithVars(ctx, int(math.Min(float64(len(splitKeys))*splitRegionBackoff, maxSplitRegionsBackoff)), nil)
 	resp, err := s.splitBatchRegionsReq(bo, splitKeys, scatter, tableID)
 	regionIDs = make([]uint64, 0, len(splitKeys))
@@ -257,8 +266,8 @@ func (s *KVStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter 
 		for _, r := range spResp.Regions {
 			regionIDs = append(regionIDs, r.Id)
 		}
-		logutil.BgLogger().Info("split regions complete", zap.Int("region count", len(regionIDs)), zap.Uint64s("region IDs", regionIDs))
 	}
+	logutil.BgLogger().Info("split regions request complete", zap.Int("region count", len(regionIDs)), zap.Duration("cost-time", time.Since(start)), zap.Uint64s("region IDs", regionIDs))
 	return regionIDs, errors.Trace(err)
 }
 
