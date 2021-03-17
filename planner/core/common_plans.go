@@ -187,6 +187,21 @@ type Execute struct {
 	Plan          Plan
 }
 
+// Check if result of GetVar expr is BinaryLiteral
+// Because GetVar use String to represent BinaryLiteral, here we need to convert string back to BinaryLiteral.
+func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) (res bool) {
+	scalarFunc, ok := expr.(*expression.ScalarFunction)
+	if ok && scalarFunc.FuncName.L == ast.GetVar {
+		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
+		if err != nil || isNull {
+			res = false
+		} else if dt, ok2 := sctx.GetSessionVars().Users[name]; ok2 {
+			res = (dt.Kind() == types.KindBinaryLiteral)
+		}
+	}
+	return res
+}
+
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := sctx.GetSessionVars()
@@ -228,6 +243,13 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 				return err
 			}
 			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			if isGetVarBinaryLiteral(sctx, usingVar) {
+				binVal, convErr := val.ToBytes()
+				if convErr != nil {
+					return convErr
+				}
+				val.SetBinaryLiteral(types.BinaryLiteral(binVal))
+			}
 			param.Datum = val
 			param.InExecute = true
 			vars.PreparedParams = append(vars.PreparedParams, val)
