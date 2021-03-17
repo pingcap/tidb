@@ -51,7 +51,7 @@
       "Join{DataScan(t1)->DataScan(t2)}->Projection",
       "Join{DataScan(t1)->DataScan(t2)}->Projection",
       "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(Column#25, Column#38)])->Projection->Delete",
-      "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(test.t.b,test.t.c)->Update"
+      "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg}(test.t.b,test.t.c)->Update"
     ]
   },
   {
