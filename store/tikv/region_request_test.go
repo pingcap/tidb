@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
+	"github.com/pingcap/tidb/store/tikv/kv"
 
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -112,23 +112,23 @@ func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContext(c *C) {
 	var seed uint32 = 0
 	var regionID = RegionVerID{s.regionID, 0, 0}
 
-	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, storeutil.ReplicaReadLeader, &seed)
-	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadLeader, &seed)
+	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, tidbkv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(rpcCtx.Peer.Id, Equals, s.leaderPeer)
 
-	req.ReplicaReadType = storeutil.ReplicaReadFollower
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	req.ReplicaReadType = kv.ReplicaReadFollower
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tidbkv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(rpcCtx.Peer.Id, Not(Equals), s.leaderPeer)
 
-	req.ReplicaReadType = storeutil.ReplicaReadMixed
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	req.ReplicaReadType = kv.ReplicaReadMixed
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tidbkv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(rpcCtx.Peer.Id, Equals, s.leaderPeer)
 
 	seed = 1
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tidbkv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(rpcCtx.Peer.Id, Not(Equals), s.leaderPeer)
 }
@@ -167,15 +167,15 @@ func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	oldStoreLimit := storeutil.StoreLimit.Load()
-	storeutil.StoreLimit.Store(500)
+	oldStoreLimit := kv.StoreLimit.Load()
+	kv.StoreLimit.Store(500)
 	s.cache.getStoreByStoreID(s.storeIDs[0]).tokenCount.Store(500)
 	// cause there is only one region in this cluster, regionID maps this leader.
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
 	c.Assert(err.Error(), Equals, "[tikv:9008]Store token is up to the limit, store id = 1")
-	storeutil.StoreLimit.Store(oldStoreLimit)
+	kv.StoreLimit.Store(oldStoreLimit)
 }
 
 func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithStoreRestart(c *C) {
@@ -250,12 +250,12 @@ func (s *testRegionRequestToSingleStoreSuite) TestSendReqCtx(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, kv.TiKV)
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tidbkv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	c.Assert(ctx, NotNil)
 	req.ReplicaRead = true
-	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, kv.TiKV)
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tidbkv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	c.Assert(ctx, NotNil)

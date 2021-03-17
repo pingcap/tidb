@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 
 	//TODO remove it in the future
-	tikvstore "github.com/pingcap/tidb/store/tikv/storeutil"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 )
 
 // Transaction options

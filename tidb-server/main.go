@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -391,7 +391,7 @@ func reloadConfig(nc, c *config.Config) {
 		metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 	}
 	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
-		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
+		tikvstore.StoreLimit.Store(nc.TiKVClient.StoreLimit)
 	}
 
 	if nc.PreparedPlanCache.Enabled != c.PreparedPlanCache.Enabled {

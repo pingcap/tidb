@@ -30,11 +30,11 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
@@ -48,16 +48,16 @@ const (
 	maxTimestamp  = math.MaxUint64
 )
 
-// KVSnapshot implements the kv.Snapshot interface.
+// KVSnapshot implements the tidbkv.Snapshot interface.
 type KVSnapshot struct {
 	store           *KVStore
 	version         uint64
-	isolationLevel  kv.IsoLevel
+	isolationLevel  tidbkv.IsoLevel
 	priority        pb.CommandPri
 	notFillCache    bool
 	syncLog         bool
 	keyOnly         bool
-	vars            *kv.Variables
+	vars            *tidbkv.Variables
 	replicaReadSeed uint32
 	resolvedLocks   *util.TSSet
 
@@ -74,7 +74,7 @@ type KVSnapshot struct {
 		cached      map[string][]byte
 		cachedSize  int
 		stats       *SnapshotRuntimeStats
-		replicaRead storeutil.ReplicaReadType
+		replicaRead kv.ReplicaReadType
 		taskID      uint64
 		isStaleness bool
 		// MatchStoreLabels indicates the labels the store should be matched
@@ -95,7 +95,7 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 		store:           store,
 		version:         ts,
 		priority:        pb.CommandPri_Normal,
-		vars:            kv.DefaultVars,
+		vars:            tidbkv.DefaultVars,
 		replicaReadSeed: replicaReadSeed,
 		resolvedLocks:   util.NewTSSet(5),
 	}
@@ -118,12 +118,12 @@ func (s *KVSnapshot) setSnapshotTS(ts uint64) {
 
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
-func (s *KVSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (s *KVSnapshot) BatchGet(ctx context.Context, keys []tidbkv.Key) (map[string][]byte, error) {
 	// Check the cached value first.
 	m := make(map[string][]byte)
 	s.mu.RLock()
 	if s.mu.cached != nil {
-		tmp := make([]kv.Key, 0, len(keys))
+		tmp := make([]tidbkv.Key, 0, len(keys))
 		for _, key := range keys {
 			if val, ok := s.mu.cached[string(key)]; ok {
 				atomic.AddInt64(&s.mu.hitCnt, 1)
@@ -142,7 +142,7 @@ func (s *KVSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]
 		return m, nil
 	}
 
-	// We want [][]byte instead of []kv.Key, use some magic to save memory.
+	// We want [][]byte instead of []tidbkv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
 	ctx = context.WithValue(ctx, TxnStartKey, s.version)
 	bo := NewBackofferWithVars(ctx, batchGetMaxBackoff, s.vars)
@@ -295,7 +295,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 		if len(matchStoreLabels) > 0 {
 			ops = append(ops, WithMatchLabels(matchStoreLabels))
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "", ops...)
+		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, tidbkv.TiKV, "", ops...)
 
 		if err != nil {
 			return errors.Trace(err)
@@ -369,7 +369,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 }
 
 // Get gets the value for key k from snapshot.
-func (s *KVSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+func (s *KVSnapshot) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
 
 	defer func(start time.Time) {
 		metrics.TxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
@@ -388,12 +388,12 @@ func (s *KVSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	}
 
 	if len(val) == 0 {
-		return nil, kv.ErrNotExist
+		return nil, tidbkv.ErrNotExist
 	}
 	return val, nil
 }
 
-func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte, error) {
+func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k tidbkv.Key) ([]byte, error) {
 	// Check the cached values first.
 	s.mu.RLock()
 	if s.mu.cached != nil {
@@ -458,7 +458,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte, 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "", ops...)
+		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, tidbkv.TiKV, "", ops...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -537,68 +537,68 @@ func (s *KVSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
 }
 
 // Iter return a list of key-value pair after `k`.
-func (s *KVSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+func (s *KVSnapshot) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
 	scanner, err := newScanner(s, k, upperBound, scanBatchSize, false)
 	return scanner, errors.Trace(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (s *KVSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
+func (s *KVSnapshot) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 	scanner, err := newScanner(s, nil, k, scanBatchSize, true)
 	return scanner, errors.Trace(err)
 }
 
 // SetOption sets an option with a value, when val is nil, uses the default
 // value of this option. Only ReplicaRead is supported for snapshot
-func (s *KVSnapshot) SetOption(opt kv.Option, val interface{}) {
+func (s *KVSnapshot) SetOption(opt tidbkv.Option, val interface{}) {
 	switch opt {
-	case kv.IsolationLevel:
-		s.isolationLevel = val.(kv.IsoLevel)
-	case kv.Priority:
+	case tidbkv.IsolationLevel:
+		s.isolationLevel = val.(tidbkv.IsoLevel)
+	case tidbkv.Priority:
 		s.priority = PriorityToPB(val.(int))
-	case kv.NotFillCache:
+	case tidbkv.NotFillCache:
 		s.notFillCache = val.(bool)
-	case kv.SyncLog:
+	case tidbkv.SyncLog:
 		s.syncLog = val.(bool)
-	case kv.KeyOnly:
+	case tidbkv.KeyOnly:
 		s.keyOnly = val.(bool)
-	case kv.SnapshotTS:
+	case tidbkv.SnapshotTS:
 		s.setSnapshotTS(val.(uint64))
-	case kv.ReplicaRead:
+	case tidbkv.ReplicaRead:
 		s.mu.Lock()
-		s.mu.replicaRead = val.(storeutil.ReplicaReadType)
+		s.mu.replicaRead = val.(kv.ReplicaReadType)
 		s.mu.Unlock()
-	case kv.TaskID:
+	case tidbkv.TaskID:
 		s.mu.Lock()
 		s.mu.taskID = val.(uint64)
 		s.mu.Unlock()
-	case kv.CollectRuntimeStats:
+	case tidbkv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
 		s.mu.Unlock()
-	case kv.SampleStep:
+	case tidbkv.SampleStep:
 		s.sampleStep = val.(uint32)
-	case kv.IsStalenessReadOnly:
+	case tidbkv.IsStalenessReadOnly:
 		s.mu.Lock()
 		s.mu.isStaleness = val.(bool)
 		s.mu.Unlock()
-	case kv.MatchStoreLabels:
+	case tidbkv.MatchStoreLabels:
 		s.mu.Lock()
 		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
 		s.mu.Unlock()
-	case kv.TxnScope:
+	case tidbkv.TxnScope:
 		s.txnScope = val.(string)
 	}
 }
 
 // DelOption deletes an option.
-func (s *KVSnapshot) DelOption(opt kv.Option) {
+func (s *KVSnapshot) DelOption(opt tidbkv.Option) {
 	switch opt {
-	case kv.ReplicaRead:
+	case tidbkv.ReplicaRead:
 		s.mu.Lock()
-		s.mu.replicaRead = storeutil.ReplicaReadLeader
+		s.mu.replicaRead = kv.ReplicaReadLeader
 		s.mu.Unlock()
-	case kv.CollectRuntimeStats:
+	case tidbkv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = nil
 		s.mu.Unlock()
@@ -637,7 +637,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	}
 	if keyErr.Retryable != "" {
 		notFoundDetail := prettyLockNotFoundKey(keyErr.GetRetryable())
-		return kv.ErrTxnRetryable.GenWithStackByArgs(keyErr.GetRetryable() + " " + notFoundDetail)
+		return tidbkv.ErrTxnRetryable.GenWithStackByArgs(keyErr.GetRetryable() + " " + notFoundDetail)
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
@@ -685,7 +685,7 @@ func newWriteConflictError(conflict *pb.WriteConflict) error {
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
-	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
+	return tidbkv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {

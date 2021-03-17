@@ -32,10 +32,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -183,7 +183,7 @@ func (s *RegionRequestSender) SetRPCError(err error) {
 
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, kv.TiKV)
+	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, tidbkv.TiKV)
 	return resp, err
 }
 
@@ -191,19 +191,19 @@ func (s *RegionRequestSender) getRPCContext(
 	bo *Backoffer,
 	req *tikvrpc.Request,
 	regionID RegionVerID,
-	sType kv.StoreType,
+	sType tidbkv.StoreType,
 	opts ...StoreSelectorOption,
 ) (*RPCContext, error) {
 	switch sType {
-	case kv.TiKV:
+	case tidbkv.TiKV:
 		var seed uint32
 		if req.ReplicaReadSeed != nil {
 			seed = *req.ReplicaReadSeed
 		}
 		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed, opts...)
-	case kv.TiFlash:
+	case tidbkv.TiFlash:
 		return s.regionCache.GetTiFlashRPCContext(bo, regionID)
-	case kv.TiDB:
+	case tidbkv.TiDB:
 		return &RPCContext{Addr: s.storeAddr}, nil
 	default:
 		return nil, errors.Errorf("unsupported storage type: %v", sType)
@@ -216,7 +216,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	req *tikvrpc.Request,
 	regionID RegionVerID,
 	timeout time.Duration,
-	sType kv.StoreType,
+	sType tidbkv.StoreType,
 	opts ...StoreSelectorOption,
 ) (
 	resp *tikvrpc.Response,
@@ -251,11 +251,11 @@ func (s *RegionRequestSender) SendReqCtx(
 				bo.vars.Hook("callBackofferHook", bo.vars)
 			}
 		case "requestTiDBStoreError":
-			if sType == kv.TiDB {
+			if sType == tidbkv.TiDB {
 				failpoint.Return(nil, nil, ErrTiKVServerTimeout)
 			}
 		case "requestTiFlashError":
-			if sType == kv.TiFlash {
+			if sType == tidbkv.TiFlash {
 				failpoint.Return(nil, nil, ErrTiFlashServerTimeout)
 			}
 		}
@@ -383,7 +383,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		return nil, false, errors.Trace(e)
 	}
 	// judge the store limit switch.
-	if limit := storeutil.StoreLimit.Load(); limit > 0 {
+	if limit := kv.StoreLimit.Load(); limit > 0 {
 		if err := s.getStoreToken(rpcCtx.Store, limit); err != nil {
 			return nil, false, err
 		}
@@ -699,11 +699,11 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 }
 
 // IsolationLevelToPB converts isolation level to wire type.
-func IsolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
+func IsolationLevelToPB(level tidbkv.IsoLevel) kvrpcpb.IsolationLevel {
 	switch level {
-	case kv.RC:
+	case tidbkv.RC:
 		return kvrpcpb.IsolationLevel_RC
-	case kv.SI:
+	case tidbkv.SI:
 		return kvrpcpb.IsolationLevel_SI
 	default:
 		return kvrpcpb.IsolationLevel_SI

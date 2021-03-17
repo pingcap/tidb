@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -174,9 +174,9 @@ type Request struct {
 	Type CmdType
 	Req  interface{}
 	kvrpcpb.Context
-	ReplicaReadType storeutil.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
-	ReplicaReadSeed *uint32                   // pointer to follower read seed in snapshot/coprocessor
-	StoreTp         kv.StoreType
+	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
+	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
+	StoreTp         tidbkv.StoreType
 }
 
 // NewRequest returns new kv rpc request.
@@ -195,7 +195,7 @@ func NewRequest(typ CmdType, pointer interface{}, ctxs ...kvrpcpb.Context) *Requ
 }
 
 // NewReplicaReadRequest returns new kv rpc request with replica read.
-func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType storeutil.ReplicaReadType, replicaReadSeed *uint32, ctxs ...kvrpcpb.Context) *Request {
+func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed *uint32, ctxs ...kvrpcpb.Context) *Request {
 	req := NewRequest(typ, pointer, ctxs...)
 	req.ReplicaRead = replicaReadType.IsFollowerRead()
 	req.ReplicaReadType = replicaReadType
@@ -401,7 +401,7 @@ func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 // EnableStaleRead enables stale read
 func (req *Request) EnableStaleRead() {
 	req.StaleRead = true
-	req.ReplicaReadType = storeutil.ReplicaReadMixed
+	req.ReplicaReadType = kv.ReplicaReadMixed
 	req.ReplicaRead = false
 }
 
