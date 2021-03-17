@@ -1297,3 +1297,92 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 		}
 	}
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_max_chunk_size=32")
+	tk.MustExec("set @@tidb_init_chunk_size=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i <= 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v),(%v),(%v)", i, i, i))
+	}
+
+	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
+	c.Assert(failpoint.Enable(fpName, "5%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]\")"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+
+	// Test 10 times panic for each AggExec.
+	var res sqlexec.RecordSet
+	for i := 1; i <= 10; i++ {
+		var err error
+		for err == nil {
+			// Test paralleled hash agg.
+			res, err = tk.Exec("select /*+ HASH_AGG() */ count(a) from t group by a")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+				c.Assert(res.Close(), IsNil)
+			}
+		}
+		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+
+		err = nil
+		for err == nil {
+			// Test unparalleled hash agg.
+			res, err = tk.Exec("select /*+ HASH_AGG() */ count(distinct a) from t")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+				c.Assert(res.Close(), IsNil)
+			}
+		}
+		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+
+		err = nil
+		for err == nil {
+			// Test stream agg.
+			res, err = tk.Exec("select /*+ STREAM_AGG() */ count(a) from t")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+				c.Assert(res.Close(), IsNil)
+			}
+		}
+		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+	}
+}
+
+func (s *testSuiteAgg) TestIssue23277(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustExec("create table t(a tinyint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a smallint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a mediumint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a int(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a bigint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+}
+>>>>>>> f30108d88... executor, expression: fix the incorrect result of AVG function (#23285)
