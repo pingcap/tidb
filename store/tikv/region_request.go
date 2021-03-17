@@ -596,7 +596,15 @@ func (s *RegionRequestSender) NeedReloadRegion(ctx *RPCContext) (need bool) {
 	if ctx.ProxyStore != nil {
 		s.failProxyStoreIDs[ctx.ProxyStore.storeID] = struct{}{}
 	}
-	need = len(s.failStoreIDs)+len(s.failProxyStoreIDs) >= len(ctx.Meta.Peers)
+
+	if ctx.AccessMode == TiKVOnly && len(s.failStoreIDs)+len(s.failProxyStoreIDs) >= ctx.TiKVNum {
+		need = true
+	} else if ctx.AccessMode == TiFlashOnly && len(s.failStoreIDs) >= len(ctx.Meta.Peers)-ctx.TiKVNum {
+		need = true
+	} else if len(s.failStoreIDs)+len(s.failProxyStoreIDs) >= len(ctx.Meta.Peers) {
+		need = true
+	}
+
 	if need {
 		s.failStoreIDs = nil
 	}

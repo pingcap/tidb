@@ -343,6 +343,7 @@ type RPCContext struct {
 	ProxyStore     *Store      // nil means proxy is not used
 	ProxyAccessIdx AccessIndex // valid when ProxyStore is not nil
 	ProxyAddr      string      // valid when ProxyStore is not nil
+	TiKVNum        int         // Number of TiKV nodes among the region's peers. Assuming non-TiKV peers are all TiFlash peers.
 }
 
 func (c *RPCContext) String() string {
@@ -374,7 +375,13 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
-	if cachedRegion == nil || cachedRegion.needReload() {
+	if cachedRegion == nil {
+		return nil, nil
+	}
+
+	if cachedRegion.needReload() {
+		// TODO: This may cause a fake EpochNotMatch error, and reload the region after a backoff. It's better to reload
+		// the region directly here.
 		return nil, nil
 	}
 
@@ -475,6 +482,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		ProxyStore:     proxyStore,
 		ProxyAccessIdx: proxyAccessIdx,
 		ProxyAddr:      proxyAddr,
+		TiKVNum:        regionStore.accessStoreNum(TiKVOnly),
 	}, nil
 }
 
@@ -528,6 +536,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			Store:      store,
 			Addr:       addr,
 			AccessMode: TiFlashOnly,
+			TiKVNum:    regionStore.accessStoreNum(TiKVOnly),
 		}, nil
 	}
 
