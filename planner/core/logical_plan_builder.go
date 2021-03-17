@@ -300,17 +300,10 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	return plan4Agg, aggIndexMap, nil
 }
 
-func (b *PlanBuilder) buildTableRefsWithCache(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
-	return b.buildTableRefs(ctx, from, true)
-}
-
-func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause, useCache bool) (p LogicalPlan, err error) {
+func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
 	if from == nil {
 		p = b.buildTableDual()
 		return
-	}
-	if !useCache {
-		return b.buildResultSetNode(ctx, from.TableRefs)
 	}
 	return b.buildResultSetNode(ctx, from.TableRefs)
 }
@@ -2248,17 +2241,13 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 // Finally it restore the original SELECT stmt.
 func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err error) {
 	// collect correlated aggregate from sub-queries inside FROM clause.
-	useCache, err := r.collectFromTableRefs(r.ctx, sel.From)
+	_, err = r.collectFromTableRefs(r.ctx, sel.From)
 	if err != nil {
 		return err
 	}
-	// do not use cache when for update read
-	if isForUpdateReadSelectLock(sel.LockInfo) {
-		useCache = false
-	}
 	// we cannot use cache if there are correlated aggregates inside FROM clause,
 	// since the plan we are building now is not correct and need to be rebuild later.
-	p, err := r.b.buildTableRefs(r.ctx, sel.From, useCache)
+	p, err := r.b.buildTableRefs(r.ctx, sel.From)
 	if err != nil {
 		return err
 	}
@@ -3326,7 +3315,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
 	// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
 	// existing ResultSetNode from the cache.
-	p, err = b.buildTableRefsWithCache(ctx, sel.From)
+	p, err = b.buildTableRefs(ctx, sel.From)
 	if err != nil {
 		return nil, err
 	}
