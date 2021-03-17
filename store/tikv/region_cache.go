@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/storeutil"
-	"github.com/pingcap/tidb/util"
 	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -1685,14 +1684,14 @@ func invokeKVStatusAPI(saddr string, timeout time.Duration) (l livenessState) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	url := fmt.Sprintf("%s://%s/status", util.InternalHTTPSchema(), saddr)
+	url := fmt.Sprintf("%s://%s/status", config.InternalHTTPSchema(), saddr)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		logutil.BgLogger().Info("[liveness] build kv status request fail", zap.String("store", saddr), zap.Error(err))
 		l = unreachable
 		return
 	}
-	resp, err := util.InternalHTTPClient().Do(req)
+	resp, err := config.InternalHTTPClient().Do(req)
 	if err != nil {
 		logutil.BgLogger().Info("[liveness] request kv status fail", zap.String("store", saddr), zap.Error(err))
 		l = unreachable

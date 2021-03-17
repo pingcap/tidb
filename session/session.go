@@ -454,8 +454,8 @@ func (s *session) doCommit(ctx context.Context) error {
 
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
-		if val.(bool) && kv.IsMockCommitErrorEnable() {
-			kv.MockCommitErrorDisable()
+		if val.(bool) && tikv.IsMockCommitErrorEnable() {
+			tikv.MockCommitErrorDisable()
 			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
