@@ -573,7 +573,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnMaxTimestampNotSyncedError(c
 	}()
 }
 
-func (s *testRegionRequestToThreeStoresSuite) getLeaderStore(c *C) (*Store, string) {
+func (s *testRegionRequestToThreeStoresSuite) loadAndGetLeaderStore(c *C) (*Store, string) {
 	region, err := s.regionRequestSender.regionCache.findRegionByKey(s.bo, []byte("a"), false)
 	c.Assert(err, IsNil)
 	leaderStore, leaderPeer, _, leaderStoreIdx := region.WorkStorePeer(region.getStore())
@@ -588,7 +588,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 	defer func() { EnableForwarding = false }()
 
 	// First get the leader's addr from region cache
-	leaderStore, leaderAddr := s.getLeaderStore(c)
+	leaderStore, leaderAddr := s.loadAndGetLeaderStore(c)
 
 	bo := NewBackoffer(context.Background(), 10000)
 
@@ -598,7 +598,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 		if addr == leaderAddr {
 			return nil, errors.New("simulated rpc error")
 		}
-
+		// MockTiKV doesn't support forwarding. Simulate forwarding here.
 		if len(req.ForwardedHost) != 0 {
 			addr = req.ForwardedHost
 		}
@@ -607,6 +607,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 
 	loc, err := s.regionRequestSender.regionCache.LocateKey(bo, []byte("k"))
 	c.Assert(err, IsNil)
+	c.Assert(loc.Region.GetID(), Equals, s.regionID)
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
 		Key:   []byte("k"),
 		Value: []byte("v1"),
@@ -643,4 +644,57 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(regionErr, IsNil)
 	c.Assert(resp.Resp.(*kvrpcpb.RawGetResponse).Value, BytesEquals, []byte("v1"))
+
+	// Simulate server down
+	s.regionRequestSender.client = &fnClient{fn: func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+		if addr == leaderAddr || req.ForwardedHost == leaderAddr {
+			return nil, errors.New("simulated rpc error")
+		}
+
+		// MockTiKV doesn't support forwarding. Simulate forwarding here.
+		if len(req.ForwardedHost) != 0 {
+			addr = req.ForwardedHost
+		}
+		return innerClient.SendRequest(ctx, addr, req, timeout)
+	}}
+	// The leader is changed after a store is down.
+	newLeaderPeerID := s.peerIDs[0]
+	if newLeaderPeerID == s.leaderPeer {
+		newLeaderPeerID = s.peerIDs[1]
+	}
+
+	c.Assert(newLeaderPeerID, Not(Equals), s.leaderPeer)
+	s.cluster.ChangeLeader(s.regionID, newLeaderPeerID)
+
+	req = tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("k"),
+		Value: []byte("v2"),
+	})
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, kv.TiKV)
+	c.Assert(err, IsNil)
+	regionErr, err = resp.GetRegionError()
+	c.Assert(err, IsNil)
+	// After several retries, the region will be marked as needReload.
+	// Then SendReqCtx will throw a pseudo EpochNotMatch to tell the caller to reload the region.
+	c.Assert(regionErr.EpochNotMatch, NotNil)
+	c.Assert(ctx, IsNil)
+
+	// Reload the region
+	// In this case, the sender should be recreated.
+	s.regionRequestSender = NewRegionRequestSender(s.regionRequestSender.regionCache, s.regionRequestSender.client)
+	loc, err = s.regionRequestSender.regionCache.LocateKey(bo, []byte("k"))
+	c.Assert(err, IsNil)
+	req = tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("k"),
+		Value: []byte("v2"),
+	})
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, kv.TiKV)
+	c.Assert(err, IsNil)
+	regionErr, err = resp.GetRegionError()
+	c.Assert(err, IsNil)
+	c.Assert(regionErr, IsNil)
+	c.Assert(resp.Resp.(*kvrpcpb.RawPutResponse).Error, Equals, "")
+	// Leader changed
+	c.Assert(ctx.Store.storeID, Not(Equals), leaderStore.storeID)
+	c.Assert(ctx.ProxyStore, IsNil)
 }

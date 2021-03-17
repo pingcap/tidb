@@ -231,13 +231,18 @@ func (r *Region) scheduleReload() {
 	atomic.CompareAndSwapInt32(&r.syncFlag, oldValue, needSync)
 }
 
-// needReload checks whether region need reload.
-func (r *Region) needReload() bool {
+// checkNeedReloadAndMarkUpdated returns whether the region need reload and marks the region to be updated.
+func (r *Region) checkNeedReloadAndMarkUpdated() bool {
 	oldValue := atomic.LoadInt32(&r.syncFlag)
 	if oldValue == updated {
 		return false
 	}
 	return atomic.CompareAndSwapInt32(&r.syncFlag, oldValue, updated)
+}
+
+func (r *Region) checkNeedReload() bool {
+	v := atomic.LoadInt32(&r.syncFlag)
+	return v != updated
 }
 
 // RegionCache caches Regions loaded from PD.
@@ -351,8 +356,12 @@ func (c *RPCContext) String() string {
 	if c.Store != nil {
 		runStoreType = c.Store.storeType.Name()
 	}
-	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d, reqStoreType: %s, runStoreType: %s",
+	res := fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d, reqStoreType: %s, runStoreType: %s",
 		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.AccessIdx, c.AccessMode, runStoreType)
+	if c.ProxyStore != nil {
+		res += fmt.Sprintf(", proxy store id: %d, proxy addr: %s, proxy idx: %d", c.ProxyStore.storeID, c.ProxyAddr, c.ProxyAccessIdx)
+	}
+	return res
 }
 
 type storeSelectorOp struct {
@@ -379,7 +388,8 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		return nil, nil
 	}
 
-	if cachedRegion.needReload() {
+	if cachedRegion.checkNeedReload() {
+		logutil.BgLogger().Info("return nil on needReload")
 		// TODO: This may cause a fake EpochNotMatch error, and reload the region after a backoff. It's better to reload
 		// the region directly here.
 		return nil, nil
@@ -600,7 +610,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 		c.mu.Lock()
 		c.insertRegionToCache(r)
 		c.mu.Unlock()
-	} else if r.needReload() {
+	} else if r.checkNeedReloadAndMarkUpdated() {
 		// load region when it be marked as need reload.
 		lr, err := c.loadRegion(bo, key, isEndKey)
 		if err != nil {
@@ -710,7 +720,7 @@ func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLoca
 	r := c.getRegionByIDFromCache(regionID)
 	c.mu.RUnlock()
 	if r != nil {
-		if r.needReload() {
+		if r.checkNeedReloadAndMarkUpdated() {
 			lr, err := c.loadRegionByID(bo, regionID)
 			if err != nil {
 				// ignore error and use old region info.
