@@ -454,7 +454,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		proxyAccessIdx AccessIndex
 		proxyStoreIdx  int
 	)
-	if EnableForwarding {
+	if EnableForwarding && replicaRead == kv.ReplicaReadLeader {
 		if atomic.LoadInt32(&store.needForwarding) == 0 {
 			regionStore.unsetProxyStoreIfNeeded(cachedRegion)
 		} else {
