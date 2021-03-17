@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/util"
 	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
@@ -358,7 +359,7 @@ func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
 
 // GetTiKVRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
-func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32, opts ...StoreSelectorOption) (*RPCContext, error) {
+func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead storeutil.ReplicaReadType, followerStoreSeed uint32, opts ...StoreSelectorOption) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -397,9 +398,9 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		}
 	})
 	switch replicaRead {
-	case kv.ReplicaReadFollower:
+	case storeutil.ReplicaReadFollower:
 		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, options)
-	case kv.ReplicaReadMixed:
+	case storeutil.ReplicaReadMixed:
 		store, peer, accessIdx, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed, options)
 	default:
 		store, peer, accessIdx, storeIdx = cachedRegion.WorkStorePeer(regionStore)

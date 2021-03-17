@@ -25,6 +25,9 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+
+	//TODO remove it in the future
+	tikvstore "github.com/pingcap/tidb/store/tikv/storeutil"
 )
 
 // Transaction options
@@ -104,24 +107,6 @@ const (
 	// RC stands for 'read committed'.
 	RC
 )
-
-// ReplicaReadType is the type of replica to read data from
-type ReplicaReadType byte
-
-const (
-	// ReplicaReadLeader stands for 'read from leader'.
-	ReplicaReadLeader ReplicaReadType = 1 << iota
-	// ReplicaReadFollower stands for 'read from follower'.
-	ReplicaReadFollower
-	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
-	ReplicaReadMixed
-)
-
-// IsFollowerRead checks if leader is going to be used to read data.
-func (r ReplicaReadType) IsFollowerRead() bool {
-	// In some cases the default value is 0, which should be treated as `ReplicaReadLeader`.
-	return r != ReplicaReadLeader && r != 0
-}
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
@@ -408,7 +393,7 @@ type Request struct {
 	// call would not corresponds to a whole region result.
 	Streaming bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
-	ReplicaRead ReplicaReadType
+	ReplicaRead tikvstore.ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
 	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.

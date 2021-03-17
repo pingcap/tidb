@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	tikvstore "github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -120,7 +120,7 @@ func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	ctx := tk.Se.(sessionctx.Context)
-	ctx.GetSessionVars().SetReplicaRead(kv.ReplicaReadFollower)
+	ctx.GetSessionVars().SetReplicaRead(tikvstore.ReplicaReadFollower)
 	tk.MustExec("analyze table t")
 }
 

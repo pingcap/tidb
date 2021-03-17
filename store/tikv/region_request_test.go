@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/store/tikv/storeutil"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"google.golang.org/grpc"
 )
@@ -112,17 +112,17 @@ func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContext(c *C) {
 	var seed uint32 = 0
 	var regionID = RegionVerID{s.regionID, 0, 0}
 
-	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadLeader, &seed)
+	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, storeutil.ReplicaReadLeader, &seed)
 	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(rpcCtx.Peer.Id, Equals, s.leaderPeer)
 
-	req.ReplicaReadType = kv.ReplicaReadFollower
+	req.ReplicaReadType = storeutil.ReplicaReadFollower
 	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(rpcCtx.Peer.Id, Not(Equals), s.leaderPeer)
 
-	req.ReplicaReadType = kv.ReplicaReadMixed
+	req.ReplicaReadType = storeutil.ReplicaReadMixed
 	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(rpcCtx.Peer.Id, Equals, s.leaderPeer)

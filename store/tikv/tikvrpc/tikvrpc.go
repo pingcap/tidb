@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/storeutil"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -173,8 +174,8 @@ type Request struct {
 	Type CmdType
 	Req  interface{}
 	kvrpcpb.Context
-	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
-	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
+	ReplicaReadType storeutil.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
+	ReplicaReadSeed *uint32                   // pointer to follower read seed in snapshot/coprocessor
 	StoreTp         kv.StoreType
 }
 
@@ -194,7 +195,7 @@ func NewRequest(typ CmdType, pointer interface{}, ctxs ...kvrpcpb.Context) *Requ
 }
 
 // NewReplicaReadRequest returns new kv rpc request with replica read.
-func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed *uint32, ctxs ...kvrpcpb.Context) *Request {
+func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType storeutil.ReplicaReadType, replicaReadSeed *uint32, ctxs ...kvrpcpb.Context) *Request {
 	req := NewRequest(typ, pointer, ctxs...)
 	req.ReplicaRead = replicaReadType.IsFollowerRead()
 	req.ReplicaReadType = replicaReadType
@@ -400,7 +401,7 @@ func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 // EnableStaleRead enables stale read
 func (req *Request) EnableStaleRead() {
 	req.StaleRead = true
-	req.ReplicaReadType = kv.ReplicaReadMixed
+	req.ReplicaReadType = storeutil.ReplicaReadMixed
 	req.ReplicaRead = false
 }
 

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
@@ -73,7 +74,7 @@ type KVSnapshot struct {
 		cached      map[string][]byte
 		cachedSize  int
 		stats       *SnapshotRuntimeStats
-		replicaRead kv.ReplicaReadType
+		replicaRead storeutil.ReplicaReadType
 		taskID      uint64
 		isStaleness bool
 		// MatchStoreLabels indicates the labels the store should be matched
@@ -565,7 +566,7 @@ func (s *KVSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.setSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
 		s.mu.Lock()
-		s.mu.replicaRead = val.(kv.ReplicaReadType)
+		s.mu.replicaRead = val.(storeutil.ReplicaReadType)
 		s.mu.Unlock()
 	case kv.TaskID:
 		s.mu.Lock()
@@ -595,7 +596,7 @@ func (s *KVSnapshot) DelOption(opt kv.Option) {
 	switch opt {
 	case kv.ReplicaRead:
 		s.mu.Lock()
-		s.mu.replicaRead = kv.ReplicaReadLeader
+		s.mu.replicaRead = storeutil.ReplicaReadLeader
 		s.mu.Unlock()
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()

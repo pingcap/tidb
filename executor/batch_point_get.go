@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	tikvstore "github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -113,7 +114,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		snapshot.SetOption(kv.ReplicaRead, tikvstore.ReplicaReadFollower)
 	}
 	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
