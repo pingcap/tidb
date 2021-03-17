@@ -447,9 +447,11 @@ type batchCommandsClient struct {
 	//
 	// client is the stream that needn't forwarding.
 	client *batchCommandsStream
-	// forwardedClients are clients that need forwarding.
-	// gRPC only allows a stream to set its metadata once, so
-	// we need a map that maps forwarded hosts to streams
+	// TiDB uses [gRPC-metadata](https://github.com/grpc/grpc-go/blob/master/Documentation/grpc-metadata.md) to
+	// indicate a request needs forwarding. gRPC doesn't support setting a metadata for each request in a stream,
+	// so we need to create a stream for each forwarded host.
+	//
+	// forwardedClients are clients that need forwarding. It's a map that maps forwarded hosts to streams
 	forwardedClients map[string]*batchCommandsStream
 	batched          sync.Map
 

@@ -72,7 +72,7 @@ const (
 )
 
 // forwardMetadataKey is the key of gRPC metadata which represents a forwarded request.
-var forwardMetadataKey = "tikv-forwarded-host"
+const forwardMetadataKey = "tikv-forwarded-host"
 
 // Client is a client that sends RPC.
 // It should not be used after calling Close().
@@ -393,7 +393,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	client := tikvpb.NewTikvClient(clientConn)
 
-	// Set metadata for forwarded request. Needn't forward DebugReq.
+	// Set metadata for request forwarding. Needn't forward DebugReq.
 	if req.ForwardedHost != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, forwardMetadataKey, req.ForwardedHost)
 	}
