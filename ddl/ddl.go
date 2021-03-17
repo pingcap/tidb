@@ -674,7 +674,7 @@ type RecoverInfo struct {
 func delayForAsyncCommit() {
 	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
 	duration := cfg.SafeWindow + cfg.AllowedClockDrift
-	logutil.BgLogger().Info("sleep before DDL finishes to make async commit safe",
+	logutil.BgLogger().Info("sleep before DDL finishes to make async commit and 1PC safe",
 		zap.Duration("duration", duration))
 	time.Sleep(duration)
 }
