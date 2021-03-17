@@ -2011,6 +2011,7 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
+		s.GetSessionVars().IntPrimaryKeyDefaultAsClustered = true
 	}
 	return s, err
 }

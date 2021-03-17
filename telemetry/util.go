@@ -22,15 +22,18 @@ import (
 )
 
 // hashString returns the SHA1 checksum in hex of the string.
-func hashString(text string) string {
+func hashString(text string) (string, error) {
 	hash := sha1.New()
-	hash.Write([]byte(text))
+	_, err := hash.Write([]byte(text))
+	if err != nil {
+		return "", err
+	}
 	hashed := hash.Sum(nil)
-	return fmt.Sprintf("%x", hashed)
+	return fmt.Sprintf("%x", hashed), nil
 }
 
 // parseAddressAndHash parses an address in HOST:PORT format, returns the hashed host and the port.
-func parseAddressAndHash(address string) (string, string) {
+func parseAddressAndHash(address string) (string, string, error) {
 	var host, port string
 	if !strings.Contains(address, ":") {
 		host = address
@@ -48,8 +51,11 @@ func parseAddressAndHash(address string) (string, string) {
 			port = lastPart
 		}
 	}
-
-	return hashString(host), port
+	res, err := hashString(host)
+	if err != nil {
+		return "", "", err
+	}
+	return res, port, err
 }
 
 // See https://stackoverflow.com/a/58026884

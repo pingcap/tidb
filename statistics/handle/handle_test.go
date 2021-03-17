@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
@@ -937,6 +938,17 @@ partition by range (a) (
 	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
 	checkModifyAndCount(4, 10, 2, 4, 2, 6)
 	checkHealthy(60, 50, 66)
+}
+
+func (s *testStatsSuite) TestHideGlobalStatsSwitch(c *C) {
+	// NOTICE: remove this test when this global-stats is GA.
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	rs := tk.MustQuery("show variables").Rows()
+	for _, r := range rs {
+		c.Assert(strings.ToLower(r[0].(string)), Not(Equals), "tidb_partition_prune_mode")
+	}
+	c.Assert(len(tk.MustQuery("show variables where variable_name like '%tidb_partition_prune_mode%'").Rows()), Equals, 0)
 }
 
 func (s *testStatsSuite) TestGlobalStatsData(c *C) {
