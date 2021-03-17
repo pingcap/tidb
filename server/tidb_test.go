@@ -90,7 +90,6 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
-	cfg.Performance.TCPNoDelay = false
 	err = logutil.InitLogger(cfg.Log.ToLogConfig())
 	c.Assert(err, IsNil)
 
@@ -227,7 +226,6 @@ func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
-	cfg.Performance.TCPNoDelay = false
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, NotNil)
@@ -1000,7 +998,6 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Performance.TCPKeepAlive = true
-	cfg.Performance.TCPNoDelay = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	c.Assert(server, NotNil)
