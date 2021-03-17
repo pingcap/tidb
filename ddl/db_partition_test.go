@@ -1774,7 +1774,10 @@ func (s *testIntegrationSuite7) TestAlterTableExchangePartition(c *C) {
 
 	// test for tiflash replica
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
 
 	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
 	tk.MustExec("create table e16 (a int)")
@@ -2031,7 +2034,8 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
+	err := tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
+	c.Assert(err, IsNil)
 	for i, t := range cases {
 		tk.MustExec(t.ptSQL)
 		tk.MustExec(t.ntSQL)
@@ -2045,7 +2049,8 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			tk.MustExec(t.exchangeSQL)
 		}
 	}
-	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
+	err = tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
@@ -2930,7 +2935,7 @@ func (s *testIntegrationSuite5) TestDropSchemaWithPartitionTable(c *C) {
 	row := rows[0]
 	c.Assert(row.GetString(3), Equals, "drop schema")
 	jobID := row.GetInt64(0)
-	kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(jobID)
 		c.Assert(err, IsNil)
@@ -2941,6 +2946,7 @@ func (s *testIntegrationSuite5) TestDropSchemaWithPartitionTable(c *C) {
 		c.Assert(len(tableIDs), Equals, 3)
 		return nil
 	})
+	c.Assert(err, IsNil)
 
 	// check records num after drop database.
 	for i := 0; i < waitForCleanDataRound; i++ {

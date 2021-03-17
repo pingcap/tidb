@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -1327,6 +1328,8 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 				return err
 			}
 		}
+	case ast.FlushClientErrorsSummary:
+		errno.FlushStats()
 	}
 	return nil
 }
@@ -1351,13 +1354,17 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
+func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	h := domain.GetDomain(e.ctx).StatsHandle()
-	ids, _, err := core.GetPhysicalIDsAndPartitionNames(s.Table.TableInfo, s.PartitionNames)
-	if err != nil {
-		return err
+	var statsIDs []int64
+	if s.IsGlobalStats {
+		statsIDs = []int64{s.Table.TableInfo.ID}
+	} else {
+		if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Table.TableInfo, s.PartitionNames); err != nil {
+			return err
+		}
 	}
-	if err := h.DeleteTableStatsFromKV(ids); err != nil {
+	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
 	}
 	return h.Update(infoschema.GetInfoSchema(e.ctx))

@@ -49,6 +49,7 @@ type Config struct {
 	StoresRefreshInterval uint64
 	OpenTracingEnable     bool
 	Path                  string
+	EnableForwarding      bool
 }
 
 // DefaultConfig returns the default configuration.
@@ -63,6 +64,7 @@ func DefaultConfig() Config {
 		StoresRefreshInterval: DefStoresRefreshInterval,
 		OpenTracingEnable:     false,
 		Path:                  "",
+		EnableForwarding:      false,
 	}
 }
 
