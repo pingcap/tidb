@@ -71,7 +71,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			}
 			// If we do not currently have global-stats, no new global-stats will be generated.
 			if globalStats != nil {
-				var opts map[ast.AnalyzeOptionType]uint64
+				opts := make(map[ast.AnalyzeOptionType]uint64)
 				// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
 				for colID := range globalStats.Columns {
 					opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Columns[colID].TopN.TopN))
