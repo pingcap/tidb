@@ -365,33 +365,37 @@ func (a *batchConn) getClientAndSend() {
 }
 
 type tryLock struct {
-	sync.Mutex
+	*sync.Cond
 	reCreating bool
 }
 
 func (l *tryLock) tryLockForSend() bool {
-	l.Lock()
+	l.L.Lock()
 	if l.reCreating {
-		l.Unlock()
+		l.L.Unlock()
 		return false
 	}
 	return true
 }
 
 func (l *tryLock) unlockForSend() {
-	l.Unlock()
+	l.L.Unlock()
 }
 
 func (l *tryLock) lockForRecreate() {
-	l.Lock()
+	l.L.Lock()
+	for l.reCreating {
+		l.Wait()
+	}
 	l.reCreating = true
-	l.Unlock()
+	l.L.Unlock()
 }
 
 func (l *tryLock) unlockForRecreate() {
-	l.Lock()
+	l.L.Lock()
 	l.reCreating = false
-	l.Unlock()
+	l.Broadcast()
+	l.L.Unlock()
 }
 
 type batchCommandsStream struct {
@@ -473,6 +477,7 @@ func (c *batchCommandsClient) send(forwardedHost string, req *tikvpb.BatchComman
 		logutil.BgLogger().Warn(
 			"init create streaming fail",
 			zap.String("target", c.target),
+			zap.String("forwardedHost", forwardedHost),
 			zap.Error(err),
 		)
 		c.failPendingRequests(err)
@@ -531,7 +536,7 @@ func (c *batchCommandsClient) waitConnReady() (err error) {
 	return
 }
 
-func (c *batchCommandsClient) reCreateStreamingClientOnce(streamClient *batchCommandsStream) error {
+func (c *batchCommandsClient) recreateStreamingClientOnce(streamClient *batchCommandsStream) error {
 	err := c.waitConnReady()
 	// Re-establish a application layer stream. TCP layer is handled by gRPC.
 	if err == nil {
@@ -581,7 +586,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 			)
 
 			now := time.Now()
-			if stopped := c.reCreateStreamingClient(err, streamClient, &epoch); stopped {
+			if stopped := c.recreateStreamingClient(err, streamClient, &epoch); stopped {
 				return
 			}
 			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
@@ -618,8 +623,9 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 	}
 }
 
-func (c *batchCommandsClient) reCreateStreamingClient(err error, streamClient *batchCommandsStream, epoch *uint64) (stopped bool) {
-	// Forbids the batchSendLoop using the old client.
+func (c *batchCommandsClient) recreateStreamingClient(err error, streamClient *batchCommandsStream, epoch *uint64) (stopped bool) {
+	// Forbids the batchSendLoop using the old client and
+	// blocks other streams trying to recreate.
 	c.lockForRecreate()
 	defer c.unlockForRecreate()
 
@@ -628,8 +634,17 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error, streamClient *b
 	// multiple times due to one failure.
 	//
 	// Check it in the locked scope to prevent the stream which gets the token from
-	// reconnecting lately.
-	// TODO(youjiali1995): it's not correct because it doesn't hold the lock here.
+	// reconnecting lately, i.e.
+	// goroutine 1       | goroutine 2
+	// CAS success       |
+	//                   | CAS failure
+	//                   | lockForRecreate
+	//                   | recreate error
+	//                   | unlockForRecreate
+	// lockForRecreate   |
+	// waitConnReady     |
+	// recreate          |
+	// unlockForRecreate |
 	waitConnReady := atomic.CompareAndSwapUint64(&c.epoch, *epoch, *epoch+1)
 	if !waitConnReady {
 		*epoch = atomic.LoadUint64(&c.epoch)
@@ -651,7 +666,7 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error, streamClient *b
 		if c.isStopped() {
 			return true
 		}
-		err1 := c.reCreateStreamingClientOnce(streamClient)
+		err1 := c.recreateStreamingClientOnce(streamClient)
 		if err1 == nil {
 			break
 		}

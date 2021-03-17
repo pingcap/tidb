@@ -203,7 +203,7 @@ func (s *testClientSuite) TestCollapseResolveLock(c *C) {
 	}
 }
 
-func (s *testClientSuite) TestForwardMetadataByUnaryCall(c *C) {
+func (s *testClientSerialSuite) TestForwardMetadataByUnaryCall(c *C) {
 	server, port := startMockTikvService()
 	c.Assert(port > 0, IsTrue)
 	defer server.Stop()
