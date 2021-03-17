@@ -2311,7 +2311,7 @@ func (s *testSuite9) TestIssue18572_1(c *C) {
 	c.Assert(rs.Close(), IsNil)
 }
 
-func (s *testSuite9) TestIssue18572_2(c *C) {
+func (s *testSuiteJoinSerial) TestIssue18572_2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, index idx(b));")

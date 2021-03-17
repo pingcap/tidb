@@ -930,7 +930,7 @@ func (s *testStateChangeSuiteBase) CheckResult(tk *testkit.TestKit, sql string, 
 }
 
 func (s *testStateChangeSuite) TestShowIndex(c *C) {
-	_, err := s.se.Execute(context.Background(), `create table t(c1 int primary key, c2 int)`)
+	_, err := s.se.Execute(context.Background(), `create table t(c1 int primary key nonclustered, c2 int)`)
 	c.Assert(err, IsNil)
 	defer func() {
 		_, err := s.se.Execute(context.Background(), "drop table t")
