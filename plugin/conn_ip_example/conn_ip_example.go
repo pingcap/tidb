@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -23,7 +24,7 @@ import (
 
 // Accumulator of connection
 // It can be increased by 1 after each OnConnectionEvent is triggered.
-var connection int
+var connection int32
 
 // Validate implements TiDB plugin's Validate SPI.
 func Validate(ctx context.Context, m *plugin.Manifest) error {
@@ -38,7 +39,7 @@ func OnInit(ctx context.Context, manifest *plugin.Manifest) error {
 	fmt.Println("## conn_ip_example OnInit called ##")
 	fmt.Printf("---- context: %s\n", ctx)
 	fmt.Printf("---- read cfg in init [key: conn_ip_example_key, value: %s]\n", manifest.SysVars["conn_ip_example_key"].Value)
-	connection = 0
+	atomic.SwapInt32(&connection, 0)
 	return nil
 }
 
@@ -47,7 +48,7 @@ func OnShutdown(ctx context.Context, manifest *plugin.Manifest) error {
 	fmt.Println("## conn_ip_examples OnShutdown called ##")
 	fmt.Printf("---- context: %s\n", ctx)
 	fmt.Printf("---- read cfg in shutdown [key: conn_ip_example_key, value: %s]\n", manifest.SysVars["conn_ip_example_key"].Value)
-	connection = 0
+	atomic.SwapInt32(&connection, 0)
 	return nil
 }
 
@@ -87,6 +88,6 @@ func OnConnectionEvent(ctx context.Context, event plugin.ConnectionEvent, info *
 	fmt.Println("## conn_ip_example onConnectionEvent called ##")
 	fmt.Printf("---- conenct event: %s, reason: [%s]\n", event, reason)
 	fmt.Printf("---- connection host: %s\n", info.Host)
-	connection += 1
+	atomic.AddInt32(&connection, 1)
 	return nil
 }
