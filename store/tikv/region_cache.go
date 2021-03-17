@@ -1842,7 +1842,7 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 			if l == reachable {
 				logutil.BgLogger().Info("[health check] store became reachable", zap.Uint64("storeID", s.storeID))
 				if !atomic.CompareAndSwapInt32(&s.needForwarding, 1, 0) {
-					logutil.BgLogger().Panic("unreachable code exectued")
+					logutil.BgLogger().Panic("unreachable code executed")
 				}
 				return
 			}
