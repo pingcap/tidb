@@ -514,7 +514,7 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 	}
 	err = mysql.RegisterTLSConfig(configName, tlsConfig)
 	if err != nil {
-		return err
+		return mysql.RegisterTLSConfig(configName, tlsConfig)
 	}
 	return nil
 }
