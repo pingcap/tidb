@@ -1858,7 +1858,7 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 		skip := true
 		tb, db, part := is.FindTableByPartitionID(id)
 		if tb != nil {
-			if checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
+			if tb != nil && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv)) {
 				dbName = db.Name.L
 				tbName = tb.Meta().Name.L
 				ptName = part.Name.L
