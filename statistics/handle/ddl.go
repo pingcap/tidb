@@ -73,7 +73,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			if globalStats != nil {
 				var opts map[ast.AnalyzeOptionType]uint64
 				// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
-				for colID, _ := range globalStats.Columns {
+				for colID := range globalStats.Columns {
 					opts[ast.AnalyzeOptNumTopN] = uint64(len(globalStats.Columns[colID].TopN.TopN))
 					opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalStats.Columns[colID].Buckets))
 					break
