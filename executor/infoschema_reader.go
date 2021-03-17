@@ -842,12 +842,17 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					nil,           // Expression
 					0,             // INDEX_ID
 					"YES",         // IS_VISIBLE
+					"YES",         // CLUSTERED
 				)
 				rows = append(rows, record)
 			}
 			for _, idxInfo := range tb.Indices {
 				if idxInfo.State != model.StatePublic {
 					continue
+				}
+				isClustered := "NO"
+				if tb.IsCommonHandle && idxInfo.Primary {
+					isClustered = "YES"
 				}
 				for i, col := range idxInfo.Columns {
 					nonUniq := 1
@@ -882,6 +887,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						expression,      // Expression
 						idxInfo.ID,      // INDEX_ID
 						visible,         // IS_VISIBLE
+						isClustered,     // CLUSTERED
 					)
 					rows = append(rows, record)
 				}
