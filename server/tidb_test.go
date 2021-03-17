@@ -512,11 +512,7 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 		ServerName:         serverName,
 		InsecureSkipVerify: !verifyServer,
 	}
-	err = mysql.RegisterTLSConfig(configName, tlsConfig)
-	if err != nil {
-		return mysql.RegisterTLSConfig(configName, tlsConfig)
-	}
-	return nil
+	return mysql.RegisterTLSConfig(configName, tlsConfig)
 }
 
 func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
