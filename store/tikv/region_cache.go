@@ -53,8 +53,8 @@ const (
 // RegionCacheTTLSec is the max idle time for regions in the region cache.
 var RegionCacheTTLSec int64 = 600
 
-// EnableRedirection is the flag that forwarding request via region follower to the leader is enable.
-var EnableRedirection = false
+// EnableForwarding is the flag that forwarding request via region follower to the leader is enable.
+var EnableForwarding = false
 
 const (
 	updated  int32 = iota // region is updated and no need to reload.
@@ -454,7 +454,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		proxyAccessIdx AccessIndex
 		proxyStoreIdx  int
 	)
-	if EnableRedirection {
+	if EnableForwarding {
 		if atomic.LoadInt32(&store.needForwarding) == 0 {
 			regionStore.unsetProxyStoreIfNeeded(cachedRegion)
 		} else {
@@ -648,7 +648,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				if leaderReq {
 					if s.requestLiveness(bo) == reachable {
 						return
-					} else if EnableRedirection {
+					} else if EnableForwarding {
 						s.startHealthCheckLoopIfNeeded(c)
 						startForwarding = true
 					}
@@ -1211,7 +1211,7 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 }
 
 func (c *RegionCache) getProxyStore(region *Region, store *Store, rs *RegionStore, workStoreIdx AccessIndex) (proxyStore *Store, proxyAccessIdx AccessIndex, proxyStoreIdx int, err error) {
-	if !EnableRedirection || store.storeType != TiKV || atomic.LoadInt32(&store.needForwarding) == 0 {
+	if !EnableForwarding || store.storeType != TiKV || atomic.LoadInt32(&store.needForwarding) == 0 {
 		return
 	}
 

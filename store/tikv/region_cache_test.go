@@ -521,8 +521,8 @@ func (s *testRegionCacheSuite) TestSendFailInvalidateRegionsInSameStore(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
-	EnableRedirection = true
-	defer func() { EnableRedirection = false }()
+	EnableForwarding = true
+	defer func() { EnableForwarding = false }()
 
 	// key range: ['' - 'm' - 'z']
 	region2 := s.cluster.AllocID()
