@@ -2164,7 +2164,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
-			if op.UintValue > 0 && tbInfo.PKIsHandle {
+			if op.UintValue > 0 && (tbInfo.PKIsHandle || tbInfo.IsCommonHandle) {
 				return errUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
@@ -2592,7 +2592,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 		// Nothing need to do.
 		return nil
 	}
-	if uVal > 0 && t.Meta().PKIsHandle {
+	if uVal > 0 && (t.Meta().PKIsHandle || t.Meta().IsCommonHandle) {
 		return errUnsupportedShardRowIDBits
 	}
 	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
