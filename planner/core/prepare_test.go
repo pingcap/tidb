@@ -426,6 +426,25 @@ func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
 	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("3"))
 }
 
+func (s *testPrepareSuite) TestPrepareCacheForClusteredIndex(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(k varchar(100) primary key clustered, v1 int, v2 int)")
+	tk.MustExec("insert into t1 (k, v1, v2) values('a', 1, 2), ('b', 1, 1)")
+	tk.MustExec("create table t2(k varchar(100) primary key clustered, v int)")
+	tk.MustExec("insert into t2 (k, v) values('c', 100)")
+	tk.MustExec(`prepare prepare_1 from " select v2, v from t1 left join t2 on v1 != v2 "`)
+	tk.MustQuery("execute prepare_1").Check(testkit.Rows("2 100", "1 <nil>"))
+	tk.MustQuery("execute prepare_1").Check(testkit.Rows("2 100", "1 <nil>"))
+}
+
 func (s *testPrepareSerialSuite) TestPrepareCacheForPartition(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -655,6 +674,18 @@ func (s *testPrepareSerialSuite) TestConstPropAndPPDWithCache(c *C) {
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
 		"0",
 	))
+
+	// Need to check if contain mutable before RefineCompareConstant() in inToExpression().
+	// Otherwise may hit wrong plan.
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 tinyint unsigned);")
+	tk.MustExec("insert into t1 values(111);")
+	tk.MustExec("prepare stmt from 'select 1 from t1 where c1 in (?)';")
+	tk.MustExec("set @a = '1.1';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows())
+	tk.MustExec("set @a = '111';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 }
 
 func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {

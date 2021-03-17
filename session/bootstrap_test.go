@@ -517,7 +517,6 @@ func (s *testBootstrapSuite) TestBootstrapInitExpensiveQueryHandle(c *C) {
 	dom := domain.GetDomain(se)
 	c.Assert(dom, NotNil)
 	defer dom.Close()
-	dom.InitExpensiveQueryHandle()
 	c.Assert(dom.ExpensiveQueryHandle(), NotNil)
 }
 
@@ -558,7 +557,7 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 			bindText:     "select /*+ use_index(t, idxb) */ * from t where a > 1",
 			db:           "test",
 			originWithDB: "select * from `test` . `t` where `a` > ?",
-			bindWithDB:   "SELECT /*+ use_index(t idxb)*/ * FROM test.t WHERE a > 1",
+			bindWithDB:   "SELECT /*+ use_index(`t` `idxb`)*/ * FROM `test`.`t` WHERE `a` > 1",
 			deleteText:   "select * from test.t where a > 1",
 		},
 		{
@@ -566,8 +565,16 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 			bindText:     "select /*+ use_index(t, idx) */ count(1), max(a) from t group by b",
 			db:           "test",
 			originWithDB: "select count ( ? ) , max ( `a` ) from `test` . `t` group by `b`",
-			bindWithDB:   "SELECT /*+ use_index(t idx)*/ count(1),max(a) FROM test.t GROUP BY b",
+			bindWithDB:   "SELECT /*+ use_index(`t` `idx`)*/ count(1),max(`a`) FROM `test`.`t` GROUP BY `b`",
 			deleteText:   "select count(1), max(a) from test.t group by b",
+		},
+		{
+			originText:   "select * from `test` . `t` where `a` = (_charset) ?",
+			bindText:     "SELECT * FROM test.t WHERE a = _utf8\\'ab\\'",
+			db:           "test",
+			originWithDB: "select * from `test` . `t` where `a` = ?",
+			bindWithDB:   "SELECT * FROM `test`.`t` WHERE `a` = 'ab'",
+			deleteText:   "select * from test.t where a = 'c'",
 		},
 	}
 	defer testleak.AfterTest(c)()
@@ -587,7 +594,7 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 		)
 		mustExecSQL(c, se, sql)
 
-		upgradeToVer61(se, version60)
+		upgradeToVer67(se, version66)
 		r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
 		req := r.NewChunk()
 		c.Assert(r.Next(ctx, req), IsNil)
@@ -625,7 +632,7 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	// The latest one.
 	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 
-	upgradeToVer61(se, version60)
+	upgradeToVer67(se, version66)
 
 	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin'`)
 	req := r.NewChunk()
@@ -633,10 +640,51 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	c.Assert(req.NumRows(), Equals, 1)
 	row := req.GetRow(0)
 	c.Assert(row.GetString(0), Equals, "select * from `test` . `t`")
-	c.Assert(row.GetString(1), Equals, "SELECT /*+ use_index(t idx_b)*/ * FROM test.t")
+	c.Assert(row.GetString(1), Equals, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`")
 	c.Assert(row.GetString(2), Equals, "")
 	c.Assert(row.GetString(3), Equals, "using")
 	c.Assert(row.GetTime(4).String(), Equals, "2021-01-04 14:50:58.257")
 	c.Assert(r.Close(), IsNil)
 	mustExecSQL(c, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
+}
+
+func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
+	var err error
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	store, _ := newStoreWithBootstrap(c, s.dbName)
+	defer func() {
+		c.Assert(store.Close(), IsNil)
+	}()
+
+	seV65 := newSession(c, store, s.dbName)
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(65))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	mustExecSQL(c, seV65, "update mysql.tidb set variable_value='65' where variable_name='tidb_server_version'")
+	mustExecSQL(c, seV65, "set @@global.tidb_track_aggregate_memory_usage = 0")
+	mustExecSQL(c, seV65, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV65)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(65))
+
+	domV66, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer domV66.Close()
+	seV66 := newSession(c, store, s.dbName)
+	ver, err = getBootstrapVersion(seV66)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	r := mustExecSQL(c, seV66, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
+	req := r.NewChunk()
+	c.Assert(r.Next(ctx, req), IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+	row := req.GetRow(0)
+	c.Assert(row.GetInt64(0), Equals, int64(1))
+	c.Assert(row.GetInt64(1), Equals, int64(1))
 }

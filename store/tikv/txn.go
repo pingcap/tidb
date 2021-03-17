@@ -28,6 +28,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -46,7 +47,7 @@ type SchemaAmender interface {
 
 // KVTxn contains methods to interact with a TiKV transaction.
 type KVTxn struct {
-	snapshot  *tikvSnapshot
+	snapshot  *KVSnapshot
 	us        kv.UnionStore
 	store     *KVStore // for connection to region.
 	startTS   uint64
@@ -79,8 +80,7 @@ func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
 
 // newTiKVTxnWithStartTS creates a txn with startTS.
 func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*KVTxn, error) {
-	ver := kv.NewVersion(startTS)
-	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
+	snapshot := newTiKVSnapshot(store, startTS, replicaReadSeed)
 	newTiKVTxn := &KVTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
@@ -412,7 +412,9 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput .
 			keys = append(keys, key)
 		} else if txn.IsPessimistic() {
 			if checkKeyExists && valueExist {
-				return txn.committer.extractKeyExistsErr(key)
+				alreadyExist := kvrpcpb.AlreadyExist{Key: key}
+				e := &ErrKeyExist{AlreadyExist: &alreadyExist}
+				return txn.committer.extractKeyExistsErr(e)
 			}
 		}
 		if lockCtx.ReturnValues && locked {
@@ -615,6 +617,6 @@ func (txn *KVTxn) GetMemBuffer() kv.MemBuffer {
 }
 
 // GetSnapshot returns the Snapshot binding to this transaction.
-func (txn *KVTxn) GetSnapshot() kv.Snapshot {
+func (txn *KVTxn) GetSnapshot() *KVSnapshot {
 	return txn.snapshot
 }

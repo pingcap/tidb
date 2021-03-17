@@ -1447,9 +1447,14 @@ func buildTableInfo(
 					}
 				}
 			case model.PrimaryKeyTypeDefault:
+				// (AlterPrimaryKey = true) ----> all pk must be nonclustered
+				// (AlterPrimaryKey = false) + (EnableClusteredIndex = true) + noBinlog ---> all pk must be clustered
+				// (AlterPrimaryKey = false) + (EnableClusteredIndex = true) + HasBinlog ---> int pk must be clustered, other must be nonclustered
+				// (AlterPrimaryKey = false) + (EnableClusteredIndex = false) + (IntPrimaryKeyDefaultAsClustered = true) --> int pk must be clustered
+				// (AlterPrimaryKey = false) + (EnableClusteredIndex = false) + (IntPrimaryKeyDefaultAsClustered = false) --> all pk must be nonclustered [Default]
 				alterPKConf := config.GetGlobalConfig().AlterPrimaryKey
 				if isSingleIntPK(constr, lastCol) {
-					tbInfo.PKIsHandle = !alterPKConf
+					tbInfo.PKIsHandle = !alterPKConf && (ctx.GetSessionVars().EnableClusteredIndex || ctx.GetSessionVars().IntPrimaryKeyDefaultAsClustered)
 				} else {
 					tbInfo.IsCommonHandle = !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex && noBinlog
 					if tbInfo.IsCommonHandle {
@@ -4300,6 +4305,9 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 		return err
 	}
 	tblInfo := tbl.Meta()
+	if tblInfo.GetPartitionInfo() != nil {
+		return errors.New("Extended statistics on partitioned tables are not supported now")
+	}
 	colIDs := make([]int64, 0, 2)
 	// Check whether columns exist.
 	for _, colName := range stats.Columns {
