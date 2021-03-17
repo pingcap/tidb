@@ -16,7 +16,8 @@ package globalkilltest
 import (
 	"net"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"inet.af/tcpproxy"
 )
 
@@ -57,7 +58,7 @@ func (dp *pdDialProxy) HandleConn(src net.Conn) {
 func (dp *pdDialProxy) closeAllConnections() {
 	for _, conn := range dp.connections {
 		if err := conn.Close(); err != nil { // Notice: will close a connection twice. Ignore for test purpose.
-			log.Errorf("closeAllConnections err: %v", err)
+			log.Error("closeAllConnections err", zap.Error(err))
 		}
 	}
 }

@@ -17,7 +17,6 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 )
@@ -67,7 +66,7 @@ func (s *testSplitSuite) TestSplitBatchGet(c *C) {
 	c.Assert(err, IsNil)
 
 	txn := s.begin(c)
-	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn.StartTS()}, 0)
+	snapshot := newTiKVSnapshot(s.store, txn.StartTS(), 0)
 
 	keys := [][]byte{{'a'}, {'b'}, {'c'}}
 	_, region, err := s.store.regionCache.GroupKeysByRegion(s.bo, keys, nil)

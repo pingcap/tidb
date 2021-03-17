@@ -86,7 +86,10 @@ L:
 		instance := row.GetString(1)
 		activeItem, ok := itemsByInstance[instance]
 		if !ok {
-			hostHash, port := parseAddressAndHash(instance)
+			hostHash, port, err := parseAddressAndHash(instance)
+			if err != nil {
+				return nil, err
+			}
 			activeItem = &clusterHardwareItem{
 				InstanceType:   row.GetString(0),
 				ListenHostHash: hostHash,
@@ -127,7 +130,10 @@ L:
 				// Use plain text only when it is in a list that we know safe.
 				hashedDeviceName = normalizedDiskName
 			} else {
-				hashedDeviceName = hashString(normalizedDiskName)
+				hashedDeviceName, err = hashString(normalizedDiskName)
+				if err != nil {
+					return nil, err
+				}
 			}
 			activeDiskItem, ok := activeItem.Disk[hashedDeviceName]
 			if !ok {
@@ -141,7 +147,10 @@ L:
 					// Use plain text only when it is in a list that we know safe.
 					path = fieldValue
 				} else {
-					path = hashString(fieldValue)
+					path, err = hashString(fieldValue)
+					if err != nil {
+						return nil, err
+					}
 				}
 				activeDiskItem[normalizeFieldName("path")] = path
 			} else if sortedStringContains(sortedDiskAllowedFieldNames, fieldName) {
