@@ -710,7 +710,7 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	snap := txn.GetSnapshot()
-	c.Assert(tikv.SnapCacheHitCount(snap), Equals, 4)
+	c.Assert(snap.(*tikv.KVSnapshot).SnapCacheHitCount(), Equals, 4)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
 
