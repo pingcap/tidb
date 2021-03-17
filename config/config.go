@@ -176,6 +176,11 @@ type Config struct {
 	// EnableTCP4Only enables net.Listen("tcp4",...)
 	// Note that: it can make lvs with toa work and thus tidb can get real client ip.
 	EnableTCP4Only bool `toml:"enable-tcp4-only" json:"enable-tcp4-only"`
+	// The client will forward the requests through the follower
+	// if one of the following conditions happens:
+	// 1. there is a network partition problem between TiDB and PD leader.
+	// 2. there is a network partition problem between TiDB and TiKV leader.
+	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -201,6 +206,7 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 		StoresRefreshInterval: c.StoresRefreshInterval,
 		OpenTracingEnable:     c.OpenTracing.Enable,
 		Path:                  c.Path,
+		EnableForwarding:      c.EnableForwarding,
 	}
 }
 
@@ -617,7 +623,7 @@ var defaultConf = Config{
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:          true,
+		Enabled:          false,
 		Capacity:         100,
 		MemoryGuardRatio: 0.1,
 	},
@@ -661,6 +667,7 @@ var defaultConf = Config{
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
 	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
+	EnableForwarding:             defTiKVCfg.EnableForwarding,
 }
 
 var (

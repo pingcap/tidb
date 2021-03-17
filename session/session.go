@@ -2011,6 +2011,7 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
+		s.GetSessionVars().IntPrimaryKeyDefaultAsClustered = true
 	}
 	return s, err
 }
@@ -2172,7 +2173,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	dom := domain.GetDomain(se)
-	dom.InitExpensiveQueryHandle()
 
 	se2, err := createSession(store)
 	if err != nil {
@@ -2497,7 +2497,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBTrackAggregateMemoryUsage,
 	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableExchangePartition,
-	variable.TiDBEnableTiFlashFallbackTiKV,
+	variable.TiDBAllowFallbackToTiKV,
 	variable.TiDBEnableDynamicPrivileges,
 }
 

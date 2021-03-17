@@ -815,8 +815,13 @@ type SessionVars struct {
 	// TiDBEnableExchangePartition indicates whether to enable exchange partition
 	TiDBEnableExchangePartition bool
 
-	// EnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
-	EnableTiFlashFallbackTiKV bool
+	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
+	// Now we only support TiFlash.
+	AllowFallbackToTiKV map[kv.StoreType]struct{}
+
+	// IntPrimaryKeyDefaultAsClustered indicates whether create integer primary table as clustered
+	// If it's true, the behavior is the same as the TiDB 4.0 and the below versions.
+	IntPrimaryKeyDefaultAsClustered bool
 
 	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
 	EnableDynamicPrivileges bool
@@ -1000,7 +1005,7 @@ func NewSessionVars() *SessionVars {
 		GuaranteeLinearizability:    DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:              DefTiDBAnalyzeVersion,
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
-		EnableTiFlashFallbackTiKV:   DefTiDBEnableTiFlashFallbackTiKV,
+		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1752,8 +1757,16 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MultiStatementMode = TiDBOptMultiStmt(val)
 	case TiDBEnableExchangePartition:
 		s.TiDBEnableExchangePartition = TiDBOptOn(val)
-	case TiDBEnableTiFlashFallbackTiKV:
-		s.EnableTiFlashFallbackTiKV = TiDBOptOn(val)
+	case TiDBAllowFallbackToTiKV:
+		s.AllowFallbackToTiKV = make(map[kv.StoreType]struct{})
+		for _, engine := range strings.Split(val, ",") {
+			switch engine {
+			case kv.TiFlash.Name():
+				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
+			}
+		}
+	case TiDBIntPrimaryKeyDefaultAsClustered:
+		s.IntPrimaryKeyDefaultAsClustered = TiDBOptOn(val)
 	case TiDBEnableDynamicPrivileges:
 		s.EnableDynamicPrivileges = TiDBOptOn(val)
 	}

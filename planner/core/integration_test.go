@@ -557,6 +557,116 @@ func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
 
+func (s *testIntegrationSerialSuite) TestJoinNotSupportedByTiFlash(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists table_1")
+	tk.MustExec("create table table_1(id int not null, bit_col bit(2) not null, datetime_col datetime not null)")
+	tk.MustExec("insert into table_1 values(1,b'1','2020-01-01 00:00:00'),(2,b'0','2020-01-01 00:00:00')")
+	tk.MustExec("analyze table table_1")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "table_1" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 1")
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_batch_cop = 1")
+	tk.MustExec("set @@session.tidb_opt_broadcast_join = 1")
+	// make cbo force choose broadcast join since sql hint does not work for semi/anti-semi join
+	tk.MustExec("set @@session.tidb_opt_cpu_factor=10000000;")
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestMPPNotSupportedInNewCollation(c *C) {
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists table_1")
+	tk.MustExec("create table table_1(id int not null, value int)")
+	tk.MustExec("insert into table_1 values(1,1),(2,2)")
+	tk.MustExec("analyze table table_1")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "table_1" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	collate.SetNewCollationEnabledForTest(true)
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSerialSuite) TestAggPushDownEngine(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1429,7 +1539,7 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 		"Projection 1.80 root  test.t.a, test.t.b",
 		"└─IndexMerge 2.00 root  ",
 		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
 		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1437,9 +1547,9 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)").Check(testkit.Rows(
 		"Projection 1.60 root  test.t.a, test.t.b",
 		"└─IndexMerge 2.00 root  ",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
 		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
 		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1449,7 +1559,7 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 		"└─IndexMerge 0.00 root  ",
 		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
 		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b)), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a)), 1)))",
+		"  └─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b, var_string(20))), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a, var_string(20))), 1)))",
 		"    └─TableRowIDScan 2.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
