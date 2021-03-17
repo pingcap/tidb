@@ -1134,66 +1134,6 @@ func (s *testSuiteP1) TestIssue5055(c *C) {
 	result.Check(testkit.Rows("1 1"))
 }
 
-<<<<<<< HEAD
-=======
-func (s *testSuiteWithData) TestSetOperation(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists t1, t2, t3`)
-	tk.MustExec(`create table t1(a int)`)
-	tk.MustExec(`create table t2 like t1`)
-	tk.MustExec(`create table t3 like t1`)
-	tk.MustExec(`insert into t1 values (1),(1),(2),(3),(null)`)
-	tk.MustExec(`insert into t2 values (1),(2),(null),(null)`)
-	tk.MustExec(`insert into t3 values (2),(3)`)
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
-	}
-}
-
-func (s *testSuiteWithData) TestSetOperationOnDiffColType(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists t1, t2, t3`)
-	tk.MustExec(`create table t1(a int, b int)`)
-	tk.MustExec(`create table t2(a int, b varchar(20))`)
-	tk.MustExec(`create table t3(a int, b decimal(30,10))`)
-	tk.MustExec(`insert into t1 values (1,1),(1,1),(2,2),(3,3),(null,null)`)
-	tk.MustExec(`insert into t2 values (1,'1'),(2,'2'),(null,null),(null,'3')`)
-	tk.MustExec(`insert into t3 values (2,2.1),(3,3)`)
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
-	}
-}
-
 // issue-23038: wrong key range of index scan for year column
 func (s *testSuiteWithData) TestIndexScanWithYearCol(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1220,7 +1160,6 @@ func (s *testSuiteWithData) TestIndexScanWithYearCol(c *C) {
 	}
 }
 
->>>>>>> db62e341f... executor: fix wrong key range of index scan when filter is comparing year column with NULL (#23079)
 func (s *testSuiteP2) TestUnion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
