@@ -1820,7 +1820,9 @@ func (s *Store) startHealthCheckLoopIfNeeded(c *RegionCache) {
 }
 
 func (s *Store) checkUntilHealth(c *RegionCache) {
-	ticker := time.NewTicker(time.Millisecond * 500)
+	defer atomic.CompareAndSwapInt32(&s.needForwarding, 1, 0)
+
+	ticker := time.NewTicker(time.Second)
 	lastCheckPDTime := time.Now()
 
 	// TODO(MyonKeminta): Set a more proper ctx here so that it can be interrupted immediately when the RegionCache is
@@ -1839,22 +1841,26 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 					logutil.BgLogger().Warn("[health check] failed to check unhealthy store's meta from pd", zap.Error(err))
 				}
 				if storeMeta == nil || storeMeta.State == metapb.StoreState_Tombstone {
-					// TODO(MyonKeminta): Should the region meta on this store be reloaded?
+					atomic.AddUint32(&s.epoch, 1)
 					return
 				}
 			}
+
+			if s.getResolveState() == unresolved {
+				s.reResolve(c)
+			}
+
 			// The store is deleted due to metadata change. No need to check its health.
 			if s.getResolveState() == deleted {
 				logutil.BgLogger().Info("[health check] store meta deleted, stop checking", zap.Uint64("storeID", s.storeID), zap.String("addr", s.addr))
 				return
 			}
+
 			bo := NewNoopBackoff(ctx)
 			l := s.requestLiveness(bo)
 			if l == reachable {
 				logutil.BgLogger().Info("[health check] store became reachable", zap.Uint64("storeID", s.storeID))
-				if !atomic.CompareAndSwapInt32(&s.needForwarding, 1, 0) {
-					logutil.BgLogger().Panic("unreachable code executed")
-				}
+
 				return
 			}
 		}

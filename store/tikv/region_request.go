@@ -288,7 +288,7 @@ func (s *RegionRequestSender) SendReqCtx(
 
 			// TODO: Change the returned error to something like "region missing in cache",
 			// and handle this error like EpochNotMatch, which means to re-split the request and retry.
-			logutil.Logger(bo.ctx).Info("throwing pseudo region error due to region not founc in cache", zap.Stringer("region", &regionID))
+			logutil.Logger(bo.ctx).Debug("throwing pseudo region error due to region not found in cache", zap.Stringer("region", &regionID))
 			resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
 			return resp, nil, err
 		}
@@ -610,6 +610,7 @@ func (s *RegionRequestSender) NeedReloadRegion(ctx *RPCContext) (need bool) {
 
 	if need {
 		s.failStoreIDs = nil
+		s.failProxyStoreIDs = nil
 	}
 	return
 }
