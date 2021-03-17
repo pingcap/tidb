@@ -1857,13 +1857,11 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 		var tbName, dbName, ptName string
 		skip := true
 		tb, db, part := is.FindTableByPartitionID(id)
-		if tb != nil {
-			if tb != nil && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv)) {
-				dbName = db.Name.L
-				tbName = tb.Meta().Name.L
-				ptName = part.Name.L
-				skip = false
-			}
+		if tb != nil && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv)) {
+			dbName = db.Name.L
+			tbName = tb.Meta().Name.L
+			ptName = part.Name.L
+			skip = false
 		}
 		failpoint.Inject("outputInvalidPlacementRules", func(val failpoint.Value) {
 			if val.(bool) {
