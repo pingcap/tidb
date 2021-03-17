@@ -2292,7 +2292,7 @@ func (s *testSuiteJoin1) TestInvalidEnumVal(c *C) {
 	rows.Check(testkit.Rows("a a", " ", " ", " ", " "))
 }
 
-func (s *testSuite9) TestIssue18572_1(c *C) {
+func (s *testSuiteJoinSerial) TestIssue18572_1(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, index idx(b));")
@@ -2330,7 +2330,7 @@ func (s *testSuiteJoinSerial) TestIssue18572_2(c *C) {
 	c.Assert(rs.Close(), IsNil)
 }
 
-func (s *testSuite9) TestIssue18572_3(c *C) {
+func (s *testSuiteJoinSerial) TestIssue18572_3(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, index idx(b));")
