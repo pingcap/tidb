@@ -600,7 +600,7 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	// Use max.Uint64 to read the data and success.
 	// That means the final commitTS > startTS+2, it's not the one we provide.
 	// So we cover the rety commitTS logic.
-	txn1, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(oracle.GlobalTxnScope).SetStartTs(committer.GetStartTS() + 2))
+	txh1, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, committer.GetStartTS()+2)
 	c.Assert(err, IsNil)
 	_, err = txn1.Get(bo.GetCtx(), []byte("x"))
 	c.Assert(kv.IsErrNotFound(err), IsTrue)
