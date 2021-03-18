@@ -713,6 +713,11 @@ var FeatureSwitchVariables = []string{
 	TiDBAnalyzeVersion,
 	TiDBPartitionPruneMode,
 	TiDBIntPrimaryKeyDefaultAsClustered,
+<<<<<<< HEAD
+=======
+	TiDBEnableExtendedStats,
+	TiDBEnableIndexMergeJoin,
+>>>>>>> 901891ae1... *: hide the config `global-kill` and session var `tidb_enable_index_merge_join` (#23395)
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
