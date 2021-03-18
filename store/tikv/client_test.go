@@ -17,16 +17,19 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"google.golang.org/grpc/metadata"
 )
 
 func TestT(t *testing.T) {
@@ -46,17 +49,12 @@ var _ = Suite(&testClientSuite{})
 var _ = SerialSuites(&testClientFailSuite{})
 var _ = SerialSuites(&testClientSerialSuite{})
 
-func setMaxBatchSize(size uint) {
-	newConf := config.NewConfig()
-	newConf.TiKVClient.MaxBatchSize = size
-	config.StoreGlobalConfig(newConf)
-}
-
 func (s *testClientSerialSuite) TestConn(c *C) {
-	maxBatchSize := config.GetGlobalConfig().TiKVClient.MaxBatchSize
-	setMaxBatchSize(0)
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.MaxBatchSize = 0
+	})()
 
-	client := newRPCClient(config.Security{})
+	client := NewRPCClient(config.Security{})
 
 	addr := "127.0.0.1:6379"
 	conn1, err := client.getConnArray(addr, true)
@@ -70,7 +68,6 @@ func (s *testClientSerialSuite) TestConn(c *C) {
 	conn3, err := client.getConnArray(addr, true)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
-	setMaxBatchSize(maxBatchSize)
 }
 
 func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
@@ -114,7 +111,7 @@ func (s *testClientSuite) TestSendWhenReconnect(c *C) {
 	server, port := startMockTikvService()
 	c.Assert(port > 0, IsTrue)
 
-	rpcClient := newRPCClient(config.Security{})
+	rpcClient := NewRPCClient(config.Security{})
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
 	conn, err := rpcClient.getConnArray(addr, true)
 	c.Assert(err, IsNil)
@@ -228,4 +225,74 @@ func (s *testClientSuite) TestCollapseResolveLock(c *C) {
 		c.Fatal("unexpected request")
 	default:
 	}
+}
+
+func (s *testClientSuite) TestForwardMetadata(c *C) {
+	server, port := startMockTikvService()
+	c.Assert(port > 0, IsTrue)
+	defer server.Stop()
+	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
+
+	// Enable batch and limit the connection count to 1 so that
+	// there is only one BatchCommands stream.
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.MaxBatchSize = 128
+		conf.TiKVClient.GrpcConnectionCount = 1
+	})()
+	rpcClient := NewRPCClient(config.Security{})
+	defer rpcClient.closeConns()
+
+	var checkCnt uint64
+	// Check no corresponding metadata if ForwardedHost is empty.
+	server.setMetaChecker(func(ctx context.Context) error {
+		atomic.AddUint64(&checkCnt, 1)
+		// gRPC may set some metadata by default, e.g. "context-type".
+		md, ok := metadata.FromIncomingContext(ctx)
+		if ok {
+			vals := md.Get(forwardMetadataKey)
+			c.Assert(len(vals), Equals, 0)
+		}
+		return nil
+	})
+
+	// Prewrite represents unary-unary call.
+	prewriteReq := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{})
+	for i := 0; i < 3; i++ {
+		_, err := rpcClient.SendRequest(context.Background(), addr, prewriteReq, 10*time.Second)
+		c.Assert(err, IsNil)
+	}
+	// checkCnt should be 1 because BatchCommands is a stream-stream call.
+	c.Assert(atomic.LoadUint64(&checkCnt), Equals, uint64(1))
+
+	// CopStream represents unary-stream call.
+	copStreamReq := tikvrpc.NewRequest(tikvrpc.CmdCopStream, &coprocessor.Request{})
+	_, err := rpcClient.SendRequest(context.Background(), addr, copStreamReq, 10*time.Second)
+	c.Assert(err, IsNil)
+	c.Assert(atomic.LoadUint64(&checkCnt), Equals, uint64(2))
+
+	checkCnt = 0
+	forwardedHost := "127.0.0.1:6666"
+	// Check the metadata exists.
+	server.setMetaChecker(func(ctx context.Context) error {
+		atomic.AddUint64(&checkCnt, 1)
+		// gRPC may set some metadata by default, e.g. "context-type".
+		md, ok := metadata.FromIncomingContext(ctx)
+		c.Assert(ok, IsTrue)
+		vals := md.Get(forwardMetadataKey)
+		c.Assert(vals, DeepEquals, []string{forwardedHost})
+		return nil
+	})
+
+	prewriteReq.ForwardedHost = forwardedHost
+	for i := 0; i < 3; i++ {
+		_, err = rpcClient.SendRequest(context.Background(), addr, prewriteReq, 10*time.Second)
+		c.Assert(err, IsNil)
+	}
+	// checkCnt should be 3 because we don't use BatchCommands for redirection for now.
+	c.Assert(atomic.LoadUint64(&checkCnt), Equals, uint64(3))
+
+	copStreamReq.ForwardedHost = forwardedHost
+	_, err = rpcClient.SendRequest(context.Background(), addr, copStreamReq, 10*time.Second)
+	c.Assert(err, IsNil)
+	c.Assert(atomic.LoadUint64(&checkCnt), Equals, uint64(4))
 }

@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -113,7 +113,7 @@ func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_clustered_index = 0")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 
 	tk.MustExec("create table primary_key_test (a int, b varchar(10))")
 	tk.MustExec("create table primary_key_test_1 (a int, b varchar(10), primary key(a))")
@@ -174,7 +174,7 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 		conf.AlterPrimaryKey = false
 	})
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table t(a int, b varchar(64), primary key(b));")
 	tk.MustExec("insert into t values(1,'a'), (2, 'b');")
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -332,7 +332,7 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndCommonHandle(c *C) {
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
 	tk.MustExec("use test_get_endhandle")
-	tk.MustExec("set @@tidb_enable_clustered_index = true")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec("create table t(a varchar(20), b int, c float, d bigint, primary key (a, b, c))")
 	var builder strings.Builder
@@ -376,7 +376,7 @@ func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
 	tk.MustExec("use test_get_endhandle")
-	tk.MustExec("set @@tidb_enable_clustered_index = true")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec("create table t(a varchar(15), b bigint, c int, primary key (a, b))")
 	tk.MustExec("create table t1(a varchar(15), b bigint, c int, primary key (a(2), b))")
@@ -402,7 +402,6 @@ func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
 	// Test MaxTableRowID with prefixed primary key.
 	tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	is = s.dom.InfoSchema()
 	d = s.dom.DDL()
 	testCtx = newTestMaxTableRowIDContext(c, d, tbl)
 	checkGetMaxTableRowID(testCtx, s.store, true, nil)
@@ -1168,6 +1167,9 @@ func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
 	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk.MustExec("use auto_random_db")
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 
 	tk.MustExec("drop table if exists e1, e2, e3, e4;")
 

@@ -19,9 +19,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -148,6 +150,16 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
+	e.snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
+	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != oracle.GlobalTxnScope {
+		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
+			},
+		})
+	}
 	return nil
 }
 
@@ -300,6 +312,9 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
+	if len(key) == 0 {
+		return nil
+	}
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, e.lockWaitTime)
@@ -424,8 +439,11 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
 		} else {
+			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
+			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.
 			idxVals[i], err = table.CastValue(ctx, idxVals[i], colInfo, true, false)
-			if types.ErrOverflow.Equal(err) {
+			if types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) ||
+				types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
 				return nil, kv.ErrNotExist
 			}
 		}

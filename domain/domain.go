@@ -149,7 +149,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		return 0, nil, fullLoad, err
 	}
 
-	bundles, err := infosync.GetAllRuleBundles(nil)
+	bundles, err := infosync.GetAllRuleBundles(context.TODO())
 	if err != nil {
 		return 0, nil, fullLoad, err
 	}
@@ -692,6 +692,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
+	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	return do
 }
 
@@ -700,7 +701,7 @@ const serverIDForStandalone = 1 // serverID for standalone deployment.
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
-	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
+	if ebd, ok := do.store.(kv.EtcdBackend); ok {
 		var addrs []string
 		var err error
 		if addrs, err = ebd.EtcdAddrs(); err != nil {
@@ -1063,7 +1064,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease)
+	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
 	if err != nil {
 		return err
 	}
@@ -1093,7 +1094,7 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
 	if err != nil {
 		return err
 	}
@@ -1296,11 +1297,6 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
 }
 
-// InitExpensiveQueryHandle init the expensive query handler.
-func (do *Domain) InitExpensiveQueryHandle() {
-	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-}
-
 const privilegeKey = "/tidb/privilege"
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
@@ -1314,9 +1310,12 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 		}
 	}
 	// update locally
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(`FLUSH PRIVILEGES`)
-	if err != nil {
-		logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	if stmt, err := exec.ParseWithParams(context.Background(), `FLUSH PRIVILEGES`); err == nil {
+		_, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
+		if err != nil {
+			logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
+		}
 	}
 }
 

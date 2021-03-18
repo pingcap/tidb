@@ -177,10 +177,11 @@ func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) (string, bool) {
 }
 
 func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
-	if rule.Role == Leader && rule.Count == 1 && len(rule.LabelConstraints) == 1 {
-		cons := rule.LabelConstraints[0]
-		if cons.Op == In && cons.Key == dcLabelKey && len(cons.Values) == 1 {
-			return true
+	if rule.Role == Leader && rule.Count == 1 {
+		for _, con := range rule.LabelConstraints {
+			if con.Op == In && con.Key == dcLabelKey && len(con.Values) == 1 {
+				return true
+			}
 		}
 	}
 	return false

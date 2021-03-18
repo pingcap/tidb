@@ -2896,6 +2896,9 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%S": secondsNumeric,        // Seconds (00..59)
 	"%T": time24Hour,            // Time, 24-hour (hh:mm:ss)
 	"%Y": yearNumericFourDigits, // Year, numeric, four digits
+	"%#": skipAllNums,           // Skip all numbers
+	"%.": skipAllPunct,          // Skip all punctation characters
+	"%@": skipAllAlpha,          // Skip all alpha characters
 	// Deprecated since MySQL 5.7.5
 	"%y": yearNumericTwoDigits, // Year, numeric (two digits)
 	// TODO: Add the following...
@@ -3275,4 +3278,40 @@ func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 
 	inRange := (t.After(b) || t.Equal(b)) && (t.Before(e) || t.Equal(e))
 	return !inRange, nil
+}
+
+func skipAllNums(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	retIdx := 0
+	for i, ch := range input {
+		if unicode.IsNumber(ch) {
+			retIdx = i + 1
+		} else {
+			break
+		}
+	}
+	return input[retIdx:], true
+}
+
+func skipAllPunct(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	retIdx := 0
+	for i, ch := range input {
+		if unicode.IsPunct(ch) {
+			retIdx = i + 1
+		} else {
+			break
+		}
+	}
+	return input[retIdx:], true
+}
+
+func skipAllAlpha(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	retIdx := 0
+	for i, ch := range input {
+		if unicode.IsLetter(ch) {
+			retIdx = i + 1
+		} else {
+			break
+		}
+	}
+	return input[retIdx:], true
 }

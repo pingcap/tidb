@@ -596,6 +596,11 @@ error = '''
 Export failed: %s
 '''
 
+["executor:8212"]
+error = '''
+Failed to split region ranges: %s
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp
@@ -1569,6 +1574,11 @@ invalid week mode format: '%v'
 ["types:8129"]
 error = '''
 TiDB does not yet support JSON objects with the key length >= 65536
+'''
+
+["types:8131"]
+error = '''
+Build table: %s global-level stats failed due to missing partition-level stats
 '''
 
 ["variable:1193"]

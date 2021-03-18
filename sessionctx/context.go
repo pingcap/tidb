@@ -139,16 +139,6 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
-type connIDCtxKeyType struct{}
-
-// ConnID is the key in context.
-var ConnID = connIDCtxKeyType{}
-
-// SetCommitCtx sets connection id into context
-func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
-	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
-}
-
 // StalenessTxnOption represents available options for the InitTxnWithStaleness
 type StalenessTxnOption struct {
 	Mode    ast.TimestampBoundMode
