@@ -899,15 +899,20 @@ func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 		})
 
 		cleanupKeysCtx := context.WithValue(context.Background(), TxnStartKey, ctx.Value(TxnStartKey))
-		err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+		var err error
+		if c.isPessimistic && c.isOnePC() {
+			err = c.pessimisticRollbackMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+		} else {
+			err = c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+		}
 		if err != nil {
 			metrics.SecondaryLockCleanupFailureCounterRollback.Inc()
-			logutil.Logger(ctx).Info("2PC cleanup failed",
-				zap.Error(err),
-				zap.Uint64("txnStartTS", c.startTS))
+			logutil.Logger(ctx).Info("2PC cleanup failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS),
+				zap.Bool("isPessimistic", c.isPessimistic), zap.Bool("isOnePC", c.isOnePC()))
 		} else {
 			logutil.Logger(ctx).Info("2PC clean up done",
-				zap.Uint64("txnStartTS", c.startTS))
+				zap.Uint64("txnStartTS", c.startTS), zap.Bool("isPessimistic", c.isPessimistic),
+				zap.Bool("isOnePC", c.isOnePC()))
 		}
 		c.cleanWg.Done()
 	}()
