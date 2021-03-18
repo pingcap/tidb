@@ -102,7 +102,7 @@ id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:COLUMNS	
 explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
-Projection	1999.00	root		eq(test.t1.c2, test.t2.c2)->Column#8
+Projection	1999.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
 └─Apply	1999.00	root		CARTESIAN left outer join
   ├─TableReader(Build)	1999.00	root		data:TableFullScan
   │ └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
@@ -128,28 +128,28 @@ HashJoin	1999.00	root		CARTESIAN left outer semi join, other cond:eq(1, test.t2.
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
-digraph HashJoin_7 {
-subgraph cluster7{
-node [style=filled, color=lightgrey]
-color=black
-label = "root"
-"HashJoin_7" -> "TableReader_9"
-"HashJoin_7" -> "TableReader_13"
-}
+digraph HashJoin_8 {
 subgraph cluster8{
 node [style=filled, color=lightgrey]
 color=black
-label = "cop"
-"TableFullScan_8"
+label = "root"
+"HashJoin_8" -> "TableReader_10"
+"HashJoin_8" -> "TableReader_14"
 }
-subgraph cluster12{
+subgraph cluster9{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_12"
+"TableFullScan_9"
 }
-"TableReader_9" -> "TableFullScan_8"
-"TableReader_13" -> "TableFullScan_12"
+subgraph cluster13{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"TableFullScan_13"
+}
+"TableReader_10" -> "TableFullScan_9"
+"TableReader_14" -> "TableFullScan_13"
 }
 
 explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
