@@ -121,9 +121,8 @@ func TestInfo(t *testing.T) {
 	cli := clus.RandClient()
 	dom.etcdClient = cli
 	// Mock new DDL and init the schema syncer with etcd client.
-	goCtx := context.Background()
 	dom.ddl = ddl.NewDDL(
-		goCtx,
+		dom.Context,
 		ddl.WithEtcdClient(dom.GetEtcdClient()),
 		ddl.WithStore(s),
 		ddl.WithInfoHandle(dom.infoHandle),
@@ -152,20 +151,20 @@ func TestInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := infosync.GetServerInfoByID(goCtx, ddlID)
+	info, err := infosync.GetServerInfoByID(dom.Context, ddlID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if serverInfo.ID != info.ID {
 		t.Fatalf("server self info %v, info %v", serverInfo, info)
 	}
-	_, err = infosync.GetServerInfoByID(goCtx, "not_exist_id")
+	_, err = infosync.GetServerInfoByID(dom.Context, "not_exist_id")
 	if err == nil || (err != nil && err.Error() != "[info-syncer] get /tidb/server/info/not_exist_id failed") {
 		t.Fatal(err)
 	}
 
 	// Test for GetAllServerInfo.
-	infos, err := infosync.GetAllServerInfo(goCtx)
+	infos, err := infosync.GetAllServerInfo(dom.Context)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,17 +214,17 @@ func TestInfo(t *testing.T) {
 
 	// Test for RemoveServerInfo.
 	dom.info.RemoveServerInfo()
-	infos, err = infosync.GetAllServerInfo(goCtx)
+	infos, err = infosync.GetAllServerInfo(dom.Context)
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("err %v, infos %v", err, infos)
 	}
 
 	// Test for acquireServerID & refreshServerIDTTL
-	err = dom.acquireServerID(goCtx)
+	err = dom.acquireServerID()
 	if err != nil || dom.ServerID() == 0 {
 		t.Fatalf("dom.acquireServerID err %v, serverID %v", err, dom.ServerID())
 	}
-	err = dom.refreshServerIDTTL(goCtx)
+	err = dom.refreshServerIDTTL()
 	if err != nil {
 		t.Fatalf("dom.refreshServerIDTTL err %v", err)
 	}
