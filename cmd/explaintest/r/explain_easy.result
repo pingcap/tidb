@@ -186,11 +186,11 @@ HashAgg	24000.00	root		group by:Column#10, funcs:firstrow(Column#11)->Column#10
     └─IndexReader	10000.00	root		index:IndexFullScan
       └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
 select * from information_schema.tidb_indexes where table_name='t4';
-TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE
-test	t4	0	PRIMARY	1	a	NULL		NULL	0	YES
-test	t4	1	idx	1	a	NULL		NULL	1	YES
-test	t4	1	idx	2	b	NULL		NULL	1	YES
-test	t4	1	expr_idx	1	NULL	NULL		(`a` + `b` + 1)	2	YES
+TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED
+test	t4	0	PRIMARY	1	a	NULL		NULL	0	YES	YES
+test	t4	1	idx	1	a	NULL		NULL	1	YES	NO
+test	t4	1	idx	2	b	NULL		NULL	1	YES	NO
+test	t4	1	expr_idx	1	NULL	NULL		(`a` + `b` + 1)	2	YES	NO
 explain format = 'brief' select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#5
@@ -467,7 +467,7 @@ insert tb values ('1');
 explain format = 'brief' select * from ta where a = 1;
 id	estRows	task	access object	operator info
 TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		eq(cast(test.ta.a), 1)
+└─Selection	8000.00	cop[tikv]		eq(cast(test.ta.a, double BINARY), 1)
   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 rollback;
 drop table if exists t1, t2;
@@ -507,7 +507,7 @@ StreamAgg	1.00	root		funcs:count(1)->Column#22
         ├─TableDual	8000.00	root		rows:0
         └─Projection	0.01	root		test.test01.stat_date, test.test01.show_date, test.test01.region_id
           └─TableReader	0.01	root		data:Selection
-            └─Selection	0.01	cop[tikv]		eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num), 0), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
+            └─Selection	0.01	cop[tikv]		eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num, bigint(20) BINARY), 0), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
               └─TableFullScan	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
@@ -744,7 +744,7 @@ create table t(a int, b int);
 explain format = 'brief' select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;
 id	estRows	task	access object	operator info
 Projection	2666.67	root		test.t.a, test.t.b
-└─Selection	2666.67	root		gt(cast(test.t.a), Column#5), lt(test.t.b, 10)
+└─Selection	2666.67	root		gt(cast(test.t.a, decimal(20,0) BINARY), Column#5), lt(test.t.b, 10)
   └─Window	3333.33	root		avg(cast(test.t.b, decimal(15,4) BINARY))->Column#5 over(partition by test.t.a)
     └─Sort	3333.33	root		test.t.a
       └─TableReader	3333.33	root		data:Selection
