@@ -636,16 +636,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		return errors.Trace(err)
 	}
 
-	useDistributedGC, err := w.checkUseDistributedGC()
-	if err != nil {
-		logutil.Logger(ctx).Error("[gc worker] failed to load gc mode, fall back to central mode.",
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
-		useDistributedGC = false
-	}
-
-	if useDistributedGC {
+	if w.checkUseDistributedGC() {
 		err = w.uploadSafePointToPD(ctx, safePoint)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to upload safe point to PD",
@@ -949,27 +940,26 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	return jobConcurrency, nil
 }
 
-func (w *GCWorker) checkUseDistributedGC() (bool, error) {
-	str, err := w.loadValueFromSysTable(gcModeKey)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if str == "" {
+// Central mode is deprecated in v5.0. This function will always return true.
+func (w *GCWorker) checkUseDistributedGC() bool {
+	mode, err := w.loadValueFromSysTable(gcModeKey)
+	if err == nil && mode == "" {
 		err = w.saveValueToSysTable(gcModeKey, gcModeDefault)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		str = gcModeDefault
 	}
-	if strings.EqualFold(str, gcModeDistributed) {
-		return true, nil
+	if err != nil {
+		logutil.BgLogger().Error("[gc worker] failed to load gc mode, fall back to distributed mode",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
 	}
-	if strings.EqualFold(str, gcModeCentral) {
-		return false, nil
+	if strings.EqualFold(mode, gcModeCentral) {
+		logutil.BgLogger().Warn("[gc worker] distributed mode will be used as central mode is deprecated")
 	}
-	logutil.BgLogger().Warn("[gc worker] distributed mode will be used",
-		zap.String("invalid gc mode", str))
-	return true, nil
+	if !strings.EqualFold(mode, gcModeDistributed) {
+		logutil.BgLogger().Warn("[gc worker] distributed mode will be used",
+			zap.String("invalid gc mode", mode))
+	}
+	return true
 }
 
 func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
