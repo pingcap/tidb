@@ -88,6 +88,6 @@ require (
 go 1.13
 
 replace (
-	github.com/pingcap/parser => github.com/wshwsh12/parser v0.0.0-20210201025852-bafee3224e71
+	github.com/pingcap/parser => github.com/wshwsh12/parser v0.0.0-20210312034204-9cfb130caf59
 	github.com/pingcap/tipb => github.com/Xuanwo/tipb v0.0.0-20210304100528-9d7c6e1a662b
 )
