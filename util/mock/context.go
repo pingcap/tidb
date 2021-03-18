@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -59,6 +60,11 @@ func (txn *wrapTxn) Valid() bool {
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Support.")
+}
+
+// ExecuteStmt implements sqlexec.SQLExecutor ExecuteStmt interface.
+func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	return nil, errors.Errorf("Not Supported.")
 }
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
