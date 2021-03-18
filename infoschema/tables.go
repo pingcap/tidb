@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -231,12 +232,12 @@ var tableIDMap = map[string]int64{
 	TableStorageStats:                       autoid.InformationSchemaDBID + 63,
 	TableTiFlashTables:                      autoid.InformationSchemaDBID + 64,
 	TableTiFlashSegments:                    autoid.InformationSchemaDBID + 65,
-	TablePlacementPolicy:                autoid.InformationSchemaDBID + 68,
+	TablePlacementPolicy:                    autoid.InformationSchemaDBID + 66,
 	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
 	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
-	TableClientErrorsSummaryByHost:                  autoid.InformationSchemaDBID + 66,
-	TableTiDBTrx:                            autoid.InformationSchemaDBID + 67,
-	ClusterTableTiDBTrx:                 autoid.InformationSchemaDBID + 69,
+	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
+	TableTiDBTrx:                            autoid.InformationSchemaDBID + 70,
+	ClusterTableTiDBTrx:                     autoid.InformationSchemaDBID + 71,
 }
 
 type columnInfo struct {
