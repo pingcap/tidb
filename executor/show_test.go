@@ -1025,16 +1025,14 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 }
 
-func (s *testSerialSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+func (s *testSuite5) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists auto_random_db;")
 	defer tk.MustExec("drop database if exists auto_random_db;")
 	tk.MustExec("use auto_random_db;")
 	tk.MustExec("drop table if exists t;")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
+	tk.MustExec("create table t (a bigint unsigned auto_random primary key clustered);")
 	tk.MustExec("set @@global.tidb_scatter_region=1;")
 	// 18446744073709541615 is MaxUint64 - 10000.
 	// 18446744073709551615 is the MaxUint64.
@@ -1235,20 +1233,20 @@ func (s *testSuite5) TestIssue19507(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));")
 	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL|YES",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO"))
 
 	tk.MustExec("CREATE INDEX t2_b_c_index ON t2 (b, c);")
 	tk.MustExec("CREATE INDEX t2_c_b_index ON t2 (c, b);")
 	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
-			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
-			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL|YES",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO",
+			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO",
+			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO"))
 }
 
 // TestShowPerformanceSchema tests for Issue 19231
@@ -1258,6 +1256,6 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 	// However, its not possible to create a new performance_schema table since its a special in memory table.
 	// Instead the test below uses the default index on the table.
 	tk.MustQuery("SHOW INDEX FROM performance_schema.events_statements_summary_by_digest").Check(
-		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES NULL",
-			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES NULL"))
+		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES NULL NO",
+			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES NULL NO"))
 }
