@@ -5487,6 +5487,10 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			} else {
 				input = append(input, s)
 			}
+		} else if s, ok := x.Source.(*ast.SelectStmt); ok {
+			if s.From != nil {
+				input = extractTableList(s.From.TableRefs, input, asName)
+			}
 		}
 	}
 	return input
