@@ -1539,7 +1539,7 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 		"Projection 1.80 root  test.t.a, test.t.b",
 		"└─IndexMerge 2.00 root  ",
 		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
 		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1547,9 +1547,9 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)").Check(testkit.Rows(
 		"Projection 1.60 root  test.t.a, test.t.b",
 		"└─IndexMerge 2.00 root  ",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
 		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
 		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1559,7 +1559,7 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 		"└─IndexMerge 0.00 root  ",
 		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
 		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b)), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a)), 1)))",
+		"  └─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b, var_string(20))), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a, var_string(20))), 1)))",
 		"    └─TableRowIDScan 2.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -2880,4 +2880,74 @@ func (s *testIntegrationSuite) TestIndexMergeTableFilter(c *C) {
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10)").Check(testkit.Rows(
 		"10 1 1 10",
 	))
+}
+
+// #22949: test HexLiteral Used in GetVar expr
+func (s *testIntegrationSuite) TestGetVarExprWithHexLiteral(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1_no_idx;")
+	tk.MustExec("create table t1_no_idx(id int, col_bit bit(16));")
+	tk.MustExec("insert into t1_no_idx values(1, 0x3135);")
+	tk.MustExec("insert into t1_no_idx values(2, 0x0f);")
+
+	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit = ?';")
+	tk.MustExec("set @a = 0x3135;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustExec("set @a = 0x0F;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
+
+	// same test, but use IN expr
+	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit in (?)';")
+	tk.MustExec("set @a = 0x3135;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustExec("set @a = 0x0F;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
+
+	// same test, but use table with index on col_bit
+	tk.MustExec("drop table if exists t2_idx;")
+	tk.MustExec("create table t2_idx(id int, col_bit bit(16), key(col_bit));")
+	tk.MustExec("insert into t2_idx values(1, 0x3135);")
+	tk.MustExec("insert into t2_idx values(2, 0x0f);")
+
+	tk.MustExec("prepare stmt from 'select id from t2_idx where col_bit = ?';")
+	tk.MustExec("set @a = 0x3135;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustExec("set @a = 0x0F;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
+
+	// same test, but use IN expr
+	tk.MustExec("prepare stmt from 'select id from t2_idx where col_bit in (?)';")
+	tk.MustExec("set @a = 0x3135;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustExec("set @a = 0x0F;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
+
+	// test col varchar with GetVar
+	tk.MustExec("drop table if exists t_varchar;")
+	tk.MustExec("create table t_varchar(id int, col_varchar varchar(100), key(col_varchar));")
+	tk.MustExec("insert into t_varchar values(1, '15');")
+	tk.MustExec("prepare stmt from 'select id from t_varchar where col_varchar = ?';")
+	tk.MustExec("set @a = 0x3135;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+}
+
+// test BitLiteral used with GetVar
+func (s *testIntegrationSuite) TestGetVarExprWithBitLiteral(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1_no_idx;")
+	tk.MustExec("create table t1_no_idx(id int, col_bit bit(16));")
+	tk.MustExec("insert into t1_no_idx values(1, 0x3135);")
+	tk.MustExec("insert into t1_no_idx values(2, 0x0f);")
+
+	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit = ?';")
+	// 0b11000100110101 is 0x3135
+	tk.MustExec("set @a = 0b11000100110101;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+
+	// same test, but use IN expr
+	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit in (?)';")
+	tk.MustExec("set @a = 0b11000100110101;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 }
