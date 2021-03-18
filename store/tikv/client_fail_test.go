@@ -94,13 +94,13 @@ func (s *testClientFailSuite) TestRecvErrorInMultipleRecvLoops(c *C) {
 		c.Assert(err, IsNil)
 	}
 	connArray, err := rpcClient.getConnArray(addr, true)
-	c.Assert(connArray, Not(IsNil))
+	c.Assert(connArray, NotNil)
 	c.Assert(err, IsNil)
 	batchConn := connArray.batchConn
-	c.Assert(batchConn, Not(IsNil))
+	c.Assert(batchConn, NotNil)
 	c.Assert(len(batchConn.batchCommandsClients), Equals, 1)
 	batchClient := batchConn.batchCommandsClients[0]
-	c.Assert(batchClient.client, Not(IsNil))
+	c.Assert(batchClient.client, NotNil)
 	c.Assert(batchClient.client.forwardedHost, Equals, "")
 	c.Assert(len(batchClient.forwardedClients), Equals, 3)
 	for _, forwardedHosts := range forwardedHosts[1:] {

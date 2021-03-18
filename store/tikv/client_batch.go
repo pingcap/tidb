@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
-	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -278,7 +277,7 @@ const idleTimeout = 3 * time.Minute
 func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
-			tidbmetrics.PanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
+			metrics.TiKVPanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
 			logutil.BgLogger().Error("batchSendLoop",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
@@ -406,7 +405,7 @@ type batchCommandsStream struct {
 func (s *batchCommandsStream) recv() (resp *tikvpb.BatchCommandsResponse, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			tidbmetrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
+			metrics.TiKVPanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
 			logutil.BgLogger().Error("batchCommandsClient.recv panic",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
@@ -564,7 +563,7 @@ func (c *batchCommandsClient) recreateStreamingClientOnce(streamClient *batchCom
 func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransportLayerLoad *uint64, streamClient *batchCommandsStream) {
 	defer func() {
 		if r := recover(); r != nil {
-			tidbmetrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
+			metrics.TiKVPanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
 			logutil.BgLogger().Error("batchRecvLoop",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
