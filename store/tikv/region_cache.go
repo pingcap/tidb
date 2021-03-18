@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -309,7 +310,8 @@ func (c *RegionCache) asyncCheckAndResolveLoop(interval time.Duration) {
 			}
 			c.storeMu.RUnlock()
 			for _, store := range stores {
-				_, _ = store.reResolve(c)
+				_, err := store.reResolve(c)
+				terror.Log(err)
 			}
 		}
 	}
@@ -337,7 +339,8 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 	c.storeMu.RUnlock()
 
 	for _, store := range needCheckStores {
-		_, _ = store.reResolve(c)
+		_, err := store.reResolve(c)
+		terror.Log(err)
 	}
 }
 
@@ -531,7 +534,8 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			return nil, nil
 		}
 		if store.getResolveState() == needCheck {
-			_, _ = store.reResolve(c)
+			_, err := store.reResolve(c)
+			terror.Log(err)
 		}
 		atomic.StoreInt32(&regionStore.workTiFlashIdx, int32(accessIdx))
 		peer := cachedRegion.meta.Peers[storeIdx]
