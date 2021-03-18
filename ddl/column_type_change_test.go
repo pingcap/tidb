@@ -18,6 +18,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	errors2 "github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	parser_mysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
@@ -1601,4 +1604,55 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFlenErrorMsg(c *C) {
 	_, err = tk.Exec("ALTER TABLE t CHANGE COLUMN token token varchar(255) DEFAULT '' NOT NULL")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 255 is less than origin 512, and tidb_enable_change_column_type is false")
+}
+
+// Close issue #23202
+func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("alter table t add index(b)")
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit=3")
+
+	failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit")
+	}()
+
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if jobID != 0 {
+			return
+		}
+		if job.Type == model.ActionDropIndex {
+			jobID = job.ID
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	// when it panics in write-reorg state, the job will be pulled up as a cancelling job. Since drop-index with
+	// write-reorg can't be cancelled, so it will be converted to running state and try again (dead loop).
+	_, err := tk.Exec("alter table t drop index b")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
+	c.Assert(jobID > 0, Equals, true)
+
+	// Verification of the history job state.
+	var job *model.Job
+	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		job, err1 = t.GetHistoryDDLJob(jobID)
+		return errors2.Trace(err1)
+	})
+	c.Assert(err, IsNil)
+	c.Assert(job.ErrorCount, Equals, int64(4))
+	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
 }
