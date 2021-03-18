@@ -2110,7 +2110,9 @@ func loadParameter(se *session, name string) (string, error) {
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
-func BootstrapSession(ctx context.Context, store kv.Storage) (*domain.Domain, error) {
+func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
+	ctx := context.Background()
+
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Plugin.Load) > 0 {
 		err := plugin.Load(ctx, plugin.Config{
