@@ -14,6 +14,7 @@
 package expensivequery
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -31,13 +32,13 @@ import (
 
 // Handle is the handler for expensive query.
 type Handle struct {
-	exitCh chan struct{}
-	sm     atomic.Value
+	ctx context.Context
+	sm  atomic.Value
 }
 
 // NewExpensiveQueryHandle builds a new expensive query handler.
-func NewExpensiveQueryHandle(exitCh chan struct{}) *Handle {
-	return &Handle{exitCh: exitCh}
+func NewExpensiveQueryHandle(ctx context.Context) *Handle {
+	return &Handle{ctx: ctx}
 }
 
 // SetSessionManager sets the SessionManager which is used to fetching the info
@@ -80,7 +81,7 @@ func (eqh *Handle) Run() {
 			if record.err == nil {
 				record.alarm4ExcessiveMemUsage(sm)
 			}
-		case <-eqh.exitCh:
+		case <-eqh.ctx.Done():
 			return
 		}
 	}

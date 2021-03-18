@@ -265,7 +265,7 @@ func createStoreAndDomain() {
 	storage, err = kvstore.New(fullPath)
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
-	dom, err = session.BootstrapSession(storage)
+	dom, err = session.BootstrapSession(context.Background(), storage)
 	terror.MustNil(err)
 }
 

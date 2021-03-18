@@ -2110,10 +2110,10 @@ func loadParameter(se *session, name string) (string, error) {
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
-func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
+func BootstrapSession(ctx context.Context, store kv.Storage) (*domain.Domain, error) {
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Plugin.Load) > 0 {
-		err := plugin.Load(context.Background(), plugin.Config{
+		err := plugin.Load(ctx, plugin.Config{
 			Plugins:        strings.Split(cfg.Plugin.Load, ","),
 			PluginDir:      cfg.Plugin.Dir,
 			PluginVarNames: &variable.PluginVarNames,
@@ -2136,7 +2136,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	// get system tz from mysql.tidb
-	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
+	tz, err := se.getTableValue(ctx, mysql.TiDBTable, "system_tz")
 	if err != nil {
 		return nil, err
 	}
@@ -2198,7 +2198,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	if len(cfg.Plugin.Load) > 0 {
-		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
+		err := plugin.Init(ctx, plugin.Config{EtcdClient: dom.GetEtcdClient()})
 		if err != nil {
 			return nil, err
 		}

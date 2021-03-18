@@ -66,6 +66,8 @@ import (
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
+	context.Context
+
 	store                kv.Storage
 	infoHandle           *infoschema.Handle
 	privHandle           *privileges.Handle
@@ -77,7 +79,6 @@ type Domain struct {
 	m                    sync.Mutex
 	SchemaValidator      SchemaValidator
 	sysSessionPool       *sessionPool
-	exit                 chan struct{}
 	etcdClient           *clientv3.Client
 	gvc                  GlobalVariableCache
 	slowQuery            *topNSlowQueries
@@ -481,7 +482,7 @@ func (do *Domain) infoSyncerKeeper() {
 			} else {
 				logutil.BgLogger().Info("server info syncer restarted")
 			}
-		case <-do.exit:
+		case <-do.Done():
 			return
 		}
 	}
@@ -510,13 +511,13 @@ func (do *Domain) topologySyncerKeeper() {
 			} else {
 				logutil.BgLogger().Info("server topology syncer restarted")
 			}
-		case <-do.exit:
+		case <-do.Done():
 			return
 		}
 	}
 }
 
-func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
+func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
@@ -555,7 +556,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			// then continue to change the TiDB schema to version 3. Unfortunately, this down TiDB schema version will still be version 1.
 			// And version 1 is not consistent to version 3. So we need to stop the schema validator to prohibit the DML executing.
 			do.SchemaValidator.Stop()
-			err := do.mustRestartSyncer(ctx)
+			err := do.mustRestartSyncer()
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop, schema syncer restart failed", zap.Error(err))
 				break
@@ -569,7 +570,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			}
 			do.SchemaValidator.Restart()
 			logutil.BgLogger().Info("schema syncer restarted")
-		case <-do.exit:
+		case <-do.Done():
 			return
 		}
 	}
@@ -577,11 +578,11 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 
 // mustRestartSyncer tries to restart the SchemaSyncer.
 // It returns until it's successful or the domain is stoped.
-func (do *Domain) mustRestartSyncer(ctx context.Context) error {
+func (do *Domain) mustRestartSyncer() error {
 	syncer := do.ddl.SchemaSyncer()
 
 	for {
-		err := syncer.Restart(ctx)
+		err := syncer.Restart(do)
 		if err == nil {
 			return nil
 		}
@@ -615,7 +616,7 @@ func (do *Domain) mustReload() (exitLoop bool) {
 
 func (do *Domain) isClose() bool {
 	select {
-	case <-do.exit:
+	case <-do.Done():
 		logutil.BgLogger().Info("domain is closed")
 		return true
 	default:
@@ -636,14 +637,13 @@ func (do *Domain) Close() {
 		do.info.RemoveServerInfo()
 		do.info.RemoveMinStartTS()
 	}
-	close(do.exit)
+	do.cancel()
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
 
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
-	do.cancel()
 	do.wg.Wait()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -683,7 +683,6 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
 		store:               store,
-		exit:                make(chan struct{}),
 		sysSessionPool:      newSessionPool(capacity, factory),
 		statsLease:          statsLease,
 		infoHandle:          infoschema.NewHandle(store),
@@ -692,7 +691,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
-	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do)
 	return do
 }
 
@@ -744,12 +743,11 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		return sysFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	do.cancel = cancelFunc
+	do.Context, do.cancel = context.WithCancel(context.Background())
 	callback := &ddlCallback{do: do}
 	d := do.ddl
 	do.ddl = ddl.NewDDL(
-		ctx,
+		do,
 		ddl.WithEtcdClient(do.etcdClient),
 		ddl.WithStore(do.store),
 		ddl.WithInfoHandle(do.infoHandle),
@@ -770,14 +768,14 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	})
 
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-	err = do.ddl.SchemaSyncer().Init(ctx)
+	err = do.ddl.SchemaSyncer().Init(do)
 	if err != nil {
 		return err
 	}
 
 	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
 		if do.etcdClient != nil {
-			err := do.acquireServerID(ctx)
+			err := do.acquireServerID(do)
 			if err != nil {
 				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
 				do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
@@ -793,7 +791,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		}
 	}
 
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
+	do.info, err = infosync.GlobalInfoSyncerInit(do, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
 	if err != nil {
 		return err
 	}
@@ -807,7 +805,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if ddlLease > 0 {
 		do.wg.Add(1)
 		// Local store needs to get the change information for every DDL state in each session.
-		go do.loadSchemaInLoop(ctx, ddlLease)
+		go do.loadSchemaInLoop(ddlLease)
 	}
 	do.wg.Add(1)
 	go do.topNSlowQueryLoop()
@@ -893,10 +891,10 @@ func (do *Domain) GetEtcdClient() *clientv3.Client {
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
-func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
+func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
+	sctx.GetSessionVars().InRestrictedSQL = true
 	do.privHandle = privileges.NewHandle()
-	err := do.privHandle.Update(ctx)
+	err := do.privHandle.Update(sctx)
 	if err != nil {
 		return err
 	}
@@ -919,7 +917,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 		for {
 			ok := true
 			select {
-			case <-do.exit:
+			case <-do.Done():
 				return
 			case _, ok = <-watchCh:
 			case <-time.After(duration):
@@ -935,7 +933,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			}
 
 			count = 0
-			err := do.privHandle.Update(ctx)
+			err := do.privHandle.Update(sctx)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -983,7 +981,7 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 		defer bindWorkerTicker.Stop()
 		for {
 			select {
-			case <-do.exit:
+			case <-do.Done():
 				return
 			case <-bindWorkerTicker.C:
 				err := do.bindHandle.Update(false)
@@ -1011,7 +1009,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 		owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 		for {
 			select {
-			case <-do.exit:
+			case <-do.Done():
 				owner.Cancel()
 				return
 			case <-time.After(bindinfo.Lease):
@@ -1040,7 +1038,7 @@ func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
 		owner := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
 		for {
 			select {
-			case <-do.exit:
+			case <-do.Done():
 				owner.Cancel()
 				return
 			case <-time.After(telemetry.ReportInterval):
@@ -1174,7 +1172,7 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
 			}
-		case <-do.exit:
+		case <-do.Done():
 			return
 		}
 	}
@@ -1192,7 +1190,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	}()
 	for {
 		select {
-		case <-do.exit:
+		case <-do.Done():
 			// TODO: need flush index usage
 			return
 		case <-idxUsageSyncTicker.C:
@@ -1229,7 +1227,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	}()
 	for {
 		select {
-		case <-do.exit:
+		case <-do.Done():
 			statsHandle.FlushStats()
 			owner.Cancel()
 			return
@@ -1286,7 +1284,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 			if owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
-		case <-do.exit:
+		case <-do.Done():
 			return
 		}
 	}
@@ -1545,7 +1543,7 @@ func (do *Domain) serverIDKeeper() {
 			//   So just set `do.serverIDSession = nil` to restart `serverID` session in `retrieveServerIDSession()`.
 			logutil.BgLogger().Info("serverIDSession need restart")
 			do.serverIDSession = nil
-		case <-do.exit:
+		case <-do.Done():
 			return
 		}
 	}
