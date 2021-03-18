@@ -1626,8 +1626,6 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
-	// Only delete the data from the partition p2 and p4. It will not delete the partition-stats.
-	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	// The value of global.count will not be updated automatically when we truncate the table partition.
 	// Because the partition-stats in the partition table which have been truncated has not been updated.
 	globalStats = h.GetTableStats(tableInfo)
@@ -1635,6 +1633,7 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
+	// The truncate operation only delete the data from the partition p2 and p4. It will not delete the partition-stats.
 	c.Assert(len(result), Equals, 5)
 	// The result for the globalStats.count will be right now
 	globalStats = h.GetTableStats(tableInfo)
