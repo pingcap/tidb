@@ -14,7 +14,6 @@
 package cophandler
 
 import (
-	"context"
 	"io"
 	"math"
 	"sync"
@@ -258,7 +257,7 @@ func (e *exchRecvExec) next() (*chunk.Chunk, error) {
 func (e *exchRecvExec) EstablishConnAndReceiveData(h *MPPTaskHandler, meta *mpp.TaskMeta) ([]*mpp.MPPDataPacket, error) {
 	req := &mpp.EstablishMPPConnectionRequest{ReceiverMeta: h.Meta, SenderMeta: meta}
 	rpcReq := tikvrpc.NewRequest(tikvrpc.CmdMPPConn, req, kvrpcpb.Context{})
-	rpcResp, err := h.RPCClient.SendRequest(context.Background(), meta.Address, rpcReq, 3600*time.Second)
+	rpcResp, err := h.RPCClient.SendRequest(e.mppCtx.Ctx, meta.Address, rpcReq, 3600*time.Second)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
