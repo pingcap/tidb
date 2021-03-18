@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
@@ -519,6 +520,64 @@ func (s *testRegionCacheSuite) TestSendFailInvalidateRegionsInSameStore(c *C) {
 	c.Assert(err, IsNil)
 }
 
+<<<<<<< HEAD
+=======
+func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
+	s.cache.enableForwarding = true
+
+	// key range: ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := s.cluster.AllocIDs(2)
+	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+
+	var storeState uint32 = uint32(unreachable)
+	s.cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+		return livenessState(atomic.LoadUint32(&storeState))
+	}
+
+	// Check the two regions.
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+
+	// Invoke OnSendFail so that the store will be marked as needForwarding
+	ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx, NotNil)
+	s.cache.OnSendFail(s.bo, ctx, false, errors.New("test error"))
+
+	// ...then on next retry, proxy will be used
+	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx, NotNil)
+	c.Assert(ctx.ProxyStore, NotNil)
+	c.Assert(ctx.ProxyStore.storeID, Equals, s.store2)
+
+	// Proxy will be also applied to other regions whose leader is on the store
+	loc2, err := s.cache.LocateKey(s.bo, []byte("x"))
+	c.Assert(err, IsNil)
+	c.Assert(loc2.Region.id, Equals, region2)
+	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc2.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx, NotNil)
+	c.Assert(ctx.ProxyStore, NotNil)
+	c.Assert(ctx.ProxyStore.storeID, Equals, s.store2)
+
+	// Recover the store
+	atomic.StoreUint32(&storeState, uint32(reachable))
+	// The proxy should be unset after several retries
+	for retry := 0; retry < 15; retry++ {
+		ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
+		c.Assert(err, IsNil)
+		if ctx.ProxyStore == nil {
+			break
+		}
+		time.Sleep(time.Millisecond * 200)
+	}
+	c.Assert(ctx.ProxyStore, IsNil)
+}
+
+>>>>>>> 3813da014... store/tikv: forward requests by BatchCommands (#23243)
 func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	// 3 nodes and no.1 is leader.
 	store3 := s.cluster.AllocID()
