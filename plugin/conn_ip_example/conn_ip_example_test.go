@@ -79,6 +79,10 @@ func (s *testConnIPExampleSuite) TestLoadPlugin(c *C) {
 		plugin.DeclareAuditManifest(auditPlugin.Manifest).OnGeneralEvent(context.Background(), nil, plugin.Log, "QUERY")
 		return nil
 	})
+	if err != nil {
+		log.Fatal(fmt.Sprintf("query event fail, error [%s]\n", err))
+	}
+
 	connectionNum := 5
 	for i := 0; i < connectionNum; i++ {
 		err = plugin.ForeachPlugin(plugin.Audit, func(auditPlugin *plugin.Plugin) error {
