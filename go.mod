@@ -67,8 +67,7 @@ require (
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/uber/jaeger-lib v2.4.0+incompatible // indirect
-	github.com/xitongsys/parquet-go v1.6.0 // indirect
-	github.com/xitongsys/parquet-go-source v0.0.0-20201108113611-f372b7d813be // indirect
+	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457 // indirect
 	github.com/zhangjinpeng1987/raft v0.0.0-20200819064223-df31bb68a018 // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.uber.org/atomic v1.7.0
