@@ -15,6 +15,7 @@ package cophandler
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -131,7 +132,11 @@ func (b *mppExecBuilder) buildMPPExchangeReceiver(pb *tipb.ExchangeReceiver) (*e
 	}
 
 	for _, pbType := range pb.FieldTypes {
-		e.fieldTypes = append(e.fieldTypes, expression.FieldTypeFromPB(pbType))
+		tp := expression.FieldTypeFromPB(pbType)
+		if tp.Tp == mysql.TypeEnum {
+			tp.Elems = append(tp.Elems, pbType.Elems...)
+		}
+		e.fieldTypes = append(e.fieldTypes, tp)
 	}
 	return e, nil
 }
@@ -327,7 +332,7 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 	}
 	mppExec, err := builder.buildMPPExecutor(dagReq.RootExecutor)
 	if err != nil {
-		return &coprocessor.Response{OtherError: err.Error()}
+		panic("build error: " + err.Error())
 	}
 	err = mppExec.open()
 	if err != nil {
@@ -400,6 +405,10 @@ type ExchangerTunnel struct {
 
 	connectedCh chan struct{}
 	ErrCh       chan error
+}
+
+func (tunnel *ExchangerTunnel) debugString() string {
+	return fmt.Sprintf("(%d->%d)", tunnel.sourceTask.TaskId, tunnel.targetTask.TaskId)
 }
 
 // RecvChunk recive tipb chunk

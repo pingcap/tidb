@@ -641,6 +641,23 @@ func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 
 	// issue #9920
 	tk.MustQuery("select group_concat(123, null)").Check(testkit.Rows("<nil>"))
+
+	// issue #23129
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(cid int, sname varchar(100));")
+	tk.MustExec("insert into t1 values(1, 'Bob'), (1, 'Alice');")
+	tk.MustExec("insert into t1 values(3, 'Ace');")
+	tk.MustExec("set @@group_concat_max_len=5;")
+	rows := tk.MustQuery("select group_concat(sname order by sname) from t1 group by cid;")
+	rows.Check(testkit.Rows("Alice", "Ace"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(10));")
+	tk.MustExec("insert into t1 values('0123456789');")
+	tk.MustExec("insert into t1 values('12345');")
+	tk.MustExec("set @@group_concat_max_len=8;")
+	rows = tk.MustQuery("select group_concat(c1 order by c1) from t1 group by c1;")
+	rows.Check(testkit.Rows("01234567", "12345"))
 }
 
 func (s *testSuiteAgg) TestSelectDistinct(c *C) {
@@ -752,7 +769,7 @@ func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select max(a+b) from t")
 	tk.MustQuery("select avg(a)+1 from t")
 	tk.MustQuery("select count(c), 5 from t")
-	// test functinal depend on primary key
+	// test functional depend on primary key
 	tk.MustQuery("select * from t group by a")
 	// test functional depend on unique not null columns
 	tk.MustQuery("select * from t group by b,d")
@@ -1355,4 +1372,46 @@ func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
 		}
 		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 	}
+}
+
+func (s *testSuiteAgg) TestIssue23277(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustExec("create table t(a tinyint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a smallint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a mediumint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a int(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a bigint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+}
+
+// https://github.com/pingcap/tidb/issues/23314
+func (s *testSuiteAgg) TestIssue23314(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(col1 time(2) NOT NULL)")
+	tk.MustExec("insert into t1 values(\"16:40:20.01\")")
+	res := tk.MustQuery("select col1 from t1 group by col1")
+	res.Check(testkit.Rows("16:40:20.01"))
 }

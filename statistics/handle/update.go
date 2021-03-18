@@ -465,15 +465,33 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		return false, errors.Trace(err)
 	}
 	startTS := txn.StartTS()
-	if delta.Delta < 0 {
-		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
-	} else {
-		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+	updateStatsMeta := func(id int64) error {
+		var err error
+		if delta.Delta < 0 {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+		} else {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+		}
+		return errors.Trace(err)
 	}
-	if err != nil {
-		return false, errors.Trace(err)
+	if err = updateStatsMeta(id); err != nil {
+		return
 	}
-	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	affectedRows := h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+
+	// if it's a partitioned table and its global-stats exists, update its count and modify_count as well.
+	is := infoschema.GetInfoSchema(h.mu.ctx)
+	if is == nil {
+		return false, errors.New("cannot get the information schema")
+	}
+	if tbl, _, _ := is.FindTableByPartitionID(id); tbl != nil {
+		if err = updateStatsMeta(tbl.Meta().ID); err != nil {
+			return
+		}
+	}
+
+	affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+	updated = affectedRows > 0
 	return
 }
 
@@ -567,6 +585,10 @@ OUTER:
 			if !ok {
 				continue
 			}
+			if table.Meta().Partition != nil {
+				// If the table is partition table, the feedback will not work.
+				continue
+			}
 			tblStats := h.GetPartitionStats(table.Meta(), fb.PhysicalID)
 			newTblStats := tblStats.Copy()
 			if fb.Tp == statistics.IndexType {
@@ -605,8 +627,12 @@ OUTER:
 				newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 				newTblStats.Columns[fb.Hist.ID] = &newCol
 			}
-			oldCache := h.statsCache.Load().(statsCache)
-			h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version))
+			for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
+				oldCache := h.statsCache.Load().(statsCache)
+				if h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version)) {
+					break
+				}
+			}
 		}
 	}
 }
@@ -638,8 +664,12 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		delete(h.mu.rateMap, id)
 	}
 	h.mu.Unlock()
-	oldCache := h.statsCache.Load().(statsCache)
-	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version))
+	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
+		oldCache := h.statsCache.Load().(statsCache)
+		if h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version)) {
+			break
+		}
+	}
 }
 
 // HandleUpdateStats update the stats using feedback.

@@ -187,6 +187,21 @@ type Execute struct {
 	Plan          Plan
 }
 
+// Check if result of GetVar expr is BinaryLiteral
+// Because GetVar use String to represent BinaryLiteral, here we need to convert string back to BinaryLiteral.
+func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) (res bool) {
+	scalarFunc, ok := expr.(*expression.ScalarFunction)
+	if ok && scalarFunc.FuncName.L == ast.GetVar {
+		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
+		if err != nil || isNull {
+			res = false
+		} else if dt, ok2 := sctx.GetSessionVars().Users[name]; ok2 {
+			res = (dt.Kind() == types.KindBinaryLiteral)
+		}
+	}
+	return res
+}
+
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := sctx.GetSessionVars()
@@ -228,6 +243,13 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 				return err
 			}
 			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			if isGetVarBinaryLiteral(sctx, usingVar) {
+				binVal, convErr := val.ToBytes()
+				if convErr != nil {
+					return convErr
+				}
+				val.SetBinaryLiteral(types.BinaryLiteral(binVal))
+			}
 			param.Datum = val
 			param.InExecute = true
 			vars.PreparedParams = append(vars.PreparedParams, val)
@@ -403,6 +425,9 @@ REBUILD:
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
+	if sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst {
+		return nil
+	}
 	var (
 		prepared = preparedStmt.PreparedAst
 		ok       bool
@@ -444,21 +469,27 @@ func (e *Execute) rebuildRange(p Plan) error {
 	switch x := p.(type) {
 	case *PhysicalTableReader:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
-		var pkCol *expression.Column
 		if ts.Table.IsCommonHandle {
 			pk := tables.FindPrimaryIndex(ts.Table)
 			pkCols := make([]*expression.Column, 0, len(pk.Columns))
 			pkColsLen := make([]int, 0, len(pk.Columns))
 			for _, colInfo := range pk.Columns {
-				pkCols = append(pkCols, expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]))
-				pkColsLen = append(pkColsLen, colInfo.Length)
+				if pkCol := expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]); pkCol != nil {
+					pkCols = append(pkCols, pkCol)
+					pkColsLen = append(pkColsLen, colInfo.Length)
+				}
 			}
-			res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), ts.AccessCondition, pkCols, pkColsLen)
-			if err != nil {
-				return err
+			if len(pkCols) > 0 {
+				res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), ts.AccessCondition, pkCols, pkColsLen)
+				if err != nil {
+					return err
+				}
+				ts.Ranges = res.Ranges
+			} else {
+				ts.Ranges = ranger.FullRange()
 			}
-			ts.Ranges = res.Ranges
 		} else {
+			var pkCol *expression.Column
 			if ts.Table.PKIsHandle {
 				if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 					pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
