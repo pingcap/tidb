@@ -258,6 +258,12 @@ type RegionCache struct {
 	}
 	notifyCheckCh chan struct{}
 	closeCh       chan struct{}
+
+	testingKnobs struct {
+		// Replace the requestLiveness function for test purpose. Note that in unit tests, if this is not set,
+		// requestLiveness always returns unreachable.
+		mockRequestLiveness func(s *Store, bo *Backoffer) livenessState
+	}
 }
 
 // NewRegionCache creates a RegionCache.
@@ -657,7 +663,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				// send fail but store is reachable, keep retry current peer for replica leader request.
 				// but we still need switch peer for follower-read or learner-read(i.e. tiflash)
 				if leaderReq {
-					if s.requestLiveness(bo) == reachable {
+					if s.requestLiveness(bo, c) == reachable {
 						return
 					} else if c.enableForwarding {
 						s.startHealthCheckLoopIfNeeded(c)
@@ -1856,7 +1862,7 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 			}
 
 			bo := NewNoopBackoff(ctx)
-			l := s.requestLiveness(bo)
+			l := s.requestLiveness(bo, c)
 			if l == reachable {
 				logutil.BgLogger().Info("[health check] store became reachable", zap.Uint64("storeID", s.storeID))
 
@@ -1866,17 +1872,10 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 	}
 }
 
-func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
-	failpoint.Inject("mockRequestLiveness", func(val failpoint.Value) {
-		result, ok := val.(bool)
-		if ok {
-			if result {
-				failpoint.Return(reachable)
-			} else {
-				failpoint.Return(unreachable)
-			}
-		}
-	})
+func (s *Store) requestLiveness(bo *Backoffer, c *RegionCache) (l livenessState) {
+	if c != nil && c.testingKnobs.mockRequestLiveness != nil {
+		return c.testingKnobs.mockRequestLiveness(s, bo)
+	}
 
 	if StoreLivenessTimeout == 0 {
 		return unreachable

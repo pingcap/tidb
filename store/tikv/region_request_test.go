@@ -23,7 +23,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -625,7 +624,9 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 
 	// Simulate recovering to normal
 	s.regionRequestSender.client = innerClient
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockRequestLiveness", "return(true)"), IsNil)
+	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+		return reachable
+	}
 	start := time.Now()
 	for {
 		if atomic.LoadInt32(&leaderStore.needForwarding) == 0 {
@@ -636,7 +637,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 		}
 		time.Sleep(time.Millisecond * 200)
 	}
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockRequestLiveness"), IsNil)
+	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = nil
 
 	req = tikvrpc.NewRequest(tikvrpc.CmdRawGet, &kvrpcpb.RawGetRequest{Key: []byte("k")})
 	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, kv.TiKV)

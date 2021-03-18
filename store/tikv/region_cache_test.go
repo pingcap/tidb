@@ -558,6 +558,9 @@ func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
 
 	// Recover the store
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockRequestLiveness", "return(true)"), IsNil)
+	s.cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+		return reachable
+	}
 	// The proxy should be unset after several retries
 	for retry := 0; retry < 15; retry++ {
 		ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
@@ -568,7 +571,6 @@ func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
 		time.Sleep(time.Millisecond * 200)
 	}
 	c.Assert(ctx.ProxyStore, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockRequestLiveness"), IsNil)
 }
 
 func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
