@@ -145,6 +145,8 @@ All tables will be hidden, including the schema itself.
 
 * `SHOW CONFIG` is disabled.
 * `SET CONFIG` is disabled by the `CONFIG` Privilege (no change necessary)
+* The `BACKUP` and `RESTORE` commands prevent local backups and restores.
+* The statement `SELECT .. INTO OUTFILE` is disabled (this is the only current usage of the `FILE` privilege, effectively disabling `FILE`. For compatibility `GRANT` and `REVOKE` of `FILE` will not be affected.)
 
 ### Restricted Dynamic Privileges
 
