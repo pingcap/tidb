@@ -951,11 +951,9 @@ func (w *GCWorker) checkUseDistributedGC() bool {
 			zap.String("uuid", w.uuid),
 			zap.Error(err))
 		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
-	}
-	if strings.EqualFold(mode, gcModeCentral) {
+	} else if strings.EqualFold(mode, gcModeCentral) {
 		logutil.BgLogger().Warn("[gc worker] distributed mode will be used as central mode is deprecated")
-	}
-	if !strings.EqualFold(mode, gcModeDistributed) {
+	} else if !strings.EqualFold(mode, gcModeDistributed) {
 		logutil.BgLogger().Warn("[gc worker] distributed mode will be used",
 			zap.String("invalid gc mode", mode))
 	}
