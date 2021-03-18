@@ -445,6 +445,17 @@ func (s *testClusteredSuite) TestClusteredIndexSyntax(c *C) {
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] nonclustered */);", nonClustered)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", clustered)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] clustered */);", clustered)
+
+	tk.MustGetErrCode("create table t (a varchar(255) unique key clustered);", errno.ErrParse)
+	tk.MustGetErrCode("create table t (a varchar(255), foreign key (a) reference t1(a) clustered);", errno.ErrParse)
+	tk.MustGetErrCode("create table t (a varchar(255), foreign key (a) clustered reference t1(a));", errno.ErrParse)
+	tk.MustGetErrCode("create table t (a varchar(255) clustered);", errno.ErrParse)
+
+	errMsg := "[ddl:8200]CLUSTERED/NONCLUSTERED keyword is only supported for primary key"
+	tk.MustGetErrMsg("create table t (a varchar(255), unique key(a) clustered);", errMsg)
+	tk.MustGetErrMsg("create table t (a varchar(255), unique index(a) clustered);", errMsg)
+	tk.MustGetErrMsg("create table t (a varchar(255), key(a) clustered);", errMsg)
+	tk.MustGetErrMsg("create table t (a varchar(255), index(a) clustered);", errMsg)
 }
 
 func (s *testClusteredSerialSuite) TestPrefixClusteredIndexAddIndexAndRecover(c *C) {

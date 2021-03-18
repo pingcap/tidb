@@ -1407,6 +1407,12 @@ func buildTableInfo(
 			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
 			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
 		}
+		// Check clustered on non-primary key.
+		if constr.Option != nil && constr.Option.PrimaryKeyTp != model.PrimaryKeyTypeDefault &&
+			constr.Tp != ast.ConstraintPrimaryKey {
+			msg := mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil)
+			return nil, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
+		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
 				if fk.Name.L == strings.ToLower(constr.Name) {
