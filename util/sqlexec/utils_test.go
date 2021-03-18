@@ -15,11 +15,11 @@ package sqlexec
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 func TestT(t *testing.T) {
@@ -105,7 +105,7 @@ func (s *testUtilsSuite) TestEscapeBackslash(c *C) {
 	for _, t := range tests {
 		commentf := Commentf("%s", t.name)
 		c.Assert(escapeBytesBackslash(nil, t.input), DeepEquals, t.output, commentf)
-		c.Assert(escapeStringBackslash(nil, string(hack.String(t.input))), DeepEquals, t.output, commentf)
+		c.Assert(escapeStringBackslash(nil, string(t.input)), DeepEquals, t.output, commentf)
 	}
 }
 
@@ -276,8 +276,8 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 		{
 			name:   "time 3",
 			input:  "select %?",
-			params: []interface{}{time.Unix(0, 888888888)},
-			output: "select '1970-01-01 08:00:00.888888'",
+			params: []interface{}{time.Unix(0, 888888888).UTC()},
+			output: "select '1970-01-01 00:00:00.888888'",
 			err:    "",
 		},
 		{
@@ -377,16 +377,54 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 			output: "rv %",
 			err:    "",
 		},
+		{
+			name:   "float32 slice",
+			input:  "select %?",
+			params: []interface{}{[]float32{33.1, 0.44}},
+			output: "select 33.1,0.44",
+		},
+		{
+			name:   "float64 slice",
+			input:  "select %?",
+			params: []interface{}{[]float64{55.2, 0.66}},
+			output: "select 55.2,0.66",
+		},
 	}
 	for _, t := range tests {
 		comment := Commentf("%s", t.name)
-		escaped, err := EscapeSQL(t.input, t.params...)
+		r3 := new(strings.Builder)
+		r1, e1 := escapeSQL(t.input, t.params...)
+		r2, e2 := EscapeSQL(t.input, t.params...)
+		e3 := FormatSQL(r3, t.input, t.params...)
 		if t.err == "" {
-			c.Assert(err, IsNil, comment)
-			c.Assert(escaped, Equals, t.output, comment)
+			c.Assert(e1, IsNil, comment)
+			c.Assert(string(r1), Equals, t.output, comment)
+			c.Assert(e2, IsNil, comment)
+			c.Assert(r2, Equals, t.output, comment)
+			c.Assert(e3, IsNil, comment)
+			c.Assert(r3.String(), Equals, t.output, comment)
 		} else {
-			c.Assert(err, NotNil, comment)
-			c.Assert(err, ErrorMatches, t.err, comment)
+			c.Assert(e1, NotNil, comment)
+			c.Assert(e1, ErrorMatches, t.err, comment)
+			c.Assert(e2, NotNil, comment)
+			c.Assert(e2, ErrorMatches, t.err, comment)
+			c.Assert(e3, NotNil, comment)
+			c.Assert(e3, ErrorMatches, t.err, comment)
 		}
 	}
+}
+
+func (s *testUtilsSuite) TestMustUtils(c *C) {
+	c.Assert(func() {
+		MustEscapeSQL("%?")
+	}, PanicMatches, "missing arguments.*")
+
+	c.Assert(func() {
+		sql := new(strings.Builder)
+		MustFormatSQL(sql, "%?")
+	}, PanicMatches, "missing arguments.*")
+
+	sql := new(strings.Builder)
+	MustFormatSQL(sql, "t")
+	MustEscapeSQL("tt")
 }

@@ -50,6 +50,7 @@ var (
 	TiKVNoAvailableConnectionCounter       prometheus.Counter
 	TiKVAsyncCommitTxnCounter              *prometheus.CounterVec
 	TiKVOnePCTxnCounter                    *prometheus.CounterVec
+	TiKVStoreLimitErrorCounter             *prometheus.CounterVec
 )
 
 // Label constants.
@@ -65,6 +66,7 @@ const (
 	LblLockKeys        = "lock_keys"
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
+	LblAddress         = "address"
 )
 
 func initMetrics(namespace, subsystem string) {
@@ -344,6 +346,16 @@ func initMetrics(namespace, subsystem string) {
 			Name:      "one_pc_txn_counter",
 			Help:      "Counter of 1PC transactions.",
 		}, []string{LblType})
+
+	TiKVStoreLimitErrorCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "get_store_limit_token_error",
+			Help:      "store token is up to the limit, probably because one of the stores is the hotspot or unavailable",
+		}, []string{LblAddress, LblStore})
+
+	initShortcuts()
 }
 
 func init() {
@@ -391,4 +403,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
 	prometheus.MustRegister(TiKVAsyncCommitTxnCounter)
 	prometheus.MustRegister(TiKVOnePCTxnCounter)
+	prometheus.MustRegister(TiKVStoreLimitErrorCounter)
 }
