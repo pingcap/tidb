@@ -394,7 +394,6 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 
 	if cachedRegion.checkNeedReload() {
-		logutil.BgLogger().Info("return nil on needReload")
 		// TODO: This may cause a fake EpochNotMatch error, and reload the region after a backoff. It's better to reload
 		// the region directly here.
 		return nil, nil
