@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"go.uber.org/zap"
@@ -112,6 +113,7 @@ func (cli *testServerClient) getDSN(overriders ...configOverrider) string {
 	config.Net = "tcp"
 	config.Addr = fmt.Sprintf("127.0.0.1:%d", cli.port)
 	config.DBName = "test"
+	config.Params = map[string]string{variable.TiDBIntPrimaryKeyDefaultAsClustered: "true"}
 	for _, overrider := range overriders {
 		if overrider != nil {
 			overrider(config)
@@ -417,7 +419,7 @@ func (cli *testServerClient) runTestPreparedTimestamp(t *C) {
 func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(c *C, server *Server) {
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "SelectIntoOutfile", func(dbt *DBTest) {
 		dbt.mustExec("create table t (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
 		dbt.mustExec("insert into t values (1, 1.1, 0.1, 'a', '2000-01-01', '01:01:01', '[1]')")
@@ -481,7 +483,7 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "load_data_slow_query", func(dbt *DBTest) {
 		dbt.mustExec("create table t_slow (a int key, b int)")
 		defer func() {
@@ -572,7 +574,7 @@ func (cli *testServerClient) runTestLoadDataAutoRandom(c *C) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "load_data_batch_dml", func(dbt *DBTest) {
 		// Set batch size, and check if load data got a invalid txn error.
 		dbt.mustExec("set @@session.tidb_dml_batch_size = 128")
@@ -597,7 +599,7 @@ func (cli *testServerClient) runTestLoadDataForListPartition(c *C) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *DBTest) {
 		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.mustExec(`create table t (id int, name varchar(10),
@@ -646,7 +648,7 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(c *C) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *DBTest) {
 		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.mustExec(`create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual,
@@ -695,7 +697,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(c *C) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *DBTest) {
 		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.mustExec(`create table t (id int, name varchar(10),
@@ -744,7 +746,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *DBTest) {
 		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.mustExec(`create table t (location varchar(10), id int, a int, unique index idx (location,id)) partition by list columns (location,id) (
@@ -848,7 +850,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 	// support ClientLocalFiles capability
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
@@ -998,7 +1000,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (str varchar(10) default null, i int default null)")
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
@@ -1046,7 +1048,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a date, b date, c date not null, d date)")
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
@@ -1102,7 +1104,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(20), b varchar(20))")
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
@@ -1200,7 +1202,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists pn")
 		dbt.mustExec("create table pn (c1 int, c2 int)")
@@ -1252,7 +1254,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists pn")
 		dbt.mustExec("create table pn (c1 int, c2 int)")
@@ -1296,7 +1298,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists pn")
 		dbt.mustExec("create table pn (c1 int, c2 int, c3 int)")
@@ -1343,7 +1345,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists pn")
 		dbt.mustExec("create table pn (c1 int, c2 int, c3 int)")
@@ -1377,7 +1379,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 func (cli *testServerClient) runTestConcurrentUpdate(c *C) {
 	dbName := "Concurrent"
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, dbName, func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists test2")
 		dbt.mustExec("create table test2 (a int, b int)")
@@ -1648,7 +1650,7 @@ func (cli *testServerClient) runTestDBNameEscape(c *C) {
 
 func (cli *testServerClient) runTestResultFieldTableIsNull(c *C) {
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}, "ResultFieldTableIsNull", func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists test;")
 		dbt.mustExec("create table test (c int);")
@@ -1738,7 +1740,7 @@ func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 func (cli *testServerClient) runTestMultiStatements(c *C) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
-		config.Params = map[string]string{"multiStatements": "true"}
+		config.Params["multiStatements"] = "true"
 	}, "MultiStatements", func(dbt *DBTest) {
 		// Create Table
 		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
