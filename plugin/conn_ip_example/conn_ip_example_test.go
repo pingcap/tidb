@@ -17,13 +17,13 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"go.uber.org/zap"
 )
 
 type testConnIPExampleSuite struct{}
@@ -67,14 +67,12 @@ func (s *testConnIPExampleSuite) TestLoadPlugin(c *C) {
 	// trigger load.
 	err := plugin.Load(ctx, cfg)
 	if err != nil {
-		fmt.Printf("load plugin [%s] fail\n", pluginSign)
-		log.Fatal(err.Error())
+		log.Fatal(fmt.Sprintf("load plugin [%s] fail, error [%s]\n", pluginSign, err))
 	}
 
 	err = plugin.Init(ctx, cfg)
 	if err != nil {
-		fmt.Printf("init plugin [%s] fail\n", pluginSign)
-		log.Fatal(err.Error())
+		log.Fatal(fmt.Sprintf("init plugin [%s] fail, error [%s]\n", pluginSign, err))
 	}
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(auditPlugin *plugin.Plugin) error {
@@ -84,21 +82,17 @@ func (s *testConnIPExampleSuite) TestLoadPlugin(c *C) {
 	connectionNum := 5
 	for i := 0; i < connectionNum; i++ {
 		err = plugin.ForeachPlugin(plugin.Audit, func(auditPlugin *plugin.Plugin) error {
-			err = plugin.DeclareAuditManifest(auditPlugin.Manifest).OnConnectionEvent(context.Background(), plugin.Connected, &variable.ConnectionInfo{Host: "localhost"})
-			if err != nil {
-				log.Fatal("OnConnectionEvent error [%s]\n", zap.Error(err))
-			}
-			return nil
+			return plugin.DeclareAuditManifest(auditPlugin.Manifest).OnConnectionEvent(context.Background(), plugin.Connected, &variable.ConnectionInfo{Host: "localhost"})
 		})
 		if err != nil {
-			log.Fatal(err.Error())
+			log.Fatal(fmt.Sprintf("OnConnectionEvent error [%s]\n", err))
 		}
 	}
 	// accumulator of connection must be connectionNum(5).
-	c.Assert(connection, Equals, int32(connectionNum))
+	c.Assert(atomic.LoadInt32(&connection), Equals, int32(connectionNum))
 	plugin.Shutdown(context.Background())
 	// after shutdown, accumulator of connection must be clear.
-	c.Assert(connection, Equals, int32(0))
+	c.Assert(atomic.LoadInt32(&connection), Equals, int32(0))
 
 	// Output:
 	//## conn_ip_example Validate called ##
