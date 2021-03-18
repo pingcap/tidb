@@ -1138,6 +1138,7 @@ func (s *testSuite5) TestShowConfigHideIndexUsage(c *C) {
 	}
 	confItems = append(confItems, strs2Items("tidb", "127.0.0.1:1111", "log.level", "info"))
 	confItems = append(confItems, strs2Items("tidb", "127.0.0.1:1111", "index-usage-sync-lease", "0"))
+	confItems = append(confItems, strs2Items("tidb", "127.0.0.1:1111", "INDEX-USAGE-SYNC-LEASE", "0"))
 	tk.MustQuery("show config").Check(testkit.Rows(
 		"tidb 127.0.0.1:1111 log.level info",
 	))

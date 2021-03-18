@@ -1023,6 +1023,7 @@ func HideConfig(s string) string {
 
 // NeedHideConfig checks whether this config needs to be hidden.
 func NeedHideConfig(s string) bool {
+	s = strings.ToLower(s)
 	for _, hc := range hideConfig {
 		r := strings.Compare(s, hc)
 		if r == 0 {
