@@ -122,7 +122,7 @@ func (s *testClientFailSuite) TestRecvErrorInMultipleRecvLoops(c *C) {
 		prewriteReq.ForwardedHost = forwardedHost
 		_, err := rpcClient.SendRequest(context.Background(), addr, prewriteReq, 10*time.Second)
 		c.Assert(err, IsNil)
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		c.Assert(failpoint.Disable(fp), IsNil)
 	}
 
