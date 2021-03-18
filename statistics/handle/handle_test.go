@@ -1598,7 +1598,7 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), " +
 		"(11), (21), (31), (41), (51)," +
 		"(12), (22), (32), (42), (52);")
-	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
@@ -1611,9 +1611,8 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	c.Assert(globalStats.Count, Equals, int64(15))
 
 	tk.MustExec("alter table t drop partition p3, p5;")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	c.Assert(len(result), Equals, 5)
@@ -1622,9 +1621,8 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	c.Assert(globalStats.Count, Equals, int64(11))
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	// The value of global.count will not be updated automatically when we truncate the table partition.
 	// Because the partition-stats in the partition table which have been truncated has not been updated.
