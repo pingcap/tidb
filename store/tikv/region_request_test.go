@@ -602,6 +602,10 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 		}
 		return innerClient.SendRequest(ctx, addr, req, timeout)
 	}}
+	var storeState uint32 = uint32(unreachable)
+	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+		return livenessState(atomic.LoadUint32(&storeState))
+	}
 
 	loc, err := s.regionRequestSender.regionCache.LocateKey(bo, []byte("k"))
 	c.Assert(err, IsNil)
@@ -624,9 +628,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 
 	// Simulate recovering to normal
 	s.regionRequestSender.client = innerClient
-	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
-		return reachable
-	}
+	atomic.StoreUint32(&storeState, uint32(reachable))
 	start := time.Now()
 	for {
 		if atomic.LoadInt32(&leaderStore.needForwarding) == 0 {
@@ -637,7 +639,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 		}
 		time.Sleep(time.Millisecond * 200)
 	}
-	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = nil
+	atomic.StoreUint32(&storeState, uint32(unreachable))
 
 	req = tikvrpc.NewRequest(tikvrpc.CmdRawGet, &kvrpcpb.RawGetRequest{Key: []byte("k")})
 	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, kv.TiKV)
