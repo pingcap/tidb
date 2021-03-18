@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/storeutil"
@@ -193,6 +192,7 @@ func (s *RegionRequestSender) getRPCContext(
 	req *tikvrpc.Request,
 	regionID RegionVerID,
 	sType kv.StoreType,
+	opts ...StoreSelectorOption,
 ) (*RPCContext, error) {
 	switch sType {
 	case kv.TiKV:
@@ -200,7 +200,7 @@ func (s *RegionRequestSender) getRPCContext(
 		if req.ReplicaReadSeed != nil {
 			seed = *req.ReplicaReadSeed
 		}
-		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed)
+		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed, opts...)
 	case kv.TiFlash:
 		return s.regionCache.GetTiFlashRPCContext(bo, regionID)
 	case kv.TiDB:
@@ -217,6 +217,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	regionID RegionVerID,
 	timeout time.Duration,
 	sType kv.StoreType,
+	opts ...StoreSelectorOption,
 ) (
 	resp *tikvrpc.Response,
 	rpcCtx *RPCContext,
@@ -253,6 +254,10 @@ func (s *RegionRequestSender) SendReqCtx(
 			if sType == kv.TiDB {
 				failpoint.Return(nil, nil, ErrTiKVServerTimeout)
 			}
+		case "requestTiFlashError":
+			if sType == kv.TiFlash {
+				failpoint.Return(nil, nil, ErrTiFlashServerTimeout)
+			}
 		}
 	})
 
@@ -262,7 +267,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
 
-		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType)
+		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType, opts...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -502,7 +507,7 @@ func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 		st.tokenCount.Add(1)
 		return nil
 	}
-	tidbmetrics.GetStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
+	metrics.TiKVStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
 	return ErrTokenLimit.GenWithStackByArgs(st.storeID)
 
 }

@@ -29,11 +29,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/util"
 	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -236,8 +236,8 @@ type RegionCache struct {
 
 	mu struct {
 		sync.RWMutex                         // mutex protect cached region
-		regions      map[RegionVerID]*Region // cached regions be organized as regionVerID to region ref mapping
-		sorted       *btree.BTree            // cache regions be organized as sorted key to region ref mapping
+		regions      map[RegionVerID]*Region // cached regions are organized as regionVerID to region ref mapping
+		sorted       *btree.BTree            // cache regions are organized as sorted key to region ref mapping
 	}
 	storeMu struct {
 		sync.RWMutex
@@ -380,6 +380,21 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	for _, op := range opts {
 		op(options)
 	}
+	failpoint.Inject("assertStoreLabels", func(val failpoint.Value) {
+		if len(opts) > 0 {
+			value := val.(string)
+			v := ""
+			for _, label := range options.labels {
+				if label.Key == placement.DCLabelKey {
+					v = label.Value
+					break
+				}
+			}
+			if v != value {
+				panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", v, value))
+			}
+		}
+	})
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
 		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, options)
@@ -1668,14 +1683,14 @@ func invokeKVStatusAPI(saddr string, timeout time.Duration) (l livenessState) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	url := fmt.Sprintf("%s://%s/status", util.InternalHTTPSchema(), saddr)
+	url := fmt.Sprintf("%s://%s/status", config.InternalHTTPSchema(), saddr)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		logutil.BgLogger().Info("[liveness] build kv status request fail", zap.String("store", saddr), zap.Error(err))
 		l = unreachable
 		return
 	}
-	resp, err := util.InternalHTTPClient().Do(req)
+	resp, err := config.InternalHTTPClient().Do(req)
 	if err != nil {
 		logutil.BgLogger().Info("[liveness] request kv status fail", zap.String("store", saddr), zap.Error(err))
 		l = unreachable

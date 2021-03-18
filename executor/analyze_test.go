@@ -508,6 +508,21 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	*/
 }
 
+func (s *testSerialSuite2) TestFastAnalyze4GlobalStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
+	// test fast analyze in dynamic mode
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("drop table if exists t4;")
+	tk.MustExec("create table t4(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
+	err := tk.ExecToErr("analyze table t4;")
+	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
+}
+
 func (s *testSuite1) TestIssue15993(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -621,6 +636,28 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 		"test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0", "test t  idx 1 2 3 1 3 3 0"))
 	tblStats = h.GetTableStats(tblInfo)
 	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(val), Equals, uint64(1))
+
+	// test analyzeIndexIncremental for global-level stats;
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (a int, b int, primary key(a), index idx(b)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30)
+	);`)
+	tk.MustExec("analyze incremental table t index")
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustExec("analyze incremental table t index")
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
+	tk.MustExec("insert into t values (2,2)")
+	tk.MustExec("analyze incremental table t index")
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 2 2 0", "test t p0 idx 1 0 1 1 1 1 0", "test t p0 idx 1 1 2 1 2 2 0"))
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("insert into t values (11,11)")
+	err = tk.ExecToErr("analyze incremental table t index")
+	c.Assert(err.Error(), Equals, "[stats]: global statistics for partitioned tables unavailable in ANALYZE INCREMENTAL")
 }
 
 type testFastAnalyze struct {
@@ -694,7 +731,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	c.Assert(row[5], Equals, "30")
 }
 
-func (s *testSuite9) TestFailedAnalyzeRequest(c *C) {
+func (s *testSuite10) TestFailedAnalyzeRequest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -894,4 +931,20 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 		"test t  idxb 1 0 1 1 \x00A \x00A 0",
 		"test t  idxb 1 1 3 2 \x00C \x00C 0",
 	))
+}
+
+func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t0(a varchar(20), primary key(a) clustered)")
+	tk.MustExec("create table t1(a varchar(20), primary key(a))")
+	tk.MustExec("insert into t0 values('1111')")
+	tk.MustExec("insert into t1 values('1111')")
+	tk.MustExec("analyze table t0 index primary")
+	tk.MustExec("analyze table t1 index primary")
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows(
+		"test t0  PRIMARY 1 0 1 1 1111 1111 0",
+		"test t1  PRIMARY 1 0 1 1 1111 1111 0"))
 }
