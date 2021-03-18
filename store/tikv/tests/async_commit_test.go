@@ -11,13 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -25,17 +27,23 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 )
 
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
+
 // testAsyncCommitCommon is used to put common parts that will be both used by
 // testAsyncCommitSuite and testAsyncCommitFailSuite.
 type testAsyncCommitCommon struct {
 	cluster cluster.Cluster
-	store   *KVStore
+	store   *tikv.KVStore
 }
 
 func (s *testAsyncCommitCommon) setUpTest(c *C) {
@@ -48,7 +56,7 @@ func (s *testAsyncCommitCommon) setUpTest(c *C) {
 	c.Assert(err, IsNil)
 	unistore.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 
 	s.store = store
@@ -66,37 +74,38 @@ func (s *testAsyncCommitCommon) putKV(c *C, key, value []byte, enableAsyncCommit
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	return txn.StartTS(), txn.commitTS
+	return txn.StartTS(), txn.GetCommitTS()
 }
 
-func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn *KVTxn, key, expectedValue []byte) {
+func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn tikv.TxnProbe, key, expectedValue []byte) {
 	v, err := txn.Get(context.Background(), key)
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, expectedValue)
 }
 
-func (s *testAsyncCommitCommon) mustGetLock(c *C, key []byte) *Lock {
+func (s *testAsyncCommitCommon) mustGetLock(c *C, key []byte) *tikv.Lock {
 	ver, err := s.store.CurrentTimestamp(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
 		Key:     key,
 		Version: ver,
 	})
-	bo := NewBackofferWithVars(context.Background(), 5000, nil)
-	loc, err := s.store.regionCache.LocateKey(bo, key)
+	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
+	loc, err := s.store.GetRegionCache().LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+	resp, err := s.store.SendReq(bo, req, loc.Region, time.Second*10)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	keyErr := resp.Resp.(*kvrpcpb.GetResponse).GetError()
 	c.Assert(keyErr, NotNil)
-	lock, err := extractLockFromKeyErr(keyErr)
+	var lockutil tikv.LockProbe
+	lock, err := lockutil.ExtractLockFromKeyErr(keyErr)
 	c.Assert(err, IsNil)
 	return lock
 }
 
 func (s *testAsyncCommitCommon) mustPointGet(c *C, key, expectedValue []byte) {
-	snap := s.store.GetSnapshot(maxTimestamp)
+	snap := s.store.GetSnapshot(math.MaxUint64)
 	value, err := snap.Get(context.Background(), key)
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, expectedValue)
@@ -115,40 +124,40 @@ func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, ke
 	c.Assert(errors.Cause(err), Equals, kv.ErrNotExist)
 }
 
-func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) *KVTxn {
+func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) tikv.TxnProbe {
 	txn := s.beginAsyncCommit(c)
 	txn.SetOption(kv.GuaranteeLinearizability, true)
 	return txn
 }
 
-func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) *KVTxn {
+func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
-	return txn
+	return tikv.TxnProbe{KVTxn: txn}
 }
 
-func (s *testAsyncCommitCommon) begin(c *C) *KVTxn {
+func (s *testAsyncCommitCommon) begin(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn
+	return tikv.TxnProbe{KVTxn: txn}
 }
 
 type testAsyncCommitSuite struct {
 	OneByOneSuite
 	testAsyncCommitCommon
-	bo *Backoffer
+	bo *tikv.Backoffer
 }
 
 var _ = SerialSuites(&testAsyncCommitSuite{})
 
 func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 	s.testAsyncCommitCommon.setUpTest(c)
-	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
+	s.bo = tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
 func (s *testAsyncCommitSuite) lockKeysWithAsyncCommit(c *C, keys, values [][]byte, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
-	txn, err := newTiKVTxn(s.store, oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
 	for i, k := range keys {
@@ -165,21 +174,23 @@ func (s *testAsyncCommitSuite) lockKeysWithAsyncCommit(c *C, keys, values [][]by
 		err = txn.Delete(primaryKey)
 	}
 	c.Assert(err, IsNil)
-	tpc, err := newTwoPhaseCommitterWithInit(txn, 0)
+	txnProbe := tikv.TxnProbe{KVTxn: txn}
+	tpc, err := txnProbe.NewCommitter(0)
 	c.Assert(err, IsNil)
-	tpc.primaryKey = primaryKey
+	tpc.SetPrimaryKey(primaryKey)
 
 	ctx := context.Background()
-	err = tpc.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), tpc.mutations)
+	err = tpc.PrewriteMutations(ctx)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
-		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		commitTS, err := s.store.GetOracle().GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		c.Assert(err, IsNil)
-		err = tpc.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), tpc.mutationsOfKeys([][]byte{primaryKey}))
+		tpc.SetCommitTS(commitTS)
+		err = tpc.CommitMutations(ctx)
 		c.Assert(err, IsNil)
 	}
-	return txn.startTS, tpc.commitTS
+	return txn.StartTS(), tpc.GetCommitTS()
 }
 
 func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
@@ -193,28 +204,30 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	loc, err := s.store.GetRegionCache().LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	newRegionID, peerID := s.cluster.AllocID(), s.cluster.AllocID()
-	s.cluster.Split(loc.Region.id, newRegionID, []byte("e"), []uint64{peerID}, peerID)
+	s.cluster.Split(loc.Region.GetID(), newRegionID, []byte("e"), []uint64{peerID}, peerID)
 	s.store.GetRegionCache().InvalidateCachedRegion(loc.Region)
 
 	// No locks to check, only primary key is locked, should be successful.
 	s.lockKeysWithAsyncCommit(c, [][]byte{}, [][]byte{}, []byte("z"), []byte("z"), false)
 	lock := s.mustGetLock(c, []byte("z"))
 	lock.UseAsyncCommit = true
-	ts, err := s.store.oracle.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	ts, err := s.store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
-	status := TxnStatus{primaryLock: &kvrpcpb.LockInfo{Secondaries: [][]byte{}, UseAsyncCommit: true, MinCommitTs: ts}}
+	var lockutil tikv.LockProbe
+	status := lockutil.NewLockStatus(nil, true, ts)
 
-	err = s.store.lockResolver.resolveLockAsync(s.bo, lock, status)
+	resolver := tikv.LockResolverProbe{LockResolver: s.store.GetLockResolver()}
+	err = resolver.ResolveLockAsync(s.bo, lock, status)
 	c.Assert(err, IsNil)
-	currentTS, err := s.store.oracle.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	currentTS, err := s.store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
-	status, err = s.store.lockResolver.getTxnStatus(s.bo, lock.TxnID, []byte("z"), currentTS, currentTS, true, false, nil)
+	status, err = resolver.GetTxnStatus(s.bo, lock.TxnID, []byte("z"), currentTS, currentTS, true, false, nil)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsTrue)
 	c.Assert(status.CommitTS(), Equals, ts)
 
 	// One key is committed (i), one key is locked (a). Should get committed.
-	ts, err = s.store.oracle.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	ts, err = s.store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	commitTs := ts + 10
 
@@ -223,7 +236,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	gotResolve := int64(0)
 	gotOther := int64(0)
 	mock := mockResolveClient{
-		inner: s.store.client,
+		inner: s.store.GetTiKVClient(),
 		onCheckSecondaries: func(req *kvrpcpb.CheckSecondaryLocksRequest) (*tikvrpc.Response, error) {
 			if req.StartVersion != ts {
 				return nil, errors.Errorf("Bad start version: %d, expected: %d", req.StartVersion, ts)
@@ -269,10 +282,10 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 			return &tikvrpc.Response{Resp: &resp}, nil
 		},
 	}
-	s.store.client = &mock
+	s.store.SetTiKVClient(&mock)
 
-	status = TxnStatus{primaryLock: &kvrpcpb.LockInfo{Secondaries: [][]byte{[]byte("a"), []byte("i")}, UseAsyncCommit: true}}
-	lock = &Lock{
+	status = lockutil.NewLockStatus([][]byte{[]byte("a"), []byte("i")}, true, 0)
+	lock = &tikv.Lock{
 		Key:            []byte("a"),
 		Primary:        []byte("z"),
 		TxnID:          ts,
@@ -283,7 +296,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 
 	_ = s.beginAsyncCommit(c)
 
-	err = s.store.lockResolver.resolveLockAsync(s.bo, lock, status)
+	err = resolver.ResolveLockAsync(s.bo, lock, status)
 	c.Assert(err, IsNil)
 	c.Assert(gotCheckA, Equals, int64(1))
 	c.Assert(gotCheckB, Equals, int64(1))
@@ -291,7 +304,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	c.Assert(gotResolve, Equals, int64(1))
 
 	// One key has been rolled back (b), one is locked (a). Should be rolled back.
-	ts, err = s.store.oracle.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	ts, err = s.store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	commitTs = ts + 10
 
@@ -320,7 +333,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	lock.TxnID = ts
 	lock.MinCommitTS = ts + 5
 
-	err = s.store.lockResolver.resolveLockAsync(s.bo, lock, status)
+	err = resolver.ResolveLockAsync(s.bo, lock, status)
 	c.Assert(err, IsNil)
 	c.Assert(gotCheckA, Equals, int64(1))
 	c.Assert(gotCheckB, Equals, int64(1))
@@ -352,7 +365,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 		err = txn1.Commit(ctx)
 		c.Assert(err, IsNil)
 		// Check txn1 is committed in async commit.
-		c.Assert(txn1.committer.isAsyncCommit(), IsTrue)
+		c.Assert(txn1.IsAsyncCommit(), IsTrue)
 		s.mustGetFromTxn(c, txn2, []byte("k1"), []byte("v1"))
 		err = txn2.Rollback()
 		c.Assert(err, IsNil)
@@ -382,8 +395,8 @@ func (s *testAsyncCommitSuite) TestAsyncCommitLinearizability(c *C) {
 	c.Assert(err, IsNil)
 	err = t1.Commit(ctx)
 	c.Assert(err, IsNil)
-	commitTS1 := t1.committer.commitTS
-	commitTS2 := t2.committer.commitTS
+	commitTS1 := t1.GetCommitTS()
+	commitTS2 := t2.GetCommitTS()
 	c.Assert(commitTS2, Less, commitTS1)
 }
 
@@ -401,7 +414,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = localTxn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(localTxn.committer.isAsyncCommit(), IsFalse)
+	c.Assert(localTxn.IsAsyncCommit(), IsFalse)
 
 	globalTxn := s.beginAsyncCommit(c)
 	err = globalTxn.Set([]byte("b"), []byte("b1"))
@@ -409,11 +422,11 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	c.Assert(err, IsNil)
 	err = globalTxn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(globalTxn.committer.isAsyncCommit(), IsTrue)
+	c.Assert(globalTxn.IsAsyncCommit(), IsTrue)
 }
 
 type mockResolveClient struct {
-	inner              Client
+	inner              tikv.Client
 	onResolveLock      func(*kvrpcpb.ResolveLockRequest) (*tikvrpc.Response, error)
 	onCheckSecondaries func(*kvrpcpb.CheckSecondaryLocksRequest) (*tikvrpc.Response, error)
 }
