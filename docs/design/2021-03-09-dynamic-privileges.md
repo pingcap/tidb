@@ -346,4 +346,14 @@ The initial implementation of dynamic privileges only implements a subset of MyS
 
 ## Unresolved Questions
 
-None
+### Adding new dynamic privileges to a lower privileged user
+
+In the case that `cloudAdmin` does not have `SUPER`, but requires additional fine grained privileges granted at a later date, there are two potential solutions:
+
+1. Write a `session/bootstrap.go` task to "split" an existing `DYNAMIC` privilege into two. i.e. users with privilege `XYZ` now have `XYZ` and `ZYX`.
+
+2. Allow the privilege `SELECT, INSERT, UPDATE ON mysql.*` to `cloudAdmin` + `RELOAD` on `*.*`. This will allow `cloudAdmin` to insert `ZYX` into the `global_grant` table, and then run `FLUSH PRIVILEGES` to reload the privilege cache.
+
+3. Add an API for plugins that register new dynamic privileges, such that on first installation they can say `ZYX` is also satisfied by `XYZ` (triggering an internal copy of privileges).
+
+The recommended method is (1), since the method (2) does not effectively restrict the credentials of `cloudAdmin`. (3) is a workaround for the fact that `visitInfo` does not support OR conditions for privileges.
