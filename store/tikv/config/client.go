@@ -22,7 +22,7 @@ import (
 
 const (
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
-	DefStoreLivenessTimeout = "5s"
+	DefStoreLivenessTimeout = "1s"
 )
 
 // TiKVClient is the config for tikv client.
@@ -70,15 +70,12 @@ type AsyncCommit struct {
 	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
 	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
 	TotalKeySizeLimit uint64 `toml:"total-key-size-limit" json:"total-key-size-limit"`
-	// The following two fields should never be modified by the user, so tags are not provided
-	// on purpose.
 	// The duration within which is safe for async commit or 1PC to commit with an old schema.
-	// It is only changed in tests.
-	// TODO: 1PC is not part of async commit. These two fields should be moved to a more suitable
-	// place.
-	SafeWindow time.Duration
+	// The following two fields should NOT be modified in most cases. If both async commit
+	// and 1PC are disabled in the whole cluster, they can be set to zero to avoid waiting in DDLs.
+	SafeWindow time.Duration `toml:"safe-window" json:"safe-window"`
 	// The duration in addition to SafeWindow to make DDL safe.
-	AllowedClockDrift time.Duration
+	AllowedClockDrift time.Duration `toml:"allowed-clock-drift" json:"allowed-clock-drift"`
 }
 
 // CoprocessorCache is the config for coprocessor cache.
