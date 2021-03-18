@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
@@ -624,7 +623,7 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
-		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName))
+		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
 		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
 			continue
 		}
@@ -689,14 +688,10 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
 	// So here we would remove the hint and inject the current best plan hint.
 	hint.BindHint(stmtNode, &hint.HintsSet{})
-	var sb strings.Builder
-	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	restoreCtx.DefaultDB = defaultDB
-	err := stmtNode.Restore(restoreCtx)
-	if err != nil {
-		logutil.Logger(ctx).Debug("[sql-bind] restore SQL failed when generating bind SQL", zap.Error(err))
+	bindSQL := utilparser.RestoreWithDefaultDB(stmtNode, defaultDB, "")
+	if bindSQL == "" {
+		return ""
 	}
-	bindSQL := sb.String()
 	keyword, err := hint.ExplainableStmtKeyword(stmtNode)
 	if err != nil {
 		logutil.Logger(ctx).Debug("[sql-bind] unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))

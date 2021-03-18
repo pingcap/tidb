@@ -47,7 +47,7 @@ type SchemaAmender interface {
 
 // KVTxn contains methods to interact with a TiKV transaction.
 type KVTxn struct {
-	snapshot  *tikvSnapshot
+	snapshot  *KVSnapshot
 	us        kv.UnionStore
 	store     *KVStore // for connection to region.
 	startTS   uint64
@@ -80,8 +80,7 @@ func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
 
 // newTiKVTxnWithStartTS creates a txn with startTS.
 func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*KVTxn, error) {
-	ver := kv.NewVersion(startTS)
-	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
+	snapshot := newTiKVSnapshot(store, startTS, replicaReadSeed)
 	newTiKVTxn := &KVTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
@@ -223,8 +222,8 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	defer txn.close()
 
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
-		if val.(bool) && kv.IsMockCommitErrorEnable() {
-			kv.MockCommitErrorDisable()
+		if val.(bool) && IsMockCommitErrorEnable() {
+			MockCommitErrorDisable()
 			failpoint.Return(errors.New("mock commit error"))
 		}
 	})
@@ -249,12 +248,7 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 		}
 		txn.committer = committer
 	}
-	defer func() {
-		// For async commit transactions, the ttl manager will be closed in the asynchronous commit goroutine.
-		if !committer.isAsyncCommit() {
-			committer.ttlManager.close()
-		}
-	}()
+	defer committer.ttlManager.close()
 
 	initRegion := trace.StartRegion(ctx, "InitKeys")
 	err = committer.initKeysAndMutations()
@@ -618,6 +612,6 @@ func (txn *KVTxn) GetMemBuffer() kv.MemBuffer {
 }
 
 // GetSnapshot returns the Snapshot binding to this transaction.
-func (txn *KVTxn) GetSnapshot() kv.Snapshot {
+func (txn *KVTxn) GetSnapshot() *KVSnapshot {
 	return txn.snapshot
 }

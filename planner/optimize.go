@@ -88,6 +88,20 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}()
 	}
 
+	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
+	stmtHints, warns := handleStmtHints(tableHints)
+	sessVars.StmtCtx.StmtHints = stmtHints
+	for _, warn := range warns {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
+	warns = warns[:0]
+	for name, val := range stmtHints.SetVars {
+		err := variable.SetStmtVar(sessVars, name, val)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+	}
+
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp plannercore.Plan
 		if fpv, ok := sctx.Value(plannercore.PointPlanKey).(plannercore.PointPlanVal); ok {
@@ -105,20 +119,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	sctx.PrepareTSFuture(ctx)
-
-	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
-	stmtHints, warns := handleStmtHints(tableHints)
-	sessVars.StmtCtx.StmtHints = stmtHints
-	for _, warn := range warns {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
-	}
-	warns = warns[:0]
-	for name, val := range stmtHints.SetVars {
-		err := variable.SetStmtVar(sessVars, name, val)
-		if err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		}
-	}
 
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
@@ -296,7 +296,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		plannercore.EraseLastSemicolon(x)
 		var normalizeExplainSQL string
 		if specifiledDB != "" {
-			normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB))
+			normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
 		} else {
 			normalizeExplainSQL = parser.Normalize(x.Text())
 		}
@@ -325,7 +325,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		if len(x.Text()) == 0 {
 			return x, "", "", nil
 		}
-		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB))
+		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
 		return x, normalizedSQL, hash, nil
 	}
 	return nil, "", "", nil
