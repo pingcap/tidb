@@ -309,7 +309,7 @@ func (c *RegionCache) asyncCheckAndResolveLoop(interval time.Duration) {
 			}
 			c.storeMu.RUnlock()
 			for _, store := range stores {
-				store.reResolve(c)
+				_, _ = store.reResolve(c)
 			}
 		}
 	}
@@ -337,7 +337,7 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 	c.storeMu.RUnlock()
 
 	for _, store := range needCheckStores {
-		store.reResolve(c)
+		_, _ = store.reResolve(c)
 	}
 }
 
@@ -531,7 +531,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			return nil, nil
 		}
 		if store.getResolveState() == needCheck {
-			store.reResolve(c)
+			_, _ = store.reResolve(c)
 		}
 		atomic.StoreInt32(&regionStore.workTiFlashIdx, int32(accessIdx))
 		peer := cachedRegion.meta.Peers[storeIdx]
@@ -1684,8 +1684,9 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 	}
 }
 
-// reResolve try to resolve addr for store that need check.
-func (s *Store) reResolve(c *RegionCache) {
+// reResolve try to resolve addr for store that need check. Returns false if the region is in tombstone state or is
+// deleted.
+func (s *Store) reResolve(c *RegionCache) (bool, error) {
 	var addr string
 	store, err := c.pdClient.GetStore(context.Background(), s.storeID)
 	if err != nil {
@@ -1696,7 +1697,7 @@ func (s *Store) reResolve(c *RegionCache) {
 	if err != nil {
 		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
-		return
+		return false, err
 	}
 	if store == nil || store.State == metapb.StoreState_Tombstone {
 		// store has be removed in PD, we should invalidate all regions using those store.
@@ -1704,7 +1705,7 @@ func (s *Store) reResolve(c *RegionCache) {
 			zap.Uint64("store", s.storeID), zap.String("add", s.addr))
 		atomic.AddUint32(&s.epoch, 1)
 		metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
-		return
+		return false, nil
 	}
 
 	storeType := GetStoreTypeByMeta(store)
@@ -1720,23 +1721,24 @@ func (s *Store) reResolve(c *RegionCache) {
 		// all region used those
 		oldState := s.getResolveState()
 		if oldState == deleted {
-			return
+			return false, nil
 		}
 		newState := deleted
 		if !s.compareAndSwapState(oldState, newState) {
 			goto retryMarkDel
 		}
-		return
+		return false, nil
 	}
 retryMarkResolved:
 	oldState := s.getResolveState()
 	if oldState != needCheck {
-		return
+		return true, nil
 	}
 	newState := resolved
 	if !s.compareAndSwapState(oldState, newState) {
 		goto retryMarkResolved
 	}
+	return true, nil
 }
 
 func (s *Store) getResolveState() resolveState {
@@ -1840,24 +1842,13 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 			if time.Since(lastCheckPDTime) > time.Second*30 {
 				lastCheckPDTime = time.Now()
 
-				storeMeta, err := c.PDClient().GetStore(ctx, s.storeID)
+				valid, err := s.reResolve(c)
 				if err != nil {
-					logutil.BgLogger().Warn("[health check] failed to check unhealthy store's meta from pd", zap.Error(err))
-				}
-				if storeMeta == nil || storeMeta.State == metapb.StoreState_Tombstone {
-					atomic.AddUint32(&s.epoch, 1)
+					logutil.BgLogger().Warn("[health check] failed to re-resolve unhealthy store", zap.Error(err))
+				} else if !valid {
+					logutil.BgLogger().Info("[health check] store meta deleted, stop checking", zap.Uint64("storeID", s.storeID), zap.String("addr", s.addr))
 					return
 				}
-			}
-
-			if s.getResolveState() == unresolved {
-				s.reResolve(c)
-			}
-
-			// The store is deleted due to metadata change. No need to check its health.
-			if s.getResolveState() == deleted {
-				logutil.BgLogger().Info("[health check] store meta deleted, stop checking", zap.Uint64("storeID", s.storeID), zap.String("addr", s.addr))
-				return
 			}
 
 			bo := NewNoopBackoff(ctx)
