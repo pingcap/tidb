@@ -52,7 +52,7 @@
         "Plan": [
           "Projection 9990.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
           "└─HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "  ├─Selection(Build) 7992.00 root  from_unixtime(cast(test.t.b))",
+          "  ├─Selection(Build) 7992.00 root  from_unixtime(cast(test.t.b, decimal(20,0) BINARY))",
           "  │ └─TableReader 7992.00 root  data:Selection",
           "  │   └─Selection 7992.00 cop[tikv]  not(isnull(test.t.a))",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
@@ -87,7 +87,7 @@
         "Plan": [
           "HashJoin 10000.00 root  left outer join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader(Build) 8000.00 root  data:Selection",
-          "│ └─Selection 8000.00 cop[tikv]  ge(cast(test.t.b), 2019-01-01 00:00:00.000000)",
+          "│ └─Selection 8000.00 cop[tikv]  ge(cast(test.t.b, date BINARY), 2019-01-01 00:00:00.000000)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
@@ -945,9 +945,8 @@
       {
         "SQL": "select t1.b, t1.c from t1 where t1.c = 2.2",
         "Plan": [
-          "Projection_4 1.00 root  test.t1.b, test.t1.c",
-          "└─IndexReader_6 1.00 root  index:IndexRangeScan_5",
-          "  └─IndexRangeScan_5 1.00 cop[tikv] table:t1, index:c(c) range:[2.2000000000,2.2000000000], keep order:false"
+          "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 1.00 cop[tikv] table:t1, index:c(c) range:[2.2000000000,2.2000000000], keep order:false"
         ],
         "Res": [
           "222 2.2000000000"
@@ -1108,6 +1107,24 @@
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
           "2 222 2.2000000000 12 2 222 2.2000000000 12",
           "3 333 3.3000000000 13 3 333 3.3000000000 13"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;",
+        "Plan": [
+          "IndexMergeJoin_19 3.00 root  left outer join, inner:Projection_17, outer key:Column#9, inner key:test.t.c",
+          "├─Projection_20(Build) 3.00 root  cast(test.t.a, decimal(20,0) BINARY)->Column#9",
+          "│ └─TableReader_22 3.00 root  data:TableFullScan_21",
+          "│   └─TableFullScan_21 3.00 cop[tikv] table:t1 keep order:false",
+          "└─Projection_17(Probe) 1.00 root  test.t.a, test.t.c, test.t.d",
+          "  └─IndexLookUp_16 1.00 root  ",
+          "    ├─IndexRangeScan_14(Build) 1.00 cop[tikv] table:t2, index:c(c) range: decided by [eq(test.t.c, Column#9)], keep order:true",
+          "    └─TableRowIDScan_15(Probe) 1.00 cop[tikv] table:t2 keep order:false"
+        ],
+        "Res": [
+          "<nil> <nil> <nil>",
+          "<nil> <nil> <nil>",
+          "<nil> <nil> <nil>"
         ]
       }
     ]
@@ -1379,11 +1396,12 @@
       {
         "SQL": "explain format = 'brief' SELECT /*+ use_index_merge(t1)*/ COUNT(*) FROM t1 WHERE (key4=42 AND key6 IS NOT NULL) OR (key1=4 AND key3=6)",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#12)->Column#10",
-          "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#12",
-          "    └─Selection 10.00 cop[tikv]  or(and(eq(test.t1.key4, 42), not(isnull(test.t1.key6))), and(eq(test.t1.key1, 4), eq(test.t1.key3, 6)))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#10",
+          "└─IndexMerge 0.02 root  ",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:i4(key4) range:[42,42], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:i1(key1) range:[4,4], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.02 cop[tikv]  or(and(eq(test.t1.key4, 42), not(isnull(test.t1.key6))), and(eq(test.t1.key1, 4), eq(test.t1.key3, 6)))",
+          "    └─TableRowIDScan 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]

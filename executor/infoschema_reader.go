@@ -28,6 +28,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -142,6 +144,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
 		case infoschema.TablePlacementPolicy:
 			err = e.setDataForPlacementPolicy(sctx)
+		case infoschema.TableClientErrorsSummaryGlobal,
+			infoschema.TableClientErrorsSummaryByUser,
+			infoschema.TableClientErrorsSummaryByHost:
+			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		}
 		if err != nil {
 			return nil, err
@@ -452,7 +458,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			pkType := "NON-CLUSTERED"
+			pkType := "NONCLUSTERED"
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
@@ -836,12 +842,17 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					nil,           // Expression
 					0,             // INDEX_ID
 					"YES",         // IS_VISIBLE
+					"YES",         // CLUSTERED
 				)
 				rows = append(rows, record)
 			}
 			for _, idxInfo := range tb.Indices {
 				if idxInfo.State != model.StatePublic {
 					continue
+				}
+				isClustered := "NO"
+				if tb.IsCommonHandle && idxInfo.Primary {
+					isClustered = "YES"
 				}
 				for i, col := range idxInfo.Columns {
 					nonUniq := 1
@@ -876,6 +887,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						expression,      // Expression
 						idxInfo.ID,      // INDEX_ID
 						visible,         // IS_VISIBLE
+						isClustered,     // CLUSTERED
 					)
 					rows = append(rows, record)
 				}
@@ -1848,11 +1860,21 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 			continue
 		}
 		// Currently, only partitions have placement rules.
+		var tbName, dbName, ptName string
+		skip := true
 		tb, db, part := is.FindTableByPartitionID(id)
-		if tb == nil {
-			return errors.Errorf("Can't find partition by id %d", id)
+		if tb != nil && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv)) {
+			dbName = db.Name.L
+			tbName = tb.Meta().Name.L
+			ptName = part.Name.L
+			skip = false
 		}
-		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
+		failpoint.Inject("outputInvalidPlacementRules", func(val failpoint.Value) {
+			if val.(bool) {
+				skip = false
+			}
+		})
+		if skip {
 			continue
 		}
 		for _, rule := range bundle.Rules {
@@ -1864,15 +1886,91 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 				bundle.ID,
 				bundle.Index,
 				rule.ID,
-				db.Name.L,
-				tb.Meta().Name.L,
-				part.Name.L,
+				dbName,
+				tbName,
+				ptName,
 				nil,
 				string(rule.Role),
 				rule.Count,
 				constraint,
 			)
 			rows = append(rows, row)
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context, tableName string) error {
+	// Seeing client errors should require the PROCESS privilege, with the exception of errors for your own user.
+	// This is similar to information_schema.processlist, which is the closest comparison.
+	var hasProcessPriv bool
+	loginUser := ctx.GetSessionVars().User
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+
+	var rows [][]types.Datum
+	switch tableName {
+	case infoschema.TableClientErrorsSummaryGlobal:
+		if !hasProcessPriv {
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
+		for code, summary := range errno.GlobalStats() {
+			firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
+			lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
+			row := types.MakeDatums(
+				int(code),                    // ERROR_NUMBER
+				errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
+				summary.ErrorCount,           // ERROR_COUNT
+				summary.WarningCount,         // WARNING_COUNT
+				firstSeen,                    // FIRST_SEEN
+				lastSeen,                     // LAST_SEEN
+			)
+			rows = append(rows, row)
+		}
+	case infoschema.TableClientErrorsSummaryByUser:
+		for user, agg := range errno.UserStats() {
+			for code, summary := range agg {
+				// Allow anyone to see their own errors.
+				if !hasProcessPriv && loginUser != nil && loginUser.Username != user {
+					continue
+				}
+				firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				row := types.MakeDatums(
+					user,                         // USER
+					int(code),                    // ERROR_NUMBER
+					errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
+					summary.ErrorCount,           // ERROR_COUNT
+					summary.WarningCount,         // WARNING_COUNT
+					firstSeen,                    // FIRST_SEEN
+					lastSeen,                     // LAST_SEEN
+				)
+				rows = append(rows, row)
+			}
+		}
+	case infoschema.TableClientErrorsSummaryByHost:
+		if !hasProcessPriv {
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
+		for host, agg := range errno.HostStats() {
+			for code, summary := range agg {
+				firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				row := types.MakeDatums(
+					host,                         // HOST
+					int(code),                    // ERROR_NUMBER
+					errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
+					summary.ErrorCount,           // ERROR_COUNT
+					summary.WarningCount,         // WARNING_COUNT
+					firstSeen,                    // FIRST_SEEN
+					lastSeen,                     // LAST_SEEN
+				)
+				rows = append(rows, row)
+			}
 		}
 	}
 	e.rows = rows

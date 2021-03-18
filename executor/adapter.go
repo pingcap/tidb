@@ -297,7 +297,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
+		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceed) {
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)

@@ -2961,6 +2961,16 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> 4"))
 	result = tk.MustQuery("select * from t where b = case when a is null then 4 when  a = 'str5' then 7 else 9 end")
 	result.Check(testkit.Rows("<nil> 4"))
+
+	// return type of case when expr should not include NotNullFlag. issue-23036
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int not null)")
+	tk.MustExec("insert into t1 values(1)")
+	result = tk.MustQuery("select (case when null then c1 end) is null from t1")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (case when null then c1 end) is not null from t1")
+	result.Check(testkit.Rows("0"))
+
 	// test warnings
 	tk.MustQuery("select case when b=0 then 1 else 1/b end from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -3794,6 +3804,17 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
 	result.Check(testkit.Rows("0"))
+}
+
+// #23157: make sure if Nullif expr is correct combined with IsNull expr.
+func (s *testIntegrationSuite) TestNullifWithIsNull(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null);")
+	tk.MustExec("insert into t values(1),(2);")
+	rows := tk.MustQuery("select * from t where nullif(a,a) is null;")
+	rows.Check(testkit.Rows("1", "2"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
@@ -5430,7 +5451,7 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	rows := tk.MustQuery("explain format = 'brief' select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
 		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
-	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "gt(cast(test.t.a), 10.10)")
+	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10)")
 	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\"), gt(test.t.b, 1988-01-01)")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
@@ -5438,7 +5459,7 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
 	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\")")
-	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "gt(cast(test.t.a), 10.10), gt(test.t.b, 1988-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10), gt(test.t.b, 1988-01-01)")
 
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_format' and store_type = 'tikv' and reason = 'for test'")
@@ -5872,9 +5893,19 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 func (s *testIntegrationSerialSuite) TestPreparePlanCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	// Plan cache should now be on by default
-	c.Assert(plannercore.PreparedPlanCacheEnabled(), Equals, true)
+	// Plan cache should now be off by default
+	c.Assert(plannercore.PreparedPlanCacheEnabled(), Equals, false)
 
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
 	// Use the example from the docs https://docs.pingcap.com/tidb/stable/sql-prepare-plan-cache
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -6270,6 +6301,15 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustQuery("select a from t_ci where a='A'").Check(testkit.Rows("a"))
 	tk.MustQuery("select a from t_ci where a='a   '").Check(testkit.Rows("a"))
 	tk.MustQuery("select a from t_ci where a='a                    '").Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c set('A', 'B') collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t values('a');")
+	tk.MustExec("insert into t values('B');")
+	tk.MustQuery("select c from t where c = 'a';").Check(testkit.Rows("A"))
+	tk.MustQuery("select c from t where c = 'A';").Check(testkit.Rows("A"))
+	tk.MustQuery("select c from t where c = 'b';").Check(testkit.Rows("B"))
+	tk.MustQuery("select c from t where c = 'B';").Check(testkit.Rows("B"))
 }
 
 func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
@@ -7906,7 +7946,7 @@ func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollationIndexEncod
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table t(a int, b char(10) collate utf8mb4_bin, c char(10) collate utf8mb4_general_ci," +
 		"d varchar(10) collate utf8mb4_bin, e varchar(10) collate utf8mb4_general_ci, f char(10) collate utf8mb4_unicode_ci, g varchar(10) collate utf8mb4_unicode_ci, " +
 		"primary key(a, b, c, d, e, f, g), key a(a), unique key ua(a), key b(b), unique key ub(b), key c(c), unique key uc(c)," +
@@ -8839,6 +8879,16 @@ func (s *testIntegrationSuite) Test22717(c *C) {
 	tk.MustQuery("select d from t where d").Check(testkit.Rows("0", "1", "0,1"))
 }
 
+func (s *testIntegrationSuite) Test23262(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a year)")
+	tk.MustExec("insert into t values(2002)")
+	tk.MustQuery("select * from t where a=2").Check(testkit.Rows("2002"))
+	tk.MustQuery("select * from t where a='2'").Check(testkit.Rows("2002"))
+}
+
 func (s *testIntegrationSerialSuite) TestPartitionPruningRelaxOP(c *C) {
 	// Discovered while looking at issue 19941 (not completely related)
 	// relaxOP relax the op > to >= and < to <=
@@ -8863,4 +8913,16 @@ func (s *testIntegrationSerialSuite) TestPartitionPruningRelaxOP(c *C) {
 
 	tk.MustQuery("SELECT COUNT(*) FROM t1 WHERE d < '2018-01-01'").Check(testkit.Rows("6"))
 	tk.MustQuery("SELECT COUNT(*) FROM t1 WHERE d > '2018-01-01'").Check(testkit.Rows("12"))
+}
+
+func (s *testIntegrationSuite) TestClusteredIndexCorCol(c *C) {
+	// For issue 23076
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int, c_str) clustered, key(c_int) );")
+	tk.MustExec("create table t2  like t1 ;")
+	tk.MustExec("insert into t1 values (1, 'crazy lumiere'), (10, 'goofy mestorf');")
+	tk.MustExec("insert into t2 select * from t1 ;")
+	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str = t1.c_str and t2.c_int = 10 order by t2.c_str limit 1) x from t1;").Check(testkit.Rows("<nil>", "goofy mestorf"))
 }

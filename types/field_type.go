@@ -134,8 +134,8 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 		}
 		lft = rft
 	}
-	setTypeFlag(flag, mysql.UnsignedFlag, unsigned)
-	setTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
+	SetTypeFlag(flag, mysql.UnsignedFlag, unsigned)
+	SetTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
 	return aggregatedEvalType
 }
 
@@ -160,7 +160,8 @@ func mergeEvalType(lhs, rhs EvalType, lft, rft *FieldType, isLHSUnsigned, isRHSU
 	return ETInt
 }
 
-func setTypeFlag(flag *uint, flagItem uint, on bool) {
+// SetTypeFlag turns the flagItem on or off.
+func SetTypeFlag(flag *uint, flagItem uint, on bool) {
 	if on {
 		*flag |= flagItem
 	} else {
@@ -260,8 +261,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Flag |= mysql.UnsignedFlag
 		SetBinChsClnFlag(tp)
 	case BinaryLiteral:
-		tp.Tp = mysql.TypeBit
-		tp.Flen = len(x) * 8
+		tp.Tp = mysql.TypeVarString
+		tp.Flen = len(x)
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 		tp.Flag &= ^mysql.BinaryFlag

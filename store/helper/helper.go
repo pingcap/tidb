@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
-	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -48,15 +48,14 @@ import (
 // Methods copied from kv.Storage and tikv.Storage due to limitation of go1.13.
 type Storage interface {
 	Begin() (kv.Transaction, error)
-	BeginWithTxnScope(txnScope string) (kv.Transaction, error)
-	BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error)
-	BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error)
+	BeginWithOption(option kv.TransactionOption) (kv.Transaction, error)
 	GetSnapshot(ver kv.Version) kv.Snapshot
 	GetClient() kv.Client
 	GetMPPClient() kv.MPPClient
 	Close() error
 	UUID() string
 	CurrentVersion(txnScope string) (kv.Version, error)
+	CurrentTimestamp(txnScop string) (uint64, error)
 	GetOracle() oracle.Oracle
 	SupportDeleteRange() (supported bool)
 	Name() string
@@ -862,7 +861,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Error(err)
+			log.Error("err", zap.Error(err))
 		}
 	}()
 
