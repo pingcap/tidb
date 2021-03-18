@@ -2101,3 +2101,14 @@ func (s *testStatsSuite) TestHideIndexUsageSyncLease(c *C) {
 		c.Assert(strings.Contains(strings.ToLower(r[0].(string)), "index-usage-sync-lease"), IsFalse)
 	}
 }
+
+func (s *testStatsSuite) TestHideExtendedStatsSwitch(c *C) {
+	// NOTICE: remove this test when this extended-stats reaches GA state.
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	rs := tk.MustQuery("show variables").Rows()
+	for _, r := range rs {
+		c.Assert(strings.ToLower(r[0].(string)), Not(Equals), "tidb_enable_extended_stats")
+	}
+	tk.MustQuery("show variables like 'tidb_enable_extended_stats'").Check(testkit.Rows())
+}
