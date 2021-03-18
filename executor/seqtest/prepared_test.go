@@ -490,14 +490,14 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 			err = counter.Write(pb)
 			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(3))
+			c.Check(hit, Equals, float64(2))
 		}
 		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(4))
+			c.Check(hit, Equals, float64(2))
 		}
 
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 101)

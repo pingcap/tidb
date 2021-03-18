@@ -222,8 +222,8 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	defer txn.close()
 
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
-		if val.(bool) && kv.IsMockCommitErrorEnable() {
-			kv.MockCommitErrorDisable()
+		if val.(bool) && IsMockCommitErrorEnable() {
+			MockCommitErrorDisable()
 			failpoint.Return(errors.New("mock commit error"))
 		}
 	})
@@ -248,12 +248,7 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 		}
 		txn.committer = committer
 	}
-	defer func() {
-		// For async commit transactions, the ttl manager will be closed in the asynchronous commit goroutine.
-		if !committer.isAsyncCommit() {
-			committer.ttlManager.close()
-		}
-	}()
+	defer committer.ttlManager.close()
 
 	initRegion := trace.StartRegion(ctx, "InitKeys")
 	err = committer.initKeysAndMutations()
