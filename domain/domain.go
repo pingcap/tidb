@@ -747,7 +747,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	callback := &ddlCallback{do: do}
 	d := do.ddl
 	do.ddl = ddl.NewDDL(
-		do,
+		do.Context,
 		ddl.WithEtcdClient(do.etcdClient),
 		ddl.WithStore(do.store),
 		ddl.WithInfoHandle(do.infoHandle),
