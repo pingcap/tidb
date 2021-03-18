@@ -560,7 +560,7 @@ func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
 	// Recover the store
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockRequestLiveness", "return(true)"), IsNil)
 	// The proxy should be unset after several retries
-	for retry := 0; retry < 5; retry++ {
+	for retry := 0; retry < 15; retry++ {
 		ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
 		c.Assert(err, IsNil)
 		if ctx.ProxyStore == nil {

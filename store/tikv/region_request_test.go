@@ -621,6 +621,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 	c.Assert(ctx.Addr, Equals, leaderAddr)
 	c.Assert(ctx.ProxyStore, NotNil)
 	c.Assert(ctx.ProxyAddr, Not(Equals), leaderAddr)
+	c.Assert(ctx.ProxyAccessIdx, Not(Equals), ctx.AccessIdx)
 	c.Assert(err, IsNil)
 
 	// Simulate recovering to normal
@@ -634,6 +635,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 		if time.Since(start) > 3*time.Second {
 			c.Fatal("store didn't recover to normal in time")
 		}
+		time.Sleep(time.Millisecond * 200)
 	}
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockRequestLiveness"), IsNil)
 
@@ -644,6 +646,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(regionErr, IsNil)
 	c.Assert(resp.Resp.(*kvrpcpb.RawGetResponse).Value, BytesEquals, []byte("v1"))
+	c.Assert(ctx.ProxyStore, IsNil)
 
 	// Simulate server down
 	s.regionRequestSender.client = &fnClient{fn: func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -678,10 +681,12 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 	// Then SendReqCtx will throw a pseudo EpochNotMatch to tell the caller to reload the region.
 	c.Assert(regionErr.EpochNotMatch, NotNil)
 	c.Assert(ctx, IsNil)
+	c.Assert(len(s.regionRequestSender.failStoreIDs), Equals, 0)
+	c.Assert(len(s.regionRequestSender.failProxyStoreIDs), Equals, 0)
+	region := s.regionRequestSender.regionCache.getCachedRegionWithRLock(loc.Region)
+	c.Assert(region, NotNil)
+	c.Assert(region.checkNeedReload(), IsTrue)
 
-	// Reload the region
-	// In this case, the sender should be recreated.
-	s.regionRequestSender = NewRegionRequestSender(s.regionRequestSender.regionCache, s.regionRequestSender.client)
 	loc, err = s.regionRequestSender.regionCache.LocateKey(bo, []byte("k"))
 	c.Assert(err, IsNil)
 	req = tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
