@@ -453,9 +453,15 @@ func (s *testClusteredSuite) TestClusteredIndexSyntax(c *C) {
 
 	errMsg := "[ddl:8200]CLUSTERED/NONCLUSTERED keyword is only supported for primary key"
 	tk.MustGetErrMsg("create table t (a varchar(255), unique key(a) clustered);", errMsg)
+	tk.MustGetErrMsg("create table t (a varchar(255), unique key(a) nonclustered);", errMsg)
 	tk.MustGetErrMsg("create table t (a varchar(255), unique index(a) clustered);", errMsg)
+	tk.MustGetErrMsg("create table t (a varchar(255), unique index(a) nonclustered);", errMsg)
 	tk.MustGetErrMsg("create table t (a varchar(255), key(a) clustered);", errMsg)
+	tk.MustGetErrMsg("create table t (a varchar(255), key(a) nonclustered);", errMsg)
 	tk.MustGetErrMsg("create table t (a varchar(255), index(a) clustered);", errMsg)
+	tk.MustGetErrMsg("create table t (a varchar(255), index(a) nonclustered);", errMsg)
+	tk.MustGetErrMsg("create table t (a varchar(255), b decimal(5, 4), primary key (a, b) clustered, key (b) clustered)", errMsg)
+	tk.MustGetErrMsg("create table t (a varchar(255), b decimal(5, 4), primary key (a, b) clustered, key (b) nonclustered)", errMsg)
 }
 
 func (s *testClusteredSerialSuite) TestPrefixClusteredIndexAddIndexAndRecover(c *C) {
