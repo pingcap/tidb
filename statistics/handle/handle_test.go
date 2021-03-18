@@ -2158,3 +2158,14 @@ func (s *testStatsSuite) TestExtendedStatsPartitionTable(c *C) {
 	err = tk.ExecToErr("alter table t2 add stats_extended s1 correlation(b,c)")
 	c.Assert(err.Error(), Equals, "Extended statistics on partitioned tables are not supported now")
 }
+
+func (s *testStatsSuite) TestHideExtendedStatsSwitch(c *C) {
+	// NOTICE: remove this test when this extended-stats reaches GA state.
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	rs := tk.MustQuery("show variables").Rows()
+	for _, r := range rs {
+		c.Assert(strings.ToLower(r[0].(string)), Not(Equals), "tidb_enable_extended_stats")
+	}
+	tk.MustQuery("show variables like 'tidb_enable_extended_stats'").Check(testkit.Rows())
+}
