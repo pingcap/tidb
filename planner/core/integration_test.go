@@ -487,6 +487,7 @@ func (s *testIntegrationSerialSuite) TestMPPShuffledJoin(c *C) {
 func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set session tidb_allow_mpp = OFF")
 	tk.MustExec("drop table if exists d1_t")
 	tk.MustExec("create table d1_t(d1_k int, value int)")
 	tk.MustExec("insert into d1_t values(1,2),(2,3)")
@@ -743,6 +744,7 @@ func (s *testIntegrationSerialSuite) TestReadFromStorageHint(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, tt, ttt")
+	tk.MustExec("set session tidb_allow_mpp=OFF")
 	tk.MustExec("create table t(a int, b int, index ia(a))")
 	tk.MustExec("create table tt(a int, b int, primary key(a))")
 	tk.MustExec("create table ttt(a int, primary key (a desc))")
@@ -1600,10 +1602,10 @@ func (s *testIntegrationSuite) TestStreamAggProp(c *C) {
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
 	}
 }
@@ -1648,10 +1650,10 @@ func (s *testIntegrationSuite) TestOptimizeHintOnPartitionTable(c *C) {
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 			output[i].Warn = s.testData.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 	}
 }
@@ -1846,10 +1848,10 @@ func (s *testIntegrationSuite) TestIndexJoinOnClusteredIndex(c *C) {
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain  format = 'brief'" + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
 	}
 }
@@ -2625,6 +2627,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, value decimal(6,3))")
 	tk.MustExec("analyze table t")
+	tk.MustExec("set session tidb_allow_mpp=OFF")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)

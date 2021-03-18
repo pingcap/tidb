@@ -2115,18 +2115,12 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
+
+// canChildPushDown only checks if it can be pushed to TiKV.
 func (p *baseLogicalPlan) canChildPushDown() bool {
-	// At present for TiKV, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
-	// When we push task to coprocessor, convertToRootTask will close the cop task and create a root task in the current implementation.
-	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
-	// But for TiFlash, Projection, Join and DataSource can also be pushed down in most cases. Other operators will be
-	// supported in the future, such as Aggregation, Limit, TopN.
 	switch p.children[0].(type) {
 	case *DataSource:
 		return true
-	case *LogicalJoin, *LogicalProjection:
-		// TiFlash supports pushing down more operators
-		return p.SCtx().GetSessionVars().AllowBCJ || (p.SCtx().GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled())
 	default:
 		return false
 	}
@@ -2318,7 +2312,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
-			childProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64}
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = MppTiDB
@@ -2339,9 +2333,6 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if !prop.IsEmpty() {
 		return nil
 	}
-	if prop.IsFlashProp() && !la.canPushToCop() {
-		return nil
-	}
 	if prop.TaskTp == property.MppTaskType && !la.checkCanPushDownToMPP() {
 		return nil
 	}
@@ -2351,22 +2342,22 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
 	canPushDownToMPP := la.ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() && la.checkCanPushDownToMPP()
-	if canPushDownToMPP {
-		taskTypes = append(taskTypes, property.MppTaskType)
-	}
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
-		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown && !canPushDownToMPP {
+		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
+	if !la.canPushToCop() {
+		taskTypes = []property.TaskType{property.RootTaskType, property.CopTiFlashLocalReadTaskType}
+	}
+	if canPushDownToMPP {
+		taskTypes = append(taskTypes, property.MppTaskType)
+	}
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
-	}
-	if !la.canPushToCop() {
-		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	for _, taskTp := range taskTypes {
 		if taskTp == property.MppTaskType {
