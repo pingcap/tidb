@@ -634,11 +634,45 @@ func (p *baseSchemaProducer) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *basePhysicalPlan) ResolveIndices() (err error) {
-	for _, child := range p.children {
+	for i, child := range p.children {
 		err = child.ResolveIndices()
 		if err != nil {
 			return err
 		}
+		if p.self != nil {
+			switch p.self.(type) {
+			case *PhysicalHashJoin:
+				join, _ := p.self.(*PhysicalHashJoin)
+				switch join.JoinType {
+				case RightOuterJoin:
+					if i == 1 {
+						p.AlignNullFlag(child.Schema())
+					}
+				case LeftOuterJoin:
+					if i == 0 {
+						p.AlignNullFlag(child.Schema())
+					}
+				default:
+					p.AlignNullFlag(child.Schema())
+				}
+			case *PhysicalMergeJoin, *PhysicalIndexHashJoin, *PhysicalIndexJoin, *PhysicalIndexMergeJoin:
+			default:
+				p.AlignNullFlag(child.Schema())
+			}
+		}
 	}
 	return
+}
+
+// AlignNullFlag aligns the parent's column not null flag to its child not null flag when these columns uniqueID are identical.
+func (p *basePhysicalPlan) AlignNullFlag(schema *expression.Schema) {
+	for _, pcol := range p.self.Schema().Columns {
+		for _, scol := range schema.Columns {
+			if pcol.UniqueID == scol.UniqueID {
+				if pcol.RetType.Flag != scol.RetType.Flag {
+					pcol.RetType.Flag = scol.RetType.Flag
+				}
+			}
+		}
+	}
 }
