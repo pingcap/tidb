@@ -582,7 +582,7 @@ func (do *Domain) mustRestartSyncer() error {
 	syncer := do.ddl.SchemaSyncer()
 
 	for {
-		err := syncer.Restart(do)
+		err := syncer.Restart(do.Context)
 		if err == nil {
 			return nil
 		}
@@ -691,7 +691,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
-	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do)
+	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.Context)
 	return do
 }
 
@@ -768,7 +768,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	})
 
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-	err = do.ddl.SchemaSyncer().Init(do)
+	err = do.ddl.SchemaSyncer().Init(do.Context)
 	if err != nil {
 		return err
 	}
@@ -791,7 +791,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		}
 	}
 
-	do.info, err = infosync.GlobalInfoSyncerInit(do, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
+	do.info, err = infosync.GlobalInfoSyncerInit(do.Context, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
 	if err != nil {
 		return err
 	}
