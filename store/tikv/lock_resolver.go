@@ -171,7 +171,8 @@ func (l *Lock) String() string {
 	prettyWriteKey(buf, l.Key)
 	buf.WriteString(", primary: ")
 	prettyWriteKey(buf, l.Primary)
-	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, minCommitTs:%d, ttl: %d, type: %s", buf.String(), l.TxnID, l.LockForUpdateTS, l.MinCommitTS, l.TTL, l.LockType)
+	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, minCommitTs:%d, ttl: %d, type: %s, UseAsyncCommit: %t",
+		buf.String(), l.TxnID, l.LockForUpdateTS, l.MinCommitTS, l.TTL, l.LockType, l.UseAsyncCommit)
 }
 
 // NewLock creates a new *Lock.
