@@ -7821,3 +7821,12 @@ func (s *testSuiteP1) TestIssue22941(c *C) {
 	rs = tk.MustQuery(`SELECT  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
 	rs.Check(testkit.Rows("<nil> 1 0"))
 }
+
+func (s *testSuite1) TestIssue23411(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(col1 varbinary(20))")
+	tk.MustExec("insert into t1 values(\".1pingcap\");")
+
+	tk.MustQuery("select col1, col1 + 1 from t1;").Check(testkit.Rows(".1pingcap 1.1"))
+}
