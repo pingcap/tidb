@@ -167,25 +167,11 @@ func (s *KVStore) runSafePointChecker() {
 
 // Begin a global transaction.
 func (s *KVStore) Begin() (*KVTxn, error) {
-	return s.beginWithTxnScope(oracle.GlobalTxnScope)
+	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
 }
 
-// BeginWithOption begins a transaction with given option
-func (s *KVStore) BeginWithOption(option kv.TransactionOption) (*KVTxn, error) {
-	txnScope := option.TxnScope
-	if txnScope == "" {
-		txnScope = oracle.GlobalTxnScope
-	}
-	if option.StartTS != nil {
-		return s.beginWithStartTS(txnScope, *option.StartTS)
-	} else if option.PrevSec != nil {
-		return s.beginWithExactStaleness(txnScope, *option.PrevSec)
-	}
-	return s.beginWithTxnScope(txnScope)
-}
-
-// beginWithTxnScope begins a transaction with the given txnScope (local or global)
-func (s *KVStore) beginWithTxnScope(txnScope string) (*KVTxn, error) {
+// BeginWithTxnScope begins a transaction with the given txnScope (local or global)
+func (s *KVStore) BeginWithTxnScope(txnScope string) (*KVTxn, error) {
 	txn, err := newTiKVTxn(s, txnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -193,8 +179,8 @@ func (s *KVStore) beginWithTxnScope(txnScope string) (*KVTxn, error) {
 	return txn, nil
 }
 
-// beginWithStartTS begins a transaction with startTS.
-func (s *KVStore) beginWithStartTS(txnScope string, startTS uint64) (*KVTxn, error) {
+// BeginWithStartTS begins a transaction with startTS.
+func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -202,8 +188,8 @@ func (s *KVStore) beginWithStartTS(txnScope string, startTS uint64) (*KVTxn, err
 	return txn, nil
 }
 
-// beginWithExactStaleness begins transaction with given staleness
-func (s *KVStore) beginWithExactStaleness(txnScope string, prevSec uint64) (*KVTxn, error) {
+// BeginWithExactStaleness begins transaction with given staleness
+func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -212,9 +198,9 @@ func (s *KVStore) beginWithExactStaleness(txnScope string, prevSec uint64) (*KVT
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
-// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-func (s *KVStore) GetSnapshot(ver kv.Version) kv.Snapshot {
-	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
+// if ts is MaxVersion or > current max committed version, we will use current version for this snapshot.
+func (s *KVStore) GetSnapshot(ts uint64) *KVSnapshot {
+	snapshot := newTiKVSnapshot(s, ts, s.nextReplicaReadSeed())
 	return snapshot
 }
 
@@ -244,14 +230,14 @@ func (s *KVStore) UUID() string {
 	return s.uuid
 }
 
-// CurrentVersion returns current max committed version with the given txnScope (local or global).
-func (s *KVStore) CurrentVersion(txnScope string) (kv.Version, error) {
+// CurrentTimestamp returns current timestamp with the given txnScope (local or global).
+func (s *KVStore) CurrentTimestamp(txnScope string) (uint64, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := s.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
-		return kv.NewVersion(0), errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	return kv.NewVersion(startTS), nil
+	return startTS, nil
 }
 
 func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64, error) {
@@ -268,7 +254,7 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
 		// This may cause duplicate data to be written.
 		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
-			if val.(bool) && !kv.IsMockCommitErrorEnable() {
+			if val.(bool) && !IsMockCommitErrorEnable() {
 				err = ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
 			}
 		})
