@@ -605,7 +605,7 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	_, err = txn1.Get(bo.GetCtx(), []byte("x"))
 	c.Assert(kv.IsErrNotFound(err), IsTrue)
 
-	txn2, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(oracle.GlobalTxnScope).SetStartTs(math.MaxUint64))
+	txn2, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, math.MaxUint64)
 	c.Assert(err, IsNil)
 	val, err := txn2.Get(bo.GetCtx(), []byte("x"))
 	c.Assert(err, IsNil)
