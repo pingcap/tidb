@@ -396,8 +396,10 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 			args := fn.GetArgs()
 			if len(args) > 0 {
 				arg0 := args[0]
-				if c, ok1 := arg0.(*expression.Column); ok1 {
-					col = c
+				if expression.ExtractColumnSet(args).Len() == 1 {
+					if c, ok1 := arg0.(*expression.Column); ok1 {
+						col = c
+					}
 				}
 			}
 		}
@@ -533,6 +535,9 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 var monotoneIncFuncs = map[string]struct{}{
 	ast.ToDays:        {},
 	ast.UnixTimestamp: {},
+	// Only when the function form is fn(column, const)
+	ast.Plus:  {},
+	ast.Minus: {},
 }
 
 // f(x) op const, op is > = <
