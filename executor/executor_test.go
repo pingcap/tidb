@@ -4064,6 +4064,23 @@ func (s *testSuiteP1) TestSelectPartition(c *C) {
 	tk.MustQuery("select a, b from th where b>10").Check(testkit.Rows("11 11"))
 	tk.MustExec("commit")
 	tk.MustQuery("select a, b from th where b>10").Check(testkit.Rows("11 11"))
+
+	// test partition function is scalar func
+	tk.MustExec("drop table if exists tscalar")
+	tk.MustExec(`create table tscalar (c1 int) partition by range (c1 % 30) (
+								partition p0 values less than (0),
+								partition p1 values less than (10),
+								partition p2 values less than (20),
+								partition pm values less than (maxvalue));`)
+	tk.MustExec("insert into tscalar values(0), (10), (40), (50), (55)")
+	// test IN expression
+	tk.MustExec("insert into tscalar values(-0), (-10), (-40), (-50), (-55)")
+	tk.MustQuery("select * from tscalar where c1 in (55, 55)").Check(testkit.Rows("55"))
+	tk.MustQuery("select * from tscalar where c1 in (40, 40)").Check(testkit.Rows("40"))
+	tk.MustQuery("select * from tscalar where c1 in (40)").Check(testkit.Rows("40"))
+	tk.MustQuery("select * from tscalar where c1 in (-40)").Check(testkit.Rows("-40"))
+	tk.MustQuery("select * from tscalar where c1 in (-40, -40)").Check(testkit.Rows("-40"))
+	tk.MustQuery("select * from tscalar where c1 in (-1)").Check(testkit.Rows())
 }
 
 func (s *testSuiteP1) TestDeletePartition(c *C) {
@@ -6452,6 +6469,15 @@ func (s *testSuite) TestIssue20305(c *C) {
 	tk.MustExec("CREATE TABLE `t3` (`y` year DEFAULT NULL, `a` int DEFAULT NULL)")
 	tk.MustExec("INSERT INTO `t3` VALUES (2069, 70), (2010, 11), (2155, 2156), (2069, 69)")
 	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
+}
+
+func (s *testSuite) TestIssue22817(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3 (a year)")
+	tk.MustExec("insert into t3 values (1991), (\"1992\"), (\"93\"), (94)")
+	tk.MustQuery("select * from t3 where a >= NULL").Check(testkit.Rows())
 }
 
 func (s *testSuite) TestIssue13953(c *C) {
