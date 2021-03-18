@@ -3609,6 +3609,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 		return b.buildMemTable(ctx, dbName, tableInfo)
 	}
+	if _, ok := tbl.(*tables.CachedTable); ok {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in virtual tables")
+		}
+		return b.buildMemTable(ctx, dbName, tableInfo)
+	}
 
 	if tableInfo.IsView() {
 		if tn.TableSample != nil {

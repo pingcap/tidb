@@ -2414,6 +2414,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				}
 				err = d.LockTables(ctx, lockStmt)
 			}
+		case ast.AlterTableCacheable:
+			err = d.CacheTable(ctx, ident, spec)
 		case ast.AlterTableExchangePartition:
 			err = d.ExchangeTablePartition(ctx, ident, spec)
 		case ast.AlterTableAddConstraint:
@@ -5398,6 +5400,35 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	if err == nil {
 		ctx.ReleaseTableLocks(unlockTables)
 		ctx.AddTableLock(lockTables)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) CacheTable(ctx sessionctx.Context, tb ast.Ident, spec *ast.AlterTableSpec) error {
+
+	fmt.Println("run here in cache tabl ....", tb, spec.Cacheable)
+
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if t.Meta().IsView() || t.Meta().IsSequence() {
+		return table.ErrUnsupportedOp.GenWithStackByArgs()
+	}
+
+	job := &model.Job {
+		SchemaID: schema.ID,
+		TableID: t.Meta().ID,
+		Type: model.ActionCacheTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args: []interface{}{spec.Cacheable},
+	}
+
+	// Send the ddl task to the channel and let the worker to do the job!!
+	err = d.doDDLJob(ctx, job)
+	if err == nil {
+
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)

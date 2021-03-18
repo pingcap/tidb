@@ -794,6 +794,10 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID int64, newSc
 	return ver, tblInfo, nil
 }
 
+func checkAndCacheTable() {
+
+}
+
 func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var comment string
 	if err := job.DecodeArgs(&comment); err != nil {
@@ -1109,4 +1113,49 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	default:
 		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
+}
+
+func onCacheTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var enable bool
+	if err := job.DecodeArgs(&enable); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+
+	tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, err
+	}
+	fmt.Println("run here worker on cache table ===", enable, *tbInfo)
+
+	// TODO: internal schema chhange
+	var stat model.TableCacheState
+	if enable {
+		stat = model.TableCacheStateEnabled
+	} else {
+		stat = model.TableCacheStateDisabled
+	}
+	tbInfo.Cache = &model.TableCacheInfo {
+		State: stat,
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+
+	fmt.Println("update table info  ...", job.SchemaID, *tbInfo)
+
+	se, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(se)
+	if stmt, err := ctx.ParseWithParams(context.Background(), "REPLACE INTO mysql.table_cache VALUES (%?, 'NONE', 0)", tbInfo.ID); err == nil {
+		ctx.ExecRestrictedStmt(stmt)
+	}
+
+	return ver, nil
 }

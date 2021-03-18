@@ -18,6 +18,7 @@
 package tables
 
 import (
+	"fmt"
 	"context"
 	"math"
 	"strconv"
@@ -97,6 +98,23 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+	t, err := tableFromMeta(allocs, tblInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	// Take table cache into considerationn.
+	if tblInfo.Cache != nil && tblInfo.Cache.State != model.TableCacheStateDisabled {
+		fmt.Println("use a cached table !!!  ====", tblInfo)
+		return &CachedTable {
+			Table: t,
+		}, nil
+	}
+	return t, nil
+}
+
+
+func tableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}

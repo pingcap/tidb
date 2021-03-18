@@ -160,14 +160,14 @@ const (
 	// CreateHelpTopic is the SQL statement creates help_topic table in system db.
 	// See: https://dev.mysql.com/doc/refman/5.5/en/system-database.html#system-database-help-tables
 	CreateHelpTopic = `CREATE TABLE IF NOT EXISTS mysql.help_topic (
-  		help_topic_id 		INT(10) UNSIGNED NOT NULL,
-  		name 				CHAR(64) NOT NULL,
-  		help_category_id 	SMALLINT(5) UNSIGNED NOT NULL,
-  		description 		TEXT NOT NULL,
-  		example 			TEXT NOT NULL,
-  		url 				TEXT NOT NULL,
-  		PRIMARY KEY (help_topic_id),
-  		UNIQUE KEY name (name)
+		help_topic_id 		INT(10) UNSIGNED NOT NULL,
+		name 				CHAR(64) NOT NULL,
+		help_category_id 	SMALLINT(5) UNSIGNED NOT NULL,
+		description 		TEXT NOT NULL,
+		example 			TEXT NOT NULL,
+		url 				TEXT NOT NULL,
+		PRIMARY KEY (help_topic_id),
+		UNIQUE KEY name (name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8 STATS_PERSISTENT=0 COMMENT='help topics';`
 
 	// CreateStatsMetaTable stores the meta of table statistics.
@@ -329,6 +329,11 @@ const (
 		LAST_USED_AT timestamp,
 		PRIMARY KEY(TABLE_ID, INDEX_ID)
 	);`
+
+	CreateTableCacheTable = `CREATE TABLE mysql.table_cache (
+		tid int primary key,
+		lock_type enum('NONE', 'READ', 'WRITE'),
+		lease uint64)`
 )
 
 // bootstrap initiates system DB for a store.
@@ -478,8 +483,11 @@ const (
 	// version67 restore all SQL bindings.
 	version67 = 67
 
+	// table_cache
+	version68 = 68
+
 	// please make sure this is the largest version
-	currentBootstrapVersion = version67
+	currentBootstrapVersion = version68
 )
 
 var (
@@ -551,6 +559,7 @@ var (
 		upgradeToVer65,
 		upgradeToVer66,
 		upgradeToVer67,
+		upgradeToVer68,
 	}
 )
 
@@ -1384,6 +1393,13 @@ func upgradeToVer67(s Session, ver int64) {
 	}
 }
 
+func upgradeToVer68(s Session, ver int64) {
+	if ver >= version68 {
+		return
+	}
+	doReentrantDDL(s, CreateTableCacheTable)
+}
+
 func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[string]bindInfo) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		bind := row.GetString(0)
@@ -1536,6 +1552,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateSchemaIndexUsageTable)
 	// Create stats_fm_sketch table.
 	mustExecute(s, CreateStatsFMSketchTable)
+	// Create meta table for table cache.
+	mustExecute(s, CreateTableCacheTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
