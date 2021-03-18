@@ -900,11 +900,12 @@ func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 
 		cleanupKeysCtx := context.WithValue(context.Background(), TxnStartKey, ctx.Value(TxnStartKey))
 		var err error
-		if c.isPessimistic && c.isOnePC() {
-			err = c.pessimisticRollbackMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
-		} else {
+		if !c.isOnePC() {
 			err = c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+		} else if c.isPessimistic {
+			err = c.pessimisticRollbackMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
 		}
+
 		if err != nil {
 			metrics.SecondaryLockCleanupFailureCounterRollback.Inc()
 			logutil.Logger(ctx).Info("2PC cleanup failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS),
