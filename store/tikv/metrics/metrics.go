@@ -50,6 +50,10 @@ var (
 	TiKVNoAvailableConnectionCounter       prometheus.Counter
 	TiKVAsyncCommitTxnCounter              *prometheus.CounterVec
 	TiKVOnePCTxnCounter                    *prometheus.CounterVec
+	TiKVStoreLimitErrorCounter             *prometheus.CounterVec
+	TiKVGRPCConnTransientFailureCounter    *prometheus.CounterVec
+	TiKVPanicCounter                       *prometheus.CounterVec
+	TiKVForwardRequestCounter              *prometheus.CounterVec
 )
 
 // Label constants.
@@ -65,6 +69,9 @@ const (
 	LblLockKeys        = "lock_keys"
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
+	LblAddress         = "address"
+	LblFromStore       = "from_store"
+	LblToStore         = "to_store"
 )
 
 func initMetrics(namespace, subsystem string) {
@@ -345,6 +352,38 @@ func initMetrics(namespace, subsystem string) {
 			Help:      "Counter of 1PC transactions.",
 		}, []string{LblType})
 
+	TiKVStoreLimitErrorCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "get_store_limit_token_error",
+			Help:      "store token is up to the limit, probably because one of the stores is the hotspot or unavailable",
+		}, []string{LblAddress, LblStore})
+
+	TiKVGRPCConnTransientFailureCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "connection_transient_failure_count",
+			Help:      "Counter of gRPC connection transient failure",
+		}, []string{LblAddress, LblStore})
+
+	TiKVPanicCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "panic_total",
+			Help:      "Counter of panic.",
+		}, []string{LblType})
+
+	TiKVForwardRequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "forward_request_counter",
+			Help:      "Counter of tikv request being forwarded through another node",
+		}, []string{LblFromStore, LblToStore, LblResult})
+
 	initShortcuts()
 }
 
@@ -393,4 +432,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
 	prometheus.MustRegister(TiKVAsyncCommitTxnCounter)
 	prometheus.MustRegister(TiKVOnePCTxnCounter)
+	prometheus.MustRegister(TiKVStoreLimitErrorCounter)
+	prometheus.MustRegister(TiKVGRPCConnTransientFailureCounter)
+	prometheus.MustRegister(TiKVPanicCounter)
+	prometheus.MustRegister(TiKVForwardRequestCounter)
 }
