@@ -758,7 +758,7 @@ func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select max(a+b) from t")
 	tk.MustQuery("select avg(a)+1 from t")
 	tk.MustQuery("select count(c), 5 from t")
-	// test functinal depend on primary key
+	// test functional depend on primary key
 	tk.MustQuery("select * from t group by a")
 	// test functional depend on unique not null columns
 	tk.MustQuery("select * from t group by b,d")
@@ -1202,4 +1202,15 @@ func (s *testSuiteAgg) TestIssue23277(c *C) {
 	tk.MustExec("insert into t values (-120), (127);")
 	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
 	tk.MustExec("drop table t;")
+}
+
+// https://github.com/pingcap/tidb/issues/23314
+func (s *testSuiteAgg) TestIssue23314(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(col1 time(2) NOT NULL)")
+	tk.MustExec("insert into t1 values(\"16:40:20.01\")")
+	res := tk.MustQuery("select col1 from t1 group by col1")
+	res.Check(testkit.Rows("16:40:20.01"))
 }
