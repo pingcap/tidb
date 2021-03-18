@@ -348,12 +348,12 @@ The initial implementation of dynamic privileges only implements a subset of MyS
 
 ### Adding new dynamic privileges to a lower privileged user
 
-In the case that `cloudAdmin` does not have `SUPER`, but requires additional fine grained privileges granted at a later date, there are two potential solutions:
+In the case that `cloudAdmin` does not have `SUPER`, but requires additional fine grained privileges granted at a later date, there are several potential solutions:
 
 1. Write a `session/bootstrap.go` task to "split" an existing `DYNAMIC` privilege into two. i.e. users with privilege `XYZ` now have `XYZ` and `ZYX`.
-
 2. Allow the privilege `SELECT, INSERT, UPDATE ON mysql.*` to `cloudAdmin` + `RELOAD` on `*.*`. This will allow `cloudAdmin` to insert `ZYX` into the `global_grant` table, and then run `FLUSH PRIVILEGES` to reload the privilege cache.
-
 3. Add an API for plugins that register new dynamic privileges, such that on first installation they can say `ZYX` is also satisfied by `XYZ` (triggering an internal copy of privileges).
+4. Support a feature similar to MySQL's [`--init-file`](https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_init_file) which executes with unrestricted privileges.
+5. Make the privilegemanager completely pluggable (it is currently an interface, and extending it to plugins is not a difficult stretch). Make cloudAdmin privileges embedded into the cloud-specific privilege manager, and not dependent on the internal system tables.
 
-The recommended method is (1), since the method (2) does not effectively restrict the credentials of `cloudAdmin`. (3) is a workaround for the fact that `visitInfo` does not support OR conditions for privileges.
+The current recommended method is (1), since the method (2) does not effectively restrict the credentials of `cloudAdmin`. (3) is a workaround for the fact that `visitInfo` does not support OR conditions for privileges. (4) and (5) have merit, but require development outside the scope of this current proposal.
