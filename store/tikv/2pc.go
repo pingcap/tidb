@@ -1171,7 +1171,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
 			zap.Uint64("sessionID", c.sessionID))
 		go func() {
-			defer c.ttlManager.close()
 			failpoint.Inject("asyncCommitDoNothing", func() {
 				failpoint.Return()
 			})
