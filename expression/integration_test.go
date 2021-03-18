@@ -5451,7 +5451,7 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	rows := tk.MustQuery("explain format = 'brief' select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
 		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
-	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "gt(cast(test.t.a), 10.10)")
+	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10)")
 	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\"), gt(test.t.b, 1988-01-01)")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
@@ -5459,7 +5459,7 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
 	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\")")
-	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "gt(cast(test.t.a), 10.10), gt(test.t.b, 1988-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10), gt(test.t.b, 1988-01-01)")
 
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_format' and store_type = 'tikv' and reason = 'for test'")
@@ -8877,6 +8877,16 @@ func (s *testIntegrationSuite) Test22717(c *C) {
 	tk.MustQuery("select b from t where b").Check(testkit.Rows("0", "1", "2"))
 	tk.MustQuery("select c from t where c").Check(testkit.Rows("a", "", "a,", ""))
 	tk.MustQuery("select d from t where d").Check(testkit.Rows("0", "1", "0,1"))
+}
+
+func (s *testIntegrationSuite) Test23262(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a year)")
+	tk.MustExec("insert into t values(2002)")
+	tk.MustQuery("select * from t where a=2").Check(testkit.Rows("2002"))
+	tk.MustQuery("select * from t where a='2'").Check(testkit.Rows("2002"))
 }
 
 func (s *testIntegrationSerialSuite) TestPartitionPruningRelaxOP(c *C) {

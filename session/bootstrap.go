@@ -166,7 +166,7 @@ const (
   		description 		TEXT NOT NULL,
   		example 			TEXT NOT NULL,
   		url 				TEXT NOT NULL,
-  		PRIMARY KEY (help_topic_id),
+  		PRIMARY KEY (help_topic_id) clustered,
   		UNIQUE KEY name (name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8 STATS_PERSISTENT=0 COMMENT='help topics';`
 
