@@ -120,7 +120,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 			return
 		}
 
-		err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), neededSchemaVersion)
+		err = do.ddl.SchemaSyncer().UpdateSelfVersion(do.Context, neededSchemaVersion)
 		if err != nil {
 			logutil.BgLogger().Info("update self version failed",
 				zap.Int64("usedSchemaVersion", usedSchemaVersion),
@@ -150,7 +150,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		return 0, nil, fullLoad, err
 	}
 
-	bundles, err := infosync.GetAllRuleBundles(context.TODO())
+	bundles, err := infosync.GetAllRuleBundles(do.Context)
 	if err != nil {
 		return 0, nil, fullLoad, err
 	}
@@ -477,7 +477,7 @@ func (do *Domain) infoSyncerKeeper() {
 			do.info.ReportMinStartTS(do.Store())
 		case <-do.info.Done():
 			logutil.BgLogger().Info("server info syncer need to restart")
-			if err := do.info.Restart(context.Background()); err != nil {
+			if err := do.info.Restart(do.Context); err != nil {
 				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
 			} else {
 				logutil.BgLogger().Info("server info syncer restarted")
@@ -500,13 +500,13 @@ func (do *Domain) topologySyncerKeeper() {
 	for {
 		select {
 		case <-ticker.C:
-			err := do.info.StoreTopologyInfo(context.Background())
+			err := do.info.StoreTopologyInfo(do.Context)
 			if err != nil {
 				logutil.BgLogger().Error("refresh topology in loop failed", zap.Error(err))
 			}
 		case <-do.info.TopologyDone():
 			logutil.BgLogger().Info("server topology syncer need to restart")
-			if err := do.info.RestartTopology(context.Background()); err != nil {
+			if err := do.info.RestartTopology(do.Context); err != nil {
 				logutil.BgLogger().Error("server topology syncer restart failed", zap.Error(err))
 			} else {
 				logutil.BgLogger().Info("server topology syncer restarted")
@@ -544,7 +544,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if !ok {
 				logutil.BgLogger().Warn("reload schema in loop, schema syncer need rewatch")
 				// Make sure the rewatch doesn't affect load schema, so we watch the global schema version asynchronously.
-				syncer.WatchGlobalSchemaVer(context.Background())
+				syncer.WatchGlobalSchemaVer(do.Context)
 			}
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
@@ -775,7 +775,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 
 	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
 		if do.etcdClient != nil {
-			err := do.acquireServerID(do)
+			err := do.acquireServerID()
 			if err != nil {
 				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
 				do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
@@ -902,7 +902,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
 	if do.etcdClient != nil {
-		watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
+		watchCh = do.etcdClient.Watch(do.Context, privilegeKey)
 		duration = 10 * time.Minute
 	}
 
@@ -924,7 +924,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			}
 			if !ok {
 				logutil.BgLogger().Error("load privilege loop watch channel closed")
-				watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
+				watchCh = do.etcdClient.Watch(do.Context, privilegeKey)
 				count++
 				if count > 10 {
 					time.Sleep(time.Duration(count) * time.Second)
@@ -1125,9 +1125,9 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(context.Background(), id)
+		statsOwner = owner.NewMockManager(do.Context, id)
 	} else {
-		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
+		statsOwner = owner.NewOwnerManager(do.Context, do.etcdClient, prompt, id, ownerKey)
 	}
 	// TODO: Need to do something when err is not nil.
 	err := statsOwner.CampaignOwner()
@@ -1302,15 +1302,15 @@ const privilegeKey = "/tidb/privilege"
 func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
-		_, err := row.Put(context.Background(), privilegeKey, "")
+		_, err := row.Put(do.Context, privilegeKey, "")
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
 	}
 	// update locally
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	if stmt, err := exec.ParseWithParams(context.Background(), `FLUSH PRIVILEGES`); err == nil {
-		_, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
+	if stmt, err := exec.ParseWithParams(do.Context, `FLUSH PRIVILEGES`); err == nil {
+		_, _, err := exec.ExecRestrictedStmt(do.Context, stmt)
 		if err != nil {
 			logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
 		}
@@ -1390,7 +1390,7 @@ func initByLDFlagsForGlobalKill() {
 	}
 }
 
-func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Session, error) {
+func (do *Domain) retrieveServerIDSession() (*concurrency.Session, error) {
 	if do.serverIDSession != nil {
 		return do.serverIDSession, nil
 	}
@@ -1398,7 +1398,7 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 	// `etcdClient.Grant` needs a shortterm timeout, to avoid blocking if connection to PD lost,
 	//   while `etcdClient.KeepAlive` should be longterm.
 	//   So we separately invoke `etcdClient.Grant` and `concurrency.NewSession` with leaseID.
-	childCtx, cancel := context.WithTimeout(ctx, retrieveServerIDSessionTimeout)
+	childCtx, cancel := context.WithTimeout(do.Context, retrieveServerIDSessionTimeout)
 	resp, err := do.etcdClient.Grant(childCtx, int64(serverIDTTL.Seconds()))
 	cancel()
 	if err != nil {
@@ -1408,7 +1408,7 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 	leaseID := resp.ID
 
 	session, err := concurrency.NewSession(do.etcdClient,
-		concurrency.WithLease(leaseID), concurrency.WithContext(context.Background()))
+		concurrency.WithLease(leaseID), concurrency.WithContext(do.Context))
 	if err != nil {
 		logutil.BgLogger().Error("retrieveServerIDSession.NewSession fail", zap.Error(err))
 		return nil, err
@@ -1417,10 +1417,10 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 	return session, nil
 }
 
-func (do *Domain) acquireServerID(ctx context.Context) error {
+func (do *Domain) acquireServerID() error {
 	atomic.StoreUint64(&do.serverID, 0)
 
-	session, err := do.retrieveServerIDSession(ctx)
+	session, err := do.retrieveServerIDSession()
 	if err != nil {
 		return err
 	}
@@ -1431,7 +1431,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
 		value := "0"
 
-		childCtx, cancel := context.WithTimeout(ctx, acquireServerIDTimeout)
+		childCtx, cancel := context.WithTimeout(do.Context, acquireServerIDTimeout)
 		txn := do.etcdClient.Txn(childCtx)
 		t := txn.If(cmp)
 		resp, err := t.Then(clientv3.OpPut(key, value, clientv3.WithLease(session.Lease()))).Commit()
@@ -1452,15 +1452,15 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 	}
 }
 
-func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
-	session, err := do.retrieveServerIDSession(ctx)
+func (do *Domain) refreshServerIDTTL() error {
+	session, err := do.retrieveServerIDSession()
 	if err != nil {
 		return err
 	}
 
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, do.ServerID())
 	value := "0"
-	err = ddlutil.PutKVToEtcd(ctx, do.etcdClient, refreshServerIDRetryCnt, key, value, clientv3.WithLease(session.Lease()))
+	err = ddlutil.PutKVToEtcd(do.Context, do.etcdClient, refreshServerIDRetryCnt, key, value, clientv3.WithLease(session.Lease()))
 	if err != nil {
 		logutil.BgLogger().Error("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
 	} else {
@@ -1504,7 +1504,7 @@ func (do *Domain) serverIDKeeper() {
 		do.isLostConnectionToPD.Set(0)
 		lastSucceedTimestamp = time.Now()
 
-		if err := do.info.StoreServerInfo(context.Background()); err != nil {
+		if err := do.info.StoreServerInfo(do.Context); err != nil {
 			logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err))
 		}
 	}
@@ -1523,7 +1523,7 @@ func (do *Domain) serverIDKeeper() {
 		select {
 		case <-tickerKeepAlive.C:
 			if !do.IsLostConnectionToPD() {
-				if err := do.refreshServerIDTTL(context.Background()); err == nil {
+				if err := do.refreshServerIDTTL(); err == nil {
 					lastSucceedTimestamp = time.Now()
 				} else {
 					if lostConnectionToPDTimeout > 0 && time.Since(lastSucceedTimestamp) > lostConnectionToPDTimeout {
@@ -1533,7 +1533,7 @@ func (do *Domain) serverIDKeeper() {
 			}
 		case <-tickerCheckRestored.C:
 			if do.IsLostConnectionToPD() {
-				if err := do.acquireServerID(context.Background()); err == nil {
+				if err := do.acquireServerID(); err == nil {
 					onConnectionToPDRestored()
 				}
 			}
