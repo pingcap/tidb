@@ -641,7 +641,7 @@ func (p *basePhysicalPlan) ResolveIndices() (err error) {
 		}
 		if p.self != nil {
 			switch p.self.(type) {
-			case *PhysicalHashJoin:
+			case *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexHashJoin, *PhysicalIndexJoin, *PhysicalIndexMergeJoin:
 				join, _ := p.self.(*PhysicalHashJoin)
 				switch join.JoinType {
 				case RightOuterJoin:
@@ -655,7 +655,6 @@ func (p *basePhysicalPlan) ResolveIndices() (err error) {
 				default:
 					p.AlignNullFlag(child.Schema())
 				}
-			case *PhysicalMergeJoin, *PhysicalIndexHashJoin, *PhysicalIndexJoin, *PhysicalIndexMergeJoin:
 			default:
 				p.AlignNullFlag(child.Schema())
 			}
