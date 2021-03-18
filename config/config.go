@@ -534,7 +534,7 @@ type Experimental struct {
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable global kill.
-	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
+	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -707,6 +707,7 @@ var deprecatedConfig = map[string]struct{}{
 	"experimental.allow-auto-random": {},
 	"enable-redact-log":              {}, // use variable tidb_redact_log instead
 	"tikv-client.copr-cache.enable":  {},
+	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -730,7 +731,7 @@ var IsOOMActionSetByUser bool
 // The function enforceCmdArgs is used to merge the config file with command arguments:
 // For example, if you start TiDB by the command "./tidb-server --port=3000", the port number should be
 // overwritten to 3000 and ignore the port number in the config file.
-func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFunc ConfReloadFunc, enforceCmdArgs func(*Config)) {
+func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCmdArgs func(*Config)) {
 	cfg := GetGlobalConfig()
 	var err error
 	if confPath != "" {
