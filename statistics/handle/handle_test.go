@@ -1563,7 +1563,7 @@ partition by range (a) (
 	tk.MustExec("alter table t drop partition p2;")
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	globalStats = h.GetTableStats(tableInfo)
-	// The value of global.count will be updated automatically after we drop or truncate the table partition.
+	// The value of global.count will be updated automatically after we drop the table partition.
 	c.Assert(globalStats.Count, Equals, int64(7))
 	c.Assert(globalStats.ModifyCount, Equals, int64(0))
 
@@ -1603,7 +1603,12 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	c.Assert(len(result), Equals, 7)
-	c.Assert(result[0][5], Equals, "15")
+	// c.Assert(result[0][5], Equals, "15")
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	globalStats := h.GetTableStats(tableInfo)
+	c.Assert(globalStats.Count, Equals, int64(15))
 
 	tk.MustExec("alter table t drop partition p3, p5;")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
@@ -1613,7 +1618,8 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	c.Assert(len(result), Equals, 5)
 	// The value of global.count will be updated automatically after we drop the table partition.
-	c.Assert(result[0][5], Equals, "11")
+	globalStats = h.GetTableStats(tableInfo)
+	c.Assert(globalStats.Count, Equals, int64(11))
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
@@ -1624,13 +1630,15 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	// The value of global.count will not be updated automatically when we truncate the table partition.
 	// Because the partition-stats in the partition table which have been truncated has not been updated.
-	c.Assert(result[0][5], Equals, "11")
+	globalStats = h.GetTableStats(tableInfo)
+	c.Assert(globalStats.Count, Equals, int64(11))
 
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	c.Assert(len(result), Equals, 5)
 	// The result for the globalStats.count will be right now
-	c.Assert(result[0][5], Equals, "7")
+	globalStats = h.GetTableStats(tableInfo)
+	c.Assert(globalStats.Count, Equals, int64(7))
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
