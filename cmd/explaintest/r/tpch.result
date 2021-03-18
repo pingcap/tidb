@@ -711,6 +711,7 @@ and n_name = 'MOZAMBIQUE'
 order by
 value desc;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Projection_49	1304801.67	root		tpch.partsupp.ps_partkey, Column#35
 └─Sort_50	1304801.67	root		Column#35:desc
   └─Selection_52	1304801.67	root		gt(Column#35, NULL)
@@ -725,6 +726,22 @@ Projection_49	1304801.67	root		tpch.partsupp.ps_partkey, Column#35
           │   └─TableFullScan_65	500000.00	cop[tikv]	table:supplier	keep order:false
           └─TableReader_71(Probe)	40000000.00	root		data:TableFullScan_70
             └─TableFullScan_70	40000000.00	cop[tikv]	table:partsupp	keep order:false
+=======
+Projection	1304801.67	root		tpch.partsupp.ps_partkey, Column#35
+└─Sort	1304801.67	root		Column#35:desc
+  └─Selection	1304801.67	root		gt(Column#35, NULL)
+    └─HashAgg	1631002.09	root		group by:Column#61, funcs:sum(Column#59)->Column#35, funcs:firstrow(Column#60)->tpch.partsupp.ps_partkey
+      └─Projection	1631002.09	root		mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY))->Column#59, tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
+        └─HashJoin	1631002.09	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
+          ├─HashJoin(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
+          │ ├─TableReader(Build)	1.00	root		data:Selection
+          │ │ └─Selection	1.00	cop[tikv]		eq(tpch.nation.n_name, "MOZAMBIQUE")
+          │ │   └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
+          │ └─TableReader(Probe)	500000.00	root		data:TableFullScan
+          │   └─TableFullScan	500000.00	cop[tikv]	table:supplier	keep order:false
+          └─TableReader(Probe)	40000000.00	root		data:TableFullScan
+            └─TableFullScan	40000000.00	cop[tikv]	table:partsupp	keep order:false
+>>>>>>> 28c374849... planner: remove some risky cache operations in the plan builder (#23354)
 /*
 Q12 Shipping Modes and Order Priority Query
 This query determines whether selecting less expensive modes of shipping is negatively affecting the critical-priority
