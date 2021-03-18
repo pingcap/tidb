@@ -1579,6 +1579,8 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec(`create table t (a int) partition by range (a) (
 		partition p0 values less than (10),
 		partition p1 values less than (20),
@@ -1587,51 +1589,48 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 		partition p4 values less than (50),
 		partition p5 values less than (60)
 	)`)
-	tk.MustExec("set @@session.tidb_analyze_version=2")
-	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	do := s.do
+	is := do.InfoSchema()
+	h := do.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), " +
 		"(11), (21), (31), (41), (51)," +
 		"(12), (22), (32), (42), (52);")
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	tk.MustExec("analyze table t")
-	c.Assert(len(tk.MustQuery("show stats_meta where table_name = 't';").Rows()), Equals, 7)
-	do := s.do
-	is := do.InfoSchema()
-	h := do.StatsHandle()
 	c.Assert(h.Update(is), IsNil)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo := tbl.Meta()
-	globalStats := h.GetTableStats(tableInfo)
-	c.Assert(globalStats.Count, Equals, int64(15))
+	tk.MustExec("analyze table t")
+	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
+	c.Assert(len(result), Equals, 7)
+	c.Assert(result[0][5], Equals, "15")
 
-	tk.MustExec("alter table t drop partition p4, p5;")
-	event := <-h.DDLEventCh()
-	err = h.HandleDDLEvent(event)
-	//c.Assert(event.String(), Equals, "")
+	tk.MustExec("alter table t drop partition p3, p5;")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(len(tk.MustQuery("show stats_meta where table_name = 't';").Rows()), Equals, 5)
-	globalStats = h.GetTableStats(tableInfo)
+	c.Assert(h.Update(is), IsNil)
+	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
+	c.Assert(len(result), Equals, 5)
 	// The value of global.count will be updated automatically after we drop the table partition.
-	c.Assert(globalStats.Count, Equals, int64(11))
-	c.Assert(globalStats.ModifyCount, Equals, int64(0))
+	c.Assert(result[0][5], Equals, "11")
 
-	tk.MustExec("alter table t truncate partition p2, p3;")
+	tk.MustExec("alter table t truncate partition p2, p4;")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	// Only delete the data from the partition p2 and p3. It will not delete the partition-stats.
-	c.Assert(len(tk.MustQuery("show stats_meta where table_name = 't';").Rows()), Equals, 5)
-	globalStats = h.GetTableStats(tableInfo)
+	c.Assert(h.Update(is), IsNil)
+	// Only delete the data from the partition p2 and p4. It will not delete the partition-stats.
+	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	// The value of global.count will not be updated automatically when we truncate the table partition.
 	// Because the partition-stats in the partition table which have been truncated has not been updated.
-	c.Assert(globalStats.Count, Equals, int64(11))
-	c.Assert(globalStats.ModifyCount, Equals, int64(0))
+	c.Assert(result[0][5], Equals, "11")
 
 	tk.MustExec("analyze table t;")
-	c.Assert(len(tk.MustQuery("show stats_meta where table_name = 't';").Rows()), Equals, 5)
-	globalStats = h.GetTableStats(tableInfo)
-	c.Assert(globalStats.Count, Equals, int64(7))
-	c.Assert(globalStats.ModifyCount, Equals, int64(0))
+	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
+	c.Assert(len(result), Equals, 5)
+	// The result for the globalStats.count will be right now
+	c.Assert(result[0][5], Equals, "7")
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
