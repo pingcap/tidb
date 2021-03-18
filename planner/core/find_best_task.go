@@ -528,7 +528,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			continue
 		}
 		// if we already know the range of the scan is empty, just return a TableDual
-		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
+		if len(path.Ranges) == 0 {
 			return []*candidatePath{{path: path}}
 		}
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {

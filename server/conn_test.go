@@ -219,15 +219,19 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Assert(err, IsNil)
 
 	expected := new(bytes.Buffer)
-	expected.WriteByte(0x0a)                                                                             // Protocol
-	expected.WriteString(mysql.ServerVersion)                                                            // Version
-	expected.WriteByte(0x00)                                                                             // NULL
-	binary.Write(expected, binary.LittleEndian, uint32(1))                                               // Connection ID
-	expected.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00})                         // Salt
-	binary.Write(expected, binary.LittleEndian, uint16(defaultCapability&0xFFFF))                        // Server Capability
-	expected.WriteByte(uint8(mysql.DefaultCollationID))                                                  // Server Language
-	binary.Write(expected, binary.LittleEndian, mysql.ServerStatusAutocommit)                            // Server Status
-	binary.Write(expected, binary.LittleEndian, uint16((defaultCapability>>16)&0xFFFF))                  // Extended Server Capability
+	expected.WriteByte(0x0a)                                     // Protocol
+	expected.WriteString(mysql.ServerVersion)                    // Version
+	expected.WriteByte(0x00)                                     // NULL
+	err = binary.Write(expected, binary.LittleEndian, uint32(1)) // Connection ID
+	c.Assert(err, IsNil)
+	expected.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00})        // Salt
+	err = binary.Write(expected, binary.LittleEndian, uint16(defaultCapability&0xFFFF)) // Server Capability
+	c.Assert(err, IsNil)
+	expected.WriteByte(uint8(mysql.DefaultCollationID))                             // Server Language
+	err = binary.Write(expected, binary.LittleEndian, mysql.ServerStatusAutocommit) // Server Status
+	c.Assert(err, IsNil)
+	err = binary.Write(expected, binary.LittleEndian, uint16((defaultCapability>>16)&0xFFFF)) // Extended Server Capability
+	c.Assert(err, IsNil)
 	expected.WriteByte(0x15)                                                                             // Authentication Plugin Length
 	expected.Write([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})                   // Unused
 	expected.Write([]byte{0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x00}) // Salt
@@ -486,7 +490,10 @@ func (ts *ConnTestSuite) TestDispatchClientProtocol41(c *C) {
 func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability uint32) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer dom.Close()

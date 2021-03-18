@@ -641,13 +641,10 @@ func (s *testTableSuite) TestTableRowIDShardingInfo(c *C) {
 	testFunc("performance_schema", nil)
 	testFunc("uucc", "NOT_SHARDED")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
-	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a bigint key auto_random)")
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a bigint key clustered auto_random)")
 	assertShardingInfo("t4", "PK_AUTO_RANDOM_BITS=5")
 
-	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key auto_random(1))")
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key clustered auto_random(1))")
 	assertShardingInfo("t5", "PK_AUTO_RANDOM_BITS=1")
 
 	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
@@ -1474,6 +1471,19 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 	is.SetBundle(bundle1)
 	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by partition_name, rule_id").Check(testkit.Rows(
 		"0 test test_placement p0", "1 test test_placement p0", "0 test test_placement p1", "1 test test_placement p1"))
+
+	// do not report error for invalid ObjectID
+	// check pingcap/tidb/issues/22950
+	bundle1.ID = placement.GroupID(1)
+	tk.MustQuery("select rule_id from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
+		"0", "1"))
+
+	// test the failpoint for testing
+	fpName := "github.com/pingcap/tidb/executor/outputInvalidPlacementRules"
+	c.Assert(failpoint.Enable(fpName, "return(true)"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+	tk.MustQuery("select rule_id from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
+		"0", "0", "1", "1"))
 }
 
 func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {

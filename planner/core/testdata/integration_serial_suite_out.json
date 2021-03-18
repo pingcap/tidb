@@ -1204,9 +1204,8 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#4)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(plus(test.t.id, 1))->Column#7",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1223,18 +1222,17 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#4)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(plus(test.t.id, 1))->Column#7",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#4)->Column#5",
-          "└─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
-          "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(plus(test.t.id, 1))->Column#7",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1250,10 +1248,9 @@
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
           "StreamAgg 1.00 root  funcs:sum(Column#7)->Column#5",
-          "└─Projection 10000.00 root  cast(Column#4, decimal(41,0) BINARY)->Column#7",
-          "  └─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
-          "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(plus(test.t.id, 1))->Column#7",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1348,9 +1345,8 @@
           "HashAgg 1.00 root  funcs:count(Column#8)->Column#5",
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#4)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(plus(test.t.id, 1))->Column#8",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1369,18 +1365,17 @@
           "HashAgg 1.00 root  funcs:sum(Column#8)->Column#5",
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#4)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(plus(test.t.id, 1))->Column#8",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#4)->Column#5",
-          "└─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
-          "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(plus(test.t.id, 1))->Column#7",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1396,10 +1391,9 @@
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
           "StreamAgg 1.00 root  funcs:sum(Column#7)->Column#5",
-          "└─Projection 10000.00 root  cast(Column#4, decimal(41,0) BINARY)->Column#7",
-          "  └─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
-          "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(plus(test.t.id, 1))->Column#7",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1515,9 +1509,8 @@
           "HashAgg 1.00 root  funcs:count(Column#8)->Column#5",
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#4)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(plus(test.t.id, 1))->Column#8",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1536,9 +1529,8 @@
           "HashAgg 1.00 root  funcs:sum(Column#8)->Column#5",
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#4)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(plus(test.t.id, 1))->Column#8",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
