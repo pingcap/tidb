@@ -236,8 +236,8 @@ type RegionCache struct {
 
 	mu struct {
 		sync.RWMutex                         // mutex protect cached region
-		regions      map[RegionVerID]*Region // cached regions be organized as regionVerID to region ref mapping
-		sorted       *btree.BTree            // cache regions be organized as sorted key to region ref mapping
+		regions      map[RegionVerID]*Region // cached regions are organized as regionVerID to region ref mapping
+		sorted       *btree.BTree            // cache regions are organized as sorted key to region ref mapping
 	}
 	storeMu struct {
 		sync.RWMutex
