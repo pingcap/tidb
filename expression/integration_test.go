@@ -7946,7 +7946,7 @@ func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollationIndexEncod
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table t(a int, b char(10) collate utf8mb4_bin, c char(10) collate utf8mb4_general_ci," +
 		"d varchar(10) collate utf8mb4_bin, e varchar(10) collate utf8mb4_general_ci, f char(10) collate utf8mb4_unicode_ci, g varchar(10) collate utf8mb4_unicode_ci, " +
 		"primary key(a, b, c, d, e, f, g), key a(a), unique key ua(a), key b(b), unique key ub(b), key c(c), unique key uc(c)," +
@@ -8909,9 +8909,8 @@ func (s *testIntegrationSuite) TestClusteredIndexCorCol(c *C) {
 	// For issue 23076
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
 	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int, c_str) , key(c_int) );")
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int, c_str) clustered, key(c_int) );")
 	tk.MustExec("create table t2  like t1 ;")
 	tk.MustExec("insert into t1 values (1, 'crazy lumiere'), (10, 'goofy mestorf');")
 	tk.MustExec("insert into t2 select * from t1 ;")
