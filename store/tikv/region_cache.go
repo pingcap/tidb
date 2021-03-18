@@ -53,9 +53,6 @@ const (
 // RegionCacheTTLSec is the max idle time for regions in the region cache.
 var RegionCacheTTLSec int64 = 600
 
-// EnableForwarding is the flag that forwarding request via region follower to the leader is enable.
-var EnableForwarding = false
-
 const (
 	updated  int32 = iota // region is updated and no need to reload.
 	needSync              //  need sync new region info.
@@ -247,7 +244,8 @@ func (r *Region) checkNeedReload() bool {
 
 // RegionCache caches Regions loaded from PD.
 type RegionCache struct {
-	pdClient pd.Client
+	pdClient         pd.Client
+	enableForwarding bool
 
 	mu struct {
 		sync.RWMutex                         // mutex protect cached region
@@ -274,6 +272,7 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.closeCh = make(chan struct{})
 	interval := config.GetGlobalConfig().StoresRefreshInterval
 	go c.asyncCheckAndResolveLoop(time.Duration(interval) * time.Second)
+	c.enableForwarding = config.GetGlobalConfig().EnableForwarding
 	return c
 }
 
@@ -466,7 +465,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		proxyAccessIdx AccessIndex
 		proxyStoreIdx  int
 	)
-	if EnableForwarding && isLeaderReq {
+	if c.enableForwarding && isLeaderReq {
 		if atomic.LoadInt32(&store.needForwarding) == 0 {
 			regionStore.unsetProxyStoreIfNeeded(cachedRegion)
 		} else {
@@ -660,7 +659,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				if leaderReq {
 					if s.requestLiveness(bo) == reachable {
 						return
-					} else if EnableForwarding {
+					} else if c.enableForwarding {
 						s.startHealthCheckLoopIfNeeded(c)
 						startForwarding = true
 					}
@@ -1223,7 +1222,7 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 }
 
 func (c *RegionCache) getProxyStore(region *Region, store *Store, rs *RegionStore, workStoreIdx AccessIndex) (proxyStore *Store, proxyAccessIdx AccessIndex, proxyStoreIdx int, err error) {
-	if !EnableForwarding || store.storeType != TiKV || atomic.LoadInt32(&store.needForwarding) == 0 {
+	if !c.enableForwarding || store.storeType != TiKV || atomic.LoadInt32(&store.needForwarding) == 0 {
 		return
 	}
 

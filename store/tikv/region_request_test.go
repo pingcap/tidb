@@ -584,8 +584,7 @@ func (s *testRegionRequestToThreeStoresSuite) loadAndGetLeaderStore(c *C) (*Stor
 }
 
 func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
-	EnableForwarding = true
-	defer func() { EnableForwarding = false }()
+	s.regionRequestSender.regionCache.enableForwarding = true
 
 	// First get the leader's addr from region cache
 	leaderStore, leaderAddr := s.loadAndGetLeaderStore(c)
