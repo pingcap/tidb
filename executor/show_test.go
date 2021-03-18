@@ -1025,16 +1025,14 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 }
 
-func (s *testSerialSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+func (s *testSuite5) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists auto_random_db;")
 	defer tk.MustExec("drop database if exists auto_random_db;")
 	tk.MustExec("use auto_random_db;")
 	tk.MustExec("drop table if exists t;")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
+	tk.MustExec("create table t (a bigint unsigned auto_random primary key clustered);")
 	tk.MustExec("set @@global.tidb_scatter_region=1;")
 	// 18446744073709541615 is MaxUint64 - 10000.
 	// 18446744073709551615 is the MaxUint64.
