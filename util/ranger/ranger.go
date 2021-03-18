@@ -97,6 +97,10 @@ func convertPoint(sc *stmtctx.StatementContext, point *point, tp *types.FieldTyp
 			// see issue #20101: overflow when converting integer to year
 		} else if tp.Tp == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
+		} else if tp.Tp == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
+			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
+			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
+			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
 		} else {
 			return point, errors.Trace(err)
 		}
