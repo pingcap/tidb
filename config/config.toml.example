@@ -86,11 +86,6 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
-# alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
-# If it is true, we can add the primary key by "alter table". However, if a table already exists before the switch is turned true and the data type of its primary key column is an integer,
-# the primary key cannot be dropped.
-alter-primary-key = false
-
 # server-version is used to change the version string of TiDB in the following scenarios:
 # 1. the server version returned by builtin-function `VERSION()`.
 # 2. the server version filled in handshake packets of MySQL Connection Protocol, see https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::Handshake for more details.
@@ -468,8 +463,6 @@ history-size = 24
 [experimental]
 # enable creating expression index.
 allow-expression-index = false
-# enable global kill.
-enable-global-kill = false
 
 # server level isolation read by engines and labels
 [isolation-read]

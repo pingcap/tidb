@@ -268,14 +268,15 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 		binlog.MutationType_Insert,
 	})
 
-	// Test cannot build clustered index tables when binlog client exists.
-	tk.MustExec("create table local_clustered_index (c1 varchar(255) primary key clustered);")
-	warnMsg := "Warning 1105 cannot build clustered index table because the binlog is ON"
-	tk.MustQuery("show warnings;").Check(testkit.Rows(warnMsg))
+	// Cannot create common clustered index table when binlog client exists.
+	errMsg := "[ddl:8200]Cannot create clustered index table when the binlog is ON"
+	tk.MustGetErrMsg("create table local_clustered_index (c1 varchar(255) primary key clustered);", errMsg)
+	// Create int clustered index table when binlog client exists.
+	tk.MustExec("create table local_clustered_index (c1 bigint primary key clustered);")
 	tk.MustQuery("select tidb_pk_type from information_schema.tables where table_name = 'local_clustered_index' and table_schema = 'test';").
-		Check(testkit.Rows("NON-CLUSTERED"))
+		Check(testkit.Rows("CLUSTERED"))
 	tk.MustExec("drop table if exists local_clustered_index;")
-	// Test clustered index tables will not write binlog.
+	// Test common clustered index tables will not write binlog.
 	tk.Se.GetSessionVars().BinlogClient = nil
 	tk.MustExec("create table local_clustered_index (c1 varchar(255) primary key clustered);")
 	tk.MustQuery("select tidb_pk_type from information_schema.tables where table_name = 'local_clustered_index' and table_schema = 'test';").
