@@ -603,10 +603,16 @@ func (s *testPointGetSuite) TestIssue18042(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, c int, primary key(a));")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), index ab(a, b));")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
-	tk.MustExec("SELECT /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 MB) */ * FROM t where a = 1;")
+	tk.MustExec("SELECT /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 MB) */ * FROM t use index(ab) where a = 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(1<<20))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
+
+	rs := tk.MustQuery("EXPLAIN SELECT * FROM t use index(ab) where a = 1").Rows()
+	c.Assert(strings.Contains(strings.ToLower(rs[0][0].(string)), "point_get"), IsTrue)
+	// use-index hint is not supported by point-get
+	c.Assert(strings.Contains(strings.ToLower(rs[0][3].(string)), "index:PRIMARY(a)"), IsTrue)
+
 	tk.MustExec("drop table t")
 }
