@@ -24,7 +24,6 @@ import (
 
 	"github.com/google/btree"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
@@ -557,7 +556,6 @@ func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
 	c.Assert(ctx.ProxyStore.storeID, Equals, s.store2)
 
 	// Recover the store
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockRequestLiveness", "return(true)"), IsNil)
 	s.cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
 		return reachable
 	}
