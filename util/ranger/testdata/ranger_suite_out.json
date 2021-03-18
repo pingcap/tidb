@@ -5,11 +5,11 @@
       {
         "SQL": "explain format = 'brief' select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t",
         "Result": [
-          "Projection 2.00 root  Column#17",
-          "└─Apply 2.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#16)",
+          "Projection 2.00 root  Column#27",
+          "└─Apply 2.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#26)",
           "  ├─TableReader(Build) 2.00 root  data:TableFullScan",
           "  │ └─TableFullScan 2.00 cop[tikv] table:t keep order:false",
-          "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#16",
+          "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#26",
           "    └─HashJoin 2.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "      ├─TableReader(Build) 2.00 root  data:TableFullScan",
           "      │ └─TableFullScan 2.00 cop[tikv] table:t1 keep order:false",
