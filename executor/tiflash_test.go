@@ -43,7 +43,6 @@ type tiflashTestSuite struct {
 }
 
 func (s *tiflashTestSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	var err error
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c cluster.Cluster) {
@@ -312,6 +311,8 @@ func (s *tiflashTestSuite) TestMppEnum(c *C) {
 }
 
 func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
 	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -345,7 +346,6 @@ func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
 
 // all goroutines exit if one goroutine hangs but another return errors
 func (s *tiflashTestSuite) TestMppGoroutinesExitFromErrors(c *C) {
-	defer testleak.AfterTest(c)()
 	// mock non-root tasks return error
 	var mppNonRootTaskError = "github.com/pingcap/tidb/store/copr/mppNonRootTaskError"
 	// mock root tasks hang
