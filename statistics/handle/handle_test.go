@@ -1561,20 +1561,13 @@ partition by range (a) (
 	c.Assert(globalStats.ModifyCount, Equals, int64(0))
 
 	tk.MustExec("alter table t drop partition p2;")
-	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	globalStats = h.GetTableStats(tableInfo)
-	// The value of global.count will be updated automatically after we drop the table partition.
-	c.Assert(globalStats.Count, Equals, int64(7))
-	c.Assert(globalStats.ModifyCount, Equals, int64(0))
-
 	tk.MustExec("analyze table t;")
 	globalStats = h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4)
-	// The value of global.Count is correct now.
 	c.Assert(globalStats.Count, Equals, int64(7))
 }
 
-func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
+func (s *testSerialStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1603,7 +1596,6 @@ func (s *testStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	c.Assert(len(result), Equals, 7)
-	// c.Assert(result[0][5], Equals, "15")
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
