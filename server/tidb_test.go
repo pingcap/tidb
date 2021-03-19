@@ -1157,6 +1157,7 @@ func (ts *tidbTestSuite) TestPKNotNullFlagOfOuterJoin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = Execute(ctx, qctx, "create table t(c1 int key, c2 int);")
 	c.Assert(err, IsNil)
+
 	// the pk is null after executing the outer join
 	rs, err := Execute(ctx, qctx, "select t.c1, sum(t1.c2) from t right join t as t1 on t.c1 =t1.c1 group by t.c1;")
 	c.Assert(err, IsNil)
@@ -1164,11 +1165,28 @@ func (ts *tidbTestSuite) TestPKNotNullFlagOfOuterJoin(c *C) {
 	c.Assert(len(cols), Equals, 2)
 	expectFlag := uint16(tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+
 	// the pk is not null after transforming an outer join into an inner join
 	rs, err = Execute(ctx, qctx, "select t.c1, sum(t1.c2) from t right join t as t1 on t.c1 =t1.c1 where t.c1 != t.c2 group by t.c1;")
 	c.Assert(err, IsNil)
 	cols = rs.Columns()
 	c.Assert(len(cols), Equals, 2)
 	expectFlag = uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+
+	// the pk is not null after transforming an outer join into an inner join
+	rs, err = Execute(ctx, qctx, "select s.a, s.b from t right outer join (select t.c1 as a, sum(t1.c2) as b from t right join t as t1 on t.c1 =t1.c1 where t.c1 != t.c2 group by t.c1) s on s.a=t.c1 order by 1;")
+	c.Assert(err, IsNil)
+	cols = rs.Columns()
+	c.Assert(len(cols), Equals, 2)
+	expectFlag = uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+
+	// the pk is null after executing the outer join
+	rs, err = Execute(ctx, qctx, "select s.a, s.b from t left outer join (select t.c1 as a, sum(t1.c2) as b from t right join t as t1 on t.c1 =t1.c1 where t.c1 != t.c2 group by t.c1) s on s.a=t.c1 limit 1;")
+	c.Assert(err, IsNil)
+	cols = rs.Columns()
+	c.Assert(len(cols), Equals, 2)
+	expectFlag = uint16(tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
 }
