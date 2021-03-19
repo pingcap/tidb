@@ -64,7 +64,12 @@ type CopClient struct {
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
-		return c.sendBatch(ctx, req, vars)
+		metrics.TiFlashExecuteCounter.Inc()
+		resp := c.sendBatch(ctx, req, vars)
+		if copErr, ok := resp.(copErrorResponse); ok {
+			metrics.TiFlashExecuteErrorCounter.WithLabelValues(tidbmetrics.ExecuteErrorToLabel(copErr.error)).Inc()
+		}
+		return resp
 	}
 	ctx = context.WithValue(ctx, TxnStartKey, req.StartTs)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
