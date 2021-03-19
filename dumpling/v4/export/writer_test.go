@@ -20,6 +20,12 @@ var _ = Suite(&testWriterSuite{})
 
 type testWriterSuite struct{}
 
+func defaultConfigForTest(c *C) *Config {
+	config := DefaultConfig()
+	c.Assert(adjustFileFormat(config), IsNil)
+	return config
+}
+
 func (s *testWriterSuite) newWriter(conf *Config, c *C) *Writer {
 	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
 	c.Assert(err, IsNil)
@@ -35,7 +41,7 @@ func (s *testWriterSuite) newWriter(conf *Config, c *C) *Writer {
 func (s *testWriterSuite) TestWriteDatabaseMeta(c *C) {
 	dir := c.MkDir()
 
-	config := DefaultConfig()
+	config := defaultConfigForTest(c)
 	config.OutputDirPath = dir
 
 	writer := s.newWriter(config, c)
@@ -52,7 +58,7 @@ func (s *testWriterSuite) TestWriteDatabaseMeta(c *C) {
 func (s *testWriterSuite) TestWriteTableMeta(c *C) {
 	dir := c.MkDir()
 
-	config := DefaultConfig()
+	config := defaultConfigForTest(c)
 	config.OutputDirPath = dir
 
 	writer := s.newWriter(config, c)
@@ -69,7 +75,7 @@ func (s *testWriterSuite) TestWriteTableMeta(c *C) {
 func (s *testWriterSuite) TestWriteViewMeta(c *C) {
 	dir := c.MkDir()
 
-	config := DefaultConfig()
+	config := defaultConfigForTest(c)
 	config.OutputDirPath = dir
 
 	writer := s.newWriter(config, c)
@@ -97,7 +103,7 @@ func (s *testWriterSuite) TestWriteViewMeta(c *C) {
 func (s *testWriterSuite) TestWriteTableData(c *C) {
 	dir := c.MkDir()
 
-	config := DefaultConfig()
+	config := defaultConfigForTest(c)
 	config.OutputDirPath = dir
 
 	writer := s.newWriter(config, c)
@@ -136,7 +142,7 @@ func (s *testWriterSuite) TestWriteTableData(c *C) {
 func (s *testWriterSuite) TestWriteTableDataWithFileSize(c *C) {
 	dir := c.MkDir()
 
-	config := DefaultConfig()
+	config := defaultConfigForTest(c)
 	config.OutputDirPath = dir
 	config.FileSize = 50
 	specCmts := []string{
@@ -186,7 +192,7 @@ func (s *testWriterSuite) TestWriteTableDataWithFileSize(c *C) {
 func (s *testWriterSuite) TestWriteTableDataWithFileSizeAndRows(c *C) {
 	dir := c.MkDir()
 
-	config := DefaultConfig()
+	config := defaultConfigForTest(c)
 	config.OutputDirPath = dir
 	config.FileSize = 50
 	config.Rows = 4
@@ -237,7 +243,7 @@ func (s *testWriterSuite) TestWriteTableDataWithFileSizeAndRows(c *C) {
 func (s *testWriterSuite) TestWriteTableDataWithStatementSize(c *C) {
 	dir := c.MkDir()
 
-	config := DefaultConfig()
+	config := defaultConfigForTest(c)
 	config.OutputDirPath = dir
 	config.StatementSize = 50
 	config.StatementSize += uint64(len("INSERT INTO `employee` VALUES\n"))

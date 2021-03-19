@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/dumpling/v4/cli"
 	tcontext "github.com/pingcap/dumpling/v4/context"
 	"github.com/pingcap/dumpling/v4/log"
 
@@ -48,7 +49,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	err := adjustConfig(conf,
 		registerTLSConfig,
 		validateSpecifiedSQL,
-		validateFileFormat)
+		adjustFileFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -655,6 +656,7 @@ func initLogger(d *Dumper) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		cli.LogLongVersion(logger)
 	}
 	d.tctx = d.tctx.WithLogger(logger)
 	return nil
