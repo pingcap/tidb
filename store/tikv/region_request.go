@@ -496,7 +496,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		if err != nil {
 			result = "fail"
 		}
-		metrics.TiKVForwardRequestCounter.WithLabelValues(fromStore, toStore, result).Inc()
+		metrics.TiKVForwardRequestCounter.WithLabelValues(fromStore, toStore, req.Type.String(), result).Inc()
 	}
 
 	if err != nil {
