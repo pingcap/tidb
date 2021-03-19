@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
@@ -38,6 +39,9 @@ var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node ast.
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
+
+// IsReadOnly check whether the ast.Node is a read only statement.
+var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
 const (
 	flagGcSubstitute uint64 = 1 << iota
