@@ -412,7 +412,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
 	prometheus.MustRegister(TiKVAsyncCommitTxnCounter)
 	prometheus.MustRegister(TiKVOnePCTxnCounter)
-	prometheus.MustRegister(TiKVReadDuration)
 	prometheus.MustRegister(TiFlashExecuteErrorCounter)
 	prometheus.MustRegister(TiFlashExecuteCounter)
 }
