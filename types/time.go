@@ -2248,7 +2248,7 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		} else {
-			if dv, err = strconv.ParseInt(dvPre[:]+"000000"[:6-dvPreLen], 10, 64); err != nil {
+			if dv, err = strconv.ParseInt(dvPre+"000000"[:6-dvPreLen], 10, 64); err != nil {
 				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		}
