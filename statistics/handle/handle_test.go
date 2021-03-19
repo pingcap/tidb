@@ -1561,6 +1561,7 @@ partition by range (a) (
 	c.Assert(globalStats.ModifyCount, Equals, int64(0))
 
 	tk.MustExec("alter table t drop partition p2;")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	tk.MustExec("analyze table t;")
 	globalStats = h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4)
