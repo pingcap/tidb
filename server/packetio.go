@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+
 	"github.com/pingcap/tidb/metrics"
 )
 
@@ -77,8 +78,12 @@ func (p *packetIO) setReadTimeout(timeout time.Duration) {
 
 func (p *packetIO) readOnePacket() ([]byte, error) {
 	var header [4]byte
-	if p.readTimeout > 0 {
-		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
+	if p.readTimeout >= 0 {
+		readTimeout := time.Now().Add(p.readTimeout)
+		if p.readTimeout == 0 {
+			readTimeout = time.Time{}
+		}
+		if err := p.bufReadConn.SetReadDeadline(readTimeout); err != nil {
 			return nil, err
 		}
 	}
@@ -96,8 +101,12 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 
 	data := make([]byte, length)
-	if p.readTimeout > 0 {
-		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
+	if p.readTimeout >= 0 {
+		readTimeout := time.Now().Add(p.readTimeout)
+		if p.readTimeout == 0 {
+			readTimeout = time.Time{}
+		}
+		if err := p.bufReadConn.SetReadDeadline(readTimeout); err != nil {
 			return nil, err
 		}
 	}
