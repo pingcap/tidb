@@ -949,7 +949,7 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 		}
 	}
 	txn.SetOption(kv.Priority, kv.PriorityLow)
-	txn.SetOption(kv.IsolationLevel, kv.RC)
+	txn.SetOption(kv.IsolationLevel, tikvstore.RC)
 	txn.SetOption(kv.NotFillCache, true)
 	return rollbackFn, nil
 }
@@ -1169,7 +1169,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	defer e.wg.Done()
 	snapshot := e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
 	snapshot.SetOption(kv.NotFillCache, true)
-	snapshot.SetOption(kv.IsolationLevel, kv.RC)
+	snapshot.SetOption(kv.IsolationLevel, tikvstore.RC)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, tikvstore.ReplicaReadFollower)

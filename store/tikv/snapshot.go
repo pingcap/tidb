@@ -52,7 +52,7 @@ const (
 type KVSnapshot struct {
 	store           *KVStore
 	version         uint64
-	isolationLevel  tidbkv.IsoLevel
+	isolationLevel  kv.IsoLevel
 	priority        pb.CommandPri
 	notFillCache    bool
 	syncLog         bool
@@ -553,7 +553,7 @@ func (s *KVSnapshot) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 func (s *KVSnapshot) SetOption(opt tidbkv.Option, val interface{}) {
 	switch opt {
 	case tidbkv.IsolationLevel:
-		s.isolationLevel = val.(tidbkv.IsoLevel)
+		s.isolationLevel = val.(kv.IsoLevel)
 	case tidbkv.Priority:
 		s.priority = PriorityToPB(val.(int))
 	case tidbkv.NotFillCache:

@@ -96,16 +96,6 @@ const UnCommitIndexKVFlag byte = '1'
 // We use it to abort the transaction to guarantee GC worker will not influence it.
 const MaxTxnTimeUse = 24 * 60 * 60 * 1000
 
-// IsoLevel is the transaction's isolation level.
-type IsoLevel int
-
-const (
-	// SI stands for 'snapshot isolation'.
-	SI IsoLevel = iota
-	// RC stands for 'read committed'.
-	RC
-)
-
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
@@ -374,7 +364,7 @@ type Request struct {
 	// sent to multiple storage units concurrently.
 	Concurrency int
 	// IsolationLevel is the isolation level, default is SI.
-	IsolationLevel IsoLevel
+	IsolationLevel tikvstore.IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
 	// memTracker is used to trace and control memory usage in co-processor layer.
