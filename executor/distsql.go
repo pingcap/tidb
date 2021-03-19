@@ -300,7 +300,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	return nil
 }
 
-const indexScanLimit = 1000
+const indexScanLimit = 5
 
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
@@ -340,6 +340,7 @@ type IndexLookUpExecutor struct {
 
 	keepOrder bool
 	desc      bool
+	rateLimit bool
 
 	indexStreaming bool
 	tableStreaming bool
@@ -391,7 +392,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-	if indexScanLimit != 0 {
+	if indexScanLimit != 0 && e.keepOrder == true {
 		// add limit
 		e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(indexScanLimit))
 	}
@@ -468,6 +469,11 @@ func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
 	}
 	if e.checkIndexValue != nil {
 		tps = e.idxColTps
+	}
+	if e.rateLimit {
+		for _, col := range e.idxCols {
+			tps = append(tps, col.RetType)
+		}
 	}
 	return tps
 }
@@ -635,7 +641,10 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		}
 	}
 hack:
-	if e.keepOrder == false {
+	if !e.rateLimit {
+		return nil
+	}
+	if e.lastHandle == nil {
 		return nil
 	}
 
@@ -645,7 +654,7 @@ hack:
 	// split ranges
 	handleKVRange := distsql.TableHandlesToKVRanges(e.table.Meta().ID, []kv.Handle{e.lastHandle})
 	e.kvRanges = e.hackChange(e.kvRanges, handleKVRange[0], e.desc)
-
+	e.lastHandle = nil
 	if err := e.open(ctx); err != nil {
 		return err
 	}
@@ -678,7 +687,7 @@ func (e *IndexLookUpExecutor) hackChange(src []kv.KeyRange, t kv.KeyRange, desc 
 			target = append(target, srcKey)
 		}
 	}
-	return src
+	return target
 }
 
 func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {

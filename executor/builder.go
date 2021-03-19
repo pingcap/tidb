@@ -2907,7 +2907,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tableStreaming, tbl, err
 }
 
-func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan,needIndexColumn bool) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	indexReq, indexStreaming, err := constructDAGReq(b.ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, false, err
@@ -2917,13 +2917,19 @@ func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []planner
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen+i))
 	}
 	if len(indexReq.OutputOffsets) == 0 {
-		indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
+		if needIndexColumn {
+			for i := 0;i < schemaLen;i++ {
+				indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+			}
+		}
+		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen))
 	}
 	return indexReq, indexStreaming, err
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	var handleLen int
 	if len(v.CommonHandleCols) != 0 {
 		handleLen = len(v.CommonHandleCols)
@@ -2934,7 +2940,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		// Should output pid col.
 		handleLen++
 	}
-	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleLen, v.IndexPlans)
+	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleLen, v.IndexPlans,v.RateLimit && is.KeepOrder)
 	if err != nil {
 		return nil, err
 	}
@@ -2942,7 +2948,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		return nil, err
@@ -2968,6 +2973,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 		PushedLimit:       v.PushedLimit,
+		rateLimit:         v.RateLimit && is.KeepOrder,
 	}
 
 	if containsLimit(indexReq.Executors) {
@@ -3056,7 +3062,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
+			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i], false)
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 		} else {
