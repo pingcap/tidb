@@ -731,7 +731,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	c.Assert(row[5], Equals, "30")
 }
 
-func (s *testSuite9) TestFailedAnalyzeRequest(c *C) {
+func (s *testSuite10) TestFailedAnalyzeRequest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

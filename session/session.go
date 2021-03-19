@@ -1090,6 +1090,11 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
 	}
+	// Set curTxnStartTS to SnapshotTS directly when the session is trying to historic read.
+	// It will avoid the session meet GC lifetime too short error.
+	if s.GetSessionVars().SnapshotTS != 0 {
+		curTxnStartTS = s.GetSessionVars().SnapshotTS
+	}
 	p := s.currentPlan
 	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
 		p = explain.TargetPlan

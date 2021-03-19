@@ -50,7 +50,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20210308063835-39b884695fb8
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
-	github.com/pingcap/parser v0.0.0-20210310110710-c7333a4927e6
+	github.com/pingcap/parser v0.0.0-20210311132237-9841cb715606
 	github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
 	github.com/pingcap/tipb v0.0.0-20210309080453-72c4feaa6da7
@@ -67,8 +67,7 @@ require (
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/uber/jaeger-lib v2.4.0+incompatible // indirect
-	github.com/xitongsys/parquet-go v1.6.0 // indirect
-	github.com/xitongsys/parquet-go-source v0.0.0-20201108113611-f372b7d813be // indirect
+	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457 // indirect
 	github.com/zhangjinpeng1987/raft v0.0.0-20200819064223-df31bb68a018 // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.uber.org/atomic v1.7.0
