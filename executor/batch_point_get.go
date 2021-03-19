@@ -48,6 +48,8 @@ type BatchPointGetExec struct {
 	handles     []kv.Handle
 	physIDs     []int64
 	partPos     int
+	singlePart  bool
+	partTblID   int64
 	idxVals     [][]types.Datum
 	startTS     uint64
 	snapshotTS  uint64
@@ -210,6 +212,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 
 			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
+			// If this BatchPointGetExec is built only for the specific table partition, skip those filters not matching this partition.
+			if e.singlePart && e.partTblID != physID {
+				continue
+			}
 			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
@@ -325,7 +331,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		sort.Slice(e.handles, less)
 	}
 
-	keys := make([]kv.Key, len(e.handles))
+	keys := make([]kv.Key, 0, len(e.handles))
+	newHandles := make([]kv.Handle, 0, len(e.handles))
 	for i, handle := range e.handles {
 		var tID int64
 		if len(e.physIDs) > 0 {
@@ -341,9 +348,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				tID = getPhysID(e.tblInfo, d.GetInt64())
 			}
 		}
+		// If this BatchPointGetExec is built only for the specific table partition, skip those handles not matching this partition.
+		if e.singlePart && e.partTblID != tID {
+			continue
+		}
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
-		keys[i] = key
+		keys = append(keys, key)
+		newHandles = append(newHandles, handle)
 	}
+	e.handles = newHandles
 
 	var values map[string][]byte
 	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.

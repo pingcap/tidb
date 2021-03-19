@@ -345,6 +345,224 @@ func (s *testPointGetSuite) TestCBOPointGet(c *C) {
 	}
 }
 
+func (s *testPointGetSuite) TestPartitionBatchPointGetPlanCache(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	testKit.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, unique key(a))")
+	testKit.MustExec("insert into t values(1,1),(2,2),(3,3)")
+	testKit.MustExec("prepare stmt from 'select * from t use index(a) where (a >= ? and a <= ?) or a = 3'")
+	testKit.MustExec("set @p=1,@q=2,@u=3")
+	testKit.MustQuery("execute stmt using @p,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"3 3",
+	))
+	testKit.MustQuery("execute stmt using @u,@q").Sort().Check(testkit.Rows(
+		"3 3",
+	))
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(2,1),(2,2),(2,3),(3,1),(3,2),(3,3)")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	testKit.MustExec("prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and b = ?'")
+	testKit.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
+		"2 1",
+	))
+	testKit.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
+		"2 2",
+	))
+	testKit.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+		"3 1",
+	))
+	testKit.MustQuery("execute stmt using @u,@p,@p").Sort().Check(testkit.Rows(
+		"2 1",
+	))
+
+	testKit.MustExec("prepare stmt from 'select * from t where a in (?,?) and b = ?'")
+	testKit.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("execute stmt using @q,@p,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
+		"2 1",
+	))
+	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+		"1 2",
+		"2 2",
+	))
+
+	testKit.MustExec("prepare stmt from 'select * from t where a = ? and ((b >= ? and b <= ?) or b = 2)'")
+	testKit.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+		"1 2",
+	))
+	testKit.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
+		"2 2",
+	))
+	testKit.MustQuery("execute stmt using @p,@p,@u").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+		"1 3",
+	))
+	testKit.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
+		"1 2",
+	))
+
+	testKit.MustExec("prepare stmt from 'select * from t where a = ? and b in (?,?)'")
+	testKit.MustQuery("execute stmt using @p,@p,@q").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+	testKit.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+		"1 2",
+	))
+	testKit.MustQuery("execute stmt using @q,@p,@q").Sort().Check(testkit.Rows(
+		"2 1",
+		"2 2",
+	))
+
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(2,1),(2,2),(2,3),(3,1),(3,2),(3,3)")
+	testKit.MustExec("prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and b = ?'")
+	testKit.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
+		"2 1",
+	))
+	testKit.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
+		"2 2",
+	))
+	testKit.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+		"3 1",
+	))
+	testKit.MustQuery("execute stmt using @u,@p,@p").Sort().Check(testkit.Rows(
+		"2 1",
+	))
+
+	testKit.MustExec("prepare stmt from 'select * from t where a in (?,?) and b = ?'")
+	testKit.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("execute stmt using @q,@p,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
+		"2 1",
+	))
+	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+		"1 2",
+		"2 2",
+	))
+
+	testKit.MustExec("prepare stmt from 'select * from t where a = ? and ((b >= ? and b <= ?) or b = 2)'")
+	testKit.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+		"1 2",
+	))
+	testKit.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
+		"2 2",
+	))
+	testKit.MustQuery("execute stmt using @p,@p,@u").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+		"1 3",
+	))
+	testKit.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
+		"1 2",
+	))
+
+	testKit.MustExec("prepare stmt from 'select * from t where a = ? and b in (?,?)'")
+	testKit.MustQuery("execute stmt using @p,@p,@q").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+	testKit.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+		"1 2",
+	))
+	testKit.MustQuery("execute stmt using @q,@p,@q").Sort().Check(testkit.Rows(
+		"2 1",
+		"2 2",
+	))
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int, b int, primary key(a)) partition by hash(a) partitions 2")
+	testKit.MustExec("insert into t values(1,0),(2,0),(3,0),(4,0)")
+	testKit.MustExec("prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and 1 = 1'")
+	testKit.MustQuery("execute stmt using @p,@p").Sort().Check(testkit.Rows(
+		"1 0",
+		"2 0",
+	))
+	testKit.MustQuery("execute stmt using @q,@q").Sort().Check(testkit.Rows(
+		"2 0",
+	))
+	testKit.MustQuery("execute stmt using @p,@u").Sort().Check(testkit.Rows(
+		"1 0",
+		"2 0",
+		"3 0",
+	))
+	testKit.MustQuery("execute stmt using @u,@p").Sort().Check(testkit.Rows(
+		"2 0",
+	))
+
+	testKit.MustExec("prepare stmt from 'select * from t where a in (?,?) and 1 = 1'")
+	testKit.MustQuery("execute stmt using @p,@q").Sort().Check(testkit.Rows(
+		"1 0",
+		"2 0",
+	))
+	testKit.MustQuery("execute stmt using @q,@p").Sort().Check(testkit.Rows(
+		"1 0",
+		"2 0",
+	))
+	testKit.MustQuery("execute stmt using @q,@q").Sort().Check(testkit.Rows(
+		"2 0",
+	))
+}
+
 func (s *testPointGetSuite) TestBatchPointGetPlanCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := core.PreparedPlanCacheEnabled()
