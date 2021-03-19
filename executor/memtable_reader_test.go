@@ -153,6 +153,12 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 				"nest1": "n-value1",
 				"nest2": "n-value2",
 			},
+			// We need hide the follow config
+			// TODO: we need remove it when index usage is GA.
+			"performance": map[string]string{
+				"index-usage-sync-lease": "0s",
+				"INDEX-USAGE-SYNC-LEASE": "0s",
+			},
 		}
 		return configuration, nil
 	}
