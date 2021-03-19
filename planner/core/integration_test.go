@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -2702,6 +2704,24 @@ func (s *testIntegrationSuite) TestIssue22071(c *C) {
 	tk.MustExec("insert into t values(1),(2),(5)")
 	tk.MustQuery("select n in (1,2) from (select a in (1,2) as n from t) g;").Sort().Check(testkit.Rows("0", "1", "1"))
 	tk.MustQuery("select n in (1,n) from (select a in (1,2) as n from t) g;").Check(testkit.Rows("1", "1", "1"))
+}
+
+func (s *testIntegrationSuite) TestCreateViewIsolationRead(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se = se
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustExec("set session tidb_isolation_read_engines='tiflash,tidb';")
+	// No error for CreateView.
+	tk.MustExec("create view v0 (a, avg_b) as select a, avg(b) from t group by a;")
+	tk.MustGetErrMsg("select * from v0;", "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash,tidb'). Available values are 'tikv'.")
+	tk.MustExec("set session tidb_isolation_read_engines='tikv,tiflash,tidb';")
+	tk.MustQuery("select * from v0;").Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite) TestIssue22199(c *C) {
