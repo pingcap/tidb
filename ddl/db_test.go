@@ -146,7 +146,7 @@ type testDBSuite6 struct{ *testDBSuite }
 type testDBSuite7 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
 
-func testAddIndexWithPK(tk *testkit.TestKit, s *testSerialDBSuite, c *C) {
+func testAddIndexWithPK(tk *testkit.TestKit) {
 	tk.MustExec("drop table if exists test_add_index_with_pk")
 	tk.MustExec("create table test_add_index_with_pk(a int not null, b int not null default '0', primary key(a))")
 	tk.MustExec("insert into test_add_index_with_pk values(1, 2)")
@@ -173,17 +173,13 @@ func testAddIndexWithPK(tk *testkit.TestKit, s *testSerialDBSuite, c *C) {
 	tk.MustExec("create index idx on t (a, b);")
 }
 
-func (s *testSerialDBSuite) TestAddIndexWithPK(c *C) {
+func (s *testDBSuite7) TestAddIndexWithPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = false
-	})
 
-	testAddIndexWithPK(tk, s, c)
+	testAddIndexWithPK(tk)
 	tk.Se.GetSessionVars().EnableClusteredIndex = true
-	testAddIndexWithPK(tk, s, c)
+	testAddIndexWithPK(tk)
 }
 
 func (s *testDBSuite5) TestAddIndexWithDupIndex(c *C) {
@@ -1140,11 +1136,7 @@ func (s *testDBSuite4) TestAddIndex4(c *C) {
 			      partition p4 values less than maxvalue)`, "")
 }
 
-func (s *testSerialDBSuite) TestAddIndex5(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = false
-	})
+func (s *testDBSuite5) TestAddIndex5(c *C) {
 	testAddIndex(c, s.store, s.lease, testClusteredIndex,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c2, c3))`, "")
 }
@@ -1414,7 +1406,7 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 
 func (s *testDBSuite1) TestDropPrimaryKey(c *C) {
 	idxName := "primary"
-	createSQL := "create table test_drop_index (c1 int, c2 int, c3 int, unique key(c1), primary key(c3))"
+	createSQL := "create table test_drop_index (c1 int, c2 int, c3 int, unique key(c1), primary key(c3) nonclustered)"
 	dropIdxSQL := "alter table test_drop_index drop primary key;"
 	testDropIndex(c, s.store, s.lease, createSQL, dropIdxSQL, idxName)
 }
@@ -1435,7 +1427,7 @@ func testDropIndex(c *C, store kv.Storage, lease time.Duration, createSQL, dropI
 	tk.MustExec("delete from test_drop_index")
 
 	num := 100
-	//  add some rows
+	// add some rows
 	for i := 0; i < num; i++ {
 		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
@@ -1953,7 +1945,6 @@ func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
-		conf.AlterPrimaryKey = true
 	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
@@ -1994,7 +1985,7 @@ func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
 		" (partition p0 values less than (10), " +
 		"  partition p1 values less than (maxvalue));")
 	tk.MustExec("insert test_t2 values (1, 1)")
-	tk.MustExec("alter table test_t2 add primary key (a);")
+	tk.MustExec("alter table test_t2 add primary key (a) nonclustered;")
 	tk.MustExec("insert test_t2 values (2, 11)")
 	t = s.testGetTable(c, "test_t2")
 	tblInfo = t.Meta()
@@ -2432,6 +2423,7 @@ func (s *testDBSuite7) TestSelectInViewFromAnotherDB(c *C) {
 	_, _ = s.s.Execute(context.Background(), "create database test_db2")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("use test_db2")
 	tk.MustExec("create sql security invoker view v as select * from " + s.schemaName + ".t")
@@ -2672,16 +2664,12 @@ func (s *testSerialDBSuite) TestRepairTable(c *C) {
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
 	}()
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, other_table, origin")
 
 	// Test repair table when TiDB is not in repair mode.
-	tk.MustExec("CREATE TABLE t (a int primary key, b varchar(10));")
+	tk.MustExec("CREATE TABLE t (a int primary key nonclustered, b varchar(10));")
 	_, err := tk.Exec("admin repair table t CREATE TABLE t (a float primary key, b varchar(5));")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: TiDB is not in REPAIR MODE")
@@ -2757,7 +2745,7 @@ func (s *testSerialDBSuite) TestRepairTable(c *C) {
 	turnRepairModeAndInit(true)
 	defer turnRepairModeAndInit(false)
 	// Domain reload the tableInfo and add it into repairInfo.
-	tk.MustExec("CREATE TABLE origin (a int primary key auto_increment, b varchar(10), c int);")
+	tk.MustExec("CREATE TABLE origin (a int primary key nonclustered auto_increment, b varchar(10), c int);")
 	// Repaired tableInfo has been filtered by `domain.InfoSchema()`, so get it in repairInfo.
 	originTableInfo, _ := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
 
@@ -2788,7 +2776,7 @@ func (s *testSerialDBSuite) TestRepairTable(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	// Exec the repair statement to override the tableInfo.
-	tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key auto_increment, b varchar(5), c int);")
+	tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key nonclustered auto_increment, b varchar(5), c int);")
 	c.Assert(repairErr, IsNil)
 
 	// Check the repaired tableInfo is exactly the same with old one in tableID, indexID, colID.
@@ -4505,7 +4493,7 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
 }
 
-func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testSerialDBSuite, c *C) {
+func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testDBSuite5, c *C) {
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
@@ -4545,15 +4533,9 @@ func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testSerialDBSuite, c
 	tk.MustQuery("select id1 from gcai_table use index(idx1)").Check(testkit.Rows("6"))
 	tk.MustExec("admin check table gcai_table")
 }
-func (s *testSerialDBSuite) TestAddIndexForGeneratedColumn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = false
-	})
 
-	testAddIndexForGeneratedColumn(tk, s, c)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	testAddIndexForGeneratedColumn(tk, s, c)
 }
 
@@ -6613,6 +6595,19 @@ func (s *testSerialDBSuite) TestIssue22819(c *C) {
 
 	_, err := tk1.Exec("commit")
 	c.Assert(err, ErrorMatches, ".*8028.*Information schema is changed during the execution of the statement.*")
+}
+
+func (s *testSerialSuite) TestTruncateAllPartitions(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test;")
+	tk1.MustExec("drop table if exists partition_table;")
+	defer func() {
+		tk1.MustExec("drop table if exists partition_table;")
+	}()
+	tk1.MustExec("create table partition_table (v int) partition by hash (v) partitions 10;")
+	tk1.MustExec("insert into partition_table values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10);")
+	tk1.MustExec("alter table partition_table truncate partition all;")
+	tk1.MustQuery("select count(*) from partition_table;").Check(testkit.Rows("0"))
 }
 
 func testDropIndexes(c *C, store kv.Storage, lease time.Duration, createSQL, dropIdxSQL string, idxNames []string) {
