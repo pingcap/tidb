@@ -300,6 +300,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	return nil
 }
 
+const indexScanLimit = 1000
+
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
 	baseExecutor
@@ -353,6 +355,8 @@ type IndexLookUpExecutor struct {
 	PushedLimit *plannercore.PushedDownLimit
 
 	stats *IndexLookUpRunTimeStats
+
+	lastHandle kv.Handle
 }
 
 type getHandleType int8
@@ -387,11 +391,22 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
+	if indexScanLimit != 0 {
+		// add limit
+		e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(indexScanLimit))
+	}
 	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
 	return err
+}
+
+func (e *IndexLookUpExecutor) constructLimitPB(count uint64) *tipb.Executor {
+	limitExec := &tipb.Limit{
+		Limit: count,
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
 func (e *IndexLookUpExecutor) open(ctx context.Context) error {
@@ -608,7 +623,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			return err
 		}
 		if resultTask == nil {
-			return nil
+			goto hack
 		}
 		if resultTask.cursor < len(resultTask.rows) {
 			numToAppend := mathutil.Min(len(resultTask.rows)-resultTask.cursor, req.RequiredRows()-req.NumRows())
@@ -619,6 +634,51 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			}
 		}
 	}
+hack:
+	if e.keepOrder == false {
+		return nil
+	}
+
+	if err := e.Close(); err != nil {
+		return err
+	}
+	// split ranges
+	handleKVRange := distsql.TableHandlesToKVRanges(e.table.Meta().ID, []kv.Handle{e.lastHandle})
+	e.kvRanges = e.hackChange(e.kvRanges, handleKVRange[0], e.desc)
+
+	if err := e.open(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *IndexLookUpExecutor) hackChange(src []kv.KeyRange, t kv.KeyRange, desc bool) []kv.KeyRange {
+	key := t.StartKey
+	var target []kv.KeyRange
+	if !desc {
+		key = key.Next()
+		for _, srcKey := range src {
+			if key.Cmp(srcKey.EndKey) > 0 {
+				continue
+			}
+			if key.Cmp(srcKey.StartKey) > 0 {
+				srcKey.StartKey = key
+			}
+			target = append(target, srcKey)
+		}
+	} else {
+		key = key.PrefixNext()
+		for _, srcKey := range src {
+			if key.Cmp(srcKey.StartKey) < 0 {
+				continue
+			}
+			if key.Cmp(srcKey.EndKey) < 0 {
+				srcKey.EndKey = key
+			}
+			target = append(target, srcKey)
+		}
+	}
+	return src
 }
 
 func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
@@ -828,6 +888,9 @@ func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *
 		indexOrder = kv.NewHandleMap()
 		for i, h := range handles {
 			indexOrder.Set(h, i)
+		}
+		if len(handles) > 0 {
+			w.idxLookup.lastHandle = handles[len(handles)-1]
 		}
 	}
 
