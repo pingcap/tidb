@@ -740,17 +740,18 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 }
 
 func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, idxInfos, err := checkDropIndexes(t, job)
+	tblInfo, indexInfos, err := checkDropIndexes(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if len(idxInfos) == 0 {
+
+	if len(indexInfos) == 0 {
 		job.State = model.JobStateCancelled
 		return ver, nil
 	}
 
 	dependentHiddenCols := make([]*model.ColumnInfo, 0)
-	for _, indexInfo := range idxInfos {
+	for _, indexInfo := range indexInfos {
 		for _, indexColumn := range indexInfo.Columns {
 			if tblInfo.Columns[indexColumn.Offset].Hidden {
 				dependentHiddenCols = append(dependentHiddenCols, tblInfo.Columns[indexColumn.Offset])
@@ -758,43 +759,43 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 	}
 
-	originalState := idxInfos[0].State
-	switch idxInfos[0].State {
+	originalState := indexInfos[0].State
+	switch indexInfos[0].State {
 	case model.StatePublic:
 		// public -> write only
-		setIndicesState(idxInfos, model.StateWriteOnly)
+		setIndicesState(indexInfos, model.StateWriteOnly)
 		setColumnsState(dependentHiddenCols, model.StateWriteOnly)
 		for _, colInfo := range dependentHiddenCols {
 			adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != idxInfos[0].State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
-		setIndicesState(idxInfos, model.StateDeleteOnly)
+		setIndicesState(indexInfos, model.StateDeleteOnly)
 		setColumnsState(dependentHiddenCols, model.StateDeleteOnly)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != idxInfos[0].State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
-		setIndicesState(idxInfos, model.StateDeleteReorganization)
+		setIndicesState(indexInfos, model.StateDeleteReorganization)
 		setColumnsState(dependentHiddenCols, model.StateDeleteReorganization)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != idxInfos[0].State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateDeleteReorganization
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		indexIDs := make([]int64, 0, len(idxInfos))
-		indexNames := make(map[string]bool, len(idxInfos))
-		for _, indexInfo := range idxInfos {
+		indexIDs := make([]int64, 0, len(indexInfos))
+		indexNames := make(map[string]bool, len(indexInfos))
+		for _, indexInfo := range indexInfos {
 			indexNames[indexInfo.Name.L] = true
 			indexIDs = append(indexIDs, indexInfo.ID)
 		}
@@ -808,7 +809,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		tblInfo.Indices = newIndices
 
 		// Set column index flag.
-		for _, indexInfo := range idxInfos {
+		for _, indexInfo := range indexInfos {
 			dropIndexColumnFlag(tblInfo, indexInfo)
 		}
 
@@ -830,7 +831,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = ErrInvalidDDLState.GenWithStackByArgs("index", idxInfos[0].State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("index", indexInfos[0].State)
 	}
 	return ver, errors.Trace(err)
 }
@@ -845,18 +846,12 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 	var indexNames []model.CIStr
 	var ifExists []bool
 	if err = job.DecodeArgs(&indexNames, &ifExists); err != nil {
-		// Compatible with the previous function: DropIndex
-		var indexName model.CIStr
-		if err = job.DecodeArgs(&indexName); err != nil {
-			job.State = model.JobStateCancelled
-			return nil, nil, errors.Trace(err)
-		}
-		indexNames = append(indexNames, indexName)
-		ifExists = append(ifExists, false)
+		return nil, nil, errors.Trace(err)
 	}
 
 	indexInfos := make([]*model.IndexInfo, 0, len(indexNames))
-	droppedIndexes := make(map[string]bool, len(indexNames))
+	uniqueIndex := make(map[string]bool, len(indexNames))
+
 	for i, indexName := range indexNames {
 		// Double check the index is exists
 		indexInfo := tblInfo.FindIndexByName(indexName.L)
@@ -867,6 +862,7 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 			}
 			continue
 		}
+
 		// Double check for drop index on auto_increment column.
 		err = checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
 		if err != nil {
@@ -874,12 +870,13 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 			return nil, nil, autoid.ErrWrongAutoKey
 		}
 		indexInfos = append(indexInfos, indexInfo)
-		droppedIndexes[indexName.L] = true
+		uniqueIndex[indexName.L] = true
 	}
+
 	// Check that drop primary index will not cause invisible implicit primary index.
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
-		if _, ok := droppedIndexes[idx.Name.L]; !ok {
+		if _, ok := uniqueIndex[idx.Name.L]; !ok {
 			newIndices = append(newIndices, idx)
 		}
 	}
@@ -890,6 +887,7 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		job.State = model.JobStateCancelled
 		return nil, nil, errors.Trace(err)
 	}
+
 	return tblInfo, indexInfos, nil
 }
 

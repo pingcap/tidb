@@ -2357,12 +2357,12 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			return errRunMultiSchemaChanges
 		}
 
-		// if isDropIndexes(validSpecs) {
-		// 	if err = d.DropIndexes(ctx, ident, validSpecs); err != nil {
-		// 		return errors.Trace(err)
-		// 	}
-		// 	return nil
-		// }
+		if isDropIndexes(validSpecs) {
+			if err = d.DropIndexes(ctx, ident, validSpecs); err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}
 
 		if isSameTypeMultiSpecs(validSpecs) {
 			switch validSpecs[0].Tp {
@@ -5257,55 +5257,16 @@ func (d *ddl) getSchemaAndTable(ti ast.Ident) (*model.DBInfo, table.Table, error
 	return schema, t, nil
 }
 
-func checkIndexInfo(ctx sessionctx.Context, t table.Table, indexName model.CIStr, ifExists bool) (isPK bool, shouldIgnore bool, _ error) {
-	indexInfo := t.Meta().FindIndexByName(indexName.L)
-
-	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
-		// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
-		(indexInfo == nil || indexInfo.Primary) {
-		isPK = true
-	}
-	if isPK {
-		if !config.GetGlobalConfig().AlterPrimaryKey {
-			return isPK, shouldIgnore, ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
-		}
-		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
-		if indexInfo == nil && !t.Meta().PKIsHandle {
-			return isPK, shouldIgnore, ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
-		}
-		if t.Meta().PKIsHandle {
-			return isPK, shouldIgnore, ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
-		}
-		if t.Meta().IsCommonHandle {
-			return isPK, shouldIgnore, ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is using clustered index")
-		}
-	}
-
-	if indexInfo == nil {
-		err := ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
-		if ifExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return isPK, true, nil
-		}
-		return isPK, shouldIgnore, err
-	}
-
-	// Check for drop index on auto_increment column.
-	if err := checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo); err != nil {
-		return isPK, shouldIgnore, errors.Trace(err)
-	}
-	return isPK, shouldIgnore, nil
-}
-
 func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
 	schema, t, err := d.getSchemaAndTable(ti)
 	if err != nil {
 		return err
 	}
 
-	// We need to confirm whether we should return an error when dropping duplicate indexes
-	indexesIfExists := make(map[string]bool, len(specs))
-	droppingIndex := make([]model.CIStr, 0, len(specs))
+	uniqueIndex := make(map[string]bool, len(specs))
+	indexNames := make([]model.CIStr, 0, len(specs))
+	ifExists := make([]bool, 0, len(specs))
+
 	for _, spec := range specs {
 		var indexName model.CIStr
 		if spec.Tp == ast.AlterTableDropPrimaryKey {
@@ -5313,7 +5274,8 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		} else {
 			indexName = model.NewCIStr(spec.Name)
 		}
-		_, ok := indexesIfExists[indexName.L]
+
+		_, ok := uniqueIndex[indexName.L]
 		if ok {
 			err := ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 			if spec.IfExists {
@@ -5322,24 +5284,50 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 			}
 			return err
 		}
-		indexesIfExists[indexName.L] = spec.IfExists
-		droppingIndex = append(droppingIndex, indexName)
-	}
+		uniqueIndex[indexName.L] = spec.IfExists
 
-	// Check the index is droppable.
-	indexNames := make([]model.CIStr, 0, len(droppingIndex))
-	ifExists := make([]bool, 0, len(droppingIndex))
-	for _, indexName := range droppingIndex {
-		_, shouldIgnore, err := checkIndexInfo(ctx, t, indexName, indexesIfExists[indexName.L])
-		if err != nil {
+		indexInfo := t.Meta().FindIndexByName(indexName.L)
+		var isPK bool
+		if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
+			// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
+			(indexInfo == nil || indexInfo.Primary) {
+			isPK = true
+		}
+		if isPK {
+			if !config.GetGlobalConfig().AlterPrimaryKey {
+				return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
+
+			}
+			// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
+			if indexInfo == nil && !t.Meta().PKIsHandle {
+				return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
+			}
+			if t.Meta().PKIsHandle {
+				return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
+			}
+			if t.Meta().IsCommonHandle {
+				return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is using clustered index")
+			}
+		}
+
+		if indexInfo == nil {
+			err := ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+			if spec.IfExists {
+				ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				continue
+			}
 			return err
 		}
-		if shouldIgnore {
-			continue
+
+		// Check for drop index on auto_increment column.
+		if err := checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo); err != nil {
+			return errors.Trace(err)
 		}
+
 		indexNames = append(indexNames, indexName)
-		ifExists = append(ifExists, indexesIfExists[indexName.L])
+		ifExists = append(ifExists, spec.IfExists)
 	}
+
 	if len(indexNames) == 0 {
 		return nil
 	}
@@ -5348,7 +5336,7 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
 		SchemaName: schema.Name.L,
-		Type:       model.ActionDropIndex,
+		Type:       model.ActionDropIndexes,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{indexNames, ifExists},
 	}
