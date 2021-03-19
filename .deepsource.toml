@@ -1,0 +1,11 @@
+version = 1
+
+test_patterns = ["tests/**"]
+
+[[analyzers]]
+name = "go"
+enabled = true
+
+  [analyzers.meta]
+  import_paths = ["github.com/pingcap/tidb"]
+
