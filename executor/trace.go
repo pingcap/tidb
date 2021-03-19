@@ -173,7 +173,7 @@ func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Rec
 
 func dfsTree(t *appdash.Trace, prefix string, isLast bool, chk *chunk.Chunk) {
 	var newPrefix, suffix string
-	if len(prefix) == 0 {
+	if prefix == "" {
 		newPrefix = prefix + "  "
 	} else {
 		if !isLast {
