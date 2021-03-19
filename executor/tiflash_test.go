@@ -193,7 +193,7 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustQuery("select count(*) k, t2.a div 2 from t2 group by t2.a div 2 order by k").Check(testkit.Rows("1 0", "2 1"))
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (c1 decimal(8, 5), c2 decimal(9, 5), c3 decimal(9, 4), c4 decimal(8, 4))")
+	tk.MustExec("create table t (c1 decimal(8, 5) not null, c2 decimal(9, 5), c3 decimal(9, 4) , c4 decimal(8, 4) not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb = testGetTableByName(c, tk.Se, "test", "t")
 	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)

@@ -559,20 +559,20 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 
 // for different decimal scale and precision, tiflash uses different underlying type.
 // Here we check the scale and precision to decide whether conversion is a must.
-func needDecimalConvert(tp *types.FieldType, dec int, l int) bool {
-	if tp.Decimal != dec {
+func needDecimalConvert(tp *types.FieldType, rtp *types.FieldType) bool {
+	if tp.Decimal != rtp.Decimal {
 		return true
 	}
-	if tp.Flen >= 0 && tp.Flen <= 9 && l >= 0 && l <= 9 {
+	if tp.Flen >= 0 && tp.Flen <= 9 && rtp.Flen >= 0 && rtp.Flen <= 9 {
 		return false
 	}
-	if tp.Flen > 9 && tp.Flen <= 18 && l > 9 && l <= 18 {
+	if tp.Flen > 9 && tp.Flen <= 18 && rtp.Flen > 9 && rtp.Flen <= 18 {
 		return false
 	}
-	if tp.Flen > 18 && tp.Flen <= 38 && l > 18 && l <= 38 {
+	if tp.Flen > 18 && tp.Flen <= 38 && rtp.Flen > 18 && rtp.Flen <= 38 {
 		return false
 	}
-	if tp.Flen > 38 && tp.Flen <= 65 && l > 38 && l <= 65 {
+	if tp.Flen > 38 && tp.Flen <= 65 && rtp.Flen > 38 && rtp.Flen <= 65 {
 		return false
 	}
 	return true
@@ -599,7 +599,7 @@ func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool,
 	cType := types.NewFieldType(mysql.TypeNewDecimal)
 	cType.Decimal = cDec
 	cType.Flen = cLen
-	return cType, needDecimalConvert(lType, cDec, cLen), needDecimalConvert(rType, cDec, cLen)
+	return cType, needDecimalConvert(lType, cType), needDecimalConvert(rType, cType)
 }
 
 func getProj(ctx sessionctx.Context, p PhysicalPlan) *PhysicalProjection {
@@ -677,11 +677,15 @@ func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppT
 		lKey := eqFunc.GetArgs()[0].(*expression.Column)
 		rKey := eqFunc.GetArgs()[1].(*expression.Column)
 		if lMask[i] {
-			lCast := expression.BuildCastFunction(p.ctx, lKey, cTypes[i])
+			cType := cTypes[i].Clone()
+			cType.Flag = lKey.RetType.Flag
+			lCast := expression.BuildCastFunction(p.ctx, lKey, cType)
 			lKey = appendExpr(lProj, lCast)
 		}
 		if rMask[i] {
-			rCast := expression.BuildCastFunction(p.ctx, rKey, cTypes[i])
+			cType := cTypes[i].Clone()
+			cType.Flag = rKey.RetType.Flag
+			rCast := expression.BuildCastFunction(p.ctx, rKey, cType)
 			rKey = appendExpr(rProj, rCast)
 		}
 		if lMask[i] || rMask[i] {
