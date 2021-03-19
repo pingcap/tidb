@@ -2548,12 +2548,6 @@ func tblInfoFromCol(from ast.ResultSetNode, name *types.FieldName) *model.TableI
 		if field.Name.L == name.TblName.L {
 			return field.TableInfo
 		}
-		if field.Name.L != name.TblName.L {
-			continue
-		}
-		if field.Schema.L == name.DBName.L {
-			return field.TableInfo
-		}
 	}
 	return nil
 }
