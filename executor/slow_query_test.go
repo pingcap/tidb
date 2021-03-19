@@ -17,12 +17,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -599,4 +601,77 @@ func removeFiles(fileNames []string) {
 	for _, fileName := range fileNames {
 		os.Remove(fileName)
 	}
+}
+
+func generateLogs(num int) string {
+	staticTmpl := fmt.Sprintf("# Time: %s\nselect 1;\n", time.Now().Format(time.RFC3339Nano))
+	logs := make([]byte, 0, num*len(staticTmpl))
+	for i := 0; i < num; i++ {
+		logs = append(logs, staticTmpl...)
+	}
+	return string(logs)
+}
+
+func (s *testExecSuite) BenchmarkRetrieveLotsOfFiles(c *C) {
+	startTime := time.Now()
+	for i := 0; i < 20; i++ {
+		// "2006-01-02T15-04-05.000" is the `backupTimeFormat` from lumberjack
+		filename := fmt.Sprintf("tidb-slow-%s.log", startTime.Format("2006-01-02T15-04-05.000"))
+		prepareLogs(c, []string{generateLogs(1000)}, []string{filename})
+		defer os.Remove(filename)
+		startTime = startTime.Add(time.Second)
+	}
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	year, month, day := time.Now().Date()
+	todayTimeRange := &plannercore.TimeRange{
+		StartTime: time.Date(year, month, day, 0, 0, 0, 0, loc),                                   // start of today
+		EndTime:   time.Date(year, month, day, 23, 59, 59, int(time.Second-time.Nanosecond), loc), // end of today
+	}
+	extractor := &plannercore.SlowQueryExtractor{
+		Enable:     true,
+		TimeRanges: []*plannercore.TimeRange{todayTimeRange},
+	}
+	tblID := int64(10000)
+	tblName := model.NewCIStr("tbl_slow")
+	tableInfo := &model.TableInfo{
+		ID:    tblID,
+		Name:  tblName,
+		State: model.StatePublic,
+	}
+	c.StartTimer()
+	for i := 0; i < c.N; i++ {
+		sctx := mock.NewContext()
+		sctx.GetSessionVars().TimeZone = loc
+		sctx.GetSessionVars().SlowQueryFile = "tidb-slow.log"
+		retriever := &slowQueryRetriever{
+			table:     tableInfo,
+			extractor: extractor,
+		}
+		_, err := retriever.retrieve(context.Background(), sctx)
+		c.Assert(err, IsNil)
+	}
+	c.StopTimer()
+}
+
+func (s *testExecSuite) BenchmarkRetrieveLargeSingleFile(c *C) {
+	prepareLogs(c, []string{generateLogs(20000)}, []string{"tidb-slow.log"})
+	defer os.Remove("tidb-slow.log")
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	tblID := int64(10000)
+	tblName := model.NewCIStr("tbl_slow")
+	tableInfo := &model.TableInfo{
+		ID:    tblID,
+		Name:  tblName,
+		State: model.StatePublic,
+	}
+	c.StartTimer()
+	for i := 0; i < c.N; i++ {
+		sctx := mock.NewContext()
+		sctx.GetSessionVars().TimeZone = loc
+		sctx.GetSessionVars().SlowQueryFile = "tidb-slow.log"
+		retriever := &slowQueryRetriever{table: tableInfo}
+		_, err := retriever.retrieve(context.Background(), sctx)
+		c.Assert(err, IsNil)
+	}
+	c.StopTimer()
 }
