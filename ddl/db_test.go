@@ -6610,3 +6610,17 @@ func (s *testSerialDBSuite) TestIssue22819(c *C) {
 	_, err := tk1.Exec("commit")
 	c.Assert(err, ErrorMatches, ".*8028.*Information schema is changed during the execution of the statement.*")
 }
+
+func (s *testSerialDBSuite) TestIssue23419(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	defer func() {
+		tk.MustExec("drop table if exists t;")
+	}()
+
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("create table t(a int, b varchar(20))")
+	tk.MustExec("insert into t values (1, NULL), (2, 'A')")
+	tk.MustExec("alter table t modify column b varchar(20) not null")
+}
