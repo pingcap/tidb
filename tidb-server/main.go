@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -165,7 +164,7 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
-	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
@@ -363,45 +362,6 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 		return flag.Bool(name, defaultVal, usage)
 	}
 	return flag.Bool(name, defaultVal, usage)
-}
-
-func reloadConfig(nc, c *config.Config) {
-	// Just a part of config items need to be reload explicitly.
-	// Some of them like OOMAction are always used by getting from global config directly
-	// like config.GetGlobalConfig().OOMAction.
-	// These config items will become available naturally after the global config pointer
-	// is updated in function ReloadGlobalConfig.
-	if nc.Performance.ServerMemoryQuota != c.Performance.ServerMemoryQuota {
-		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.ServerMemoryQuota)
-	}
-	if nc.Performance.CrossJoin != c.Performance.CrossJoin {
-		plannercore.AllowCartesianProduct.Store(nc.Performance.CrossJoin)
-	}
-	if nc.Performance.FeedbackProbability != c.Performance.FeedbackProbability {
-		statistics.FeedbackProbability.Store(nc.Performance.FeedbackProbability)
-	}
-	if nc.Performance.QueryFeedbackLimit != c.Performance.QueryFeedbackLimit {
-		statistics.MaxQueryFeedbackCount.Store(int64(nc.Performance.QueryFeedbackLimit))
-	}
-	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
-		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
-	}
-	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
-		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
-		metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
-	}
-	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
-		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
-	}
-
-	if nc.PreparedPlanCache.Enabled != c.PreparedPlanCache.Enabled {
-		plannercore.SetPreparedPlanCache(nc.PreparedPlanCache.Enabled)
-	}
-	if nc.Log.Level != c.Log.Level {
-		if err := logutil.SetLevel(nc.Log.Level); err != nil {
-			logutil.BgLogger().Error("update log level error", zap.Error(err))
-		}
-	}
 }
 
 // overrideConfig considers command arguments and overrides some config items in the Config.
