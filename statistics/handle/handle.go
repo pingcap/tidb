@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -910,7 +909,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 	} else {
 		table.ExtendedStats = statistics.NewExtendedStatsColl()
 	}
-	rows, _, err := reader.read("select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?) and version > %?", physicalID, StatsStatusAnalyzed, StatsStatusDeleted, lastVersion)
+	rows, _, err := reader.read("select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?, %?) and version > %?", physicalID, StatsStatusInited, StatsStatusAnalyzed, StatsStatusDeleted, lastVersion)
 	if err != nil || len(rows) == 0 {
 		return table, nil
 	}
@@ -918,7 +917,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 		lastVersion = mathutil.MaxUint64(lastVersion, row.GetUint64(5))
 		name := row.GetString(0)
 		status := uint8(row.GetInt64(1))
-		if status == StatsStatusDeleted {
+		if status == StatsStatusDeleted || status == StatsStatusInited {
 			delete(table.ExtendedStats.Stats, name)
 		} else {
 			item := &statistics.ExtendedStatsItem{
@@ -1229,7 +1228,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	strColIDs := string(bytes)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ctx := context.TODO()
+	ctx := context.Background()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
@@ -1238,17 +1237,38 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
+	// No need to use `exec.ExecuteInternal` since we have acquired the lock.
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, StatsStatusInited, StatsStatusAnalyzed)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) > 0 {
+		if ifNotExists {
+			return nil
+		}
+		return errors.New(fmt.Sprintf("extended statistics '%s' for the specified table already exists", statsName))
+	}
+	// Remove the existing 'deleted' records.
+	if _, err = exec.ExecuteInternal(ctx, "DELETE FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID); err != nil {
+		return err
+	}
+	// Remove the cache item, which is necessary for cases like a cluster with 3 tidb instances, e.g, a, b and c.
+	// If tidb-a executes `alter table drop stats_extended` to mark the record as 'deleted', and before this operation
+	// is synchronized to other tidb instances, tidb-b executes `alter table add stats_extended`, which would delete
+	// the record from the table, tidb-b should delete the cached item synchronously. While for tidb-c, it has to wait for
+	// next `Update()` to remove the cached item then.
+	h.removeExtendedStatsItem(tableID, statsName)
 	txn, err := h.mu.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	version := txn.StartTS()
 	const sql = "INSERT INTO mysql.stats_extended(name, type, table_id, column_ids, version, status) VALUES (%?, %?, %?, %?, %?, %?)"
-	_, err = exec.ExecuteInternal(ctx, sql, statsName, tp, tableID, strColIDs, version, StatsStatusInited)
-	// Key exists, but `if not exists` is specified, so we ignore this error.
-	if kv.ErrKeyExists.Equal(err) && ifNotExists {
-		err = nil
+	if _, err = exec.ExecuteInternal(ctx, sql, statsName, tp, tableID, strColIDs, version, StatsStatusInited); err != nil {
+		return err
 	}
+	// Bump version in `mysql.stats_meta` to trigger stats cache refresh.
+	_, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID)
 	return
 }
 
