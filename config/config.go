@@ -411,6 +411,7 @@ type Performance struct {
 	TxnEntrySizeLimit     uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
 	TxnTotalSizeLimit     uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
@@ -596,6 +597,7 @@ var defaultConf = Config{
 		ServerMemoryQuota:     0,
 		MemoryUsageAlarmRatio: 0.8,
 		TCPKeepAlive:          true,
+		TCPNoDelay:            true,
 		CrossJoin:             true,
 		StatsLease:            "3s",
 		RunAutoAnalyze:        true,
