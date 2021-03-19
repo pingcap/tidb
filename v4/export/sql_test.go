@@ -63,7 +63,7 @@ func (s *testSQLSuite) TestBuildSelectAllQuery(c *C) {
 	conn, err := db.Conn(context.Background())
 	c.Assert(err, IsNil)
 
-	mockConf := DefaultConfig()
+	mockConf := defaultConfigForTest(c)
 	mockConf.SortByPk = true
 
 	// Test TiDB server.
@@ -181,7 +181,7 @@ func (s *testSQLSuite) TestBuildOrderByClause(c *C) {
 	conn, err := db.Conn(context.Background())
 	c.Assert(err, IsNil)
 
-	mockConf := DefaultConfig()
+	mockConf := defaultConfigForTest(c)
 	mockConf.SortByPk = true
 
 	// Test TiDB server.

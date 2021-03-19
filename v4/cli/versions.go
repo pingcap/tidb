@@ -15,6 +15,10 @@ package cli
 
 import (
 	"fmt"
+
+	"go.uber.org/zap"
+
+	"github.com/pingcap/dumpling/v4/log"
 )
 
 var (
@@ -44,4 +48,14 @@ func LongVersion() string {
 		BuildTimestamp,
 		GoVersion,
 	)
+}
+
+// LogLongVersion logs the version information of this program to the logger.
+func LogLongVersion(logger log.Logger) {
+	logger.Info("Welcome to dumpling",
+		zap.String("Release Version", ReleaseVersion),
+		zap.String("Git Commit Hash", GitHash),
+		zap.String("Git Branch", GitBranch),
+		zap.String("Build timestamp", BuildTimestamp),
+		zap.String("Go Version", GoVersion))
 }
