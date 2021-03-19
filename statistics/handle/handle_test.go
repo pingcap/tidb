@@ -2112,3 +2112,42 @@ func (s *testStatsSuite) TestHideExtendedStatsSwitch(c *C) {
 	}
 	tk.MustQuery("show variables like 'tidb_enable_extended_stats'").Check(testkit.Rows())
 }
+
+func (s *testStatsSuite) TestRepetitiveAddDropExtendedStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustQuery("select name, status from mysql.stats_extended where name = 's1'").Sort().Check(testkit.Rows(
+		"s1 0",
+	))
+	result := tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 0)
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select name, status from mysql.stats_extended where name = 's1'").Sort().Check(testkit.Rows(
+		"s1 1",
+	))
+	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 1)
+	tk.MustExec("alter table t drop stats_extended s1")
+	tk.MustQuery("select name, status from mysql.stats_extended where name = 's1'").Sort().Check(testkit.Rows(
+		"s1 2",
+	))
+	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 0)
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustQuery("select name, status from mysql.stats_extended where name = 's1'").Sort().Check(testkit.Rows(
+		"s1 0",
+	))
+	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 0)
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select name, status from mysql.stats_extended where name = 's1'").Sort().Check(testkit.Rows(
+		"s1 1",
+	))
+	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 1)
+}
