@@ -36,7 +36,7 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	tctx := tcontext.Background().WithContext(ctx)
-	conf := DefaultConfig()
+	conf := defaultConfigForTest(c)
 	resultOk := sqlmock.NewResult(0, 1)
 
 	conf.Consistency = consistencyTypeNone
@@ -85,7 +85,7 @@ func (s *testConsistencySuite) TestConsistencyLockControllerRetry(c *C) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	tctx := tcontext.Background().WithContext(ctx)
-	conf := DefaultConfig()
+	conf := defaultConfigForTest(c)
 	resultOk := sqlmock.NewResult(0, 1)
 
 	conf.Consistency = consistencyTypeLock
@@ -106,7 +106,7 @@ func (s *testConsistencySuite) TestConsistencyLockControllerRetry(c *C) {
 }
 
 func (s *testConsistencySuite) TestResolveAutoConsistency(c *C) {
-	conf := DefaultConfig()
+	conf := defaultConfigForTest(c)
 	cases := []struct {
 		serverTp            ServerType
 		resolvedConsistency string
@@ -134,7 +134,7 @@ func (s *testConsistencySuite) TestConsistencyControllerError(c *C) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	tctx := tcontext.Background().WithContext(ctx)
-	conf := DefaultConfig()
+	conf := defaultConfigForTest(c)
 
 	conf.Consistency = "invalid_str"
 	_, err = NewConsistencyController(ctx, conf, db)

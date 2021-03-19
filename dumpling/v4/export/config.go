@@ -155,7 +155,7 @@ func DefaultConfig() *Config {
 		NoViews:            true,
 		Rows:               UnspecifiedSize,
 		Where:              "",
-		FileType:           FileFormatSQLTextString,
+		FileType:           "",
 		NoHeader:           false,
 		NoSchemas:          false,
 		NoData:             false,
@@ -221,12 +221,13 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.Uint64P(flagRows, "r", UnspecifiedSize, "Split table into chunks of this many rows, default unlimited")
 	flags.String(flagWhere, "", "Dump only selected records")
 	flags.Bool(flagEscapeBackslash, true, "use backslash to escape special characters")
-	flags.String(flagFiletype, FileFormatSQLTextString, "The type of export file (sql/csv)")
+	flags.String(flagFiletype, "", "The type of export file (sql/csv)")
 	flags.Bool(flagNoHeader, false, "whether not to dump CSV table header")
 	flags.BoolP(flagNoSchemas, "m", false, "Do not dump table schemas with the data")
 	flags.BoolP(flagNoData, "d", false, "Do not dump table data")
 	flags.String(flagCsvNullValue, "\\N", "The null value used when export to csv")
 	flags.StringP(flagSQL, "S", "", "Dump data with given sql. This argument doesn't support concurrent dump")
+	_ = flags.MarkHidden(flagSQL)
 	flags.StringSliceP(flagFilter, "f", []string{"*.*", DefaultTableFilter}, "filter to select which tables to dump")
 	flags.Bool(flagCaseSensitive, false, "whether the filter should be case-sensitive")
 	flags.Bool(flagDumpEmptyDatabase, true, "whether to dump empty database")
@@ -682,11 +683,22 @@ func validateSpecifiedSQL(conf *Config) error {
 	return nil
 }
 
-func validateFileFormat(conf *Config) error {
+func adjustFileFormat(conf *Config) error {
 	conf.FileType = strings.ToLower(conf.FileType)
 	switch conf.FileType {
-	case FileFormatSQLTextString, FileFormatCSVString:
-		return nil
+	case "":
+		if conf.SQL != "" {
+			conf.FileType = FileFormatCSVString
+		} else {
+			conf.FileType = FileFormatSQLTextString
+		}
+	case FileFormatSQLTextString:
+		if conf.SQL != "" {
+			return errors.Errorf("unsupported config.FileType '%s' when we specify --sql, please unset --filetype or set it to 'csv'", conf.FileType)
+		}
+	case FileFormatCSVString:
+	default:
+		return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
 	}
-	return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
+	return nil
 }
