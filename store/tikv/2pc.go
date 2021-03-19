@@ -1001,7 +1001,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}
 
-	failpoint.Inject("beforePrewrite", nil)
+	if c.sessionID > 0 {
+		failpoint.Inject("beforePrewrite", nil)
+	}
 
 	c.prewriteStarted = true
 	var binlogChan <-chan BinlogWriteResult
