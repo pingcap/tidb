@@ -21,8 +21,5 @@ var _ = Suite(&testBRIESuite{})
 
 func (s *testPartitionSuite) TestGlueGetVersion(c *C) {
 	g := tidbGlueSession{}
-	version := g.GetVersion()
-	c.Assert(version, Matches, `(.|\n)*Release Version(.|\n)*`)
-	c.Assert(version, Matches, `(.|\n)*Git Commit Hash(.|\n)*`)
-	c.Assert(version, Matches, `(.|\n)*GoVersion(.|\n)*`)
+	c.Assert(g.GetVersion(), Matches, `TiDB\n(None|v[0-9]+\.[0-9]+\.[0-9]+[\.\-0-9a-za]*)`)
 }
