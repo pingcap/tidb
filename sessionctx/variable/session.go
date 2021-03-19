@@ -42,8 +42,8 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -712,7 +712,7 @@ type SessionVars struct {
 	enableIndexMerge bool
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
-	replicaRead kv.ReplicaReadType
+	replicaRead tikvstore.ReplicaReadType
 
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
@@ -969,7 +969,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		enableIndexMerge:            false,
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
-		replicaRead:                 kv.ReplicaReadLeader,
+		replicaRead:                 tikvstore.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
@@ -1118,15 +1118,15 @@ func (s *SessionVars) SetEnableIndexMerge(val bool) {
 }
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
-func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
+func (s *SessionVars) GetReplicaRead() tikvstore.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
-		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
+		return tikvstore.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
 	return s.replicaRead
 }
 
 // SetReplicaRead set SessionVars.replicaRead.
-func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
+func (s *SessionVars) SetReplicaRead(val tikvstore.ReplicaReadType) {
 	s.replicaRead = val
 }
 
@@ -1589,11 +1589,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableNoopFuncs = TiDBOptOn(val)
 	case TiDBReplicaRead:
 		if strings.EqualFold(val, "follower") {
-			s.SetReplicaRead(kv.ReplicaReadFollower)
+			s.SetReplicaRead(tikvstore.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader-and-follower") {
-			s.SetReplicaRead(kv.ReplicaReadMixed)
+			s.SetReplicaRead(tikvstore.ReplicaReadMixed)
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
-			s.SetReplicaRead(kv.ReplicaReadLeader)
+			s.SetReplicaRead(tikvstore.ReplicaReadLeader)
 		}
 	case TiDBAllowRemoveAutoInc:
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
@@ -1619,7 +1619,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			}
 		}
 	case TiDBStoreLimit:
-		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
+		tikvstore.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
 	case TiDBMetricSchemaStep:
 		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
 	case TiDBMetricSchemaRangeDuration:
