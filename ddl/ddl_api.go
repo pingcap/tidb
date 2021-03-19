@@ -39,6 +39,7 @@ import (
 	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -54,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -1405,6 +1407,12 @@ func buildTableInfo(
 			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
 			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
 		}
+		// Check clustered on non-primary key.
+		if constr.Option != nil && constr.Option.PrimaryKeyTp != model.PrimaryKeyTypeDefault &&
+			constr.Tp != ast.ConstraintPrimaryKey {
+			msg := mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil)
+			return nil, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
+		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
 				if fk.Name.L == strings.ToLower(constr.Name) {
@@ -1425,41 +1433,18 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			pkTp := model.PrimaryKeyTypeDefault
-			if constr.Option != nil {
-				pkTp = constr.Option.PrimaryKeyTp
-			}
-			noBinlog := ctx.GetSessionVars().BinlogClient == nil
-			switch pkTp {
-			case model.PrimaryKeyTypeNonClustered:
-				break
-			case model.PrimaryKeyTypeClustered:
-				if isSingleIntPK(constr, lastCol) {
+			isSingleIntPK := isSingleIntPK(constr, lastCol)
+			if ShouldBuildClusteredIndex(ctx, constr.Option, isSingleIntPK) {
+				if isSingleIntPK {
 					tbInfo.PKIsHandle = true
 				} else {
-					tbInfo.IsCommonHandle = noBinlog
-					if tbInfo.IsCommonHandle {
-						tbInfo.CommonHandleVersion = 1
+					hasBinlog := ctx.GetSessionVars().BinlogClient != nil
+					if hasBinlog {
+						msg := mysql.Message("Cannot create clustered index table when the binlog is ON", nil)
+						return nil, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
 					}
-					if !noBinlog {
-						errMsg := "cannot build clustered index table because the binlog is ON"
-						ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf(errMsg))
-					}
-				}
-			case model.PrimaryKeyTypeDefault:
-				// (AlterPrimaryKey = true) ----> all pk must be nonclustered
-				// (AlterPrimaryKey = false) + (EnableClusteredIndex = true) + noBinlog ---> all pk must be clustered
-				// (AlterPrimaryKey = false) + (EnableClusteredIndex = true) + HasBinlog ---> int pk must be clustered, other must be nonclustered
-				// (AlterPrimaryKey = false) + (EnableClusteredIndex = false) + (IntPrimaryKeyDefaultAsClustered = true) --> int pk must be clustered
-				// (AlterPrimaryKey = false) + (EnableClusteredIndex = false) + (IntPrimaryKeyDefaultAsClustered = false) --> all pk must be nonclustered [Default]
-				alterPKConf := config.GetGlobalConfig().AlterPrimaryKey
-				if isSingleIntPK(constr, lastCol) {
-					tbInfo.PKIsHandle = !alterPKConf && (ctx.GetSessionVars().EnableClusteredIndex || ctx.GetSessionVars().IntPrimaryKeyDefaultAsClustered)
-				} else {
-					tbInfo.IsCommonHandle = !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex && noBinlog
-					if tbInfo.IsCommonHandle {
-						tbInfo.CommonHandleVersion = 1
-					}
+					tbInfo.IsCommonHandle = true
+					tbInfo.CommonHandleVersion = 1
 				}
 			}
 			if tbInfo.PKIsHandle || tbInfo.IsCommonHandle {
@@ -1533,6 +1518,15 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 		return true
 	}
 	return false
+}
+
+// ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
+func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption, isSingleIntPK bool) bool {
+	if opt == nil || opt.PrimaryKeyTp == model.PrimaryKeyTypeDefault {
+		return ctx.GetSessionVars().EnableClusteredIndex ||
+			(isSingleIntPK && ctx.GetSessionVars().IntPrimaryKeyDefaultAsClustered)
+	}
+	return opt.PrimaryKeyTp == model.PrimaryKeyTypeClustered
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
@@ -2176,7 +2170,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
-			if op.UintValue > 0 && tbInfo.PKIsHandle {
+			if op.UintValue > 0 && (tbInfo.PKIsHandle || tbInfo.IsCommonHandle) {
 				return errUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
@@ -2604,7 +2598,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 		// Nothing need to do.
 		return nil
 	}
-	if uVal > 0 && t.Meta().PKIsHandle {
+	if uVal > 0 && (t.Meta().PKIsHandle || t.Meta().IsCommonHandle) {
 		return errUnsupportedShardRowIDBits
 	}
 	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
@@ -4759,11 +4753,10 @@ func getAnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) 
 
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
-	if !config.GetGlobalConfig().AlterPrimaryKey {
-		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false. " +
-			"Please check the documentation for the tidb-server configuration files")
+	if indexOption != nil && indexOption.PrimaryKeyTp == model.PrimaryKeyTypeClustered {
+		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Adding clustered primary key is not supported. " +
+			"Please consider adding NONCLUSTERED primary key instead")
 	}
-
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -5173,10 +5166,6 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		isPK = true
 	}
 	if isPK {
-		if !config.GetGlobalConfig().AlterPrimaryKey {
-			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
-
-		}
 		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
 		if indexInfo == nil && !t.Meta().PKIsHandle {
 			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
