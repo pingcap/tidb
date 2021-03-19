@@ -336,10 +336,6 @@ func (s *testPlanSuite) TestGroupByWhenNotExistCols(c *C) {
 			sql:              "select length(a + b) as tempField from t  group by b",
 			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
 		},
-		{
-			sql:              "select a, b from (select 1) t0 join (select * from t) t1 join (select * from t) t2 group by c",
-			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
-		},
 	}
 	for _, test := range sqlTests {
 		sql := test.sql
