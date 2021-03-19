@@ -1146,3 +1146,29 @@ func (ts *tidbTestSerialSuite) TestPrepareCount(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt)
 }
+
+func (ts *tidbTestSuite) TestPKNotNullFlagOfOuterJoin(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "drop table if exists t")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "create table t(c1 int key, c2 int);")
+	c.Assert(err, IsNil)
+	// the pk is null after executing the outer join
+	rs, err := Execute(ctx, qctx, "select t.c1, sum(t1.c2) from t right join t as t1 on t.c1 =t1.c1 group by t.c1;")
+	c.Assert(err, IsNil)
+	cols := rs.Columns()
+	c.Assert(len(cols), Equals, 2)
+	expectFlag := uint16(tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	// the pk is not null after transforming an outer join into an inner join
+	rs, err = Execute(ctx, qctx, "select t.c1, sum(t1.c2) from t right join t as t1 on t.c1 =t1.c1 where t.c1 != t.c2 group by t.c1;")
+	c.Assert(err, IsNil)
+	cols = rs.Columns()
+	c.Assert(len(cols), Equals, 2)
+	expectFlag = uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+}
