@@ -88,6 +88,20 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}()
 	}
 
+	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
+	stmtHints, warns := handleStmtHints(tableHints)
+	sessVars.StmtCtx.StmtHints = stmtHints
+	for _, warn := range warns {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
+	warns = warns[:0]
+	for name, val := range stmtHints.SetVars {
+		err := variable.SetStmtVar(sessVars, name, val)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+	}
+
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp plannercore.Plan
 		if fpv, ok := sctx.Value(plannercore.PointPlanKey).(plannercore.PointPlanVal); ok {
@@ -105,20 +119,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	sctx.PrepareTSFuture(ctx)
-
-	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
-	stmtHints, warns := handleStmtHints(tableHints)
-	sessVars.StmtCtx.StmtHints = stmtHints
-	for _, warn := range warns {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
-	}
-	warns = warns[:0]
-	for name, val := range stmtHints.SetVars {
-		err := variable.SetStmtVar(sessVars, name, val)
-		if err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		}
-	}
 
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
@@ -290,12 +290,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			var normalizeSQL string
-			if specifiledDB != "" {
-				normalizeSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB))
-			} else {
-				normalizeSQL = parser.Normalize(x.Text())
-			}
+			normalizeSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
 			normalizeSQL = plannercore.EraseLastSemicolonInSQL(normalizeSQL)
 			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt, normalizeSQL, hash, nil
@@ -303,7 +298,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 			plannercore.EraseLastSemicolon(x)
 			var normalizeExplainSQL string
 			if specifiledDB != "" {
-				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB))
+				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
 			} else {
 				normalizeExplainSQL = parser.Normalize(x.Text())
 			}
@@ -326,12 +321,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		if len(x.Text()) == 0 {
 			return x, "", "", nil
 		}
-		var normalizedSQL, hash string
-		if specifiledDB != "" {
-			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB))
-		} else {
-			normalizedSQL, hash = parser.NormalizeDigest(x.Text())
-		}
+		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
 		return x, normalizedSQL, hash, nil
 	}
 	return nil, "", "", nil

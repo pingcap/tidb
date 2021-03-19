@@ -121,7 +121,7 @@ func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
 
 	c.Assert(len(tk.Se.GetSessionVars().PreparedStmts), Equals, 1)
-	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedSQL, Equals, "select * from t")
+	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedSQL, Equals, "select * from `t`")
 	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedPlan, Equals, "")
 }
 
@@ -254,7 +254,6 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustExec(`set @v1 = 'a', @v2 = 'b'`)
 	tk.MustQuery(`execute stmt1 using @v1`).Check(testkit.Rows("a 1 a 1"))
 	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 b 2"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// case 2:
 	tk.MustExec(`drop table if exists ta, tb`)
@@ -266,7 +265,6 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustExec(`set @v1 = 'a', @v2 = 'b'`)
 	tk.MustQuery(`execute stmt1 using @v1`).Check(testkit.Rows("a 1 1 1"))
 	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}

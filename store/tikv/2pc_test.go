@@ -61,7 +61,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	spkv := NewMockSafePointKV()
-	store, err := NewKVStore("mocktikv-store", pdCli, spkv, client, nil)
+	store, err := NewKVStore("mocktikv-store", pdCli, spkv, client)
 	store.EnableTxnLocalLatches(1024000)
 	c.Assert(err, IsNil)
 
@@ -88,17 +88,17 @@ func (s *testCommitterSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testCommitterSuite) begin(c *C) *tikvTxn {
+func (s *testCommitterSuite) begin(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn
 }
 
-func (s *testCommitterSuite) beginAsyncCommit(c *C) *tikvTxn {
+func (s *testCommitterSuite) beginAsyncCommit(c *C) *KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
-	return txn.(*tikvTxn)
+	return txn
 }
 
 func (s *testCommitterSuite) checkValues(c *C, m map[string]string) {
@@ -333,12 +333,12 @@ func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
 }
 
 func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
-	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := s.store.CurrentTimestamp(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
 		Key:     key,
-		Version: ver.Ver,
+		Version: ver,
 	})
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
@@ -421,17 +421,6 @@ func (s *testCommitterSuite) TestIllegalTso(c *C) {
 
 func errMsgMustContain(c *C, err error, msg string) {
 	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
-}
-
-func newTwoPhaseCommitterWithInit(txn *tikvTxn, sessionID uint64) (*twoPhaseCommitter, error) {
-	c, err := newTwoPhaseCommitter(txn, sessionID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err = c.initKeysAndMutations(); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return c, nil
 }
 
 func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
@@ -1036,19 +1025,6 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	c.Assert(err, IsNil)
 	waitErr := <-doneCh
 	c.Assert(ErrLockWaitTimeout.Equal(waitErr), IsTrue)
-}
-
-func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
-	var res PlainMutations
-	for i := 0; i < c.mutations.Len(); i++ {
-		for _, key := range keys {
-			if bytes.Equal(c.mutations.GetKey(i), key) {
-				res.Push(c.mutations.GetOp(i), c.mutations.GetKey(i), c.mutations.GetValue(i), c.mutations.IsPessimisticLock(i))
-				break
-			}
-		}
-	}
-	return &res
 }
 
 func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {

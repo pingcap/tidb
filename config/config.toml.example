@@ -86,11 +86,6 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
-# alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
-# If it is true, we can add the primary key by "alter table". However, if a table already exists before the switch is turned true and the data type of its primary key column is an integer,
-# the primary key cannot be dropped.
-alter-primary-key = false
-
 # server-version is used to change the version string of TiDB in the following scenarios:
 # 1. the server version returned by builtin-function `VERSION()`.
 # 2. the server version filled in handshake packets of MySQL Connection Protocol, see https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::Handshake for more details.
@@ -312,7 +307,7 @@ networks = ""
 header-timeout = 5
 
 [prepared-plan-cache]
-enabled = true
+enabled = false
 capacity = 100
 memory-guard-ratio = 0.1
 
@@ -411,34 +406,15 @@ region-cache-ttl = 600
 store-limit = 0
 
 # store-liveness-timeout is used to control timeout for store liveness after sending request failed.
-store-liveness-timeout = "5s"
+store-liveness-timeout = "1s"
 
 # ttl-refreshed-txn-size decides whether a transaction should update its lock TTL.
 # If the size(in byte) of a transaction is large than `ttl-refreshed-txn-size`, it update the lock TTL during the 2PC.
 ttl-refreshed-txn-size = 33554432
 
-[tikv-client.async-commit]
-# The maximum allowed keys in an async commit transaction. Transactions with more keys than the limit
-# will be committed with normal 2PC way.
-keys-limit = 256
-# The maximum length total of keys in bytes. Transactions will be committed with the normal 2PC way
-# if the limit is exceeded.
-total-key-size-limit = 4096
-
 [tikv-client.copr-cache]
-# Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
-# reuses the result when corresponding data in TiKV is unchanged, on a region basis.
-enable = true
-
-# The capacity in MB of the cache.
+# The capacity in MB of the cache. Zero means disable coprocessor cache.
 capacity-mb = 1000.0
-
-# Only cache small requests. Zero means no limits for requests.
-admission-max-ranges = 500
-# Only cache requests whose result set is small.
-admission-max-result-mb = 10.0
-# Only cache requests takes notable time to process.
-admission-min-process-ms = 5
 
 [binlog]
 # enable to write binlog.
@@ -487,8 +463,6 @@ history-size = 24
 [experimental]
 # enable creating expression index.
 allow-expression-index = false
-# enable global kill.
-enable-global-kill = false
 
 # server level isolation read by engines and labels
 [isolation-read]

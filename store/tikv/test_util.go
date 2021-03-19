@@ -14,9 +14,10 @@
 package tikv
 
 import (
+	"sync/atomic"
+
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/store/tikv/config"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -34,7 +35,7 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 	// Make sure the uuid is unique.
 	uid := uuid.New().String()
 	spkv := NewMockSafePointKV()
-	tikvStore, err := NewKVStore(uid, pdCli, spkv, client, &config.GetGlobalConfig().TiKVClient.CoprCache)
+	tikvStore, err := NewKVStore(uid, pdCli, spkv, client)
 
 	if txnLocalLatches > 0 {
 		tikvStore.EnableTxnLocalLatches(txnLocalLatches)
@@ -42,4 +43,22 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 
 	tikvStore.mock = true
 	return tikvStore, errors.Trace(err)
+}
+
+// mockCommitErrorEnable uses to enable `mockCommitError` and only mock error once.
+var mockCommitErrorEnable = int64(0)
+
+// MockCommitErrorEnable exports for gofail testing.
+func MockCommitErrorEnable() {
+	atomic.StoreInt64(&mockCommitErrorEnable, 1)
+}
+
+// MockCommitErrorDisable exports for gofail testing.
+func MockCommitErrorDisable() {
+	atomic.StoreInt64(&mockCommitErrorEnable, 0)
+}
+
+// IsMockCommitErrorEnable exports for gofail testing.
+func IsMockCommitErrorEnable() bool {
+	return atomic.LoadInt64(&mockCommitErrorEnable) == 1
 }

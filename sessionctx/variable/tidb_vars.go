@@ -145,11 +145,13 @@ const (
 	TiDBRowFormatVersion = "tidb_row_format_version"
 
 	// tidb_enable_table_partition is used to control table partition feature.
-	// The valid value include auto/on/off/nightly:
-	// on or auto: enable range/hash partition table.
-	// nightly: enable table partition if the partition type is implemented.
+	// The valid value include auto/on/off:
+	// on or auto: enable table partition if the partition type is implemented.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
+
+	// tidb_enable_list_partition is used to control list table partition feature.
+	TiDBEnableListTablePartition = "tidb_enable_list_partition"
 
 	// tidb_skip_isolation_level_check is used to control whether to return error when set unsupported transaction
 	// isolation level.
@@ -524,8 +526,12 @@ const (
 	// TiDBEnableExchangePartition indicates whether to enable exchange partition.
 	TiDBEnableExchangePartition = "tidb_enable_exchange_partition"
 
-	// TiDBEnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
-	TiDBEnableTiFlashFallbackTiKV = "tidb_enable_tiflash_fallback_tikv"
+	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
+	// Now we only support TiFlash.
+	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
+
+	// TiDBIntPrimaryKeyDefaultAsClustered indicates whether create int primary key as clustered as 4.0 behavior.
+	TiDBIntPrimaryKeyDefaultAsClustered = "tidb_int_primary_key_default_as_clustered"
 )
 
 // TiDB vars that have only global scope
@@ -657,16 +663,15 @@ const (
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = false
-	DefTiDBPartitionPruneMode          = "static-only"
+	DefTiDBPartitionPruneMode          = "static"
 	DefTiDBEnableRateLimitAction       = true
 	DefTiDBEnableAsyncCommit           = false
 	DefTiDBEnable1PC                   = false
 	DefTiDBGuaranteeLinearizability    = true
 	DefTiDBAnalyzeVersion              = 1
 	DefTiDBEnableIndexMergeJoin        = false
-	DefTiDBTrackAggregateMemoryUsage   = false
+	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
-	DefTiDBEnableTiFlashFallbackTiKV   = false
 )
 
 // Process global variables.
@@ -703,6 +708,13 @@ var FeatureSwitchVariables = []string{
 	TiDBEnableAsyncCommit,
 	TiDBEnable1PC,
 	TiDBGuaranteeLinearizability,
+	TiDBEnableClusteredIndex,
+	TiDBTrackAggregateMemoryUsage,
+	TiDBAnalyzeVersion,
+	TiDBPartitionPruneMode,
+	TiDBIntPrimaryKeyDefaultAsClustered,
+	TiDBEnableExtendedStats,
+	TiDBEnableIndexMergeJoin,
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.

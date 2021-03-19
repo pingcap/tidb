@@ -89,7 +89,8 @@ LOOP:
 	for {
 		select {
 		case <-ticker.C:
-			d.Stop()
+			err := d.Stop()
+			c.Assert(err, IsNil)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
@@ -101,7 +102,10 @@ LOOP:
 
 func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	store := testCreateStore(c, "test_schema_resume")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	d1 := testNewDDLAndStart(
 		context.Background(),
@@ -109,7 +113,10 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d1.Stop()
+	defer func() {
+		err := d1.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	testCheckOwner(c, d1, true)
 
@@ -134,7 +141,10 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 
 func (s *testStatSuite) TestStat(c *C) {
 	store := testCreateStore(c, "test_stat")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	d := testNewDDLAndStart(
 		context.Background(),
@@ -142,7 +152,10 @@ func (s *testStatSuite) TestStat(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
@@ -169,7 +182,8 @@ LOOP:
 	for {
 		select {
 		case <-ticker.C:
-			d.Stop()
+			err := d.Stop()
+			c.Assert(err, IsNil)
 			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)

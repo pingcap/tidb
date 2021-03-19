@@ -11,19 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package tikv_test
 
 import (
 	"context"
 	"flag"
-	"fmt"
+	"strings"
 	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/config"
+	pd "github.com/tikv/pd/client"
 )
 
 var (
@@ -32,15 +33,22 @@ var (
 	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
-// NewTestStore creates a kv.Storage for testing purpose.
-func NewTestStore(c *C) kv.Storage {
+// NewTestStore creates a KVStore for testing purpose.
+func NewTestStore(c *C) *tikv.KVStore {
 	if !flag.Parsed() {
 		flag.Parse()
 	}
 
 	if *WithTiKV {
-		var d TiKVDriver
-		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
+		addrs := strings.Split(*pdAddrs, ",")
+		pdClient, err := pd.NewClient(addrs, pd.SecurityOption{})
+		c.Assert(err, IsNil)
+		var securityConfig config.Security
+		tlsConfig, err := securityConfig.ToTLSConfig()
+		c.Assert(err, IsNil)
+		spKV, err := tikv.NewEtcdSafePointKV(addrs, tlsConfig)
+		c.Assert(err, IsNil)
+		store, err := tikv.NewKVStore("test-store", &tikv.CodecPDClient{Client: pdClient}, spKV, tikv.NewRPCClient(securityConfig))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
@@ -51,10 +59,10 @@ func NewTestStore(c *C) kv.Storage {
 	unistore.BootstrapWithSingleStore(cluster)
 	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-	return &tikvStore{KVStore: store}
+	return store
 }
 
-func clearStorage(store kv.Storage) error {
+func clearStorage(store *tikv.KVStore) error {
 	txn, err := store.Begin()
 	if err != nil {
 		return errors.Trace(err)

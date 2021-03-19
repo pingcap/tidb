@@ -17,7 +17,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
@@ -51,37 +50,16 @@ type Storage interface {
 	// Closed returns the closed channel.
 	Closed() <-chan struct{}
 
-	// Begin a global transaction
-	Begin() (kv.Transaction, error)
-	// Begin a transaction with the given txnScope (local or global)
-	BeginWithTxnScope(txnScope string) (kv.Transaction, error)
-	// BeginWithStartTS begins transaction with given txnScope and startTS.
-	BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error)
-	// BeginWithStalenessTS begins transaction with given staleness
-	BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error)
-	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
-	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-	GetSnapshot(ver kv.Version) kv.Snapshot
-	// GetClient gets a client instance.
-	GetClient() kv.Client
-	// GetMPPClient gets a mpp client instance.
-	GetMPPClient() kv.MPPClient
 	// Close store
 	Close() error
 	// UUID return a unique ID which represents a Storage.
 	UUID() string
-	// CurrentVersion returns current max committed version with the given txnScope (local or global).
-	CurrentVersion(txnScope string) (kv.Version, error)
+	// CurrentTimestamp returns current timestamp with the given txnScope (local or global).
+	CurrentTimestamp(txnScope string) (uint64, error)
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
 	SupportDeleteRange() (supported bool)
-	// Name gets the name of the storage engine
-	Name() string
-	// Describe returns of brief introduction of the storage
-	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
-	// GetMemCache return memory manager of the storage
-	GetMemCache() kv.MemManager
 }

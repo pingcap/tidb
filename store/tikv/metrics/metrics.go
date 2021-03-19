@@ -36,7 +36,7 @@ var (
 	TiKVStatusCounter                      *prometheus.CounterVec
 	TiKVBatchWaitDuration                  prometheus.Histogram
 	TiKVBatchSendLatency                   prometheus.Histogram
-	TiKVBatchWaitOverLoad                  prometheus.Counter
+	TiKvBatchWaitOverLoad                  prometheus.Counter
 	TiKVBatchPendingRequests               *prometheus.HistogramVec
 	TiKVBatchRequests                      *prometheus.HistogramVec
 	TiKVBatchClientUnavailable             prometheus.Histogram
@@ -50,8 +50,10 @@ var (
 	TiKVNoAvailableConnectionCounter       prometheus.Counter
 	TiKVAsyncCommitTxnCounter              *prometheus.CounterVec
 	TiKVOnePCTxnCounter                    *prometheus.CounterVec
-	TiFlashExecuteErrorCounter             *prometheus.CounterVec
-	TiFlashExecuteCounter                  prometheus.Counter
+	TiKVStoreLimitErrorCounter             *prometheus.CounterVec
+	TiKVGRPCConnTransientFailureCounter    *prometheus.CounterVec
+	TiKVPanicCounter                       *prometheus.CounterVec
+	TiKVForwardRequestCounter              *prometheus.CounterVec
 )
 
 // Label constants.
@@ -67,6 +69,9 @@ const (
 	LblLockKeys        = "lock_keys"
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
+	LblAddress         = "address"
+	LblFromStore       = "from_store"
+	LblToStore         = "to_store"
 )
 
 func initMetrics(namespace, subsystem string) {
@@ -233,7 +238,7 @@ func initMetrics(namespace, subsystem string) {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 34), // 1ns ~ 8s
 			Help:      "batch send latency",
 		})
-	TiKVBatchWaitOverLoad = prometheus.NewCounter(
+	TiKvBatchWaitOverLoad = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
@@ -306,7 +311,6 @@ func initMetrics(namespace, subsystem string) {
 			Help:      "Bucketed histogram of the txn_heartbeat request duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType})
-
 	TiKVPessimisticLockKeysDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
@@ -348,21 +352,37 @@ func initMetrics(namespace, subsystem string) {
 			Help:      "Counter of 1PC transactions.",
 		}, []string{LblType})
 
-	TiFlashExecuteErrorCounter = prometheus.NewCounterVec(
+	TiKVStoreLimitErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
-			Name:      "tiflash_execute_error_total",
-			Help:      "Counter of TiFlash execute errors.",
+			Name:      "get_store_limit_token_error",
+			Help:      "store token is up to the limit, probably because one of the stores is the hotspot or unavailable",
+		}, []string{LblAddress, LblStore})
+
+	TiKVGRPCConnTransientFailureCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "connection_transient_failure_count",
+			Help:      "Counter of gRPC connection transient failure",
+		}, []string{LblAddress, LblStore})
+
+	TiKVPanicCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "panic_total",
+			Help:      "Counter of panic.",
 		}, []string{LblType})
 
-	TiFlashExecuteCounter = prometheus.NewCounter(
+	TiKVForwardRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
-			Name:      "tiflash_execute_total",
-			Help:      "Counter of TiFlash execute.",
-		})
+			Name:      "forward_request_counter",
+			Help:      "Counter of tikv request being forwarded through another node",
+		}, []string{LblFromStore, LblToStore, LblResult})
 
 	initShortcuts()
 }
@@ -398,7 +418,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVStatusCounter)
 	prometheus.MustRegister(TiKVBatchWaitDuration)
 	prometheus.MustRegister(TiKVBatchSendLatency)
-	prometheus.MustRegister(TiKVBatchWaitOverLoad)
+	prometheus.MustRegister(TiKvBatchWaitOverLoad)
 	prometheus.MustRegister(TiKVBatchPendingRequests)
 	prometheus.MustRegister(TiKVBatchRequests)
 	prometheus.MustRegister(TiKVBatchClientUnavailable)
@@ -412,7 +432,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
 	prometheus.MustRegister(TiKVAsyncCommitTxnCounter)
 	prometheus.MustRegister(TiKVOnePCTxnCounter)
-	prometheus.MustRegister(TiKVReadDuration)
-	prometheus.MustRegister(TiFlashExecuteErrorCounter)
-	prometheus.MustRegister(TiFlashExecuteCounter)
+	prometheus.MustRegister(TiKVStoreLimitErrorCounter)
+	prometheus.MustRegister(TiKVGRPCConnTransientFailureCounter)
+	prometheus.MustRegister(TiKVPanicCounter)
+	prometheus.MustRegister(TiKVForwardRequestCounter)
 }

@@ -108,8 +108,10 @@ func (s *testConfigSuite) TestLogConfig(c *C) {
 		c.Assert(conf.Log.EnableTimestamp, Equals, expectedEnableTimestamp)
 		c.Assert(conf.Log.DisableTimestamp, Equals, expectedDisableTimestamp)
 		c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }))
-		f.Truncate(0)
-		f.Seek(0, 0)
+		err := f.Truncate(0)
+		c.Assert(err, IsNil)
+		_, err = f.Seek(0, 0)
+		c.Assert(err, IsNil)
 	}
 
 	testLoad(`
@@ -174,13 +176,14 @@ unrecognized-option-test = true
 	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*invalid configuration option(?:.|\n)*")
 	c.Assert(conf.MaxServerConnections, Equals, uint32(0))
 
-	f.Truncate(0)
-	f.Seek(0, 0)
+	err = f.Truncate(0)
+	c.Assert(err, IsNil)
+	_, err = f.Seek(0, 0)
+	c.Assert(err, IsNil)
 
 	_, err = f.WriteString(`
 token-limit = 0
 enable-table-lock = true
-alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
 enable-batch-dml = true
@@ -195,6 +198,7 @@ skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
+enable-forwarding = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -238,7 +242,6 @@ spilled-file-encryption-method = "plaintext"
 
 	// Test that the value will be overwritten by the config file.
 	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
-	c.Assert(conf.AlterPrimaryKey, Equals, true)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.AsyncCommit.KeysLimit, Equals, uint(123))
@@ -274,6 +277,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
+	c.Assert(conf.EnableForwarding, Equals, true)
 	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
 
 	_, err = f.WriteString(`
@@ -286,8 +290,10 @@ log-rotate = true`)
 
 	// Test telemetry config default value and whether it will be overwritten.
 	conf = NewConfig()
-	f.Truncate(0)
-	f.Seek(0, 0)
+	err = f.Truncate(0)
+	c.Assert(err, IsNil)
+	_, err = f.Seek(0, 0)
+	c.Assert(err, IsNil)
 	c.Assert(f.Sync(), IsNil)
 	c.Assert(conf.Load(configFile), IsNil)
 	c.Assert(conf.EnableTelemetry, Equals, true)

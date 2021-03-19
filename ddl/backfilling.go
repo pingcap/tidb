@@ -335,7 +335,8 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 		return nil, errors.Trace(err)
 	}
 	if len(ranges) == 0 {
-		return nil, errors.Trace(errInvalidSplitRegionRanges)
+		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
+		return nil, errors.Trace(errInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
 	return ranges, nil
 }
@@ -690,7 +691,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rk := t.RecordKey(handle)
+		rk := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 
 		more, err := fn(handle, rk, it.Value())
 		if !more || err != nil {
