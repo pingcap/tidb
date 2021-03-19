@@ -614,7 +614,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 		Key:   []byte("k"),
 		Value: []byte("v1"),
 	})
-	resp, ctx, err := s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, kv.TiKV)
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, tidbkv.TiKV)
 	c.Assert(err, IsNil)
 	regionErr, err := resp.GetRegionError()
 	c.Assert(err, IsNil)
@@ -642,7 +642,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 	atomic.StoreUint32(&storeState, uint32(unreachable))
 
 	req = tikvrpc.NewRequest(tikvrpc.CmdRawGet, &kvrpcpb.RawGetRequest{Key: []byte("k")})
-	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, kv.TiKV)
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, tidbkv.TiKV)
 	c.Assert(err, IsNil)
 	regionErr, err = resp.GetRegionError()
 	c.Assert(err, IsNil)
@@ -675,7 +675,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 		Key:   []byte("k"),
 		Value: []byte("v2"),
 	})
-	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, kv.TiKV)
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, tidbkv.TiKV)
 	c.Assert(err, IsNil)
 	regionErr, err = resp.GetRegionError()
 	c.Assert(err, IsNil)
@@ -695,7 +695,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 		Key:   []byte("k"),
 		Value: []byte("v2"),
 	})
-	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, kv.TiKV)
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, tidbkv.TiKV)
 	c.Assert(err, IsNil)
 	regionErr, err = resp.GetRegionError()
 	c.Assert(err, IsNil)
