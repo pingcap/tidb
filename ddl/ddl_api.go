@@ -5183,24 +5183,12 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
-	var isPK bool
-	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
-		// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
-		(indexInfo == nil || indexInfo.Primary) {
-		isPK = true
+
+	isPK, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
+	if err != nil {
+		return err
 	}
-	if isPK {
-		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
-		if indexInfo == nil && !t.Meta().PKIsHandle {
-			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
-		}
-		if t.Meta().PKIsHandle {
-			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
-		}
-		if t.Meta().IsCommonHandle {
-			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is using clustered index")
-		}
-	}
+
 	if indexInfo == nil {
 		err = ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		if ifExists {
@@ -5283,27 +5271,10 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		uniqueIndex[indexName.L] = spec.IfExists
 
 		indexInfo := t.Meta().FindIndexByName(indexName.L)
-		var isPK bool
-		if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
-			// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
-			(indexInfo == nil || indexInfo.Primary) {
-			isPK = true
-		}
-		if isPK {
-			if !config.GetGlobalConfig().AlterPrimaryKey {
-				return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
 
-			}
-			// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
-			if indexInfo == nil && !t.Meta().PKIsHandle {
-				return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
-			}
-			if t.Meta().PKIsHandle {
-				return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
-			}
-			if t.Meta().IsCommonHandle {
-				return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is using clustered index")
-			}
+		_, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
+		if err != nil {
+			return err
 		}
 
 		if indexInfo == nil {
@@ -5343,6 +5314,29 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func checkIsDropPrimaryKey(indexName model.CIStr, indexInfo *model.IndexInfo, t table.Table) (bool, error) {
+	var isPK bool
+	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
+		// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
+		(indexInfo == nil || indexInfo.Primary) {
+		isPK = true
+	}
+	if isPK {
+		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
+		if indexInfo == nil && !t.Meta().PKIsHandle {
+			return isPK, ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
+		}
+		if t.Meta().PKIsHandle {
+			return isPK, ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
+		}
+		if t.Meta().IsCommonHandle {
+			return isPK, ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is using clustered index")
+		}
+	}
+
+	return isPK, nil
 }
 
 func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
