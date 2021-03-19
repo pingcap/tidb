@@ -74,7 +74,7 @@ type HashJoinExec struct {
 	joiners []joiner
 
 	probeChkResourceCh chan *chunk.Chunk
-	probeResultChs     chan *chunk.Chunk
+	probeChkResultCh   chan *chunk.Chunk
 	joinChkResourceCh  chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
 
@@ -118,7 +118,7 @@ func (e *HashJoinExec) Close() error {
 			for range e.probeChkResourceCh {
 			}
 		}
-		for range e.probeResultChs {
+		for range e.probeChkResultCh {
 		}
 		close(e.joinChkResourceCh)
 		for range e.joinChkResourceCh {
@@ -219,7 +219,7 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			return
 		}
 
-		e.probeResultChs <- probeSideResult
+		e.probeChkResultCh <- probeSideResult
 	}
 }
 
@@ -268,10 +268,10 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 }
 
 func (e *HashJoinExec) initializeForProbe() {
-	// e.probeResultChs is for transmitting the chunks which store the data of
+	// e.probeChkResultCh is for transmitting the chunks which store the data of
 	// probeSideExec, it'll be written by probe side worker goroutine, and read by join
 	// workers.
-	e.probeResultChs = make(chan *chunk.Chunk, e.concurrency)
+	e.probeChkResultCh = make(chan *chunk.Chunk, e.concurrency)
 
 	// e.probeChkResourceCh is for transmitting the used probeSideExec chunks from
 	// join workers to probeSideExec worker.
@@ -319,7 +319,7 @@ func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
 }
 
 func (e *HashJoinExec) handleProbeSideFetcherPanic(r interface{}) {
-	close(e.probeResultChs)
+	close(e.probeChkResultCh)
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
@@ -415,7 +415,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		select {
 		case <-e.closeCh:
 			return
-		case probeSideResult, ok = <-e.probeResultChs:
+		case probeSideResult, ok = <-e.probeChkResultCh:
 		}
 		if !ok {
 			break
