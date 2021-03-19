@@ -520,8 +520,6 @@ func (s *testRegionCacheSuite) TestSendFailInvalidateRegionsInSameStore(c *C) {
 	c.Assert(err, IsNil)
 }
 
-<<<<<<< HEAD
-=======
 func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
 	s.cache.enableForwarding = true
 
@@ -577,7 +575,6 @@ func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
 	c.Assert(ctx.ProxyStore, IsNil)
 }
 
->>>>>>> 3813da014... store/tikv: forward requests by BatchCommands (#23243)
 func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	// 3 nodes and no.1 is leader.
 	store3 := s.cluster.AllocID()

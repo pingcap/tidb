@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -48,6 +49,7 @@ type testRegionRequestToSingleStoreSuite struct {
 }
 
 type testRegionRequestToThreeStoresSuite struct {
+	OneByOneSuite
 	cluster             *mocktikv.Cluster
 	storeIDs            []uint64
 	peerIDs             []uint64
@@ -569,8 +571,6 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnMaxTimestampNotSyncedError(c
 		c.Assert(resp, NotNil)
 	}()
 }
-<<<<<<< HEAD
-=======
 
 func (s *testRegionRequestToThreeStoresSuite) loadAndGetLeaderStore(c *C) (*Store, string) {
 	region, err := s.regionRequestSender.regionCache.findRegionByKey(s.bo, []byte("a"), false)
@@ -705,4 +705,3 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 	c.Assert(ctx.Store.storeID, Not(Equals), leaderStore.storeID)
 	c.Assert(ctx.ProxyStore, IsNil)
 }
->>>>>>> 3813da014... store/tikv: forward requests by BatchCommands (#23243)
