@@ -19,7 +19,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -69,6 +72,8 @@ const (
 	TxnScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
 	IsStalenessReadOnly
+	// MatchStoreLabels indicates the labels the store should be matched
+	MatchStoreLabels
 )
 
 // Priority value for transaction priority.
@@ -90,34 +95,6 @@ const UnCommitIndexKVFlag byte = '1'
 // MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
 // We use it to abort the transaction to guarantee GC worker will not influence it.
 const MaxTxnTimeUse = 24 * 60 * 60 * 1000
-
-// IsoLevel is the transaction's isolation level.
-type IsoLevel int
-
-const (
-	// SI stands for 'snapshot isolation'.
-	SI IsoLevel = iota
-	// RC stands for 'read committed'.
-	RC
-)
-
-// ReplicaReadType is the type of replica to read data from
-type ReplicaReadType byte
-
-const (
-	// ReplicaReadLeader stands for 'read from leader'.
-	ReplicaReadLeader ReplicaReadType = 1 << iota
-	// ReplicaReadFollower stands for 'read from follower'.
-	ReplicaReadFollower
-	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
-	ReplicaReadMixed
-)
-
-// IsFollowerRead checks if leader is going to be used to read data.
-func (r ReplicaReadType) IsFollowerRead() bool {
-	// In some cases the default value is 0, which should be treated as `ReplicaReadLeader`.
-	return r != ReplicaReadLeader && r != 0
-}
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
@@ -292,6 +269,12 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
+	// CacheIndexName caches the index name.
+	// PresumeKeyNotExists will use this to help decode error message.
+	CacheTableInfo(id int64, info *model.TableInfo)
+	// GetIndexName returns the cached index name.
+	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
+	GetTableInfo(id int64) *model.TableInfo
 }
 
 // LockCtx contains information for LockKeys method.
@@ -381,7 +364,7 @@ type Request struct {
 	// sent to multiple storage units concurrently.
 	Concurrency int
 	// IsolationLevel is the isolation level, default is SI.
-	IsolationLevel IsoLevel
+	IsolationLevel tikvstore.IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
 	// memTracker is used to trace and control memory usage in co-processor layer.
@@ -398,7 +381,7 @@ type Request struct {
 	// call would not corresponds to a whole region result.
 	Streaming bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
-	ReplicaRead ReplicaReadType
+	ReplicaRead tikvstore.ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
 	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
@@ -411,6 +394,10 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
+	// IsStaleness indicates whether the request read staleness data
+	IsStaleness bool
+	// MatchStoreLabels indicates the labels the store should be matched
+	MatchStoreLabels []*metapb.StoreLabel
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -460,17 +447,38 @@ type Driver interface {
 	Open(path string) (Storage, error)
 }
 
+// TransactionOption indicates the option when beginning a transaction
+type TransactionOption struct {
+	TxnScope string
+	StartTS  *uint64
+	PrevSec  *uint64
+}
+
+// SetStartTs set startTS
+func (to TransactionOption) SetStartTs(startTS uint64) TransactionOption {
+	to.StartTS = &startTS
+	return to
+}
+
+// SetPrevSec set prevSec
+func (to TransactionOption) SetPrevSec(prevSec uint64) TransactionOption {
+	to.PrevSec = &prevSec
+	return to
+}
+
+// SetTxnScope set txnScope
+func (to TransactionOption) SetTxnScope(txnScope string) TransactionOption {
+	to.TxnScope = txnScope
+	return to
+}
+
 // Storage defines the interface for storage.
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
 	// Begin a global transaction
 	Begin() (Transaction, error)
-	// Begin a transaction with the given txnScope (local or global)
-	BeginWithTxnScope(txnScope string) (Transaction, error)
-	// BeginWithStartTS begins transaction with given txnScope and startTS.
-	BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error)
-	// BeginWithStalenessTS begins transaction with given staleness
-	BeginWithExactStaleness(txnScope string, prevSec uint64) (Transaction, error)
+	// Begin a transaction with given option
+	BeginWithOption(option TransactionOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot
@@ -494,7 +502,7 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
-	// GetMemCache return memory manager of the storage
+	// GetMemCache return memory manager of the storage.
 	GetMemCache() MemManager
 }
 

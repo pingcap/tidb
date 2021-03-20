@@ -1047,8 +1047,10 @@ func (s *testSuite3) TestInsertFloatOverflow(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col1' at row 1")
 	_, err = tk.Exec("insert into t values (-34028234.6611, -3.402823466E+68, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
 	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col2' at row 1")
-	tk.Exec("create table t1(id1 float,id2 float)")
-	tk.Exec("insert ignore into t1 values(999999999999999999999999999999999999999,-999999999999999999999999999999999999999)")
+	_, err = tk.Exec("create table t1(id1 float,id2 float)")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("insert ignore into t1 values(999999999999999999999999999999999999999,-999999999999999999999999999999999999999)")
+	c.Assert(err, IsNil)
 	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "2"))
 	tk.MustQuery("select convert(id1,decimal(65)),convert(id2,decimal(65)) from t1").Check(testkit.Rows("340282346638528860000000000000000000000 -340282346638528860000000000000000000000"))
 	tk.MustExec("drop table if exists t,t1")
@@ -1124,20 +1126,17 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }
 
-var _ = SerialSuites(&testSuite9{&baseTestSuite{}})
+var _ = Suite(&testSuite9{&baseTestSuite{}})
 
 type testSuite9 struct {
 	*baseTestSuite
 }
 
 func (s *testSuite9) TestAutoRandomID(c *C) {
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key clustered auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null)`)
 	rs := tk.MustQuery(`select id from ar`)
@@ -1166,7 +1165,7 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 
 	tk.MustExec(`drop table ar`)
-	tk.MustExec(`create table ar (id bigint key auto_random(15), name char(10))`)
+	tk.MustExec(`create table ar (id bigint key clustered auto_random(15), name char(10))`)
 	overflowVal := 1 << (64 - 5)
 	errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, overflowVal, 1<<(64-16)-1)
 	_, err = tk.Exec(fmt.Sprintf("alter table ar auto_random_base = %d", overflowVal))
@@ -1175,13 +1174,10 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 }
 
 func (s *testSuite9) TestMultiAutoRandomID(c *C) {
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key clustered auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null),(null),(null)`)
 	rs := tk.MustQuery(`select id from ar order by id`)
@@ -1219,13 +1215,10 @@ func (s *testSuite9) TestMultiAutoRandomID(c *C) {
 }
 
 func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key clustered auto_random, name char(10))`)
 
 	rs := tk.MustQuery(`select @@session.sql_mode`)
 	sqlMode := rs.Rows()[0][0].(string)
@@ -1252,15 +1245,12 @@ func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
 }
 
 func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key clustered auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (1)`)
 	tk.MustQuery(`select id from ar`).Check(testkit.Rows("1"))

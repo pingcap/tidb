@@ -92,7 +92,8 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 		}
 		logutil.BgLogger().Debug("backoff",
 			zap.Int("base", base),
-			zap.Int("sleep", sleep))
+			zap.Int("sleep", sleep),
+			zap.Int("attempts", attempts))
 
 		realSleep := sleep
 		// when set maxSleepMs >= 0 in `tikv.BackoffWithMaxSleep` will force sleep maxSleepMs milliseconds.
@@ -216,11 +217,9 @@ func (t BackoffType) TError() error {
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	GetAllMembersBackoff           = 5000
-	copBuildTaskMaxBackoff         = 5000
 	tsoMaxBackoff                  = 15000
 	scannerNextMaxBackoff          = 20000
 	batchGetMaxBackoff             = 20000
-	copNextMaxBackoff              = 20000
 	getMaxBackoff                  = 20000
 	cleanupMaxBackoff              = 20000
 	GcOneRegionMaxBackoff          = 20000

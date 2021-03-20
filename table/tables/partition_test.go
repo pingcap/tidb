@@ -111,7 +111,8 @@ PARTITION BY RANGE ( id ) (
 	// Value must locates in one partition.
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
-	ts.se.Execute(context.Background(), "rollback")
+	_, err = ts.se.Execute(context.Background(), "rollback")
+	c.Assert(err, IsNil)
 
 	createTable2 := `CREATE TABLE test.t2 (id int(11))
 PARTITION BY RANGE ( id ) (

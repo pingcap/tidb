@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"runtime"
 	"runtime/trace"
 	"sort"
@@ -134,62 +133,6 @@ func closeAll(objs ...Closeable) error {
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-// handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
-func handleIsExtra(col *expression.Column) bool {
-	if col != nil && col.ID == model.ExtraHandleID {
-		return true
-	}
-	return false
-}
-
-func splitRanges(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
-	if isCommonHandle || len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
-		return ranges, nil
-	}
-	idx := sort.Search(len(ranges), func(i int) bool { return ranges[i].HighVal[0].GetUint64() > math.MaxInt64 })
-	if idx == len(ranges) {
-		return ranges, nil
-	}
-	if ranges[idx].LowVal[0].GetUint64() > math.MaxInt64 {
-		signedRanges := ranges[0:idx]
-		unsignedRanges := ranges[idx:]
-		if !keepOrder {
-			return append(unsignedRanges, signedRanges...), nil
-		}
-		if desc {
-			return unsignedRanges, signedRanges
-		}
-		return signedRanges, unsignedRanges
-	}
-	signedRanges := make([]*ranger.Range, 0, idx+1)
-	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
-	signedRanges = append(signedRanges, ranges[0:idx]...)
-	if !(ranges[idx].LowVal[0].GetUint64() == math.MaxInt64 && ranges[idx].LowExclude) {
-		signedRanges = append(signedRanges, &ranger.Range{
-			LowVal:     ranges[idx].LowVal,
-			LowExclude: ranges[idx].LowExclude,
-			HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
-		})
-	}
-	if !(ranges[idx].HighVal[0].GetUint64() == math.MaxInt64+1 && ranges[idx].HighExclude) {
-		unsignedRanges = append(unsignedRanges, &ranger.Range{
-			LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
-			HighVal:     ranges[idx].HighVal,
-			HighExclude: ranges[idx].HighExclude,
-		})
-	}
-	if idx < len(ranges) {
-		unsignedRanges = append(unsignedRanges, ranges[idx+1:]...)
-	}
-	if !keepOrder {
-		return append(unsignedRanges, signedRanges...), nil
-	}
-	if desc {
-		return unsignedRanges, signedRanges
-	}
-	return signedRanges, unsignedRanges
 }
 
 // rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
@@ -964,9 +907,8 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			// original value(the primary key) here.
 			// We use a trick to avoid encoding the "sortKey" again by changing the charset
 			// collation to `binary`.
-			// TODO: Add the restore value to the secondary index to remove this trick.
 			rtp := e.handleCols[i].RetType
-			if collate.NewCollationEnabled() && rtp.EvalType() == types.ETString &&
+			if collate.NewCollationEnabled() && e.table.Meta().CommonHandleVersion == 0 && rtp.EvalType() == types.ETString &&
 				!mysql.HasBinaryFlag(rtp.Flag) && tp == getHandleFromIndex {
 				rtp = rtp.Clone()
 				rtp.Collate = charset.CollationBin
@@ -1101,17 +1043,24 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
+			sctx := w.idxLookup.ctx.GetSessionVars().StmtCtx
 			for i, val := range vals {
 				col := w.idxTblCols[i]
 				tp := &col.FieldType
-				ret := chunk.Compare(idxRow, i, &val)
-				if ret != 0 {
-					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v", col.Name, handle, idxRow.GetDatum(i, tp), val)
+				idxVal := idxRow.GetDatum(i, tp)
+				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
+				cmpRes, err := idxVal.CompareDatum(sctx, &val)
+				if err != nil {
+					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v, compare err:%#v", col.Name,
+						handle, idxRow.GetDatum(i, tp), val, err)
+				}
+				if cmpRes != 0 {
+					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v", col.Name,
+						handle, idxRow.GetDatum(i, tp), val)
 				}
 			}
 		}
 	}
-
 	return nil
 }
 

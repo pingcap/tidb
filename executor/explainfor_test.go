@@ -238,7 +238,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	explainQuery := "explain for connection " + strconv.FormatUint(tk1.Se.ShowProcess().ID, 10)
 	explainResult := testkit.Rows(
 		"TableReader_7 8000.00 root  data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
+		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a, double BINARY), 1)",
 		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	)
 
@@ -316,9 +316,9 @@ func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
 	rows := tk.MustQuery("select connection_id()").Rows()
 	c.Assert(len(rows), Equals, 1)
 	connID := rows[0][0].(string)
-	tk.MustQuery("explain select 1").Check(testkit.Rows(
-		"Projection_3 1.00 root  1->Column#1",
-		"└─TableDual_4 1.00 root  rows:1",
+	tk.MustQuery("explain format = 'brief' select 1").Check(testkit.Rows(
+		"Projection 1.00 root  1->Column#1",
+		"└─TableDual 1.00 root  rows:1",
 	))
 
 	tkProcess := tk.Se.ShowProcess()
@@ -478,8 +478,5 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[3][3]), "table:t2"), IsTrue)
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
-	))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(
-		"1",
 	))
 }

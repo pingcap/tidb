@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	ast "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // IsTypeBlob returns a boolean indicating whether the tp is a blob type.
@@ -99,6 +100,17 @@ func IsBinaryStr(ft *FieldType) bool {
 // whether the field type is a non-binary string type.
 func IsNonBinaryStr(ft *FieldType) bool {
 	if ft.Collate != charset.CollationBin && IsString(ft.Tp) {
+		return true
+	}
+	return false
+}
+
+// NeedRestoredData returns if a type needs restored data.
+// If the type is char and the collation is _bin, NeedRestoredData() returns false.
+func NeedRestoredData(ft *FieldType) bool {
+	if collate.NewCollationEnabled() &&
+		IsNonBinaryStr(ft) &&
+		!(collate.IsBinCollation(ft.Collate) && !IsTypeVarchar(ft.Tp)) {
 		return true
 	}
 	return false

@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,17 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metrics
+package executor
 
-import "github.com/prometheus/client_golang/prometheus"
+import . "github.com/pingcap/check"
 
-// Metrics to monitor gRPC service
-var (
-	GRPCConnTransientFailureCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "grpc",
-			Name:      "connection_transient_failure_count",
-			Help:      "Counter of gRPC connection transient failure",
-		}, []string{LblAddress, LblStore})
-)
+type testBRIESuite struct{}
+
+var _ = Suite(&testBRIESuite{})
+
+func (s *testPartitionSuite) TestGlueGetVersion(c *C) {
+	g := tidbGlueSession{}
+	version := g.GetVersion()
+	c.Assert(version, Matches, `(.|\n)*Release Version(.|\n)*`)
+	c.Assert(version, Matches, `(.|\n)*Git Commit Hash(.|\n)*`)
+	c.Assert(version, Matches, `(.|\n)*GoVersion(.|\n)*`)
+}

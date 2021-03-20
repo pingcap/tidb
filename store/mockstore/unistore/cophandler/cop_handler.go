@@ -15,6 +15,7 @@ package cophandler
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"time"
 
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -47,6 +47,7 @@ type MPPCtx struct {
 	RPCClient   client.Client
 	StoreAddr   string
 	TaskHandler *MPPTaskHandler
+	Ctx         context.Context
 }
 
 // HandleCopRequest handles coprocessor request.
@@ -61,7 +62,7 @@ func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstor
 	switch req.Tp {
 	case kv.ReqTypeDAG:
 		if mppCtx != nil && mppCtx.TaskHandler != nil {
-			return handleMPPDAGReq(dbReader, req, mppCtx)
+			return HandleMPPDAGReq(dbReader, req, mppCtx)
 		}
 		return handleCopDAGRequest(dbReader, lockStore, req)
 	case kv.ReqTypeAnalyze:
@@ -265,18 +266,6 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 		return nil
 	}
 	return rowcodec.NewChunkDecoder(cols, pkCols, def, timeZone), nil
-}
-
-// decodeRelatedColumnVals decodes data to Datum slice according to the row information.
-func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][]byte, row []types.Datum) error {
-	var err error
-	for _, offset := range relatedColOffsets {
-		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.sc.TimeZone)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
 }
 
 // flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
