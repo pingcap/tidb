@@ -6810,8 +6810,9 @@ func (s *testDBSuite5) TestDropIndexes(c *C) {
 	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
 
 	// test drop primary key and index
-	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i1;"
-	idxNames = []string{"primary", "i1"}
+	createSQL = "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id) nonclustered, unique key i1(c1), key i2(c2));"
+	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i2;"
+	idxNames = []string{"primary", "i2"}
 	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
 
 	testDropDuplicateIndexes(c, s.store)
