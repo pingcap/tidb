@@ -221,10 +221,11 @@ func (b *builtinCastRealAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(v, 'f', -1, bits), b.tp, sc, false)
+		res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(v, 'e', -1, bits), b.tp, sc, false)
 		if err != nil {
 			return err
 		}
+		res = strings.Replace(res, "+", "", -1)
 		res, isNull, err = padZeroForBinaryType(res, b.tp, b.ctx)
 		if err != nil {
 			return err
