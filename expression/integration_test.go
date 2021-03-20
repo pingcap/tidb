@@ -2920,6 +2920,16 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> 4"))
 	result = tk.MustQuery("select * from t where b = case when a is null then 4 when  a = 'str5' then 7 else 9 end")
 	result.Check(testkit.Rows("<nil> 4"))
+
+	// return type of case when expr should not include NotNullFlag. issue-23036
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int not null)")
+	tk.MustExec("insert into t1 values(1)")
+	result = tk.MustQuery("select (case when null then c1 end) is null from t1")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (case when null then c1 end) is not null from t1")
+	result.Check(testkit.Rows("0"))
+
 	// test warnings
 	tk.MustQuery("select case when b=0 then 1 else 1/b end from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -3721,6 +3731,17 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
 	result.Check(testkit.Rows("0"))
+}
+
+// #23157: make sure if Nullif expr is correct combined with IsNull expr.
+func (s *testIntegrationSuite) TestNullifWithIsNull(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null);")
+	tk.MustExec("insert into t values(1),(2);")
+	rows := tk.MustQuery("select * from t where nullif(a,a) is null;")
+	rows.Check(testkit.Rows("1", "2"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
@@ -6076,6 +6097,15 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustQuery("select * from t_ci where a='A'").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from t_ci where a='a   '").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from t_ci where a='a                    '").Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c set('A', 'B') collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t values('a');")
+	tk.MustExec("insert into t values('B');")
+	tk.MustQuery("select c from t where c = 'a';").Check(testkit.Rows("A"))
+	tk.MustQuery("select c from t where c = 'A';").Check(testkit.Rows("A"))
+	tk.MustQuery("select c from t where c = 'b';").Check(testkit.Rows("B"))
+	tk.MustQuery("select c from t where c = 'B';").Check(testkit.Rows("B"))
 }
 
 func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
@@ -7198,6 +7228,20 @@ func (s *testIntegrationSerialSuite) TestIssue18702(c *C) {
 	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("1 A 10 1", "3 A 10 1"))
 	tk.MustExec("ROLLBACK;")
 	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollationText(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a TINYTEXT collate UTF8MB4_GENERAL_CI, UNIQUE KEY `a`(`a`(10)));")
+	tk.MustExec("insert into t (a) values ('A');")
+	tk.MustQuery("select * from t t1 inner join t t2 on t1.a = t2.a where t1.a = 'A';").Check(testkit.Rows("A A"))
+	tk.MustExec("update t set a = 'B';")
+	tk.MustExec("admin check table t;")
 }
 
 func (s *testIntegrationSuite) TestIssue18850(c *C) {

@@ -1040,7 +1040,8 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 			}
 		}
 		// The converted result must be same as original datum.
-		cmp, err := d.CompareDatum(stmtCtx, &dVal)
+		// Compare them based on the dVal's type.
+		cmp, err := dVal.CompareDatum(stmtCtx, &d)
 		if err != nil {
 			return nil, false
 		} else if cmp != 0 {
