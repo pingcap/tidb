@@ -120,9 +120,7 @@ func (h hashCollision) Size() int                         { panic("not implement
 func (h hashCollision) BlockSize() int                    { panic("not implemented") }
 
 func (s *pkgTestSerialSuite) TestHashRowContainer(c *C) {
-	hashFunc := func() hash.Hash64 {
-		return fnv.New64()
-	}
+	hashFunc := fnv.New64
 	rowContainer := s.testHashRowContainer(c, hashFunc, false)
 	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
 	// On windows time.Now() is imprecise, the elapse time may equal 0

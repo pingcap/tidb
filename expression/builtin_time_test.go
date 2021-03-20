@@ -826,7 +826,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		fc  functionClass
 		now func() time.Time
 	}{
-		{funcs[ast.Now], func() time.Time { return time.Now() }},
+		{funcs[ast.Now], time.Now},
 		{funcs[ast.UTCTimestamp], func() time.Time { return time.Now().UTC() }},
 	} {
 		f, err := x.fc.getFunction(s.ctx, s.datumsToConstants(nil))
