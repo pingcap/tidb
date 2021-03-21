@@ -29,8 +29,8 @@ var (
 )
 
 const (
-	// AutoRandomPKisNotHandleErrMsg indicates the auto_random column attribute is defined on a non-primary key column, or the table's primary key is not a single integer column.
-	AutoRandomPKisNotHandleErrMsg = "column %s is not the integer primary key, or table is created with alter-primary-key enabled"
+	// AutoRandomPKisNotHandleErrMsg indicates the auto_random column attribute is defined on a non-primary key column, or the primary key is nonclustered.
+	AutoRandomPKisNotHandleErrMsg = "column %s is not the integer primary key, or the primary key is nonclustered"
 	// AutoRandomIncompatibleWithAutoIncErrMsg is reported when auto_random and auto_increment are specified on the same column.
 	AutoRandomIncompatibleWithAutoIncErrMsg = "auto_random is incompatible with auto_increment"
 	// AutoRandomIncompatibleWithDefaultValueErrMsg is reported when auto_random and default are specified on the same column.

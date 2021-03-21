@@ -1411,6 +1411,13 @@ func (w *worker) doModifyColumn(
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)
+
+		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
+		// We need to check after the flag is set
+		if d.lease > 0 && !noPreventNullFlag {
+			delayForAsyncCommit()
+		}
+
 		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 		err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, newCol.Name, oldCol.Tp != newCol.Tp)
 		if err != nil {
