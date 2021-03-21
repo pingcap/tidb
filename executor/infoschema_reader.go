@@ -147,6 +147,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
+		case infoschema.TableStatementsSummaryEvited:
+			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
 		}
 		if err != nil {
 			return nil, err
@@ -1827,6 +1829,10 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 	case infoschema.TableStatementsSummaryHistory,
 		infoschema.ClusterTableStatementsSummaryHistory:
 		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
+	}
+	switch tableName {
+	case infoschema.TableStatementsSummaryEvited:
+		e.rows = stmtsummary.StmtEvictedMap.ToCurrentDatum()
 	}
 	switch tableName {
 	case infoschema.ClusterTableStatementsSummary,

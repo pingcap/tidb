@@ -95,7 +95,6 @@ type stmtSummaryByDigest struct {
 	normalizedSQL string
 	tableNames    string
 	isInternal    bool
-	evictedCount    int64
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
@@ -287,8 +286,11 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
 			if ssMap.summaryMap.Size()==ssMap.maxStmtCount(){
-				ssMap.EVICTED++
-				summary.evictedCount = ssMap.EVICTED
+				//We needn't oldestkey
+				_,oldestValue,err:=ssMap.summaryMap.RemoveOldest()
+				if err {
+					StmtEvictedMap.AddEvictedRecord(now, oldestValue)
+				}
 			}
 			ssMap.summaryMap.Put(key, summary)
 		} else {
@@ -963,7 +965,6 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssElement.prevSQL,
 		ssbd.planDigest,
 		plan,
-		ssbd.evictedCount,
 	)
 }
 

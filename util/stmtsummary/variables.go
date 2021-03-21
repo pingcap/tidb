@@ -32,7 +32,6 @@ const (
 	typeMaxStmtCount
 	typeMaxSQLLength
 	typesNum
-	typeMaxStmtEvictedCount
 )
 
 type systemVars struct {
