@@ -69,10 +69,8 @@ type stmtSummaryByDigestMap struct {
 	summaryMap *kvcache.SimpleLRUCache
 	// beginTimeForCurInterval is the begin time for current summary.
 	beginTimeForCurInterval int64
-
 	// sysVars encapsulates system variables needed to control statement summary.
 	sysVars    *systemVars
-	EVICTED int64
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -238,7 +236,6 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	return &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 		sysVars:    sysVars,
-		EVICTED: 0,
 	}
 }
 
@@ -276,7 +273,6 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
 			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
 			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
-			ssMap.EVICTED=0
 		}
 
 		beginTime := ssMap.beginTimeForCurInterval
