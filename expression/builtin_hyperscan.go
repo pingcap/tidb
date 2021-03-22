@@ -95,6 +95,53 @@ func (b *builtinHsMatchSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return boolToInt64(matched), false, nil
 }
 
+func (b *builtinHsMatchSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	bufVal, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufVal)
+	if err := b.args[0].VecEvalString(b.ctx, input, bufVal); err != nil {
+		return err
+	}
+
+	bufPat, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufPat)
+
+	if err := b.args[1].VecEvalString(b.ctx, input, bufPat); err != nil {
+		return err
+	}
+	if b.db == nil && n > 0 {
+		for i := 0; i < n; i++ {
+			if bufPat.IsNull(i) {
+				continue
+			}
+			db, err := b.buildBlockDB(bufPat.GetString(i))
+			if err != nil {
+				return err
+			}
+			b.db = db
+			break
+		}
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(bufVal, bufPat)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		_, matched := b.hsMatch(bufVal.GetString(i))
+		i64s[i] = boolToInt64(matched)
+	}
+	return nil
+}
+
 func (b *builtinHsMatchSig) buildBlockDB(patterns string) (hs.BlockDatabase, error) {
 	lines := strings.Split(patterns, "\n")
 	pats := make([]*hs.Pattern, 0, len(lines))
@@ -109,18 +156,27 @@ func (b *builtinHsMatchSig) buildBlockDB(patterns string) (hs.BlockDatabase, err
 		pat.Id = id
 		pats = append(pats, pat)
 	}
+	if len(pats) == 0 {
+		return nil, nil
+	}
 	builder := hs.DatabaseBuilder{
 		Patterns: pats,
 		Mode:     hs.BlockMode,
 		Platform: hs.PopulatePlatform(),
 	}
 	db, err := builder.Build()
+	if err != nil {
+		return nil, err
+	}
 	return db.(hs.BlockDatabase), err
 }
 
 func (b *builtinHsMatchSig) hsMatch(val string) (int, bool) {
 	matched := false
 	matchedId := 0
+	if b.db == nil {
+		return matchedId, matched
+	}
 	handler := func(id uint, from, to uint64, flags uint, context interface{}) error {
 		if !matched {
 			matched = true
@@ -134,4 +190,8 @@ func (b *builtinHsMatchSig) hsMatch(val string) (int, bool) {
 		return 0, false
 	}
 	return matchedId, matched
+}
+
+func (b *builtinHsMatchSig) vectorized() bool {
+	return true
 }
