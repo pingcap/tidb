@@ -292,8 +292,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	return nil
 }
 
-const indexScanPageSize = 1000
-
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
 	baseExecutor
@@ -333,6 +331,7 @@ type IndexLookUpExecutor struct {
 	keepOrder           bool
 	desc                bool
 	indexSidePagination bool
+	paginationSize      int64
 
 	indexStreaming bool
 	tableStreaming bool
@@ -384,10 +383,21 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-	if indexScanPageSize != 0 && e.indexSidePagination {
-		// add limit executor
-		if e.dagPB.Executors[len(e.dagPB.Executors)-1].Limit == nil {
-			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(indexScanPageSize))
+	if e.indexSidePagination {
+		switch e.paginationSize {
+		case -1: // run too many times, remove Limit executor and read all rest data.
+			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
+			e.indexSidePagination = false
+		case 0:  // add Limit executor, init page size.
+			e.paginationSize = 1000
+			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
+		default:
+			e.paginationSize = e.paginationSize * 2
+			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
+			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
+			if e.paginationSize > 100000 {
+				e.paginationSize = -1
+			}
 		}
 	}
 	err = e.open(ctx)
