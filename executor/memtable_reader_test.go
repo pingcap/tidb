@@ -216,35 +216,11 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	c.Assert(requestCounter, Equals, int32(9))
 
 	// TODO: we need remove it when index usage is GA.
-	tk.MustQuery("show config").Check(testkit.Rows(
-		"tidb key1 value1",
-		"tidb key2.nest1 n-value1",
-		"tidb key2.nest2 n-value2",
-		"tidb key1 value1",
-		"tidb key2.nest1 n-value1",
-		"tidb key2.nest2 n-value2",
-		"tidb key1 value1",
-		"tidb key2.nest1 n-value1",
-		"tidb key2.nest2 n-value2",
-		"tikv key1 value1",
-		"tikv key2.nest1 n-value1",
-		"tikv key2.nest2 n-value2",
-		"tikv key1 value1",
-		"tikv key2.nest1 n-value1",
-		"tikv key2.nest2 n-value2",
-		"tikv key1 value1",
-		"tikv key2.nest1 n-value1",
-		"tikv key2.nest2 n-value2",
-		"pd key1 value1",
-		"pd key2.nest1 n-value1",
-		"pd key2.nest2 n-value2",
-		"pd key1 value1",
-		"pd key2.nest1 n-value1",
-		"pd key2.nest2 n-value2",
-		"pd key1 value1",
-		"pd key2.nest1 n-value1",
-		"pd key2.nest2 n-value2",
-	))
+	rs := tk.MustQuery("show config")
+	for i := range rs.rows {
+		c.Assert(strings.Contains(rs.rows[i][2], "index-usage-sync-lease"), IsFalse)
+		c.Assert(strings.Contains(rs.rows[i][2], "INDEX-USAGE-SYNC-LEASE"), IsFalse)
+	}
 
 	// type => server index => row
 	rows := map[string][][]string{}
