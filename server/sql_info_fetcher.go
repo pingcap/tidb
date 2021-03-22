@@ -31,14 +31,14 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 type sqlInfoFetcher struct {
-	store tikv.Storage
+	store kv.Storage
 	do    *domain.Domain
 	s     session.Session
 }
@@ -88,7 +88,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	timeoutString := r.FormValue("timeout")
 	curDB := strings.ToLower(r.FormValue("current_db"))
 	if curDB != "" {
-		_, err = sh.s.Execute(reqCtx, fmt.Sprintf("use %v", curDB))
+		_, err = sh.s.ExecuteInternal(context.Background(), "use %n", curDB)
 		if err != nil {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("use database %v failed, err: %v", curDB, err))
 			return

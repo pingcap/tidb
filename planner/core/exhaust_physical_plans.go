@@ -44,7 +44,7 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	if prop.IsFlashProp() {
 		return nil, true
 	}
-	childProp := prop.Clone()
+	childProp := prop.CloneEssentialFields()
 	us := PhysicalUnionScan{
 		Conditions: p.conditions,
 		HandleCols: p.handleCols,
@@ -765,18 +765,26 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			innerTask2 = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 	}
+	var (
+		path       *util.AccessPath
+		lastColMng *ColWithCmpFuncManager
+	)
+	if helper != nil {
+		path = helper.chosenPath
+		lastColMng = helper.lastColManager
+	}
 	joins = make([]PhysicalPlan, 0, 3)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil))
+			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
+	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
-	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
+	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng)...)
 	if innerTask2 != nil {
-		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, ranges, keyOff2IdxOff, nil, nil)...)
+		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, ranges, keyOff2IdxOff, path, lastColMng)...)
 	}
 	return joins
 }
@@ -945,7 +953,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	}
 	selStats := ts.stats.Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
-	t := finishCopTask(ds.ctx, copTask).(*rootTask)
+	t := copTask.convertToRootTask(ds.ctx)
 	reader := t.p
 	t.p = p.constructInnerUnionScan(us, reader)
 	return t
@@ -1022,6 +1030,16 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, ds.blockOffset)
 		ts.schema = is.dataSourceSchema.Clone()
+		if ds.tableInfo.IsCommonHandle {
+			commonHandle := ds.handleCols.(*CommonHandleCols)
+			for _, col := range commonHandle.columns {
+				if ts.schema.ColumnIndex(col) == -1 {
+					ts.Schema().Append(col)
+					ts.Columns = append(ts.Columns, col.ToInfo())
+					cop.doubleReadNeedProj = true
+				}
+			}
+		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
 			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
@@ -1079,7 +1097,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	cop.cst = tmpPath.CountAfterAccess * rowSize * sessVars.ScanFactor
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
-	t := finishCopTask(ds.ctx, cop).(*rootTask)
+	t := cop.convertToRootTask(ds.ctx)
 	reader := t.p
 	t.p = p.constructInnerUnionScan(us, reader)
 	return t
@@ -1607,6 +1625,29 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	return filterIndexJoinBySessionVars(p.ctx, append(allLeftOuterJoins, allRightOuterJoins...)), false
 }
 
+func checkChildFitBC(p Plan) bool {
+	if p.statsInfo().HistColl == nil {
+		return p.statsInfo().Count() < p.SCtx().GetSessionVars().BroadcastJoinThresholdCount
+	}
+	avg := p.statsInfo().HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	sz := avg * float64(p.statsInfo().Count())
+	return sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
+}
+
+// If we can use mpp broadcast join, that's our first choice.
+
+func (p *LogicalJoin) shouldUseMPPBCJ() bool {
+	if p.ctx.GetSessionVars().BroadcastJoinThresholdSize == 0 || p.ctx.GetSessionVars().BroadcastJoinThresholdCount == 0 {
+		return p.ctx.GetSessionVars().AllowBCJ
+	}
+	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
+		return checkChildFitBC(p.children[1])
+	} else if p.JoinType == RightOuterJoin {
+		return checkChildFitBC(p.children[0])
+	}
+	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
+}
+
 // LogicalJoin can generates hash join, index join and sort merge join.
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
@@ -1622,8 +1663,22 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	if prop.IsFlashProp() && ((p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0) {
 		return nil, false
 	}
+	if prop.PartitionTp == property.BroadcastType {
+		return nil, false
+	}
 	joins := make([]PhysicalPlan, 0, 8)
-	if p.ctx.GetSessionVars().AllowBCJ {
+	if p.ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() {
+		if p.shouldUseMPPBCJ() {
+			mppJoins := p.tryToGetMppHashJoin(prop, true)
+			if (p.preferJoinType & preferBCJoin) > 0 {
+				return mppJoins, true
+			}
+			joins = append(joins, mppJoins...)
+		} else {
+			mppJoins := p.tryToGetMppHashJoin(prop, false)
+			joins = append(joins, mppJoins...)
+		}
+	} else if p.ctx.GetSessionVars().AllowBCJ {
 		broadCastJoins := p.tryToGetBroadCastJoin(prop)
 		if (p.preferJoinType & preferBCJoin) > 0 {
 			return broadCastJoins, true
@@ -1661,6 +1716,120 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	return joins, true
 }
 
+func canExprsInJoinPushdown(p *LogicalJoin, storeType kv.StoreType) bool {
+	equalExprs := make([]expression.Expression, 0, len(p.EqualConditions))
+	for _, eqCondition := range p.EqualConditions {
+		if eqCondition.FuncName.L == ast.NullEQ {
+			return false
+		}
+		equalExprs = append(equalExprs, eqCondition)
+	}
+	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, equalExprs, p.ctx.GetClient(), storeType) {
+		return false
+	}
+	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.LeftConditions, p.ctx.GetClient(), storeType) {
+		return false
+	}
+	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.RightConditions, p.ctx.GetClient(), storeType) {
+		return false
+	}
+	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.OtherConditions, p.ctx.GetClient(), storeType) {
+		return false
+	}
+	return true
+}
+
+func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBCJ bool) []PhysicalPlan {
+	if !prop.IsEmpty() {
+		return nil
+	}
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
+		return nil
+	}
+
+	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin) || len(p.EqualConditions) == 0 {
+		return nil
+	}
+	if prop.PartitionTp == property.BroadcastType {
+		return nil
+	}
+	if !canExprsInJoinPushdown(p, kv.TiFlash) {
+		return nil
+	}
+	lkeys, rkeys, _, _ := p.GetJoinKeys()
+	// check match property
+	baseJoin := basePhysicalJoin{
+		JoinType:        p.JoinType,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
+		DefaultValues:   p.DefaultValues,
+		LeftJoinKeys:    lkeys,
+		RightJoinKeys:   rkeys,
+	}
+	// It indicates which side is the build side.
+	preferredBuildIndex := 0
+	if p.JoinType == InnerJoin {
+		if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
+			preferredBuildIndex = 1
+		}
+	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin || p.JoinType == LeftOuterJoin {
+		preferredBuildIndex = 1
+	}
+	baseJoin.InnerChildIdx = preferredBuildIndex
+	childrenProps := make([]*property.PhysicalProperty, 2)
+	if useBCJ {
+		childrenProps[preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.BroadcastType, CanAddEnforcer: true}
+		expCnt := math.MaxFloat64
+		if prop.ExpectedCnt < p.stats.RowCount {
+			expCntScale := prop.ExpectedCnt / p.stats.RowCount
+			expCnt = p.children[1-preferredBuildIndex].statsInfo().RowCount * expCntScale
+		}
+		if prop.PartitionTp == property.HashType {
+			hashKeys := rkeys
+			if preferredBuildIndex == 1 {
+				hashKeys = lkeys
+			}
+			if matches := prop.IsSubsetOf(hashKeys); len(matches) != 0 {
+				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.HashType, PartitionCols: prop.PartitionCols}
+			} else {
+				return nil
+			}
+		} else {
+			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.AnyType}
+		}
+	} else {
+		if prop.PartitionTp == property.HashType {
+			var matches []int
+			if matches = prop.IsSubsetOf(lkeys); len(matches) == 0 {
+				matches = prop.IsSubsetOf(rkeys)
+			}
+			if len(matches) == 0 {
+				return nil
+			}
+			lkeys = chooseSubsetOfJoinKeys(lkeys, matches)
+			rkeys = chooseSubsetOfJoinKeys(rkeys, matches)
+		}
+		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: lkeys, CanAddEnforcer: true}
+		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: rkeys, CanAddEnforcer: true}
+	}
+	join := PhysicalHashJoin{
+		basePhysicalJoin: baseJoin,
+		Concurrency:      uint(p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor),
+		EqualConditions:  p.EqualConditions,
+		storeTp:          kv.TiFlash,
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenProps...)
+	return []PhysicalPlan{join}
+}
+
+func chooseSubsetOfJoinKeys(keys []*expression.Column, matches []int) []*expression.Column {
+	newKeys := make([]*expression.Column, 0, len(matches))
+	for _, id := range matches {
+		newKeys = append(newKeys, keys[id])
+	}
+	return newKeys
+}
+
 func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsEmpty() {
 		return nil
@@ -1668,8 +1837,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
 		return nil
 	}
-	_, _, _, hasNullEQ := p.GetJoinKeys()
-	if hasNullEQ {
+	if !canExprsInJoinPushdown(p, kv.TiFlash) {
 		return nil
 	}
 
@@ -1683,16 +1851,6 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 	}
 
 	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin) || len(p.EqualConditions) == 0 {
-		return nil
-	}
-
-	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.LeftConditions, p.ctx.GetClient(), kv.TiFlash) {
-		return nil
-	}
-	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.RightConditions, p.ctx.GetClient(), kv.TiFlash) {
-		return nil
-	}
-	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.OtherConditions, p.ctx.GetClient(), kv.TiFlash) {
 		return nil
 	}
 
@@ -1755,9 +1913,11 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 		childrenReqProps[1-baseJoin.InnerChildIdx].ExpectedCnt = p.children[1-baseJoin.InnerChildIdx].statsInfo().RowCount * expCntScale
 	}
 
-	join := PhysicalBroadCastJoin{
+	join := PhysicalHashJoin{
 		basePhysicalJoin: baseJoin,
+		Concurrency:      uint(p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor),
 		EqualConditions:  p.EqualConditions,
+		storeTp:          kv.TiFlash,
 		globalChildIndex: preferredGlobalIndex,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenReqProps...)
 	return []PhysicalPlan{join}
@@ -1767,10 +1927,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
 func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
-	if prop.IsFlashProp() {
-		return nil, false
-	}
-	newProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: prop.ExpectedCnt}
+	newProp := prop.CloneEssentialFields()
 	newCols := make([]property.SortItem, 0, len(prop.SortItems))
 	for _, col := range prop.SortItems {
 		idx := p.schema.ColumnIndex(col.Col)
@@ -1800,13 +1957,7 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 }
 
 func (lt *LogicalTopN) canPushToCop() bool {
-	// At present, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
-	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
-	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
-
-	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
-	_, ok := lt.children[0].(*DataSource)
-	return ok
+	return lt.canChildPushDown()
 }
 
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -1946,7 +2097,7 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	var byItems []property.SortItem
 	byItems = append(byItems, p.PartitionBy...)
 	byItems = append(byItems, p.OrderBy...)
-	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems, Enforced: true}
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems, CanAddEnforcer: true}
 	if !prop.IsPrefix(childProperty) {
 		return nil, true
 	}
@@ -1964,15 +2115,25 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
+func (p *baseLogicalPlan) canChildPushDown() bool {
+	// At present for TiKV, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
+	// When we push task to coprocessor, convertToRootTask will close the cop task and create a root task in the current implementation.
+	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
+	// But for TiFlash, Projection, Join and DataSource can also be pushed down in most cases. Other operators will be
+	// supported in the future, such as Aggregation, Limit, TopN.
+	switch p.children[0].(type) {
+	case *DataSource:
+		return true
+	case *LogicalJoin, *LogicalProjection:
+		// TiFlash supports pushing down more operators
+		return p.SCtx().GetSessionVars().AllowBCJ || (p.SCtx().GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled())
+	default:
+		return false
+	}
+}
 
 func (la *LogicalAggregation) canPushToCop() bool {
-	// At present, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
-	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
-	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
-
-	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
-	_, ok := la.children[0].(*DataSource)
-	return ok && !la.noCopPushDown
+	return la.canChildPushDown() && !la.noCopPushDown
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -1983,9 +2144,9 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
 	enforcedAggs := make([]PhysicalPlan, 0, len(allTaskTypes))
 	childProp := &property.PhysicalProperty{
-		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
-		Enforced:    true,
-		SortItems:   property.SortItemsFromCols(la.GetGroupByCols(), desc),
+		ExpectedCnt:    math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
+		CanAddEnforcer: true,
+		SortItems:      property.SortItemsFromCols(la.GetGroupByCols(), desc),
 	}
 	if !prop.IsPrefix(childProp) {
 		return enforcedAggs
@@ -2098,6 +2259,82 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	return streamAggs
 }
 
+// TODO: support more operators and distinct later
+func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
+	for _, agg := range la.AggFuncs {
+		// MPP does not support distinct except count distinct now
+		if agg.HasDistinct {
+			if agg.Name != ast.AggFuncCount {
+				return false
+			}
+		}
+		// MPP does not support AggFuncApproxCountDistinct now
+		if agg.Name == ast.AggFuncApproxCountDistinct {
+			return false
+		}
+	}
+	return CheckAggCanPushCop(la.ctx, la.AggFuncs, la.GroupByItems, kv.TiFlash)
+}
+
+func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalProperty) (hashAggs []PhysicalPlan) {
+	if !prop.IsEmpty() {
+		return nil
+	}
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
+		return nil
+	}
+	if prop.PartitionTp == property.BroadcastType {
+		return nil
+	}
+	if len(la.GroupByItems) > 0 {
+		partitionCols := la.GetGroupByCols()
+		// trying to match the required parititions.
+		if prop.PartitionTp == property.HashType {
+			if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
+				partitionCols = chooseSubsetOfJoinKeys(partitionCols, matches)
+			} else {
+				// do not satisfy the property of its parent, so return empty
+				return nil
+			}
+		}
+		// TODO: permute various partition columns from group-by columns
+		// 1-phase agg
+		// If there are no available parititon cols, but still have group by items, that means group by items are all expressions or constants.
+		// To avoid mess, we don't do any one-phase aggregation in this case.
+		if len(partitionCols) != 0 {
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg.SetSchema(la.schema.Clone())
+			agg.MppRunMode = Mpp1Phase
+			hashAggs = append(hashAggs, agg)
+		}
+
+		// 2-phase agg
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType}
+		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+		agg.SetSchema(la.schema.Clone())
+		agg.MppRunMode = Mpp2Phase
+		hashAggs = append(hashAggs, agg)
+
+		// agg runs on TiDB with a partial agg on TiFlash if possible
+		if prop.TaskTp == property.RootTaskType {
+			childProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64}
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg.SetSchema(la.schema.Clone())
+			agg.MppRunMode = MppTiDB
+			hashAggs = append(hashAggs, agg)
+		}
+	} else {
+		// TODO: support scalar agg in MPP, merge the final result to one node
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
+		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+		agg.SetSchema(la.schema.Clone())
+		agg.MppRunMode = MppTiDB
+		hashAggs = append(hashAggs, agg)
+	}
+	return
+}
+
 func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsEmpty() {
 		return nil
@@ -2105,15 +2342,21 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if prop.IsFlashProp() && !la.canPushToCop() {
 		return nil
 	}
+	if prop.TaskTp == property.MppTaskType && !la.checkCanPushDownToMPP() {
+		return nil
+	}
 	hashAggs := make([]PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if la.ctx.GetSessionVars().AllowBCJ {
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
+	canPushDownToMPP := la.ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() && la.checkCanPushDownToMPP()
+	if canPushDownToMPP {
+		taskTypes = append(taskTypes, property.MppTaskType)
+	}
 	if la.HasDistinct() {
-		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
-		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+		// TODO: remove after the cost estimation of distinct pushdown is implemented.
+		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown && !canPushDownToMPP {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
@@ -2126,9 +2369,16 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	for _, taskTp := range taskTypes {
-		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
-		agg.SetSchema(la.schema.Clone())
-		hashAggs = append(hashAggs, agg)
+		if taskTp == property.MppTaskType {
+			mppAggs := la.tryToGetMppHashAggs(prop)
+			if len(mppAggs) > 0 {
+				hashAggs = append(hashAggs, mppAggs...)
+			}
+		} else {
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
+			agg.SetSchema(la.schema.Clone())
+			hashAggs = append(hashAggs, agg)
+		}
 	}
 	return hashAggs
 }
@@ -2182,7 +2432,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 }
 
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	childProp := prop.Clone()
+	childProp := prop.CloneEssentialFields()
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProp)
@@ -2190,20 +2440,14 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 }
 
 func (p *LogicalLimit) canPushToCop() bool {
-	// At present, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
-	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
-	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
-
-	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
-	_, ok := p.children[0].(*DataSource)
-	return ok
+	return p.canChildPushDown()
 }
 
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if !prop.IsEmpty() {
 		return nil, true
 	}
-	// allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+
 	if p.limitHints.preferLimitToCop {
 		if !p.canPushToCop() {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
@@ -2234,7 +2478,7 @@ func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	if prop.IsFlashProp() {
 		return nil, true
 	}
-	childProp := prop.Clone()
+	childProp := prop.CloneEssentialFields()
 	lock := PhysicalLock{
 		Lock:             p.Lock,
 		TblID2Handle:     p.tblID2Handle,

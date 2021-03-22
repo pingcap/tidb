@@ -16,8 +16,10 @@ package distsql
 import (
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -40,7 +43,7 @@ type RequestBuilder struct {
 	kv.Request
 	// txnScope indicates the value of txn_scope
 	txnScope string
-	bundles  map[string]*placement.Bundle
+	is       infoschema.InfoSchema
 	err      error
 }
 
@@ -142,7 +145,7 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 		builder.Request.Tp = kv.ReqTypeAnalyze
 		builder.Request.Data, builder.err = ana.Marshal()
 		builder.Request.NotFillCache = true
-		builder.Request.IsolationLevel = kv.RC
+		builder.Request.IsolationLevel = tikvstore.RC
 		builder.Request.Priority = kv.PriorityLow
 	}
 
@@ -196,12 +199,12 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	return builder
 }
 
-func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
+func (builder *RequestBuilder) getIsolationLevel() tikvstore.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
-		return kv.RC
+		return tikvstore.RC
 	}
-	return kv.SI
+	return tikvstore.SI
 }
 
 func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
@@ -234,6 +237,15 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
 	}
 	builder.txnScope = sv.TxnCtx.TxnScope
+	builder.IsStaleness = sv.TxnCtx.IsStaleness
+	if builder.IsStaleness && builder.txnScope != oracle.GlobalTxnScope {
+		builder.MatchStoreLabels = []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: builder.txnScope,
+			},
+		}
+	}
 	return builder
 }
 
@@ -263,7 +275,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *Requ
 	if is == nil {
 		return builder
 	}
-	builder.bundles = is.RuleBundles()
+	builder.is = is
 	return builder
 }
 
@@ -271,23 +283,38 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	if builder.txnScope == "" {
 		builder.txnScope = oracle.GlobalTxnScope
 	}
-	if builder.txnScope == oracle.GlobalTxnScope || len(builder.bundles) < 1 {
+	if builder.txnScope == oracle.GlobalTxnScope || builder.is == nil {
 		return nil
 	}
-	visitTableID := make(map[int64]struct{})
+	visitPhysicalTableID := make(map[int64]struct{})
 	for _, keyRange := range builder.Request.KeyRanges {
 		tableID := tablecodec.DecodeTableID(keyRange.StartKey)
 		if tableID > 0 {
-			visitTableID[tableID] = struct{}{}
+			visitPhysicalTableID[tableID] = struct{}{}
 		} else {
 			return errors.New("requestBuilder can't decode tableID from keyRange")
 		}
 	}
 
-	for tableID := range visitTableID {
-		valid := VerifyTxnScope(builder.txnScope, tableID, builder.bundles)
+	for phyTableID := range visitPhysicalTableID {
+		valid := VerifyTxnScope(builder.txnScope, phyTableID, builder.is)
 		if !valid {
-			return fmt.Errorf("table %v can not be read by %v txn_scope", tableID, builder.txnScope)
+			var tblName string
+			var partName string
+			tblInfo, _, partInfo := builder.is.FindTableByPartitionID(phyTableID)
+			if tblInfo != nil && partInfo != nil {
+				tblName = tblInfo.Meta().Name.String()
+				partName = partInfo.Name.String()
+			} else {
+				tblInfo, _ = builder.is.TableByID(phyTableID)
+				tblName = tblInfo.Meta().Name.String()
+			}
+			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.txnScope)
+			if len(partName) > 0 {
+				err = fmt.Errorf("table %v's partition %v can not be read by %v txn_scope",
+					tblName, partName, builder.txnScope)
+			}
+			return err
 		}
 	}
 	return nil
@@ -364,6 +391,64 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 		high = kv.Key(high).PrefixNext()
 	}
 	return low, high
+}
+
+// SplitRangesBySign split the ranges into two parts:
+// 1. signedRanges is less or equal than maxInt64
+// 2. unsignedRanges is greater than maxInt64
+// We do that because the encoding of tikv key takes every key as a int. As a result MaxUInt64 is indeed
+// small than zero. So we must
+// 1. pick the range that straddles the MaxInt64
+// 2. split that range into two parts : smaller than max int64 and greater than it.
+// 3. if the ascent order is required, return signed first, vice versa.
+// 4. if no order is required, is better to return the unsigned one. That's because it's the normal order
+// of tikv scan.
+func SplitRangesBySign(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
+	if isCommonHandle || len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
+		return ranges, nil
+	}
+	idx := sort.Search(len(ranges), func(i int) bool { return ranges[i].HighVal[0].GetUint64() > math.MaxInt64 })
+	if idx == len(ranges) {
+		return ranges, nil
+	}
+	if ranges[idx].LowVal[0].GetUint64() > math.MaxInt64 {
+		signedRanges := ranges[0:idx]
+		unsignedRanges := ranges[idx:]
+		if !keepOrder {
+			return append(unsignedRanges, signedRanges...), nil
+		}
+		if desc {
+			return unsignedRanges, signedRanges
+		}
+		return signedRanges, unsignedRanges
+	}
+	signedRanges := make([]*ranger.Range, 0, idx+1)
+	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
+	signedRanges = append(signedRanges, ranges[0:idx]...)
+	if !(ranges[idx].LowVal[0].GetUint64() == math.MaxInt64 && ranges[idx].LowExclude) {
+		signedRanges = append(signedRanges, &ranger.Range{
+			LowVal:     ranges[idx].LowVal,
+			LowExclude: ranges[idx].LowExclude,
+			HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
+		})
+	}
+	if !(ranges[idx].HighVal[0].GetUint64() == math.MaxInt64+1 && ranges[idx].HighExclude) {
+		unsignedRanges = append(unsignedRanges, &ranger.Range{
+			LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
+			HighVal:     ranges[idx].HighVal,
+			HighExclude: ranges[idx].HighExclude,
+		})
+	}
+	if idx < len(ranges) {
+		unsignedRanges = append(unsignedRanges, ranges[idx+1:]...)
+	}
+	if !keepOrder {
+		return append(unsignedRanges, signedRanges...), nil
+	}
+	if desc {
+		return unsignedRanges, signedRanges
+	}
+	return signedRanges, unsignedRanges
 }
 
 // TableHandlesToKVRanges converts sorted handle to kv ranges.
@@ -511,11 +596,11 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 }
 
 // VerifyTxnScope verify whether the txnScope and visited physical table break the leader rule's dcLocation.
-func VerifyTxnScope(txnScope string, physicalTableID int64, bundles map[string]*placement.Bundle) bool {
+func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSchema) bool {
 	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
 		return true
 	}
-	bundle, ok := bundles[placement.GroupID(physicalTableID)]
+	bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 	if !ok {
 		return true
 	}

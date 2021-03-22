@@ -27,7 +27,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -73,6 +74,7 @@ const (
 	CmdBatchCop
 	CmdMPPTask
 	CmdMPPConn
+	CmdMPPCancel
 
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
@@ -147,6 +149,8 @@ func (t CmdType) String() string {
 		return "DispatchMPPTask"
 	case CmdMPPConn:
 		return "EstablishMPPConnection"
+	case CmdMPPCancel:
+		return "CancelMPPTask"
 	case CmdMvccGetByKey:
 		return "MvccGetByKey"
 	case CmdMvccGetByStartTs:
@@ -170,9 +174,14 @@ type Request struct {
 	Type CmdType
 	Req  interface{}
 	kvrpcpb.Context
-	ReplicaReadType kv.ReplicaReadType // dirrerent from `kvrpcpb.Context.ReplicaRead`
+	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
 	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
-	StoreTp         kv.StoreType
+	StoreTp         tidbkv.StoreType
+	// ForwardedHost is the address of a store which will handle the request. It's different from
+	// the address the request sent to.
+	// If it's not empty, the store which receive the request will forward it to
+	// the forwarded host. It's useful when network partition occurs.
+	ForwardedHost string
 }
 
 // NewRequest returns new kv rpc request.
@@ -197,6 +206,22 @@ func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.
 	req.ReplicaReadType = replicaReadType
 	req.ReplicaReadSeed = replicaReadSeed
 	return req
+}
+
+// EnableStaleRead enables stale read
+func (req *Request) EnableStaleRead() {
+	req.StaleRead = true
+	req.ReplicaReadType = kv.ReplicaReadMixed
+	req.ReplicaRead = false
+}
+
+// IsDebugReq check whether the req is debug req.
+func (req *Request) IsDebugReq() bool {
+	switch req.Type {
+	case CmdDebugGetRegionProperties:
+		return true
+	}
+	return false
 }
 
 // Get returns GetRequest in request.
@@ -334,9 +359,14 @@ func (req *Request) DispatchMPPTask() *mpp.DispatchTaskRequest {
 	return req.Req.(*mpp.DispatchTaskRequest)
 }
 
-// EstablishMPPConn returns stablishMPPConnectionRequest in request.
+// EstablishMPPConn returns EstablishMPPConnectionRequest in request.
 func (req *Request) EstablishMPPConn() *mpp.EstablishMPPConnectionRequest {
 	return req.Req.(*mpp.EstablishMPPConnectionRequest)
+}
+
+// CancelMPPTask returns canceling task in request
+func (req *Request) CancelMPPTask() *mpp.CancelTaskRequest {
+	return req.Req.(*mpp.CancelTaskRequest)
 }
 
 // MvccGetByKey returns MvccGetByKeyRequest in request.
@@ -448,15 +478,6 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 	return nil
 }
 
-// IsDebugReq check whether the req is debug req.
-func (req *Request) IsDebugReq() bool {
-	switch req.Type {
-	case CmdDebugGetRegionProperties:
-		return true
-	}
-	return false
-}
-
 // Response wraps all kv/coprocessor responses.
 type Response struct {
 	Resp interface{}
@@ -524,7 +545,7 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) (*Res
 	panic("unreachable")
 }
 
-// CopStreamResponse combinates tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.
+// CopStreamResponse combines tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.
 // In streaming API, get grpc stream client may not involve any network packet, then region error have
 // to be handled in Recv() function. This struct facilitates the error handling.
 type CopStreamResponse struct {
@@ -796,7 +817,7 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 }
 
 // CallRPC launches a rpc call.
-// ch is needed to implement timeout for coprocessor streaing, the stream object's
+// ch is needed to implement timeout for coprocessor streaming, the stream object's
 // cancel function will be sent to the channel, together with a lease checked by a background goroutine.
 func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Response, error) {
 	resp := &Response{}
@@ -864,6 +885,9 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp = &MPPStreamResponse{
 			Tikv_EstablishMPPConnectionClient: streamClient,
 		}
+	case CmdMPPCancel:
+		// it cannot use the ctx with cancel(), otherwise this cmd will fail.
+		resp.Resp, err = client.CancelMPPTask(ctx, req.CancelMPPTask())
 	case CmdCopStream:
 		var streamClient tikvpb.Tikv_CoprocessorStreamClient
 		streamClient, err = client.CoprocessorStream(ctx, req.Cop())
@@ -981,7 +1005,7 @@ func (resp *MPPStreamResponse) Close() {
 	}
 }
 
-// CheckStreamTimeoutLoop runs periodically to check is there any stream request timeouted.
+// CheckStreamTimeoutLoop runs periodically to check is there any stream request timed out.
 // Lease is an object to track stream requests, call this function with "go CheckStreamTimeoutLoop()"
 // It is not guaranteed to call every Lease.Cancel() putting into channel when exits.
 // If grpc-go supports SetDeadline(https://github.com/grpc/grpc-go/issues/2917), we can stop using this method.
@@ -1025,4 +1049,34 @@ func keepOnlyActive(array []*Lease, now int64) []*Lease {
 		}
 	}
 	return array[:idx]
+}
+
+// IsGreenGCRequest checks if the request is used by Green GC's protocol. This is used for failpoints to inject errors
+// to specified RPC requests.
+func (req *Request) IsGreenGCRequest() bool {
+	if req.Type == CmdCheckLockObserver ||
+		req.Type == CmdRegisterLockObserver ||
+		req.Type == CmdRemoveLockObserver ||
+		req.Type == CmdPhysicalScanLock {
+		return true
+	}
+	return false
+}
+
+// IsTxnWriteRequest checks if the request is a transactional write request. This is used for failpoints to inject
+// errors to specified RPC requests.
+func (req *Request) IsTxnWriteRequest() bool {
+	if req.Type == CmdPessimisticLock ||
+		req.Type == CmdPrewrite ||
+		req.Type == CmdCommit ||
+		req.Type == CmdBatchRollback ||
+		req.Type == CmdPessimisticRollback ||
+		req.Type == CmdCheckTxnStatus ||
+		req.Type == CmdCheckSecondaryLocks ||
+		req.Type == CmdCleanup ||
+		req.Type == CmdTxnHeartBeat ||
+		req.Type == CmdResolveLock {
+		return true
+	}
+	return false
 }

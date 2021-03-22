@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,9 +29,9 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
-	log "github.com/sirupsen/logrus"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -72,7 +73,8 @@ type TestGlobalKillSuite struct {
 }
 
 func (s *TestGlobalKillSuite) SetUpSuite(c *C) {
-	logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	c.Assert(err, IsNil)
 
 	s.pdCli, s.pdErr = s.connectPD()
 }
@@ -106,7 +108,7 @@ func (s *TestGlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
 		cli.Close()
 		return nil, errors.Trace(err)
 	}
-	log.Infof("pd connected")
+	log.Info("pd connected")
 	return cli, nil
 }
 
@@ -119,7 +121,7 @@ func (s *TestGlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd 
 		fmt.Sprintf("--status=%d", statusPort),
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
 		fmt.Sprintf("--config=%s", "./config.toml"))
-	log.Infof("starting tidb: %v", cmd)
+	log.Info("starting tidb", zap.Any("cmd", cmd))
 	err = cmd.Start()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -137,7 +139,7 @@ func (s *TestGlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath s
 		fmt.Sprintf("--status=%d", statusPort),
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
 		fmt.Sprintf("--config=%s", "./config.toml"))
-	log.Infof("starting tidb: %v", cmd)
+	log.Info("starting tidb", zap.Any("cmd", cmd))
 	err = cmd.Start()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -154,7 +156,7 @@ func (s *TestGlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful b
 		if err = cmd.Wait(); err != nil {
 			return errors.Trace(err)
 		}
-		log.Infof("service \"%s\" stopped gracefully", name)
+		log.Info("service stopped gracefully", zap.String("name", name))
 		return nil
 	}
 
@@ -162,7 +164,7 @@ func (s *TestGlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful b
 		return errors.Trace(err)
 	}
 	time.Sleep(1 * time.Second)
-	log.Infof("service \"%s\" killed", name)
+	log.Info("service killed", zap.String("name", name))
 	return nil
 }
 
@@ -182,7 +184,7 @@ func (s *TestGlobalKillSuite) startPDProxy() (proxy *pdProxy, err error) {
 	if err := p.Start(); err != nil {
 		return nil, err
 	}
-	log.Infof("start PD proxy: %s --> %s", from, dst)
+	log.Info("start PD proxy", zap.String("from", from), zap.String("dst", dst))
 	return &p, nil
 }
 
@@ -194,26 +196,41 @@ func (s *TestGlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 	for i := 0; i < 5; i++ {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
-			log.Warnf("open addr %v failed, retry count %d err %v", addr, i, err)
+			log.Warn("open addr failed",
+				zap.String("addr", addr),
+				zap.Int("retry count", i),
+				zap.Error(err),
+			)
 			continue
 		}
 		err = db.Ping()
 		if err == nil {
 			break
 		}
-		log.Warnf("ping addr %v failed, retry count %d err %v", addr, i, err)
+		log.Warn("ping addr failed",
+			zap.String("addr", addr),
+			zap.Int("retry count", i),
+			zap.Error(err),
+		)
 
-		db.Close()
+		err = db.Close()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
 	}
 	if err != nil {
-		log.Errorf("connect to server addr %v failed %v, take time %v", addr, err, time.Since(startTime))
+		log.Error("connect to server addr failed",
+			zap.String("addr", addr),
+			zap.Duration("take time", time.Since(startTime)),
+			zap.Error(err),
+		)
 		return nil, errors.Trace(err)
 	}
 	db.SetMaxOpenConns(10)
 
-	log.Infof("connect to server %s ok", addr)
+	log.Info("connect to server ok", zap.String("addr", addr))
 	return db, nil
 }
 
@@ -228,7 +245,7 @@ func (s *TestGlobalKillSuite) killByCtrlC(c *C, port int, sleepTime int) time.Du
 		fmt.Sprintf("-P%d", port),
 		"-uroot",
 		"-e", fmt.Sprintf("SELECT SLEEP(%d);", sleepTime))
-	log.Infof("run mysql cli: %v", cli)
+	log.Info("run mysql cli", zap.Any("cli", cli))
 
 	ch := make(chan sleepResult)
 	go func() {
@@ -240,7 +257,7 @@ func (s *TestGlobalKillSuite) killByCtrlC(c *C, port int, sleepTime int) time.Du
 		}
 
 		elapsed := time.Since(startTS)
-		log.Infof("mysql cli takes: %v", elapsed)
+		log.Info("mysql cli takes", zap.Duration("elapsed", elapsed))
 		ch <- sleepResult{elapsed: elapsed}
 	}()
 
@@ -258,9 +275,9 @@ func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uin
 	startTS := time.Now()
 	sql := fmt.Sprintf("SELECT SLEEP(%d);", sleepTime)
 	if connID > 0 {
-		log.Infof("exec: %s [on 0x%x]", sql, connID)
+		log.Info("exec sql", zap.String("sql", sql), zap.String("connID", "0x"+strconv.FormatUint(connID, 16)))
 	} else {
-		log.Infof("exec: %s", sql)
+		log.Info("exec sql", zap.String("sql", sql))
 	}
 	rows, err := conn.QueryContext(ctx, sql)
 	if err != nil {
@@ -274,7 +291,7 @@ func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uin
 	}
 
 	elapsed := time.Since(startTS)
-	log.Infof("sleepRoutine takes %v", elapsed)
+	log.Info("sleepRoutine takes", zap.Duration("elapsed", elapsed))
 	ch <- sleepResult{elapsed: elapsed}
 }
 
@@ -289,7 +306,7 @@ func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB
 	var connID1 uint64
 	err = conn1.QueryRowContext(ctx, "SELECT CONNECTION_ID();").Scan(&connID1)
 	c.Assert(err, IsNil)
-	log.Infof("connID1: 0x%x", connID1)
+	log.Info("connID1", zap.String("connID1", "0x"+strconv.FormatUint(connID1, 16)))
 
 	ch := make(chan sleepResult)
 	go sleepRoutine(ctx, sleepTime, conn1, connID1, ch)
@@ -302,9 +319,12 @@ func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB
 	var connID2 uint64
 	err = conn2.QueryRowContext(ctx, "SELECT CONNECTION_ID();").Scan(&connID2)
 	c.Assert(err, IsNil)
-	log.Infof("connID2: 0x%x", connID2)
+	log.Info("connID2", zap.String("connID2", "0x"+strconv.FormatUint(connID2, 16)))
 
-	log.Infof("exec: KILL QUERY %v(0x%x) [on 0x%x]", connID1, connID1, connID2)
+	log.Info("exec: KILL QUERY",
+		zap.String("connID1", "0x"+strconv.FormatUint(connID1, 16)),
+		zap.String("connID2", "0x"+strconv.FormatUint(connID2, 16)),
+	)
 	_, err = conn2.ExecContext(ctx, fmt.Sprintf("KILL QUERY %v", connID1))
 	c.Assert(err, IsNil)
 
@@ -323,7 +343,10 @@ func (s *TestGlobalKillSuite) TestWithoutPD(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	defer db.Close()
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	const sleepTime = 2
 
@@ -348,7 +371,10 @@ func (s *TestGlobalKillSuite) TestOneTiDB(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	defer db.Close()
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	const sleepTime = 2
 
@@ -452,33 +478,33 @@ func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
 	time.Sleep(waitToStartup) // wait go-routine to start.
 
 	// disconnect to PD by closing PD proxy.
-	log.Infof("shutdown PD proxy to simulate lost connection to PD.")
+	log.Info("shutdown PD proxy to simulate lost connection to PD.")
 	pdProxy.Close()
 	pdProxy.closeAllConnections()
 
 	// wait for "lostConnectionToPDTimeout" elapsed.
 	// delay additional 3 seconds for TiDB would have a small interval to detect lost connection more than "lostConnectionToPDTimeout".
 	sleepTime := time.Duration(*lostConnectionToPDTimeout+3) * time.Second
-	log.Infof("sleep %v to wait for TiDB had detected lost connection", sleepTime)
+	log.Info("sleep to wait for TiDB had detected lost connection", zap.Duration("sleepTime", sleepTime))
 	time.Sleep(sleepTime)
 
 	// check running sql
 	// [Test Scenario 4] Existing connections are killed after PD lost connection for long time.
 	r := <-ch
-	log.Infof("sleepRoutine err: %v", r.err)
+	log.Info("sleepRoutine err", zap.Error(r.err))
 	c.Assert(r.err, NotNil)
 	c.Assert(r.err.Error(), Equals, "invalid connection")
 
 	// check new connection.
 	// [Test Scenario 5] New connections are not accepted after PD lost connection for long time.
-	log.Infof("check connection after lost connection to PD.")
+	log.Info("check connection after lost connection to PD.")
 	_, err = s.connectTiDB(port1)
-	log.Infof("connectTiDB err: %v", err)
+	log.Info("connectTiDB err", zap.Error(r.err))
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "driver: bad connection")
 
 	// start PD proxy to restore connection.
-	log.Infof("restart pdProxy")
+	log.Info("restart pdProxy")
 	pdProxy1, err := s.startPDProxy()
 	c.Assert(err, IsNil)
 	defer pdProxy1.Close()
@@ -486,7 +512,7 @@ func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
 	// wait for "timeToCheckPDConnectionRestored" elapsed.
 	// delay additional 3 seconds for TiDB would have a small interval to detect lost connection restored more than "timeToCheckPDConnectionRestored".
 	sleepTime = time.Duration(*timeToCheckPDConnectionRestored+3) * time.Second
-	log.Infof("sleep %v to wait for TiDB had detected lost connection restored", sleepTime)
+	log.Info("sleep to wait for TiDB had detected lost connection restored", zap.Duration("sleepTime", sleepTime))
 	time.Sleep(sleepTime)
 
 	// check restored

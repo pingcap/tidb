@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -127,6 +127,7 @@ type testIntegrationSuite5 struct{ *testIntegrationSuite }
 type testIntegrationSuite6 struct{ *testIntegrationSuite }
 type testIntegrationSuite7 struct{ *testIntegrationSuite }
 type testIntegrationSuite8 struct{ *testIntegrationSuite }
+type testIntegrationSuite9 struct{ *testIntegrationSuite }
 
 func (s *testIntegrationSuite5) TestNoZeroDateMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -690,13 +691,14 @@ func (s *testIntegrationSuite2) TestUpdateMultipleTable(c *C) {
 	}
 	t1Info.Columns = append(t1Info.Columns, newColumn)
 
-	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
 		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
 		return nil
 	})
+	c.Assert(err, IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
 
@@ -706,13 +708,14 @@ func (s *testIntegrationSuite2) TestUpdateMultipleTable(c *C) {
 
 	newColumn.State = model.StatePublic
 
-	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
 		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
 		return nil
 	})
+	c.Assert(err, IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
 
@@ -1260,7 +1263,7 @@ func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
 	tk.MustExec("create database test_get_endhandle")
 	tk.MustExec("use test_get_endhandle")
 
-	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+	tk.MustExec("create table t(a bigint PRIMARY KEY nonclustered, b int)")
 	for i := 0; i < 1000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
 	}
@@ -1323,7 +1326,7 @@ func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expe
 func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
 	var job *model.Job
 
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
@@ -1487,7 +1490,7 @@ func (s *testIntegrationSuite6) TestAddColumnTooMany(c *C) {
 func (s *testIntegrationSuite8) TestCreateTooManyIndexes(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	count := int(atomic.LoadUint32(&ddl.TableIndexCountLimit) - 1)
+	count := config.GetGlobalConfig().IndexLimit - 1
 	sql := "create table t_index_too_many ("
 	for i := 0; i < 100; i++ {
 		if i != 0 {
@@ -1570,34 +1573,34 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	// The followings tests whether adding constraints via change / modify column
 	// is forbidden as expected.
 	tk.MustExec("drop table if exists mc")
-	tk.MustExec("create table mc(a int key, b int, c int)")
+	tk.MustExec("create table mc(a int key nonclustered, b int, c int)")
 	_, err = tk.Exec("alter table mc modify column a int key") // Adds a new primary key
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("alter table mc modify column c int unique") // Adds a new unique key
 	c.Assert(err, NotNil)
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `a` int(11) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected := "CREATE TABLE `mc` (\n  `a` int(11) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 
 	// Change / modify column should preserve index options.
 	tk.MustExec("drop table if exists mc")
-	tk.MustExec("create table mc(a int key, b int, c int unique)")
+	tk.MustExec("create table mc(a int key nonclustered, b int, c int unique)")
 	tk.MustExec("alter table mc modify column a bigint") // NOT NULL & PRIMARY KEY should be preserved
 	tk.MustExec("alter table mc modify column b bigint")
 	tk.MustExec("alter table mc modify column c bigint") // Unique should be preserved
 	result = tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 
 	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
 	tk.MustExec("drop table if exists mc")
-	tk.MustExec("create table mc(a int key auto_increment, b int)")
+	tk.MustExec("create table mc(a int key nonclustered auto_increment, b int)")
 	tk.MustExec("alter table mc modify column a bigint auto_increment") // Keeps auto_increment
 	result = tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 	_, err = tk.Exec("alter table mc modify column a bigint") // Droppping auto_increment is not allow when @@tidb_allow_remove_auto_inc == 'off'
 	c.Assert(err, NotNil)
@@ -1605,7 +1608,7 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	tk.MustExec("alter table mc modify column a bigint") // Dropping auto_increment is ok when @@tidb_allow_remove_auto_inc == 'on'
 	result = tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 
 	_, err = tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
@@ -2167,6 +2170,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustExec("create table t (a int, b real);")
 	tk.MustExec("insert into t values (1, 2.1);")
 	tk.MustExec("alter table t add index idx((a+b));")
+	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE table_name = 't'").Check(testkit.Rows())
 
 	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -2210,6 +2214,8 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, key((a+1)), key((a+2)), key idx((a+3)), key((a+4)));")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (A INT, B INT, UNIQUE KEY ((A * 2)));")
 
 	// Test experiment switch.
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -2220,22 +2226,21 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
-	defer config.RestoreFunc()
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
-		conf.AlterPrimaryKey = true
 	})
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b real);")
-	tk.MustGetErrCode("alter table t add primary key ((a+b));", errno.ErrFunctionalIndexPrimaryKey)
+	tk.MustGetErrCode("alter table t add primary key ((a+b)) nonclustered;", errno.ErrFunctionalIndexPrimaryKey)
 
 	// Test for error
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b real);")
-	tk.MustGetErrCode("alter table t add primary key ((a+b));", errno.ErrFunctionalIndexPrimaryKey)
+	tk.MustGetErrCode("alter table t add primary key ((a+b)) nonclustered;", errno.ErrFunctionalIndexPrimaryKey)
 	tk.MustGetErrCode("alter table t add index ((rand()));", errno.ErrFunctionalIndexFunctionIsNotAllowed)
 	tk.MustGetErrCode("alter table t add index ((now()+1));", errno.ErrFunctionalIndexFunctionIsNotAllowed)
 
@@ -2260,7 +2265,7 @@ func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
 	tk.MustExec("create table t (j json, key k ((j+1),(j+1)))")
 
 	tk.MustGetErrCode("create table t1 (col1 int, index ((concat(''))));", errno.ErrWrongKeyColumnFunctionalIndex)
-	tk.MustGetErrCode("CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))));", errno.ErrFunctionalIndexPrimaryKey)
+	tk.MustGetErrCode("CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);", errno.ErrFunctionalIndexPrimaryKey)
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
@@ -2302,7 +2307,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	tk.MustExec("drop table if exists t1;")
 
 	// Test primary key is handle.
-	tk.MustExec("create table t(a int auto_increment key) auto_id_cache 100")
+	tk.MustExec("create table t(a int auto_increment key clustered) auto_id_cache 100")
 	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(100))
@@ -2366,13 +2371,15 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t(a int auto_increment key) auto_id_cache 3")
+	tk.MustExec("create table t(a int auto_increment key clustered) auto_id_cache 3")
 	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(3))
 
 	// Test insert batch size(4 here) greater than the customized autoid step(3 here).
-	tk.MustExec("insert into t(a) values(NULL),(NULL),(NULL),(NULL)")
+	tk.MustExec("insert into t(a) values(NULL),(NULL),(NULL)")
+	// Cache 3 more values. We can't merge this two lines because the batch allocation overrides autoid step.
+	tk.MustExec("insert into t(a) values(NULL)")
 	tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
 	tk.MustExec("delete from t")
 
@@ -2621,17 +2628,12 @@ func (s *testIntegrationSuite5) TestDropLastVisibleColumns(c *C) {
 
 func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		// Make sure the integer primary key is the handle(PkIsHandle).
-		conf.AlterPrimaryKey = false
-	})
 	tk.MustExec("drop database if exists test_auto_inc_table_opt;")
 	tk.MustExec("create database test_auto_inc_table_opt;")
 	tk.MustExec("use test_auto_inc_table_opt;")
 
 	// Empty auto_inc allocator should not cause error.
-	tk.MustExec("create table t (a bigint primary key) auto_increment = 10;")
+	tk.MustExec("create table t (a bigint primary key clustered) auto_increment = 10;")
 	tk.MustExec("alter table t auto_increment = 10;")
 	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
 
@@ -2740,8 +2742,8 @@ func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
 			config.UpdateGlobal(func(conf *config.Config) {
 				conf.EnableGlobalIndex = globalIndex
 			})
-			for _, clusteredIndex := range []int{0, 1} {
-				tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", clusteredIndex))
+			for _, clusteredIndex := range []bool{false, true} {
+				tk.Se.GetSessionVars().EnableClusteredIndex = clusteredIndex
 				for _, t := range tests {
 					tk.MustExec("drop table if exists t;")
 					fields := make([]string, len(t.types))
@@ -2769,4 +2771,25 @@ func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
 			restoreConfig()
 		}
 	}
+}
+
+func (s *testIntegrationSuite3) TestIssue22028(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	_, err := tk.Exec("create table t(a double(0, 0));")
+	c.Assert(err.Error(), Equals, "[types:1439]Display width out of range for column 'a' (max = 255)")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a double);")
+	_, err = tk.Exec("ALTER TABLE t MODIFY COLUMN a DOUBLE(0,0);")
+	c.Assert(err.Error(), Equals, "[types:1439]Display width out of range for column 'a' (max = 255)")
+}
+
+func (s *testIntegrationSuite3) TestIssue21835(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	_, err := tk.Exec("create table t( col decimal(1,2) not null default 0);")
+	c.Assert(err.Error(), Equals, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column 'col').")
 }
