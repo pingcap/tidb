@@ -254,7 +254,7 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 			return err
 		}
 		if txnSize > 0 {
-			se.txn.writeSLI.AddWriteSize(uint64(txnSize))
+			se.txn.writeSLI.CommittedTxn(uint64(txnSize))
 		}
 		return nil
 	}

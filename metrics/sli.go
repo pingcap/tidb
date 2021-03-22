@@ -34,6 +34,6 @@ var (
 			Subsystem: "sli",
 			Name:      "txn_write_throughput",
 			Help:      "Bucketed histogram of transaction write throughput (bytes/second).",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 28), // 1 bytes/s ~ 256MB/s
+			Buckets:   prometheus.ExponentialBuckets(64, 1.3, 40), // 64 bytes/s ~ 2.3MB/s
 		})
 )
