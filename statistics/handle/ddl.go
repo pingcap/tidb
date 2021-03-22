@@ -88,7 +88,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		opts[key] = val
 	}
 	// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
-	globalColStatsTopNNum, globalColStatsBucketNum := -1, -1
+	globalColStatsTopNNum, globalColStatsBucketNum := 0, 0
 	for colID := range globalStats.Columns {
 		globalColStatsTopN := globalStats.Columns[colID].TopN
 		if globalColStatsTopN != nil && len(globalColStatsTopN.TopN) > globalColStatsTopNNum {
@@ -99,10 +99,10 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 			globalColStatsBucketNum = len(globalColStats.Buckets)
 		}
 	}
-	if globalColStatsTopNNum != -1 {
+	if globalColStatsTopNNum != 0 {
 		opts[ast.AnalyzeOptNumTopN] = uint64(globalColStatsTopNNum)
 	}
-	if globalColStatsBucketNum != -1 {
+	if globalColStatsBucketNum != 0 {
 		opts[ast.AnalyzeOptNumBuckets] = uint64(globalColStatsBucketNum)
 	}
 	// Generate the new column global-stats
@@ -119,7 +119,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	}
 
 	// Generate the new index global-stats
-	globalIdxStatsTopNNum, globalIdxStatsBucketNum := -1, -1
+	globalIdxStatsTopNNum, globalIdxStatsBucketNum := 0, 0
 	for idx := range tblInfo.Indices {
 		globalIdxStatsTopN := globalStats.Indices[int64(idx)].TopN
 		if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) > globalIdxStatsTopNNum {
@@ -129,10 +129,10 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		if globalIdxStats != nil && len(globalIdxStats.Buckets) > globalIdxStatsBucketNum {
 			globalIdxStatsBucketNum = len(globalIdxStats.Buckets)
 		}
-		if globalIdxStatsTopNNum != -1 {
+		if globalIdxStatsTopNNum != 0 {
 			opts[ast.AnalyzeOptNumTopN] = uint64(globalIdxStatsTopNNum)
 		}
-		if globalIdxStatsBucketNum != -1 {
+		if globalIdxStatsBucketNum != 0 {
 			opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
 		}
 		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, int64(idx))
