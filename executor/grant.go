@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -434,7 +435,7 @@ func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, intern
 	if e.Level.Level != ast.GrantLevelGlobal { // DYNAMIC can only be *.*
 		return ErrIllegalPrivilegeLevel.GenWithStackByArgs(privName)
 	}
-	if !privileges.IsDynamicPrivilege(privName) {
+	if !privilege.GetPrivilegeManager(e.ctx).IsDynamicPrivilege(privName) {
 		// In GRANT context, MySQL returns a syntax error if the privilege has not been registered with the server:
 		// ERROR 1149 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
 		// But in REVOKE context, it returns a warning ErrDynamicPrivilegeNotRegistered. It is not strictly compatible,

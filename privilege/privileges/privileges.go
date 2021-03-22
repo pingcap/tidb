@@ -16,8 +16,10 @@ package privileges
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -35,6 +37,8 @@ import (
 var SkipWithGrant = false
 
 var _ privilege.Manager = (*UserPrivileges)(nil)
+var dynamicPrivs = []string{"BACKUP_ADMIN", "SYSTEM_VARIABLES_ADMIN", "ROLE_ADMIN", "CONNECTION_ADMIN"}
+var dynamicPrivLock sync.Mutex
 
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
@@ -477,11 +481,25 @@ func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
 	return mysqlPrivilege.getAllRoles(user, host)
 }
 
-// IsDynamicPrivilege returns a bool
-func IsDynamicPrivilege(privNameInUpper string) bool {
-	switch privNameInUpper {
-	case "BACKUP_ADMIN", "SYSTEM_VARIABLES_ADMIN", "ROLE_ADMIN", "CONNECTION_ADMIN":
-		return true
+// IsDynamicPrivilege returns true if the DYNAMIC privilege is built-in or has been registered by a plugin
+func (p *UserPrivileges) IsDynamicPrivilege(privNameInUpper string) bool {
+	for _, priv := range dynamicPrivs {
+		if privNameInUpper == priv {
+			return true
+		}
 	}
 	return false
+}
+
+// RegisterDynamicPrivilege is used by plugins to add new privileges to TiDB
+func RegisterDynamicPrivilege(privNameInUpper string) error {
+	dynamicPrivLock.Lock()
+	defer dynamicPrivLock.Unlock()
+	for _, priv := range dynamicPrivs {
+		if privNameInUpper == priv {
+			return errors.New("privilege is already registered")
+		}
+	}
+	dynamicPrivs = append(dynamicPrivs, privNameInUpper)
+	return nil
 }
