@@ -259,8 +259,8 @@ type PhysicalIndexLookUpReader struct {
 
 	ExtraHandleCol *expression.Column
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
-	PushedLimit *PushedDownLimit
-	RateLimit   bool
+	PushedLimit         *PushedDownLimit
+	IndexSidePagination bool
 
 	CommonHandleCols []*expression.Column
 

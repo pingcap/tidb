@@ -2907,13 +2907,13 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tableStreaming, tbl, err
 }
 
-func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan, needIndexColumn bool) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan, needAllIndexColumns bool) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	indexReq, indexStreaming, err := constructDAGReq(b.ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, false, err
 	}
 	indexReq.OutputOffsets = []uint32{}
-	if needIndexColumn {
+	if needAllIndexColumns {
 		for i := 0; i < schemaLen; i++ {
 			indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
 		}
@@ -2940,7 +2940,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		// Should output pid col.
 		handleLen++
 	}
-	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleLen, v.IndexPlans, v.RateLimit && is.KeepOrder)
+	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleLen, v.IndexPlans, v.IndexSidePagination && is.KeepOrder)
 	if err != nil {
 		return nil, err
 	}
@@ -2953,27 +2953,27 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		return nil, err
 	}
 	e := &IndexLookUpExecutor{
-		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:             indexReq,
-		startTS:           startTS,
-		table:             tbl,
-		index:             is.Index,
-		keepOrder:         is.KeepOrder,
-		desc:              is.Desc,
-		tableRequest:      tableReq,
-		columns:           ts.Columns,
-		indexStreaming:    indexStreaming,
-		tableStreaming:    tableStreaming,
-		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
-		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
-		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
-		corColInAccess:    b.corColInAccess(v.IndexPlans[0]),
-		idxCols:           is.IdxCols,
-		colLens:           is.IdxColLens,
-		idxPlans:          v.IndexPlans,
-		tblPlans:          v.TablePlans,
-		PushedLimit:       v.PushedLimit,
-		rateLimit:         v.RateLimit && is.KeepOrder,
+		baseExecutor:        newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPB:               indexReq,
+		startTS:             startTS,
+		table:               tbl,
+		index:               is.Index,
+		keepOrder:           is.KeepOrder,
+		desc:                is.Desc,
+		tableRequest:        tableReq,
+		columns:             ts.Columns,
+		indexStreaming:      indexStreaming,
+		tableStreaming:      tableStreaming,
+		dataReaderBuilder:   &dataReaderBuilder{executorBuilder: b},
+		corColInIdxSide:     b.corColInDistPlan(v.IndexPlans),
+		corColInTblSide:     b.corColInDistPlan(v.TablePlans),
+		corColInAccess:      b.corColInAccess(v.IndexPlans[0]),
+		idxCols:             is.IdxCols,
+		colLens:             is.IdxColLens,
+		idxPlans:            v.IndexPlans,
+		tblPlans:            v.TablePlans,
+		PushedLimit:         v.PushedLimit,
+		indexSidePagination: v.IndexSidePagination && is.KeepOrder,
 	}
 
 	if containsLimit(indexReq.Executors) {

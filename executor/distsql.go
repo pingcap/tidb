@@ -292,7 +292,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	return nil
 }
 
-const indexScanLimit = 100
+const indexScanPageSize = 1000
 
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
@@ -330,9 +330,9 @@ type IndexLookUpExecutor struct {
 	kvRanges      []kv.KeyRange
 	workerStarted bool
 
-	keepOrder bool
-	desc      bool
-	rateLimit bool
+	keepOrder           bool
+	desc                bool
+	indexSidePagination bool
 
 	indexStreaming bool
 	tableStreaming bool
@@ -384,10 +384,10 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-	if indexScanLimit != 0 && e.rateLimit {
-		// add limit
+	if indexScanPageSize != 0 && e.indexSidePagination {
+		// add limit executor
 		if e.dagPB.Executors[len(e.dagPB.Executors)-1].Limit == nil {
-			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(indexScanLimit))
+			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(indexScanPageSize))
 		}
 	}
 	err = e.open(ctx)
@@ -451,7 +451,7 @@ func (e *IndexLookUpExecutor) isCommonHandle() bool {
 
 func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
 	var tps []*types.FieldType
-	if e.rateLimit {
+	if e.indexSidePagination {
 		for _, col := range e.idxCols {
 			tps = append(tps, col.RetType)
 		}
@@ -623,7 +623,10 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) (err e
 			return err
 		}
 		if resultTask == nil {
-			goto hack
+			if e.indexSidePagination {
+				goto paginate
+			}
+			return nil
 		}
 		if resultTask.cursor < len(resultTask.rows) {
 			numToAppend := mathutil.Min(len(resultTask.rows)-resultTask.cursor, req.RequiredRows()-req.NumRows())
@@ -634,10 +637,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) (err e
 			}
 		}
 	}
-hack:
-	if !e.rateLimit {
-		return nil
-	}
+paginate:
 	if e.lastRowKeys == nil {
 		return nil
 	}
@@ -645,7 +645,7 @@ hack:
 	if err := e.Close(); err != nil {
 		return err
 	}
-	// split ranges
+	// rebuild ranges
 	var ran = ranger.FullRange()[0]
 	if e.desc {
 		ran.HighVal = e.lastRowKeys
@@ -654,14 +654,11 @@ hack:
 		ran.LowVal = e.lastRowKeys
 		ran.LowExclude = true
 	}
-	e.ranges, err = ranger.MergeRanges(e.ctx.GetSessionVars().StmtCtx, e.ranges, ran)
+	e.ranges, err = ranger.MergeOneRange(e.ctx.GetSessionVars().StmtCtx, e.ranges, ran)
 	if err != nil {
 		return err
 	}
-	if err := e.Open(ctx); err != nil {
-		return err
-	}
-	return nil
+	return e.Open(ctx)
 }
 
 func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
@@ -858,7 +855,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			}
 			handles = append(handles, h)
 		}
-		if w.idxLookup.rateLimit && chk.NumRows() != 0 {
+		if w.idxLookup.indexSidePagination && chk.NumRows() != 0 {
 			w.idxLookup.lastRowKeys = w.constructLookUpContent(chk.GetRow(chk.NumRows() - 1))
 		}
 

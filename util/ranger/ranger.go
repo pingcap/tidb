@@ -451,7 +451,37 @@ func genSortRange(sc *stmtctx.StatementContext, ran *Range) (*sortRange, error) 
 	return &sortRange{originalValue: ran, encodedStart: left, encodedEnd: right}, nil
 }
 
-func MergeRanges(sc *stmtctx.StatementContext, ranges []*Range, src *Range) ([]*Range, error) {
+func mergeRange(r1 *sortRange, r2 *sortRange) *Range {
+	if bytes.Compare(r1.encodedStart, r2.encodedEnd) > 0 {
+		return nil
+	}
+	if bytes.Compare(r1.encodedEnd, r2.encodedStart) < 0 {
+		return nil
+	}
+	tmp := &Range{}
+	if bytes.Compare(r1.encodedStart, r2.encodedStart) < 0 {
+		tmp.LowVal = r2.originalValue.LowVal
+		tmp.LowExclude = r2.originalValue.LowExclude
+	} else {
+		tmp.LowVal = r1.originalValue.LowVal
+		tmp.LowExclude = r1.originalValue.LowExclude
+	}
+
+	if bytes.Compare(r1.encodedEnd, r2.encodedEnd) < 0 {
+		tmp.HighVal = r1.originalValue.HighVal
+		tmp.HighExclude = r1.originalValue.HighExclude
+	} else {
+		tmp.HighVal = r2.originalValue.HighVal
+		tmp.HighExclude = r2.originalValue.HighExclude
+	}
+	return tmp
+}
+
+// MergeOneRange merge one range to ranges.
+// For two ranges ([a, b], [c, d]), ([e, f]) we have guaranteed that a <= c.
+// If a <= e <= b, c <= f <= d. this two ranges can be merged as ([e, b], [c, f]).
+// If they aren't overlapped, the function will return nil.
+func MergeOneRange(sc *stmtctx.StatementContext, ranges []*Range, src *Range) ([]*Range, error) {
 	if len(ranges) == 0 {
 		return nil, nil
 	}
@@ -463,36 +493,14 @@ func MergeRanges(sc *stmtctx.StatementContext, ranges []*Range, src *Range) ([]*
 		}
 		objects = append(objects, sr)
 	}
-	srcSr, err := genSortRange(sc, src)
+	mergeObject, err := genSortRange(sc, src)
 	if err != nil {
 		return nil, err
 	}
 
 	var ret []*Range
 	for _, obj := range objects {
-		if bytes.Compare(srcSr.encodedStart, obj.encodedEnd) > 0 {
-			continue
-		}
-		if bytes.Compare(srcSr.encodedEnd, obj.encodedStart) < 0 {
-			continue
-		}
-		tmp := &Range{}
-		if bytes.Compare(srcSr.encodedStart, obj.encodedStart) < 0 {
-			tmp.LowVal = obj.originalValue.LowVal
-			tmp.LowExclude = obj.originalValue.LowExclude
-		} else {
-			tmp.LowVal = srcSr.originalValue.LowVal
-			tmp.LowExclude = srcSr.originalValue.LowExclude
-		}
-
-		if bytes.Compare(srcSr.encodedEnd, obj.encodedEnd) < 0 {
-			tmp.HighVal = srcSr.originalValue.HighVal
-			tmp.HighExclude = srcSr.originalValue.HighExclude
-		} else {
-			tmp.HighVal = obj.originalValue.HighVal
-			tmp.HighExclude = obj.originalValue.HighExclude
-		}
-		ret = append(ret, tmp)
+		ret = append(ret, mergeRange(obj, mergeObject))
 	}
 	return ret, nil
 }
