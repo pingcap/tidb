@@ -13,106 +13,112 @@ import (
 
 var StmtEvictedMap = newstmtEvictedMap()
 
-type stmtEvictedByDigestMap struct {
+type stmtSummaryEvictedMap struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	sync.Mutex
 	summaryMap *kvcache.SimpleLRUCache
 	// beginTimeForCurInterval is the begin time for current summary.
 	beginTimeForCurInterval int64
+	sysVars    *systemVars
 }
 
-type stmEvictedByDigestKey struct {
+type stmtSummaryEvictedKey struct {
 	hash          []byte
 	beginTimeHash string
 }
 
-type stmEvictedByDigest struct {
+type stmtSummaryEvictedInfo struct {
 	sync.Mutex
-	beginTime int64
-	endTime int64
-	isInit	bool
-	history	*list.List
-	Count	int64
+	beginTime  int64
+	endTime    int64
+	isInit     bool
+	history    *list.List
+	Count      int64
 	historyMax int
 }
 
-func newstmtEvictedMap() *stmtEvictedByDigestMap {
-	return &stmtEvictedByDigestMap{
-		//Only record 96 time window(48H)
-		//maybe we can modify this later
-		summaryMap:              		kvcache.NewSimpleLRUCache(96,0,0),
-		beginTimeForCurInterval:		900,
+func newstmtEvictedMap() *stmtSummaryEvictedMap {
+	sysVars:=newSysVars()
+	maxCount:=uint(sysVars.getVariable(typeMaxStmtCount))
+	return &stmtSummaryEvictedMap{
+		summaryMap:              kvcache.NewSimpleLRUCache(maxCount, 0, 0),
+		sysVars:    sysVars,
 	}
 }
 
-func (key *stmEvictedByDigestKey) Hash() []byte {
-	key.hash=make([]byte,0,len(key.beginTimeHash))
-	key.hash=append(key.hash,hack.Slice(key.beginTimeHash)...)
+func (key *stmtSummaryEvictedKey) Hash() []byte {
+	key.hash = make([]byte, 0, len(key.beginTimeHash))
+	key.hash = append(key.hash, hack.Slice(key.beginTimeHash)...)
 	return key.hash
 }
 
-func (sseMap *stmtEvictedByDigestMap) AddEvictedRecord(now int64,value kvcache.Value)   {
-	if sseMap.beginTimeForCurInterval+900<=now{
-		sseMap.beginTimeForCurInterval = now / 900 * 900
+func (sseMap *stmtSummaryEvictedMap) AddEvictedRecord(now int64, value kvcache.Value) {
+	intervalSeconds := sseMap.refreshInterval()
+	historySize := sseMap.historySize()
+	if sseMap.beginTimeForCurInterval+intervalSeconds <= now {
+		sseMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
 	}
-	begintime:=sseMap.beginTimeForCurInterval
-	key:=&stmEvictedByDigestKey{
-		beginTimeHash: strconv.FormatInt(begintime,10),
+	begintime := sseMap.beginTimeForCurInterval
+	key := &stmtSummaryEvictedKey{
+		beginTimeHash: strconv.FormatInt(begintime, 10),
 	}
 	key.Hash()
-	evicted:= func() *stmEvictedByDigest {
+	evicted := func() *stmtSummaryEvictedInfo {
 		sseMap.Lock()
 		defer sseMap.Unlock()
-		value,ok:=sseMap.summaryMap.Get(key)
-		var evicted *stmEvictedByDigest
+		value, ok := sseMap.summaryMap.Get(key)
+		var evicted *stmtSummaryEvictedInfo
 		if !ok {
-			evicted = new(stmEvictedByDigest)
+			evicted = new(stmtSummaryEvictedInfo)
 			sseMap.summaryMap.Put(key, evicted)
 		} else {
-			evicted = value.(*stmEvictedByDigest)
+			evicted = value.(*stmtSummaryEvictedInfo)
 		}
 		return evicted
 	}()
-	evicted.add(value,begintime)
+	evicted.add(value, begintime,intervalSeconds,historySize)
 }
 
-func (sseMap *stmtEvictedByDigestMap) ToCurrentDatum() [][]types.Datum {
+func (sseMap *stmtSummaryEvictedMap) ToCurrentDatum() [][]types.Datum {
 	sseMap.Lock()
 	values := sseMap.summaryMap.Values()
 	sseMap.Unlock()
 	rows := make([][]types.Datum, 0, len(values))
-	for _,v:=range values{
-		record:=v.(*stmEvictedByDigest)
-		rows=append(rows,record.toCurrentDatum())
+	for _, v := range values {
+		record := v.(*stmtSummaryEvictedInfo)
+		rows = append(rows, record.toDatum())
 	}
 	return rows
 }
 
-func (eb *stmEvictedByDigest) add(value kvcache.Value,begintime int64)  {
+func (eb *stmtSummaryEvictedInfo) add(value kvcache.Value, begintime int64,intervalSeconds int64,historysize int) {
 	eb.Lock()
 	defer eb.Unlock()
-	if !eb.isInit{
-		eb.init(begintime,begintime+900)
+	if !eb.isInit {
+		eb.init(begintime, begintime+intervalSeconds,historysize)
 	}
-	EvictedCol:=value.(*stmtSummaryByDigest)
-	for i:=EvictedCol.history.Front();i!=nil;i=i.Next(){
-		if i.Value.(*stmtSummaryByDigestElement).endTime>begintime {
-			eb.history.PushBack(i.Value.(*stmtSummaryByDigestElement))
-			//Add Count
+	EvictedCol := value.(*stmtSummaryByDigest)
+	for i := EvictedCol.history.Front(); i != nil; i = i.Next() {
+		if i.Value.(*stmtSummaryByDigestElement).endTime > begintime {
+			eb.history.PushFront(i.Value.(*stmtSummaryByDigestElement))
+			if eb.history.Len() > eb.historyMax {
+				eb.history.Remove(eb.history.Back())
+			}
 			eb.Count++
 		}
 	}
 }
 
-func (eb *stmEvictedByDigest) init(begintime int64,endtime int64) {
-	eb.isInit=  true
-	eb.history= list.New()
-	eb.beginTime= begintime
-	eb.endTime= endtime
-	eb.Count= 0
+func (eb *stmtSummaryEvictedInfo) init(begintime int64, endtime int64,historysize int) {
+	eb.isInit = true
+	eb.history = list.New()
+	eb.beginTime = begintime
+	eb.endTime = endtime
+	eb.historyMax = historysize
+	eb.Count = 0
 }
 
-func (eb *stmEvictedByDigest) toCurrentDatum() []types.Datum {
+func (eb *stmtSummaryEvictedInfo) toDatum() []types.Datum {
 	eb.Lock()
 	defer eb.Unlock()
 	return types.MakeDatums(
@@ -120,4 +126,11 @@ func (eb *stmEvictedByDigest) toCurrentDatum() []types.Datum {
 		types.NewTime(types.FromGoTime(time.Unix(eb.endTime, 0)), mysql.TypeTimestamp, 0),
 		eb.Count,
 	)
+}
+
+func (sseMap *stmtSummaryEvictedMap) refreshInterval() int64 {
+	return sseMap.sysVars.getVariable(typeRefreshInterval)
+}
+func (sseMap *stmtSummaryEvictedMap) historySize() int {
+	return int(sseMap.sysVars.getVariable(typeHistorySize))
 }

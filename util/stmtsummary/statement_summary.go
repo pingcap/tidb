@@ -70,7 +70,7 @@ type stmtSummaryByDigestMap struct {
 	// beginTimeForCurInterval is the begin time for current summary.
 	beginTimeForCurInterval int64
 	// sysVars encapsulates system variables needed to control statement summary.
-	sysVars    *systemVars
+	sysVars *systemVars
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -281,9 +281,8 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		if !ok {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
-			if ssMap.summaryMap.Size()==ssMap.maxStmtCount(){
-				//We needn't oldestkey
-				_,oldestValue,err:=ssMap.summaryMap.RemoveOldest()
+			if ssMap.summaryMap.Size() == ssMap.maxStmtCount() {
+				_, oldestValue, err := ssMap.summaryMap.RemoveOldest()
 				if err {
 					StmtEvictedMap.AddEvictedRecord(now, oldestValue)
 				}
