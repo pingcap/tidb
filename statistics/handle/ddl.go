@@ -15,6 +15,7 @@ package handle
 
 import (
 	"context"
+	"modernc.org/mathutil"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -88,16 +89,22 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		opts[key] = val
 	}
 	// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
+	globalColStatsTopNNum, globalColStatsBucketNum := -1, -1
 	for colID := range globalStats.Columns {
 		globalColStatsTopN := globalStats.Columns[colID].TopN
 		if globalColStatsTopN != nil && len(globalColStatsTopN.TopN) != 0 {
-			opts[ast.AnalyzeOptNumTopN] = uint64(len(globalColStatsTopN.TopN))
+			globalColStatsTopNNum = mathutil.Max(globalColStatsTopNNum, len(globalColStatsTopN.TopN))
 		}
 		globalColStats := globalStats.Columns[colID]
 		if globalColStats != nil && len(globalColStats.Buckets) != 0 {
-			opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalColStats.Buckets))
+			globalColStatsBucketNum = mathutil.Max(globalColStatsBucketNum, len(globalColStats.Buckets))
 		}
-		break
+	}
+	if globalColStatsTopNNum != -1 {
+		opts[ast.AnalyzeOptNumTopN] = uint64(globalColStatsTopNNum)
+	}
+	if globalColStatsBucketNum != -1 {
+		opts[ast.AnalyzeOptNumBuckets] = uint64(globalColStatsBucketNum)
 	}
 	// Generate the new column global-stats
 	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, 0)
@@ -113,14 +120,21 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	}
 
 	// Generate the new index global-stats
+	globalIdxStatsTopNNum, globalIdxStatsBucketNum := -1, -1
 	for idx := range tblInfo.Indices {
 		globalIdxStatsTopN := globalStats.Indices[int64(idx)].TopN
 		if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) != 0 {
-			opts[ast.AnalyzeOptNumTopN] = uint64(len(globalIdxStatsTopN.TopN))
+			globalIdxStatsTopNNum = mathutil.Max(globalIdxStatsTopNNum, len(globalIdxStatsTopN.TopN))
 		}
 		globalIdxStats := globalStats.Indices[int64(idx)]
 		if globalIdxStats != nil && len(globalIdxStats.Buckets) != 0 {
-			opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalIdxStats.Buckets))
+			globalIdxStatsBucketNum = mathutil.Max(globalIdxStatsBucketNum, len(globalIdxStats.Buckets))
+		}
+		if globalIdxStatsTopNNum != -1 {
+			opts[ast.AnalyzeOptNumTopN] = uint64(globalIdxStatsTopNNum)
+		}
+		if globalIdxStatsBucketNum != -1 {
+			opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
 		}
 		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, int64(idx))
 		if err != nil {
