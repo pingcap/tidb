@@ -1452,7 +1452,7 @@ func CountTelemetry(s *session) {
 	length := len(telemetry.CoprocessorCacheTelemetry.MinuteWindow)
 	if length == 0 || time.Since(*telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].BeginAt) >= time.Minute {
 		var i int
-		for i = 0; i < length && time.Since(*telemetry.CoprocessorCacheTelemetry.MinuteWindow[i].BeginAt) >= 6*time.Hour; i++ {
+		for i = 0; i < length && time.Since(*telemetry.CoprocessorCacheTelemetry.MinuteWindow[i].BeginAt) >= telemetry.UpdateInterval; i++ {
 		}
 		telemetry.CoprocessorCacheTelemetry.MinuteWindow = telemetry.CoprocessorCacheTelemetry.MinuteWindow[i:]
 		telemetry.CoprocessorCacheTelemetry.MinuteWindow = append(telemetry.CoprocessorCacheTelemetry.MinuteWindow, telemetry.CoprCacheUsedWindowItem{})
@@ -1462,25 +1462,26 @@ func CountTelemetry(s *session) {
 	}
 	if s.sessionVars.CopRespTimes.Load() > 0 {
 		ratio := float64(s.sessionVars.CoprCacheHitNum.Load()) / float64(s.sessionVars.CopRespTimes.Load())
-		if ratio >= 0 {
+		switch {
+		case ratio >= 0:
 			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P0.Add(1)
-		}
-		if ratio >= 0.01 {
+			fallthrough
+		case ratio >= 0.01:
 			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P1.Add(1)
-		}
-		if ratio >= 0.1 {
+			fallthrough
+		case ratio >= 0.1:
 			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P10.Add(1)
-		}
-		if ratio >= 0.2 {
+			fallthrough
+		case ratio >= 0.2:
 			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P20.Add(1)
-		}
-		if ratio >= 0.4 {
+			fallthrough
+		case ratio >= 0.4:
 			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P40.Add(1)
-		}
-		if ratio >= 0.8 {
+			fallthrough
+		case ratio >= 0.8:
 			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P80.Add(1)
-		}
-		if ratio >= 1 {
+			fallthrough
+		case ratio >= 1:
 			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P100.Add(1)
 		}
 	} else {
@@ -1515,7 +1516,7 @@ func CountTelemetry(s *session) {
 	length = len(telemetry.TiFlashUsageTelemetry.MinuteWindow)
 	if length == 0 || time.Since(*telemetry.TiFlashUsageTelemetry.MinuteWindow[length-1].BeginAt) >= time.Minute {
 		var i int
-		for i = 0; i < length && time.Since(*telemetry.TiFlashUsageTelemetry.MinuteWindow[i].BeginAt) >= 6*time.Hour; i++ {
+		for i = 0; i < length && time.Since(*telemetry.TiFlashUsageTelemetry.MinuteWindow[i].BeginAt) >= telemetry.UpdateInterval; i++ {
 		}
 		telemetry.TiFlashUsageTelemetry.MinuteWindow = telemetry.TiFlashUsageTelemetry.MinuteWindow[i:]
 		telemetry.TiFlashUsageTelemetry.MinuteWindow = append(telemetry.TiFlashUsageTelemetry.MinuteWindow, telemetry.TiFlashUsageItem{})

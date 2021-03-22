@@ -39,13 +39,13 @@ var CoprocessorCacheTelemetry = struct {
 
 // CoprCacheUsedWindowItem is the coprocessor cache telemetry data struct.
 type CoprCacheUsedWindowItem struct {
-	P0   atomic.Uint64 `json:"ge0"`
-	P1   atomic.Uint64 `json:"ge1"`
-	P10  atomic.Uint64 `json:"ge10"`
-	P20  atomic.Uint64 `json:"ge20"`
-	P40  atomic.Uint64 `json:"ge40"`
-	P80  atomic.Uint64 `json:"ge80"`
-	P100 atomic.Uint64 `json:"ge100"`
+	P0   atomic.Uint64 `json:"gte0"`
+	P1   atomic.Uint64 `json:"gte1"`
+	P10  atomic.Uint64 `json:"gte10"`
+	P20  atomic.Uint64 `json:"gte20"`
+	P40  atomic.Uint64 `json:"gte40"`
+	P80  atomic.Uint64 `json:"gte80"`
+	P100 atomic.Uint64 `json:"gte100"`
 
 	BeginAt *time.Time `json:"beginAt"`
 }
@@ -68,9 +68,9 @@ type TiFlashUsageItem struct {
 func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, error) {
 	// init
 	usageInfo := featureUsageInfo{
-		CoprCacheUsed:    make([]*CoprCacheUsedWindowItem, 0, 6),
+		CoprCacheUsed:    make([]*CoprCacheUsedWindowItem, 0, UpdateInterval/time.Hour),
 		ClusterIndexUsed: make(map[string]bool),
-		TiFlashUsed:      make([]*TiFlashUsageItem, 0, 6),
+		TiFlashUsed:      make([]*TiFlashUsageItem, 0, UpdateInterval/time.Hour),
 	}
 
 	// coprocessor cache
@@ -78,7 +78,7 @@ func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, er
 	maxLen := 0
 	for _, window := range CoprocessorCacheTelemetry.MinuteWindow {
 		timeSince := time.Since(*window.BeginAt)
-		if timeSince >= 6*time.Hour {
+		if timeSince >= UpdateInterval {
 			continue
 		}
 		maxLen = mathutil.Max(maxLen, int(timeSince/time.Hour))
@@ -104,7 +104,7 @@ func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, er
 	maxLen = 0
 	for _, window := range TiFlashUsageTelemetry.MinuteWindow {
 		timeSince := time.Since(*window.BeginAt)
-		if timeSince >= 6*time.Hour {
+		if timeSince >= UpdateInterval {
 			continue
 		}
 		maxLen = mathutil.Max(maxLen, int(timeSince/time.Hour))

@@ -37,9 +37,10 @@ const (
 )
 
 const (
-	etcdOpTimeout = 3 * time.Second
-	uploadTimeout = 60 * time.Second
-	apiEndpoint   = "https://telemetry.pingcap.com/api/v1/tidb/report"
+	etcdOpTimeout  = 3 * time.Second
+	uploadTimeout  = 60 * time.Second
+	apiEndpoint    = "https://telemetry.pingcap.com/api/v1/tidb/report"
+	UpdateInterval = 6 * time.Hour
 )
 
 func getTelemetryGlobalVariable(ctx sessionctx.Context) (bool, error) {
