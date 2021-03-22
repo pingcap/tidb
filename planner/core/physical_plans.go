@@ -72,7 +72,7 @@ type PhysicalTableReader struct {
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
 
-	// StoreType indicates table read from which type of store.
+	// StoresType indicates table read from which type of store.
 	StoreType kv.StoreType
 
 	// BatchCop = true means the cop task in the physical table reader will be executed in batch mode(use in TiFlash only)

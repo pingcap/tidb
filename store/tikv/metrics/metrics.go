@@ -54,8 +54,8 @@ var (
 	TiKVGRPCConnTransientFailureCounter    *prometheus.CounterVec
 	TiKVPanicCounter                       *prometheus.CounterVec
 	TiKVForwardRequestCounter              *prometheus.CounterVec
-	TiFlashExecuteErrorCounter             *prometheus.CounterVec
-	TiFlashExecuteCounter                  prometheus.Counter
+	TiFlashExecuteErrorCounter             prometheus.Counter
+	TiFlashExecuteSuccCounter              prometheus.Counter
 )
 
 // Label constants.
@@ -394,15 +394,15 @@ func initMetrics(namespace, subsystem string) {
 			Help:      "Counter of tikv request being forwarded through another node",
 		}, []string{LblFromStore, LblToStore, LblResult})
 
-	TiFlashExecuteErrorCounter = prometheus.NewCounterVec(
+	TiFlashExecuteErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "tiflash_execute_error_total",
 			Help:      "Counter of TiFlash execute errors.",
-		}, []string{LblType})
+		})
 
-	TiFlashExecuteCounter = prometheus.NewCounter(
+	TiFlashExecuteSuccCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
@@ -462,5 +462,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVPanicCounter)
 	prometheus.MustRegister(TiKVForwardRequestCounter)
 	prometheus.MustRegister(TiFlashExecuteErrorCounter)
-	prometheus.MustRegister(TiFlashExecuteCounter)
+	prometheus.MustRegister(TiFlashExecuteSuccCounter)
 }

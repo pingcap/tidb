@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
@@ -39,6 +40,8 @@ import (
 
 // make sure `TableReaderExecutor` implements `Executor`.
 var _ Executor = &TableReaderExecutor{}
+var TiFlashExecuteSuccCounter = metrics.TiFlashExecuteSuccCounter
+var TiFlashExecuteErrorCounter = metrics.TiFlashExecuteErrorCounter
 
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
@@ -105,6 +108,7 @@ type TableReaderExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
+	// isTiflash indicates whether this query is involve TiFlash
 }
 
 // Open initializes necessary variables for using this executor.
@@ -114,11 +118,19 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	var err error
+	defer func() {
+		if e.storeType == kv.TiFlash {
+			if err != nil {
+				TiFlashExecuteErrorCounter.Inc()
+				return
+			}
+			TiFlashExecuteSuccCounter.Inc()
+		}
+	}()
 	if e.corColInFilter {
 		if e.storeType == kv.TiFlash {
 			execs, _, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
@@ -227,7 +239,7 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
-// buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
+// buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResult returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
