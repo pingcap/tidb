@@ -167,6 +167,7 @@ func typeInferForNull(args []Expression) {
 	if !hasNullArg || retFieldTp == nil {
 		return
 	}
+	retFieldTp.Flag &= ^mysql.NotNullFlag // Remove NotNullFlag to NullConst
 	for _, arg := range args {
 		if isNull(arg) {
 			*arg.GetType() = *retFieldTp
