@@ -243,9 +243,11 @@ func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
 	atomic.AddUint64(&sd.RocksdbBlockReadByte, scanDetail.RocksdbBlockReadByte)
 }
 
+var zeroScanDetail = ScanDetail{}
+
 // String implements the fmt.Stringer interface.
 func (sd *ScanDetail) String() string {
-	if sd == nil {
+	if sd == nil || *sd == zeroScanDetail {
 		return ""
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
@@ -612,10 +614,11 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString("}")
 		}
 	}
-	if !isTiFlashCop {
-		if detail := crs.scanDetail; detail != nil {
+	if !isTiFlashCop && crs.scanDetail != nil {
+		detail := crs.scanDetail.String()
+		if detail != "" {
 			buf.WriteString(", ")
-			buf.WriteString(detail.String())
+			buf.WriteString(detail)
 		}
 	}
 	return buf.String()
