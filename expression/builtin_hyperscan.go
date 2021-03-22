@@ -17,6 +17,7 @@ import (
 
 var (
 	_ functionClass = &hsMatchFunctionClass{}
+	_ functionClass = &hsMatchIdsFunctionClass{}
 	_ functionClass = &hsMatchDbFunctionClass{}
 	_ functionClass = &hsMatchJsonFunctionClass{}
 	_ functionClass = &hsBuildDbJsonFunctionClass{}
@@ -31,17 +32,23 @@ var (
 
 var (
 	HSMatch           = "hs_match"
+	HSMatchIds        = "hs_match_ids"
 	HSMatchDb         = "hs_match_db"
+	HSMatchIdsDb      = "hs_match_ids_db"
 	HSMatchJson       = "hs_match_json"
+	HSMatchIdsJson    = "hs_match_ids_json"
 	HSBuildDBJson     = "hs_build_db_json"
 	errAlreadyMatched = fmt.Errorf("Already Matched")
 )
 
 const (
-	ScalarFuncSig_HsMatch       tipb.ScalarFuncSig = 4320
-	ScalarFuncSig_HsMatchDb     tipb.ScalarFuncSig = 4321
-	ScalarFuncSig_HsMatchJson   tipb.ScalarFuncSig = 4322
-	ScalarFuncSig_HsBuildDbJson tipb.ScalarFuncSig = 4323
+	ScalarFuncSig_HsMatch        tipb.ScalarFuncSig = 4320
+	ScalarFuncSig_HsMatchDb      tipb.ScalarFuncSig = 4321
+	ScalarFuncSig_HsMatchJson    tipb.ScalarFuncSig = 4322
+	ScalarFuncSig_HsBuildDbJson  tipb.ScalarFuncSig = 4323
+	ScalarFuncSig_HsMatchIds     tipb.ScalarFuncSig = 4324
+	ScalarFuncSig_HsMatchIdsDb   tipb.ScalarFuncSig = 4325
+	ScalarFuncSig_HsMatchIdsJson tipb.ScalarFuncSig = 4326
 )
 
 type baseBuiltinHsSig struct {
@@ -81,6 +88,33 @@ type hsBuildDbJsonFunctionClass struct {
 	baseFunctionClass
 }
 
+type hsMatchIdsFunctionClass struct {
+	baseFunctionClass
+}
+
+type hsMatchIdsJsonFunctionClass struct {
+	baseFunctionClass
+}
+
+type hsMatchIdsDbFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *hsMatchIdsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTp := []types.EvalType{types.ETString, types.ETString}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTp...)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Flen = 1
+	sig := &builtinHsMatchSig{baseBuiltinHsSig{bf, nil}}
+	sig.setPbCode(ScalarFuncSig_HsMatch)
+	return sig, nil
+}
+
 func (c *hsMatchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -111,12 +145,42 @@ func (c *hsMatchDbFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
+func (c *hsMatchIdsDbFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTp := []types.EvalType{types.ETString, types.ETString}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTp...)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Flen = 1
+	sig := &builtinHsMatchDbSig{baseBuiltinHsSig{bf, nil}}
+	sig.setPbCode(ScalarFuncSig_HsMatchDb)
+	return sig, nil
+}
+
 func (c *hsMatchJsonFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTp := []types.EvalType{types.ETString, types.ETString}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Flen = 1
+	sig := &builtinHsMatchJsonSig{baseBuiltinHsSig{bf, nil}}
+	sig.setPbCode(ScalarFuncSig_HsMatchJson)
+	return sig, nil
+}
+
+func (c *hsMatchIdsJsonFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTp := []types.EvalType{types.ETString, types.ETString}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTp...)
 	if err != nil {
 		return nil, err
 	}
@@ -177,6 +241,22 @@ func (b *baseBuiltinHsSig) hsMatch(val string) (int, bool) {
 		return 0, false
 	}
 	return matchedId, matched
+}
+
+func (b *baseBuiltinHsSig) hsMatchIds(val string) []string {
+	matchedIds := make([]string, 0)
+	if b.db == nil {
+		return matchedIds
+	}
+	handler := func(id uint, from, to uint64, flags uint, context interface{}) error {
+		matchedIds = append(matchedIds, fmt.Sprintf("%d", id))
+		return nil
+	}
+	err := b.db.Scan([]byte(val), nil, handler, nil)
+	if err != nil && err.(hs.HsError) != hs.ErrScanTerminated {
+		return nil
+	}
+	return matchedIds
 }
 
 func (b *baseBuiltinHsSig) buildHsBlockDB(patterns []*hs.Pattern) (hs.BlockDatabase, error) {
@@ -280,55 +360,28 @@ func (b *builtinHsMatchSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return boolToInt64(matched), false, nil
 }
 
-func (b *builtinHsMatchSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	bufVal, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
+func (b *builtinHsMatchSig) evalString(row chunk.Row) (string, bool, error) {
+	valStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
 	}
-	defer b.bufAllocator.put(bufVal)
-	if err := b.args[0].VecEvalString(b.ctx, input, bufVal); err != nil {
-		return err
+	patternStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
 	}
 
-	bufPat, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(bufPat)
-
-	if err := b.args[1].VecEvalString(b.ctx, input, bufPat); err != nil {
-		return err
-	}
-	if b.db == nil && n > 0 {
-		for i := 0; i < n; i++ {
-			if bufPat.IsNull(i) {
-				continue
-			}
-			db, err := b.buildBlockDBFromLines(bufPat.GetString(i))
-			if err != nil {
-				return err
-			}
-			b.db = db
-			break
+	if b.db == nil {
+		db, err := b.buildBlockDBFromLines(patternStr)
+		if err != nil {
+			return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
 		}
+		b.db = db
 	}
-
-	result.ResizeInt64(n, false)
-	result.MergeNulls(bufVal, bufPat)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		_, matched := b.hsMatch(bufVal.GetString(i))
-		i64s[i] = boolToInt64(matched)
+	matchedIds := b.hsMatchIds(valStr)
+	if len(matchedIds) == 0 {
+		return "", false, nil
 	}
-	return nil
-}
-
-func (b *builtinHsMatchSig) vectorized() bool {
-	return true
+	return strings.Join(matchedIds, ","), false, nil
 }
 
 func (b *builtinHsMatchJsonSig) Clone() builtinFunc {
@@ -360,55 +413,28 @@ func (b *builtinHsMatchJsonSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return boolToInt64(matched), false, nil
 }
 
-func (b *builtinHsMatchJsonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	bufVal, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
+func (b *builtinHsMatchJsonSig) evalString(row chunk.Row) (string, bool, error) {
+	valStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
 	}
-	defer b.bufAllocator.put(bufVal)
-	if err := b.args[0].VecEvalString(b.ctx, input, bufVal); err != nil {
-		return err
+	patternJsonStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
 	}
 
-	bufPat, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(bufPat)
-
-	if err := b.args[1].VecEvalString(b.ctx, input, bufPat); err != nil {
-		return err
-	}
-	if b.db == nil && n > 0 {
-		for i := 0; i < n; i++ {
-			if bufPat.IsNull(i) {
-				continue
-			}
-			db, err := b.buildBlockDBFromJson(bufPat.GetString(i))
-			if err != nil {
-				return err
-			}
-			b.db = db
-			break
+	if b.db == nil {
+		db, err := b.buildBlockDBFromJson(patternJsonStr)
+		if err != nil {
+			return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
 		}
+		b.db = db
 	}
-
-	result.ResizeInt64(n, false)
-	result.MergeNulls(bufVal, bufPat)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		_, matched := b.hsMatch(bufVal.GetString(i))
-		i64s[i] = boolToInt64(matched)
+	matchedIds := b.hsMatchIds(valStr)
+	if len(matchedIds) == 0 {
+		return "", false, nil
 	}
-	return nil
-}
-
-func (b *builtinHsMatchJsonSig) vectorized() bool {
-	return true
+	return strings.Join(matchedIds, ","), false, nil
 }
 
 func (b *builtinHsBuildDbJsonSig) Clone() builtinFunc {
@@ -454,55 +480,28 @@ func (b *builtinHsMatchDbSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return boolToInt64(matched), false, nil
 }
 
-func (b *builtinHsMatchDbSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	bufVal, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
+func (b *builtinHsMatchDbSig) evalString(row chunk.Row) (string, bool, error) {
+	valStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
 	}
-	defer b.bufAllocator.put(bufVal)
-	if err := b.args[0].VecEvalString(b.ctx, input, bufVal); err != nil {
-		return err
+	dbHex, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
 	}
 
-	bufPat, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(bufPat)
-
-	if err := b.args[1].VecEvalString(b.ctx, input, bufPat); err != nil {
-		return err
-	}
-	if b.db == nil && n > 0 {
-		for i := 0; i < n; i++ {
-			if bufPat.IsNull(i) {
-				continue
-			}
-			db, err := b.buildBlockDBFromHex(bufPat.GetString(i))
-			if err != nil {
-				return err
-			}
-			b.db = db
-			break
+	if b.db == nil {
+		db, err := b.buildBlockDBFromHex(dbHex)
+		if err != nil {
+			return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
 		}
+		b.db = db
 	}
-
-	result.ResizeInt64(n, false)
-	result.MergeNulls(bufVal, bufPat)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		_, matched := b.hsMatch(bufVal.GetString(i))
-		i64s[i] = boolToInt64(matched)
+	matchedIds := b.hsMatchIds(valStr)
+	if len(matchedIds) == 0 {
+		return "", false, nil
 	}
-	return nil
-}
-
-func (b *builtinHsMatchDbSig) vectorized() bool {
-	return true
+	return strings.Join(matchedIds, ","), false, nil
 }
 
 func (b *builtinHsMatchDbSig) Clone() builtinFunc {
