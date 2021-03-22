@@ -1842,7 +1842,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumSamples:    100000,
 }
 
-var AnalyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
+var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    256,
 	ast.AnalyzeOptNumTopN:       20,
 	ast.AnalyzeOptCMSketchWidth: 2048,
@@ -1851,8 +1851,8 @@ var AnalyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 }
 
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(AnalyzeOptionDefault))
-	for key, val := range AnalyzeOptionDefault {
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	for key, val := range analyzeOptionDefault {
 		optMap[key] = val
 	}
 	for _, opt := range opts {
