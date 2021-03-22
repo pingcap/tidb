@@ -215,6 +215,37 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	c.Assert(len(warnings), Equals, 0, Commentf("unexpected warnigns: %+v", warnings))
 	c.Assert(requestCounter, Equals, int32(9))
 
+	// TODO: we need remove it when index usage is GA.
+	tk.MustQuery("show config").Check(testkit.Rows(
+		"tidb key1 value1",
+		"tidb key2.nest1 n-value1",
+		"tidb key2.nest2 n-value2",
+		"tidb key1 value1",
+		"tidb key2.nest1 n-value1",
+		"tidb key2.nest2 n-value2",
+		"tidb key1 value1",
+		"tidb key2.nest1 n-value1",
+		"tidb key2.nest2 n-value2",
+		"tikv key1 value1",
+		"tikv key2.nest1 n-value1",
+		"tikv key2.nest2 n-value2",
+		"tikv key1 value1",
+		"tikv key2.nest1 n-value1",
+		"tikv key2.nest2 n-value2",
+		"tikv key1 value1",
+		"tikv key2.nest1 n-value1",
+		"tikv key2.nest2 n-value2",
+		"pd key1 value1",
+		"pd key2.nest1 n-value1",
+		"pd key2.nest2 n-value2",
+		"pd key1 value1",
+		"pd key2.nest1 n-value1",
+		"pd key2.nest2 n-value2",
+		"pd key1 value1",
+		"pd key2.nest1 n-value1",
+		"pd key2.nest2 n-value2",
+	))
+
 	// type => server index => row
 	rows := map[string][][]string{}
 	for _, typ := range []string{"tidb", "tikv", "pd"} {
