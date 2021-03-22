@@ -315,8 +315,8 @@ type GlobalStats struct {
 	Fms   []*statistics.FMSketch
 }
 
-// MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
+// MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -326,6 +326,11 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		return
 	}
 	globalTableInfo := globalTable.Meta()
+	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, idxID)
+}
+
+// MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
+func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	partitionIDs := make([]int64, 0, partitionNum)
 	for i := 0; i < partitionNum; i++ {
@@ -1423,14 +1428,15 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	}
 	// samplesX and samplesY are in order of handle, i.e, their SampleItem.Ordinals are in order.
 	samplesX := collectors[colOffsets[0]].Samples
-	if len(samplesX) == 0 {
-		return nil
-	}
 	// We would modify Ordinal of samplesY, so we make a deep copy.
 	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
-	sampleNum := len(samplesX)
+	sampleNum := mathutil.Min(len(samplesX), len(samplesY))
 	if sampleNum == 1 {
-		item.ScalarVals = float64(1)
+		item.ScalarVals = 1
+		return item
+	}
+	if sampleNum <= 0 {
+		item.ScalarVals = 0
 		return item
 	}
 	h.mu.Lock()
@@ -1441,18 +1447,21 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	if err != nil {
 		return nil
 	}
-	samplesYInXOrder := make([]*statistics.SampleItem, sampleNum)
+	samplesYInXOrder := make([]*statistics.SampleItem, 0, sampleNum)
 	for i, itemX := range samplesX {
+		if itemX.Ordinal >= len(samplesY) {
+			continue
+		}
 		itemY := samplesY[itemX.Ordinal]
 		itemY.Ordinal = i
-		samplesYInXOrder[i] = itemY
+		samplesYInXOrder = append(samplesYInXOrder, itemY)
 	}
 	samplesYInYOrder, err := statistics.SortSampleItems(sc, samplesYInXOrder)
 	if err != nil {
 		return nil
 	}
 	var corrXYSum float64
-	for i := 1; i < sampleNum; i++ {
+	for i := 1; i < len(samplesYInYOrder); i++ {
 		corrXYSum += float64(i) * float64(samplesYInYOrder[i].Ordinal)
 	}
 	// X means the ordinal of the item in original sequence, Y means the oridnal of the item in the
