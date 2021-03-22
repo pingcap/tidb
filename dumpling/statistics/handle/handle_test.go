@@ -1562,15 +1562,72 @@ partition by range (a) (
 
 	tk.MustExec("alter table t drop partition p2;")
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	globalStats = h.GetTableStats(tableInfo)
-	// The value of global.count will be updated the next time analyze.
-	c.Assert(globalStats.Count, Equals, int64(9))
-	c.Assert(globalStats.ModifyCount, Equals, int64(0))
-
 	tk.MustExec("analyze table t;")
 	globalStats = h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4)
-	// The value of global.Count is correct now.
+	c.Assert(globalStats.Count, Equals, int64(7))
+}
+
+func (s *testSerialStatsSuite) TestDDLPartition4GlobalStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec(`create table t (a int) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30),
+		partition p3 values less than (40),
+		partition p4 values less than (50),
+		partition p5 values less than (60)
+	)`)
+	do := s.do
+	is := do.InfoSchema()
+	h := do.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), " +
+		"(11), (21), (31), (41), (51)," +
+		"(12), (22), (32), (42), (52);")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tk.MustExec("analyze table t")
+	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
+	c.Assert(len(result), Equals, 7)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	globalStats := h.GetTableStats(tableInfo)
+	c.Assert(globalStats.Count, Equals, int64(15))
+
+	tk.MustExec("alter table t drop partition p3, p5;")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
+	c.Assert(len(result), Equals, 5)
+	// The value of global.count will be updated automatically after we drop the table partition.
+	globalStats = h.GetTableStats(tableInfo)
+	c.Assert(globalStats.Count, Equals, int64(11))
+
+	tk.MustExec("alter table t truncate partition p2, p4;")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	// The value of global.count will not be updated automatically when we truncate the table partition.
+	// Because the partition-stats in the partition table which have been truncated has not been updated.
+	globalStats = h.GetTableStats(tableInfo)
+	c.Assert(globalStats.Count, Equals, int64(11))
+
+	tk.MustExec("analyze table t;")
+	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
+	// The truncate operation only delete the data from the partition p2 and p4. It will not delete the partition-stats.
+	c.Assert(len(result), Equals, 5)
+	// The result for the globalStats.count will be right now
+	globalStats = h.GetTableStats(tableInfo)
 	c.Assert(globalStats.Count, Equals, int64(7))
 }
 

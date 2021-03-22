@@ -315,8 +315,8 @@ type GlobalStats struct {
 	Fms   []*statistics.FMSketch
 }
 
-// MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
+// MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -326,6 +326,11 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		return
 	}
 	globalTableInfo := globalTable.Meta()
+	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, idxID)
+}
+
+// MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
+func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	partitionIDs := make([]int64, 0, partitionNum)
 	for i := 0; i < partitionNum; i++ {
