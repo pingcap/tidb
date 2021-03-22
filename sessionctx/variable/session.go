@@ -822,6 +822,11 @@ type SessionVars struct {
 	// IntPrimaryKeyDefaultAsClustered indicates whether create integer primary table as clustered
 	// If it's true, the behavior is the same as the TiDB 4.0 and the below versions.
 	IntPrimaryKeyDefaultAsClustered bool
+
+	// CoprCacheHitNum is to record coprocessor cache hit times for one statement.
+	CoprCacheHitNum atomic2.Uint64
+	// CopRespTimes is to record coprocessor response times for one statement.
+	CopRespTimes atomic2.Uint64
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.

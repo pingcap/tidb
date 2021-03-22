@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -75,6 +76,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -1389,6 +1391,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.sessionVars.StartTime = time.Now()
+	s.sessionVars.CoprCacheHitNum.Store(0)
+	s.sessionVars.CopRespTimes.Store(0)
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -1436,7 +1440,97 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 		return nil, err
 	}
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		CountTelemetry(s)
+	}
 	return recordSet, nil
+}
+
+// CountTelemetry records the telemetry.
+func CountTelemetry(s *session) {
+	telemetry.CoprocessorCacheTelemetry.Lock.Lock()
+	length := len(telemetry.CoprocessorCacheTelemetry.MinuteWindow)
+	if length == 0 || time.Since(*telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].BeginAt) >= time.Minute {
+		var i int
+		for i = 0; i < length && time.Since(*telemetry.CoprocessorCacheTelemetry.MinuteWindow[i].BeginAt) >= 6*time.Hour; i++ {
+		}
+		telemetry.CoprocessorCacheTelemetry.MinuteWindow = telemetry.CoprocessorCacheTelemetry.MinuteWindow[i:]
+		telemetry.CoprocessorCacheTelemetry.MinuteWindow = append(telemetry.CoprocessorCacheTelemetry.MinuteWindow, telemetry.CoprCacheUsedWindowItem{})
+		length -= i - 1
+		telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].BeginAt = new(time.Time)
+		*telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].BeginAt = time.Now()
+	}
+	if s.sessionVars.CopRespTimes.Load() > 0 {
+		ratio := float64(s.sessionVars.CoprCacheHitNum.Load()) / float64(s.sessionVars.CopRespTimes.Load())
+		if ratio >= 0 {
+			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P0.Add(1)
+		}
+		if ratio >= 0.01 {
+			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P1.Add(1)
+		}
+		if ratio >= 0.1 {
+			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P10.Add(1)
+		}
+		if ratio >= 0.2 {
+			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P20.Add(1)
+		}
+		if ratio >= 0.4 {
+			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P40.Add(1)
+		}
+		if ratio >= 0.8 {
+			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P80.Add(1)
+		}
+		if ratio >= 1 {
+			telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P100.Add(1)
+		}
+	} else {
+		telemetry.CoprocessorCacheTelemetry.MinuteWindow[length-1].P0.Add(1)
+	}
+	telemetry.CoprocessorCacheTelemetry.Lock.Unlock()
+
+	if s.currentPlan == nil {
+		return
+	}
+	tiFlashPushDown := false
+	tiFlashExchangePushDown := false
+	var tiflashProcess func(plan plannercore.Plan)
+	tiflashProcess = func(plan plannercore.Plan) {
+		pp, isPhysical := plan.(plannercore.PhysicalPlan)
+		if !isPhysical {
+			return
+		}
+		if tableReader, ok := pp.(*plannercore.PhysicalTableReader); ok {
+			tiFlashPushDown = tableReader.StoreType == kv.TiFlash
+			if tiFlashPushDown && tableReader.GetTablePlan().TP() == plancodec.TypeExchangeSender {
+				tiFlashExchangePushDown = true
+			}
+			return
+		}
+		for _, child := range pp.Children() {
+			tiflashProcess(child)
+		}
+	}
+	tiflashProcess(s.currentPlan)
+	telemetry.TiFlashUsageTelemetry.Lock.Lock()
+	length = len(telemetry.TiFlashUsageTelemetry.MinuteWindow)
+	if length == 0 || time.Since(*telemetry.TiFlashUsageTelemetry.MinuteWindow[length-1].BeginAt) >= time.Minute {
+		var i int
+		for i = 0; i < length && time.Since(*telemetry.TiFlashUsageTelemetry.MinuteWindow[i].BeginAt) >= 6*time.Hour; i++ {
+		}
+		telemetry.TiFlashUsageTelemetry.MinuteWindow = telemetry.TiFlashUsageTelemetry.MinuteWindow[i:]
+		telemetry.TiFlashUsageTelemetry.MinuteWindow = append(telemetry.TiFlashUsageTelemetry.MinuteWindow, telemetry.TiFlashUsageItem{})
+		length -= i - 1
+		telemetry.TiFlashUsageTelemetry.MinuteWindow[length-1].BeginAt = new(time.Time)
+		*telemetry.TiFlashUsageTelemetry.MinuteWindow[length-1].BeginAt = time.Now()
+	}
+	telemetry.TiFlashUsageTelemetry.MinuteWindow[length-1].TotalNumbers.Add(1)
+	if tiFlashPushDown {
+		telemetry.TiFlashUsageTelemetry.MinuteWindow[length-1].TiFlashPushDownNumbers.Add(1)
+	}
+	if tiFlashExchangePushDown {
+		telemetry.TiFlashUsageTelemetry.MinuteWindow[length-1].TiFlashExchangePushDownNumbers.Add(1)
+	}
+	telemetry.TiFlashUsageTelemetry.Lock.Unlock()
 }
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
