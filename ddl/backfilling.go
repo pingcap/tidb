@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
@@ -157,7 +158,7 @@ func newBackfillWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		sessCtx:   sessCtx,
 		taskCh:    make(chan *reorgBackfillTask, 1),
 		resultCh:  make(chan *backfillResult, 1),
-		priority:  kv.PriorityLow,
+		priority:  tikvstore.PriorityLow,
 	}
 }
 
@@ -673,7 +674,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 
 	ver := kv.Version{Ver: version}
 	snap := store.GetSnapshot(ver)
-	snap.SetOption(kv.Priority, priority)
+	snap.SetOption(tikvstore.Priority, priority)
 
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {
