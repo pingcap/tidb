@@ -661,7 +661,7 @@ func (s *testBootstrapSuite) TestForIssue23387(c *C) {
 	_, err = BootstrapSession(store)
 	// domain leaked here, Close() is not called. For testing, it's OK.
 	// If we close it and BootstrapSession again, we'll get an error "session pool is closed".
-	// The problem is caused by some the global level variable, domain map is not intented for multiple instances.
+	// The problem is caused by some the global level variable, domain map is not intended for multiple instances.
 	c.Assert(err, IsNil)
 
 	se := newSession(c, store, s.dbName)
@@ -676,6 +676,7 @@ func (s *testBootstrapSuite) TestForIssue23387(c *C) {
 	rs, err := exec(se, "show grants for quatest")
 	c.Assert(err, IsNil)
 	rows, err := ResultSetToStringSlice(context.Background(), se, rs)
+	c.Assert(err, IsNil)
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "GRANT USAGE ON *.* TO 'quatest'@'%'")
 }
