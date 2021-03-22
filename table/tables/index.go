@@ -120,7 +120,7 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		prefix:   prefix,
 		phyTblID: physicalID,
 	}
-	index.needRestoredData = index.checkNeedRestoredData()
+	index.needRestoredData = NeedRestoredData(indexInfo.Columns, tblInfo.Columns)
 	return index
 }
 

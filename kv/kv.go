@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -94,34 +95,6 @@ const UnCommitIndexKVFlag byte = '1'
 // MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
 // We use it to abort the transaction to guarantee GC worker will not influence it.
 const MaxTxnTimeUse = 24 * 60 * 60 * 1000
-
-// IsoLevel is the transaction's isolation level.
-type IsoLevel int
-
-const (
-	// SI stands for 'snapshot isolation'.
-	SI IsoLevel = iota
-	// RC stands for 'read committed'.
-	RC
-)
-
-// ReplicaReadType is the type of replica to read data from
-type ReplicaReadType byte
-
-const (
-	// ReplicaReadLeader stands for 'read from leader'.
-	ReplicaReadLeader ReplicaReadType = 1 << iota
-	// ReplicaReadFollower stands for 'read from follower'.
-	ReplicaReadFollower
-	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
-	ReplicaReadMixed
-)
-
-// IsFollowerRead checks if leader is going to be used to read data.
-func (r ReplicaReadType) IsFollowerRead() bool {
-	// In some cases the default value is 0, which should be treated as `ReplicaReadLeader`.
-	return r != ReplicaReadLeader && r != 0
-}
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
@@ -391,7 +364,7 @@ type Request struct {
 	// sent to multiple storage units concurrently.
 	Concurrency int
 	// IsolationLevel is the isolation level, default is SI.
-	IsolationLevel IsoLevel
+	IsolationLevel tikvstore.IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
 	// memTracker is used to trace and control memory usage in co-processor layer.
@@ -408,7 +381,7 @@ type Request struct {
 	// call would not corresponds to a whole region result.
 	Streaming bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
-	ReplicaRead ReplicaReadType
+	ReplicaRead tikvstore.ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
 	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
