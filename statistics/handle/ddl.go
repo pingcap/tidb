@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -62,14 +63,6 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	return nil
 }
 
-// analyzeOptionDefault saves the default values of NumBuckets and NumTopN.
-// These values will be used in dynamic mode when we drop table partition and then need to merge global-stats.
-// These values originally came from the analyzeOptionDefault structure in the planner/core/planbuilder.go file.
-var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets: 256,
-	ast.AnalyzeOptNumTopN:    20,
-}
-
 // updateGlobalStats will trigger the merge of global-stats when we drop table partition
 func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	// We need to merge the partition-level stats to global-stats when we drop table partition in dynamic mode.
@@ -80,56 +73,57 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		return err
 	}
 	// If we do not currently have global-stats, no new global-stats will be generated.
-	if globalStats != nil {
-		opts := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
-		for key, val := range analyzeOptionDefault {
-			opts[key] = val
+	if globalStats == nil {
+		return nil
+	}
+	opts := make(map[ast.AnalyzeOptionType]uint64, len(plannercore.AnalyzeOptionDefault))
+	for key, val := range plannercore.AnalyzeOptionDefault {
+		opts[key] = val
+	}
+	// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
+	for colID := range globalStats.Columns {
+		globalColStatsTopN := globalStats.Columns[colID].TopN
+		if globalColStatsTopN != nil && len(globalColStatsTopN.TopN) != 0 {
+			opts[ast.AnalyzeOptNumTopN] = uint64(len(globalColStatsTopN.TopN))
 		}
-		// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
-		for colID := range globalStats.Columns {
-			globalColStatsTopN := globalStats.Columns[colID].TopN
-			if globalColStatsTopN != nil && len(globalColStatsTopN.TopN) != 0 {
-				opts[ast.AnalyzeOptNumTopN] = uint64(len(globalColStatsTopN.TopN))
-			}
-			globalColStats := globalStats.Columns[colID]
-			if globalColStats != nil && len(globalColStats.Buckets) != 0 {
-				opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalColStats.Buckets))
-			}
-			break
+		globalColStats := globalStats.Columns[colID]
+		if globalColStats != nil && len(globalColStats.Buckets) != 0 {
+			opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalColStats.Buckets))
 		}
-		// Generate the new column global-stats
-		newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, 0)
+		break
+	}
+	// Generate the new column global-stats
+	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, 0)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < newColGlobalStats.Num; i++ {
+		hg, cms, topN, fms := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i], newColGlobalStats.Fms[i]
+		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, fms, 2, 1)
 		if err != nil {
 			return err
 		}
-		for i := 0; i < newColGlobalStats.Num; i++ {
-			hg, cms, topN, fms := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i], newColGlobalStats.Fms[i]
-			err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, fms, 2, 1)
-			if err != nil {
-				return err
-			}
-		}
+	}
 
-		// Generate the new index global-stats
-		for idx := range tblInfo.Indices {
-			globalIdxStatsTopN := globalStats.Indices[int64(idx)].TopN
-			if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) != 0 {
-				opts[ast.AnalyzeOptNumTopN] = uint64(len(globalIdxStatsTopN.TopN))
-			}
-			globalIdxStats := globalStats.Indices[int64(idx)]
-			if globalIdxStats != nil && len(globalIdxStats.Buckets) != 0 {
-				opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalIdxStats.Buckets))
-			}
-			newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, int64(idx))
+	// Generate the new index global-stats
+	for idx := range tblInfo.Indices {
+		globalIdxStatsTopN := globalStats.Indices[int64(idx)].TopN
+		if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) != 0 {
+			opts[ast.AnalyzeOptNumTopN] = uint64(len(globalIdxStatsTopN.TopN))
+		}
+		globalIdxStats := globalStats.Indices[int64(idx)]
+		if globalIdxStats != nil && len(globalIdxStats.Buckets) != 0 {
+			opts[ast.AnalyzeOptNumBuckets] = uint64(len(globalIdxStats.Buckets))
+		}
+		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, int64(idx))
+		if err != nil {
+			return err
+		}
+		for i := 0; i < newIndexGlobalStats.Num; i++ {
+			hg, cms, topN, fms := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i], newIndexGlobalStats.Fms[i]
+			err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, 1, hg, cms, topN, fms, 2, 1)
 			if err != nil {
 				return err
-			}
-			for i := 0; i < newIndexGlobalStats.Num; i++ {
-				hg, cms, topN, fms := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i], newIndexGlobalStats.Fms[i]
-				err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, 1, hg, cms, topN, fms, 2, 1)
-				if err != nil {
-					return err
-				}
 			}
 		}
 	}
