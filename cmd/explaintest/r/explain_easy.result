@@ -311,11 +311,12 @@ Projection	10000.00	root		Column#17
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─StreamAgg(Probe)	1.00	root		funcs:count(1)->Column#16
-    └─MergeJoin	12.50	root		inner join, left key:test.t.a, right key:test.t.a
+    └─IndexJoin	12.50	root		inner join, inner:TableReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
       ├─TableReader(Build)	1.00	root		data:TableRangeScan
-      │ └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [eq(test.t.a, test.t.a)], keep order:true, stats:pseudo
-      └─TableReader(Probe)	1.00	root		data:TableRangeScan
-        └─TableRangeScan	1.00	cop[tikv]	table:s	range: decided by [eq(test.t.a, test.t.a)], keep order:true, stats:pseudo
+      │ └─TableRangeScan	1.00	cop[tikv]	table:s	range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo
+      └─TableReader(Probe)	0.00	root		data:Selection
+        └─Selection	0.00	cop[tikv]		eq(test.t.a, test.t.a), not(isnull(test.t.a))
+          └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:false, stats:pseudo
 explain format = 'brief' select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#17
@@ -326,8 +327,9 @@ Projection	10000.00	root		Column#17
     └─IndexJoin	12.50	root		inner join, inner:TableReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
       ├─IndexReader(Build)	10.00	root		index:IndexRangeScan
       │ └─IndexRangeScan	10.00	cop[tikv]	table:s, index:idx(b)	range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo
-      └─TableReader(Probe)	1.00	root		data:TableRangeScan
-        └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:false, stats:pseudo
+      └─TableReader(Probe)	1.00	root		data:Selection
+        └─Selection	1.00	cop[tikv]		not(isnull(test.t.a))
+          └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:false, stats:pseudo
 explain format = 'brief' select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#17
@@ -340,8 +342,9 @@ Projection	10000.00	root		Column#17
       │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:s, index:idx(b)	range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo
       │ └─Selection(Probe)	9.99	cop[tikv]		not(isnull(test.t.c))
       │   └─TableRowIDScan	10.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-      └─TableReader(Probe)	1.00	root		data:TableRangeScan
-        └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [test.t.c], keep order:false, stats:pseudo
+      └─TableReader(Probe)	1.00	root		data:Selection
+        └─Selection	1.00	cop[tikv]		not(isnull(test.t.a))
+          └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [test.t.c], keep order:false, stats:pseudo
 insert into t values(1, 1, 1), (2, 2 ,2), (3, 3, 3), (4, 3, 4),(5,3,5);
 analyze table t;
 explain format = 'brief' select t.c in (select count(*) from t s, t t1 where s.b = t.a and s.b = 3 and s.a = t1.a) from t;
@@ -575,7 +578,7 @@ HashJoin	2773.61	root		inner join, equal:[eq(test.t.nb, test.t.nb)]
 │ └─Selection	2218.89	cop[tikv]		gt(test.t.a, 1), or(test.t.nb, 0)
 │   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader(Probe)	6656.67	root		data:Selection
-  └─Selection	6656.67	cop[tikv]		or(test.t.nb, 0)
+  └─Selection	6656.67	cop[tikv]		not(isnull(test.t.nb)), or(test.t.nb, 0)
     └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
