@@ -48,12 +48,6 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
-	github.com/pingcap/parser v0.0.0-20201030090627-3d18e257aed6
-	github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2
-	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
-	github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f
-	github.com/pingcap/tiup v1.2.2 // indirect
 	github.com/pingcap/kvproto v0.0.0-20210308063835-39b884695fb8
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
 	github.com/pingcap/parser v0.0.0-20210314080929-ed8900c94180
@@ -100,4 +94,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser v0.0.0-20201030090627-3d18e257aed6 => github.com/blacktear23/parser v0.0.0-20201103063758-6b08f3888bec
+replace github.com/pingcap/parser v0.0.0-20210314080929-ed8900c94180 => github.com/blacktear23/parser v0.0.0-20210322034148-7057ca1fe557

@@ -772,15 +772,19 @@ func runAndWaitReorgIndexesJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		for i := startElementOffset; i < len(indexInfos); i++ {
 			currentIdx = indexInfos[i]
 			if i > startElementOffset {
-				reorgInfo.StartHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID = originalStartHandle, originalEndHandle, pid
+				reorgInfo.StartKey, reorgInfo.EndKey, reorgInfo.PhysicalTableID = originalStartHandle, originalEndHandle, pid
 			}
 
 			reorgInfo.currElement = reorgInfo.elements[i]
 			// Write the reorg info to store so the whole reorganize process can recover from panic.
-			err := reorgInfo.UpdateReorgMeta(reorgInfo.StartHandle)
-			logutil.BgLogger().Info(fmt.Sprintf("[ddl] %s", jobDesc), zap.Int64("jobID", reorgInfo.Job.ID),
-				zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
-				zap.String("startHandle", toString(reorgInfo.StartHandle)), zap.String("endHandle", toString(reorgInfo.EndHandle)))
+			err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey)
+			logutil.BgLogger().Info(fmt.Sprintf("[ddl] %s", jobDesc),
+				zap.Int64("jobID", reorgInfo.Job.ID),
+				zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+				zap.Int64("elementID", reorgInfo.currElement.ID),
+				zap.String("startHandle", tryDecodeToHandleString(reorgInfo.StartKey)),
+				zap.String("endHandle", tryDecodeToHandleString(reorgInfo.EndKey)),
+			)
 			if err != nil {
 				return errors.Trace(err)
 			}

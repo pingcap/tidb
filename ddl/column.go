@@ -462,22 +462,30 @@ func (w *worker) onDropColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 			switch ctidxInfos[0].State {
 			case model.StateNone:
 				// none -> delete only
-				job.SchemaState = model.StateCreateIndexDeleteOnly
 				setIndexesState(ctidxInfos, model.StateDeleteOnly)
 				ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
-				metrics.AddIndexProgress.Set(0)
+				if err != nil {
+					return ver, err
+				}
+				job.SchemaState = model.StateCreateIndexDeleteOnly
 			case model.StateDeleteOnly:
 				// delete only -> write only
-				job.SchemaState = model.StateCreateIndexWriteOnly
 				setIndexesState(ctidxInfos, model.StateWriteOnly)
 				ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+				if err != nil {
+					return ver, err
+				}
+				job.SchemaState = model.StateCreateIndexWriteOnly
 			case model.StateWriteOnly:
 				// write only -> reorganization
-				job.SchemaState = model.StateWriteReorganization
 				setIndexesState(ctidxInfos, model.StateWriteReorganization)
 				// Initialize SnapshotVer to 0 for later reorganization check.
-				job.SnapshotVer = 0
 				ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+				if err != nil {
+					return ver, err
+				}
+				job.SnapshotVer = 0
+				job.SchemaState = model.StateWriteReorganization
 			case model.StateWriteReorganization:
 				var first bool
 				// Run reorg job
@@ -713,22 +721,30 @@ func (w *worker) onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 		switch ctidxInfos[0].State {
 		case model.StateNone:
 			// none -> delete only
-			job.SchemaState = model.StateCreateIndexDeleteOnly
 			setIndexesState(ctidxInfos, model.StateDeleteOnly)
 			ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
-			metrics.AddIndexProgress.Set(0)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			job.SchemaState = model.StateCreateIndexDeleteOnly
 		case model.StateDeleteOnly:
 			// delete only -> write only
-			job.SchemaState = model.StateCreateIndexWriteOnly
 			setIndexesState(ctidxInfos, model.StateWriteOnly)
 			ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			job.SchemaState = model.StateCreateIndexWriteOnly
 		case model.StateWriteOnly:
 			// write only -> reorganization
-			job.SchemaState = model.StateWriteReorganization
 			setIndexesState(ctidxInfos, model.StateWriteReorganization)
 			// Initialize SnapshotVer to 0 for later reorganization check.
-			job.SnapshotVer = 0
 			ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			job.SnapshotVer = 0
+			job.SchemaState = model.StateWriteReorganization
 		case model.StateWriteReorganization:
 			var first bool
 			// Run reorg job
