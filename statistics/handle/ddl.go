@@ -15,7 +15,6 @@ package handle
 
 import (
 	"context"
-	"modernc.org/mathutil"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -92,12 +91,12 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	globalColStatsTopNNum, globalColStatsBucketNum := -1, -1
 	for colID := range globalStats.Columns {
 		globalColStatsTopN := globalStats.Columns[colID].TopN
-		if globalColStatsTopN != nil && len(globalColStatsTopN.TopN) != 0 {
-			globalColStatsTopNNum = mathutil.Max(globalColStatsTopNNum, len(globalColStatsTopN.TopN))
+		if globalColStatsTopN != nil && len(globalColStatsTopN.TopN) > globalColStatsTopNNum {
+			globalColStatsTopNNum = len(globalColStatsTopN.TopN)
 		}
 		globalColStats := globalStats.Columns[colID]
-		if globalColStats != nil && len(globalColStats.Buckets) != 0 {
-			globalColStatsBucketNum = mathutil.Max(globalColStatsBucketNum, len(globalColStats.Buckets))
+		if globalColStats != nil && len(globalColStats.Buckets) > globalColStatsBucketNum {
+			globalColStatsBucketNum = len(globalColStats.Buckets)
 		}
 	}
 	if globalColStatsTopNNum != -1 {
@@ -123,12 +122,12 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	globalIdxStatsTopNNum, globalIdxStatsBucketNum := -1, -1
 	for idx := range tblInfo.Indices {
 		globalIdxStatsTopN := globalStats.Indices[int64(idx)].TopN
-		if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) != 0 {
-			globalIdxStatsTopNNum = mathutil.Max(globalIdxStatsTopNNum, len(globalIdxStatsTopN.TopN))
+		if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) > globalIdxStatsTopNNum {
+			globalIdxStatsTopNNum = len(globalIdxStatsTopN.TopN)
 		}
 		globalIdxStats := globalStats.Indices[int64(idx)]
-		if globalIdxStats != nil && len(globalIdxStats.Buckets) != 0 {
-			globalIdxStatsBucketNum = mathutil.Max(globalIdxStatsBucketNum, len(globalIdxStats.Buckets))
+		if globalIdxStats != nil && len(globalIdxStats.Buckets) > globalIdxStatsBucketNum {
+			globalIdxStatsBucketNum = len(globalIdxStats.Buckets)
 		}
 		if globalIdxStatsTopNNum != -1 {
 			opts[ast.AnalyzeOptNumTopN] = uint64(globalIdxStatsTopNNum)
