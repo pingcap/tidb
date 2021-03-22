@@ -14,12 +14,13 @@
 package sli
 
 import (
-	"github.com/pingcap/tidb/metrics"
 	"time"
+
+	"github.com/pingcap/tidb/metrics"
 )
 
 type TxnWriteThroughputSLI struct {
-	ignore    bool
+	invalid   bool
 	affectRow uint64
 	writeSize uint64
 	writeTime time.Duration
@@ -41,12 +42,12 @@ func (t *TxnWriteThroughputSLI) IsTxnCommitted() bool {
 	return t.writeSize > 0
 }
 
-func (t *TxnWriteThroughputSLI) SetIgnore() {
-	t.ignore = true
+func (t *TxnWriteThroughputSLI) SetInvalid() {
+	t.invalid = true
 }
 
 func (t *TxnWriteThroughputSLI) ReportMetric() {
-	if t.ignore || t.writeSize == 0 || t.writeTime == 0 {
+	if t.invalid || t.writeSize == 0 || t.writeTime == 0 {
 		return
 	}
 	if t.affectRow <= 20 && t.writeSize <= 1*1024*1024 {
@@ -58,7 +59,7 @@ func (t *TxnWriteThroughputSLI) ReportMetric() {
 }
 
 func (t *TxnWriteThroughputSLI) Reset() {
-	t.ignore = false
+	t.invalid = false
 	t.affectRow = 0
 	t.writeSize = 0
 	t.writeTime = 0

@@ -17,7 +17,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Session metrics.
 var (
 	SmallTxnWriteDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
