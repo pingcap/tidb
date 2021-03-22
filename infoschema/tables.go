@@ -235,7 +235,7 @@ var tableIDMap = map[string]int64{
 	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
 	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
 	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
-	TableStatementsSummaryEvited: 			 autoid.InformationSchemaDBID + 70,
+	TableStatementsSummaryEvited:            autoid.InformationSchemaDBID + 70,
 }
 
 type columnInfo struct {
@@ -1708,7 +1708,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
-	TableStatementsSummaryEvited: 			 tableStmtEvictedCols,
+	TableStatementsSummaryEvited:            tableStmtEvictedCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

@@ -19,7 +19,7 @@ type stmtSummaryEvictedMap struct {
 	summaryMap *kvcache.SimpleLRUCache
 	// beginTimeForCurInterval is the begin time for current summary.
 	beginTimeForCurInterval int64
-	sysVars    *systemVars
+	sysVars                 *systemVars
 }
 
 type stmtSummaryEvictedKey struct {
@@ -38,10 +38,10 @@ type stmtSummaryEvictedInfo struct {
 }
 
 func newstmtEvictedMap() *stmtSummaryEvictedMap {
-	sysVars:=newSysVars()
-	maxCount:=uint(sysVars.getVariable(typeMaxStmtCount))
+	sysVars := newSysVars()
+	maxCount := uint(sysVars.getVariable(typeMaxStmtCount))
 	return &stmtSummaryEvictedMap{
-		summaryMap:              kvcache.NewSimpleLRUCache(maxCount, 0, 0),
+		summaryMap: kvcache.NewSimpleLRUCache(maxCount, 0, 0),
 		sysVars:    sysVars,
 	}
 }
@@ -76,7 +76,7 @@ func (sseMap *stmtSummaryEvictedMap) AddEvictedRecord(now int64, value kvcache.V
 		}
 		return evicted
 	}()
-	evicted.add(value, begintime,intervalSeconds,historySize)
+	evicted.add(value, begintime, intervalSeconds, historySize)
 }
 
 func (sseMap *stmtSummaryEvictedMap) ToCurrentDatum() [][]types.Datum {
@@ -91,11 +91,11 @@ func (sseMap *stmtSummaryEvictedMap) ToCurrentDatum() [][]types.Datum {
 	return rows
 }
 
-func (eb *stmtSummaryEvictedInfo) add(value kvcache.Value, begintime int64,intervalSeconds int64,historysize int) {
+func (eb *stmtSummaryEvictedInfo) add(value kvcache.Value, begintime int64, intervalSeconds int64, historysize int) {
 	eb.Lock()
 	defer eb.Unlock()
 	if !eb.isInit {
-		eb.init(begintime, begintime+intervalSeconds,historysize)
+		eb.init(begintime, begintime+intervalSeconds, historysize)
 	}
 	EvictedCol := value.(*stmtSummaryByDigest)
 	for i := EvictedCol.history.Front(); i != nil; i = i.Next() {
@@ -109,7 +109,7 @@ func (eb *stmtSummaryEvictedInfo) add(value kvcache.Value, begintime int64,inter
 	}
 }
 
-func (eb *stmtSummaryEvictedInfo) init(begintime int64, endtime int64,historysize int) {
+func (eb *stmtSummaryEvictedInfo) init(begintime int64, endtime int64, historysize int) {
 	eb.isInit = true
 	eb.history = list.New()
 	eb.beginTime = begintime
