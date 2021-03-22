@@ -14,6 +14,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -987,3 +988,44 @@ const (
 	OOMActionCancel = "cancel"
 	OOMActionLog    = "log"
 )
+
+/// hideConfig is used to filter a single line of config for hiding.
+var hideConfig = []string{
+	"index-usage-sync-lease",
+}
+
+// HideConfig is used to filter the configs that needs to be hidden.
+func HideConfig(s string) string {
+	configs := strings.Split(s, "\n")
+	hideMap := make([]bool, len(configs))
+	for i, c := range configs {
+		for _, hc := range hideConfig {
+			if strings.Contains(c, hc) {
+				hideMap[i] = true
+				break
+			}
+		}
+	}
+	var buf bytes.Buffer
+	for i, c := range configs {
+		if hideMap[i] {
+			continue
+		}
+		if i != 0 {
+			buf.WriteString("\n")
+		}
+		buf.WriteString(c)
+	}
+	return buf.String()
+}
+
+// ContainHiddenConfig checks whether it contains the configuration that needs to be hidden.
+func ContainHiddenConfig(s string) bool {
+	s = strings.ToLower(s)
+	for _, hc := range hideConfig {
+		if strings.Contains(s, hc) {
+			return true
+		}
+	}
+	return false
+}

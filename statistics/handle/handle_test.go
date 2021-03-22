@@ -2092,6 +2092,16 @@ func (s *testStatsSuite) TestExtendedStatsPartitionTable(c *C) {
 	c.Assert(err.Error(), Equals, "Extended statistics on partitioned tables are not supported now")
 }
 
+func (s *testStatsSuite) TestHideIndexUsageSyncLease(c *C) {
+	// NOTICE: remove this test when index usage is GA.
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	rs := tk.MustQuery("select @@tidb_config").Rows()
+	for _, r := range rs {
+		c.Assert(strings.Contains(strings.ToLower(r[0].(string)), "index-usage-sync-lease"), IsFalse)
+	}
+}
+
 func (s *testStatsSuite) TestHideExtendedStatsSwitch(c *C) {
 	// NOTICE: remove this test when this extended-stats reaches GA state.
 	defer cleanEnv(c, s.store, s.do)
