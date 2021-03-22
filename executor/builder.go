@@ -2907,21 +2907,21 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tableStreaming, tbl, err
 }
 
-func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan,needIndexColumn bool) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan, needIndexColumn bool) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	indexReq, indexStreaming, err := constructDAGReq(b.ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, false, err
 	}
 	indexReq.OutputOffsets = []uint32{}
+	if needIndexColumn {
+		for i := 0; i < schemaLen; i++ {
+			indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+		}
+	}
 	for i := 0; i < handleLen; i++ {
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen+i))
 	}
 	if len(indexReq.OutputOffsets) == 0 {
-		if needIndexColumn {
-			for i := 0;i < schemaLen;i++ {
-				indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
-			}
-		}
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen))
 	}
 	return indexReq, indexStreaming, err
@@ -2940,7 +2940,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		// Should output pid col.
 		handleLen++
 	}
-	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleLen, v.IndexPlans,v.RateLimit && is.KeepOrder)
+	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleLen, v.IndexPlans, v.RateLimit && is.KeepOrder)
 	if err != nil {
 		return nil, err
 	}

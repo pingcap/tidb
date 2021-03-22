@@ -433,6 +433,70 @@ func UnionRanges(sc *stmtctx.StatementContext, ranges []*Range, mergeConsecutive
 	return ranges, nil
 }
 
+func genSortRange(sc *stmtctx.StatementContext, ran *Range) (*sortRange, error) {
+	left, err := codec.EncodeKey(sc, nil, ran.LowVal...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if ran.LowExclude {
+		left = kv.Key(left).PrefixNext()
+	}
+	right, err := codec.EncodeKey(sc, nil, ran.HighVal...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !ran.HighExclude {
+		right = kv.Key(right).PrefixNext()
+	}
+	return &sortRange{originalValue: ran, encodedStart: left, encodedEnd: right}, nil
+}
+
+func MergeRanges(sc *stmtctx.StatementContext, ranges []*Range, src *Range) ([]*Range, error) {
+	if len(ranges) == 0 {
+		return nil, nil
+	}
+	objects := make([]*sortRange, 0, len(ranges))
+	for _, ran := range ranges {
+		sr, err := genSortRange(sc, ran)
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, sr)
+	}
+	srcSr, err := genSortRange(sc, src)
+	if err != nil {
+		return nil, err
+	}
+
+	var ret []*Range
+	for _, obj := range objects {
+		if bytes.Compare(srcSr.encodedStart, obj.encodedEnd) > 0 {
+			continue
+		}
+		if bytes.Compare(srcSr.encodedEnd, obj.encodedStart) < 0 {
+			continue
+		}
+		tmp := &Range{}
+		if bytes.Compare(srcSr.encodedStart, obj.encodedStart) < 0 {
+			tmp.LowVal = obj.originalValue.LowVal
+			tmp.LowExclude = obj.originalValue.LowExclude
+		} else {
+			tmp.LowVal = srcSr.originalValue.LowVal
+			tmp.LowExclude = srcSr.originalValue.LowExclude
+		}
+
+		if bytes.Compare(srcSr.encodedEnd, obj.encodedEnd) < 0 {
+			tmp.HighVal = srcSr.originalValue.HighVal
+			tmp.HighExclude = srcSr.originalValue.HighExclude
+		} else {
+			tmp.HighVal = obj.originalValue.HighVal
+			tmp.HighExclude = obj.originalValue.HighExclude
+		}
+		ret = append(ret, tmp)
+	}
+	return ret, nil
+}
+
 func hasPrefix(lengths []int) bool {
 	for _, l := range lengths {
 		if l != types.UnspecifiedLength {
