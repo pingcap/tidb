@@ -39,13 +39,13 @@ var CoprocessorCacheTelemetry = struct {
 
 // CoprCacheUsedWindowItem is the coprocessor cache telemetry data struct.
 type CoprCacheUsedWindowItem struct {
-	P0   atomic.Uint64 `json:"le0"`
-	P1   atomic.Uint64 `json:"le1"`
-	P10  atomic.Uint64 `json:"le10"`
-	P20  atomic.Uint64 `json:"le20"`
-	P40  atomic.Uint64 `json:"le40"`
-	P80  atomic.Uint64 `json:"le80"`
-	P100 atomic.Uint64 `json:"le100"`
+	P0   atomic.Uint64 `json:"ge0"`
+	P1   atomic.Uint64 `json:"ge1"`
+	P10  atomic.Uint64 `json:"ge10"`
+	P20  atomic.Uint64 `json:"ge20"`
+	P40  atomic.Uint64 `json:"ge40"`
+	P80  atomic.Uint64 `json:"ge80"`
+	P100 atomic.Uint64 `json:"ge100"`
 
 	BeginAt *time.Time `json:"beginAt"`
 }
