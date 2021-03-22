@@ -888,6 +888,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		}
 	}
 
+	cc.ctx.RecordSLI(startTime)
 	stmtType := cc.ctx.GetSessionVars().StmtCtx.StmtType
 	sqlType := metrics.LblGeneral
 	if stmtType != "" {

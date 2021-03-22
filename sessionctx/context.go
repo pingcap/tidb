@@ -16,6 +16,7 @@ package sessionctx
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -113,6 +114,8 @@ type Context interface {
 	PrepareTSFuture(ctx context.Context)
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
+	// RecordSLI record some metrics for SLI/SLO.
+	RecordSLI(stmtStartTime time.Time)
 }
 
 type basicCtxType int

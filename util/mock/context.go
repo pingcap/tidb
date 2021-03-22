@@ -256,6 +256,9 @@ func (c *Context) StoreQueryFeedback(_ interface{}) {}
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
 
+// RecordSLI implements the Session interface.
+func (c *Context) RecordSLI(_ time.Time) {}
+
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit() {}
 
