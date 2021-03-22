@@ -34,13 +34,14 @@ const (
 	Prompt = "telemetry"
 	// ReportInterval is the interval of the report.
 	ReportInterval = 24 * time.Hour
+	// UpdateInterval means the max time window for saved data.
+	UpdateInterval = 6 * time.Hour
 )
 
 const (
 	etcdOpTimeout  = 3 * time.Second
 	uploadTimeout  = 60 * time.Second
 	apiEndpoint    = "https://telemetry.pingcap.com/api/v1/tidb/report"
-	UpdateInterval = 6 * time.Hour
 )
 
 func getTelemetryGlobalVariable(ctx sessionctx.Context) (bool, error) {
