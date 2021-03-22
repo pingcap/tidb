@@ -383,7 +383,7 @@ func initMetrics(namespace, subsystem string) {
 			Subsystem: subsystem,
 			Name:      "forward_request_counter",
 			Help:      "Counter of tikv request being forwarded through another node",
-		}, []string{LblFromStore, LblToStore, LblResult})
+		}, []string{LblFromStore, LblToStore, LblType, LblResult})
 
 	TiKVTSFutureWaitDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
