@@ -17,6 +17,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -34,18 +35,18 @@ func (s testMockSuite) TestInterface(c *C) {
 	snapshot := storage.GetSnapshot(version)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
-	snapshot.SetOption(Priority, PriorityNormal)
+	snapshot.SetOption(tikvstore.Priority, tikvstore.PriorityNormal)
 
 	transaction, err := storage.Begin()
 	c.Check(err, IsNil)
 	err = transaction.LockKeys(context.Background(), new(LockCtx), Key("lock"))
 	c.Check(err, IsNil)
-	transaction.SetOption(Option(23), struct{}{})
+	transaction.SetOption(23, struct{}{})
 	if mock, ok := transaction.(*mockTxn); ok {
-		mock.GetOption(Option(23))
+		mock.GetOption(23)
 	}
 	transaction.StartTS()
-	transaction.DelOption(Option(23))
+	transaction.DelOption(23)
 	if transaction.IsReadOnly() {
 		_, err = transaction.Get(context.TODO(), Key("lock"))
 		c.Check(err, IsNil)
