@@ -1054,9 +1054,6 @@ func (e *ShowExec) fetchShowClusterConfigs(ctx context.Context) error {
 	}
 	for _, items := range confItems {
 		row := make([]interface{}, 0, 4)
-		if len(items) > 2 && config.NeedHideConfig(items[2].GetString()) {
-			continue
-		}
 		for _, item := range items {
 			row = append(row, item.GetString())
 		}
