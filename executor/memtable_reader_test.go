@@ -216,10 +216,12 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	c.Assert(requestCounter, Equals, int32(9))
 
 	// TODO: we need remove it when index usage is GA.
-	rs := tk.MustQuery("show config")
-	for i := range rs.rows {
-		c.Assert(strings.Contains(rs.rows[i][2], "index-usage-sync-lease"), IsFalse)
-		c.Assert(strings.Contains(rs.rows[i][2], "INDEX-USAGE-SYNC-LEASE"), IsFalse)
+	rs := tk.MustQuery("show config").Rows()
+	for _, r := range rs {
+		s, ok := r[2].(string)
+		c.Assert(ok, IsTrue)
+		c.Assert(strings.Contains(s, "index-usage-sync-lease"), IsFalse)
+		c.Assert(strings.Contains(s, "INDEX-USAGE-SYNC-LEASE"), IsFalse)
 	}
 
 	// type => server index => row
