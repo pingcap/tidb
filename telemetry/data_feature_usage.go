@@ -31,11 +31,13 @@ type featureUsageInfo struct {
 	TiFlashUsed      []*TiFlashUsageItem        `json:"tiFlashUsed"`
 }
 
+// CoprocessorCacheTelemetry is to save the global coprocessor cache telemetry data.
 var CoprocessorCacheTelemetry = struct {
 	MinuteWindow []CoprCacheUsedWindowItem
 	Lock         sync.RWMutex
 }{Lock: sync.RWMutex{}}
 
+// CoprCacheUsedWindowItem is the coprocessor cache telemetry data struct.
 type CoprCacheUsedWindowItem struct {
 	P0   atomic.Uint64 `json:"le0"`
 	P1   atomic.Uint64 `json:"le1"`
@@ -48,11 +50,13 @@ type CoprCacheUsedWindowItem struct {
 	BeginAt *time.Time `json:"beginAt"`
 }
 
+// TiFlashUsageTelemetry is to save the global TiFlash usage telemetry data.
 var TiFlashUsageTelemetry = struct {
 	MinuteWindow []TiFlashUsageItem
 	Lock         sync.RWMutex
 }{Lock: sync.RWMutex{}}
 
+// TiFlashUsageItem is the TiFlash usage telemetry data struct.
 type TiFlashUsageItem struct {
 	TotalNumbers                   atomic.Uint64 `json:"totalNumbers"`
 	TiFlashPushDownNumbers         atomic.Uint64 `json:"tiFlashPushDownNumbers"`
