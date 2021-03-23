@@ -150,7 +150,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		if err != nil {
 			return "", false, err
 		}
-		return string(j), true, nil
+		return config.HideConfig(string(j)), true, nil
 	case TiDBForcePriority:
 		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
 	case TiDBDDLSlowOprThreshold:
