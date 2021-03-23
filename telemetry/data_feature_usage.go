@@ -32,7 +32,7 @@ type featureUsageInfo struct {
 }
 
 // FeatureTaskChan is the update task channel for telemetry feature data.
-var FeatureTaskChan = make(chan *FeatureTask, 1<<18)
+var FeatureTaskChan = make(chan *FeatureTask, 1<<16)
 
 // FeatureTask is the update task for telemetry feature data.
 type FeatureTask struct {
