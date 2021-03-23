@@ -388,7 +388,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		case -1: // run too many times, remove Limit executor and read all rest data.
 			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
 			e.indexSidePagination = false
-		case 0:  // add Limit executor, init page size.
+		case 0: // add Limit executor, init page size.
 			e.paginationSize = 1000
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
 		default:
