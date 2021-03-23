@@ -406,7 +406,7 @@ region-cache-ttl = 600
 store-limit = 0
 
 # store-liveness-timeout is used to control timeout for store liveness after sending request failed.
-store-liveness-timeout = "5s"
+store-liveness-timeout = "1s"
 
 # ttl-refreshed-txn-size decides whether a transaction should update its lock TTL.
 # If the size(in byte) of a transaction is large than `ttl-refreshed-txn-size`, it update the lock TTL during the 2PC.
@@ -463,8 +463,6 @@ history-size = 24
 [experimental]
 # enable creating expression index.
 allow-expression-index = false
-# enable global kill.
-enable-global-kill = false
 
 # server level isolation read by engines and labels
 [isolation-read]

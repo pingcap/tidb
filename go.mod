@@ -42,7 +42,7 @@ require (
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pierrec/lz4 v2.5.2+incompatible // indirect
 	github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19
-	github.com/pingcap/br v5.0.0-nightly.0.20210317100924-d95f9fdfcd29+incompatible
+	github.com/pingcap/br v5.0.0-nightly.0.20210318140754-0b223bc5358c+incompatible
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
@@ -50,7 +50,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20210308063835-39b884695fb8
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
-	github.com/pingcap/parser v0.0.0-20210310110710-c7333a4927e6
+	github.com/pingcap/parser v0.0.0-20210314080929-ed8900c94180
 	github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
 	github.com/pingcap/tipb v0.0.0-20210309080453-72c4feaa6da7
@@ -67,8 +67,7 @@ require (
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/uber/jaeger-lib v2.4.0+incompatible // indirect
-	github.com/xitongsys/parquet-go v1.6.0 // indirect
-	github.com/xitongsys/parquet-go-source v0.0.0-20201108113611-f372b7d813be // indirect
+	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457 // indirect
 	github.com/zhangjinpeng1987/raft v0.0.0-20200819064223-df31bb68a018 // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.uber.org/atomic v1.7.0
