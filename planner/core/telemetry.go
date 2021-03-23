@@ -25,6 +25,9 @@ func GetTiFlashTelemetry(plan Plan) (tiFlashPushDown, tiFlashExchangePushDown bo
 		}
 		for _, child := range pp.Children() {
 			tiflashProcess(child)
+			if tiFlashPushDown {
+				return
+			}
 		}
 	}
 	tiflashProcess(plan)

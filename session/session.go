@@ -1441,7 +1441,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
-		tiFlashPushDown, tiFlashExchangePushDown := plannercore.GetTiFlashTelemetry(s.currentPlan)
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.GetTiFlashTelemetry(stmt.Plan)
 		select {
 		case telemetry.FeatureTaskChan <- &telemetry.FeatureTask{
 			TiFlashPushDown:         tiFlashPushDown,
