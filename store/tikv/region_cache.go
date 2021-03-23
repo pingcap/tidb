@@ -77,7 +77,8 @@ const (
 	EpochNotMatch
 	// StoreNotFound indicates it's invalidated due to store not found in PD
 	StoreNotFound
-	// Other indicates it's invalidated due to other reasons
+	// Other indicates it's invalidated due to other reasons, e.g., the store
+	// is removed from the cluster, fail to send requests to the store.
 	Other
 )
 
@@ -980,9 +981,8 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 		oldRegion := old.(*btreeItem).cachedRegion
 		oldRegionStore := oldRegion.getStore()
 		// Joint consensus is enabled in v5.0, which is possible to make a leader step down as a learner during a conf change.
-		// And hibernate region is also enabled by default in v5.0, so after the leader step down, there can be a long time
-		// that there is no leader in the region and the leader info in PD is stale until requests are sent to followers
-		// or hibernate timeout.
+		// And if hibernate region is enabled, after the leader step down, there can be a long time that there is no leader
+		// in the region and the leader info in PD is stale until requests are sent to followers or hibernate timeout.
 		// To solve it, one solution is always to try a different peer if the invalid reason of the old cached region is no-leader.
 		// There is a small probability that the current peer who reports no-leader becomes a leader and TiDB has to retry once in this case.
 		if InvalidReason(atomic.LoadInt32((*int32)(&oldRegion.invalidReason))) == NoLeader {
