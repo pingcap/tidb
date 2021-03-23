@@ -7867,6 +7867,9 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 		c.Assert(writeSLI.IsSmallTxn(), Equals, true)
 		c.Assert(writeSLI.IsTxnCommitted(), Equals, false)
 	}
+	// The statement which affect rows is 0 shouldn't record into time.
+	mustExec("select count(*) from t")
+	mustExec("select * from t")
 	mustExec("insert into t values (20,20)")
 	c.Assert(writeSLI.IsSmallTxn(), Equals, false)
 	mustExec("commit")
