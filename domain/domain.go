@@ -1074,7 +1074,10 @@ func (do *Domain) TelemetryUpdateLoop(ctx sessionctx.Context) {
 				ownerManger.Cancel()
 				return
 			case task := <-telemetry.FeatureTaskChan:
-				telemetry.UpdateFeature(task)
+				// only owner do telemetry update.
+				if ownerManger.IsOwner() {
+					telemetry.UpdateFeature(task)
+				}
 			}
 		}
 	}()
