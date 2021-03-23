@@ -824,7 +824,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 	}
 
-	if !needChangeColumnData(oldCol, jobParam.newCol) {
+	if job.ReorgMeta.SQLMode.HasStrictMode() && !needChangeColumnData(oldCol, jobParam.newCol) {
 		return w.doModifyColumn(t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
 	}
 
