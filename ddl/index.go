@@ -853,7 +853,7 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 	uniqueIndex := make(map[string]bool, len(indexNames))
 
 	for i, indexName := range indexNames {
-		// Double check the index is exists
+		// Double check the index is exists.
 		indexInfo := tblInfo.FindIndexByName(indexName.L)
 		if indexInfo == nil {
 			if ifExists[i] {

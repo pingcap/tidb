@@ -6616,7 +6616,6 @@ func testDropIndexes(c *C, store kv.Storage, lease time.Duration, createSQL, dro
 	tk.MustExec("drop table if exists test_drop_indexes")
 	tk.MustExec(createSQL)
 	done := make(chan error, 1)
-	tk.MustExec("delete from test_drop_indexes")
 
 	num := 100
 	//  add some rows
