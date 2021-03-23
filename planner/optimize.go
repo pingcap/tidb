@@ -30,11 +30,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/cascades"
+	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -88,6 +90,20 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}()
 	}
 
+	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
+	stmtHints, warns := handleStmtHints(tableHints)
+	sessVars.StmtCtx.StmtHints = stmtHints
+	for _, warn := range warns {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
+	warns = warns[:0]
+	for name, val := range stmtHints.SetVars {
+		err := variable.SetStmtVar(sessVars, name, val)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+	}
+
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp plannercore.Plan
 		if fpv, ok := sctx.Value(plannercore.PointPlanKey).(plannercore.PointPlanVal); ok {
@@ -105,20 +121,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	sctx.PrepareTSFuture(ctx)
-
-	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
-	stmtHints, warns := handleStmtHints(tableHints)
-	sessVars.StmtCtx.StmtHints = stmtHints
-	for _, warn := range warns {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
-	}
-	warns = warns[:0]
-	for name, val := range stmtHints.SetVars {
-		err := variable.SetStmtVar(sessVars, name, val)
-		if err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		}
-	}
 
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
@@ -235,6 +237,18 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return nil, nil, 0, err
 	}
 	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
+
+	if execPlan, ok := p.(*plannercore.Execute); ok {
+		execID := execPlan.ExecID
+		if execPlan.Name != "" {
+			execID = sctx.GetSessionVars().PreparedStmtNameToID[execPlan.Name]
+		}
+		if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execID]; ok {
+			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
+				is = domain.GetDomain(sctx).InfoSchema()
+			}
+		}
+	}
 
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
 	activeRoles := sctx.GetSessionVars().ActiveRoles
@@ -519,7 +533,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warns = append(warns, warn)
 		}
 		stmtHints.HasReplicaReadHint = true
-		stmtHints.ReplicaRead = byte(kv.ReplicaReadFollower)
+		stmtHints.ReplicaRead = byte(tikvstore.ReplicaReadFollower)
 	}
 	// Handle MAX_EXECUTION_TIME
 	if maxExecutionTimeCnt != 0 {
@@ -556,4 +570,5 @@ func setFoundInBinding(sctx sessionctx.Context, opt bool) error {
 
 func init() {
 	plannercore.OptimizeAstNode = Optimize
+	plannercore.IsReadOnly = IsReadOnly
 }

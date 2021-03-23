@@ -134,7 +134,7 @@ func (s *TestGracefulShutdownSuite) TestGracefulShutdown(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	defer func(){
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
