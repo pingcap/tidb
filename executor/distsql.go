@@ -328,10 +328,8 @@ type IndexLookUpExecutor struct {
 	kvRanges      []kv.KeyRange
 	workerStarted bool
 
-	keepOrder           bool
-	desc                bool
-	indexSidePagination bool
-	paginationSize      int64
+	keepOrder bool
+	desc      bool
 
 	indexStreaming bool
 	tableStreaming bool
@@ -348,7 +346,11 @@ type IndexLookUpExecutor struct {
 
 	stats *IndexLookUpRunTimeStats
 
-	lastRowKeys []types.Datum
+	indexSidePagination bool
+	paginationSize      int64
+	openCloseByInside   bool
+	originRange         []*ranger.Range
+	lastRowKeys         []types.Datum
 }
 
 type getHandleType int8
@@ -383,13 +385,16 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
+	if !e.openCloseByInside {
+		e.originRange = e.ranges
+	}
 	if e.indexSidePagination {
 		switch e.paginationSize {
 		case -1: // run too many times, remove Limit executor and read all rest data.
 			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
 			e.indexSidePagination = false
 		case 0: // add Limit executor, init page size.
-			e.paginationSize = 1000
+			e.paginationSize = 1
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
 		default:
 			e.paginationSize = e.paginationSize * 2
@@ -601,6 +606,9 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
+	if !e.openCloseByInside {
+		e.ranges = e.originRange
+	}
 	if !e.workerStarted || e.finished == nil {
 		return nil
 	}
@@ -621,6 +629,7 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+start:
 	if !e.workerStarted {
 		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
 			return err
@@ -652,6 +661,8 @@ paginate:
 		return nil
 	}
 
+	e.openCloseByInside = true
+	defer func() { e.openCloseByInside = false }()
 	if err := e.Close(); err != nil {
 		return err
 	}
@@ -668,7 +679,10 @@ paginate:
 	if err != nil {
 		return err
 	}
-	return e.Open(ctx)
+	if err = e.Open(ctx); err != nil {
+		return err
+	}
+	goto start
 }
 
 func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
