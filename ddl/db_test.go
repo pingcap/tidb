@@ -6619,7 +6619,7 @@ func testDropIndexes(c *C, store kv.Storage, lease time.Duration, createSQL, dro
 	tk.MustExec("delete from test_drop_indexes")
 
 	num := 100
-	//  add some rows
+	// add some rows
 	for i := 0; i < num; i++ {
 		tk.MustExec("insert into test_drop_indexes values (?, ?, ?)", i, i, i)
 	}
