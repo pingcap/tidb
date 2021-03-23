@@ -68,20 +68,21 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MP
 }
 
 func (f *Fragment) init(p PhysicalPlan) error {
-	if ts, ok := p.(*PhysicalTableScan); ok {
+	switch x := p.(type) {
+	case *PhysicalTableScan:
 		if f.TableScan != nil {
 			return errors.New("one task contains at most one table scan")
 		}
-		f.TableScan = ts
+		f.TableScan = x
 		return nil
-	}
-	if recv, ok := p.(*PhysicalExchangeReceiver); ok {
-		f.ExchangeReceivers = append(f.ExchangeReceivers, recv)
+	case *PhysicalExchangeReceiver:
+		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
 		return nil
-	}
-	for _, ch := range p.Children() {
-		if err := f.init(ch); err != nil {
-			return errors.Trace(err)
+	default:
+		for _, ch := range p.Children() {
+			if err := f.init(ch); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
