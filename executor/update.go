@@ -50,6 +50,7 @@ type UpdateExec struct {
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos            plannercore.TblColPosInfoSlice
+	assign2TblColPosIdx       []int
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
 	virtualAssignmentsOffset  int
@@ -320,9 +321,9 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 
 func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
-	for _, assign := range e.OrderedList {
-		tblIdx, tblFound := e.tblColPosInfos.FindTblColPosIdx(assign.Col.Index)
-		if tblFound && !e.updatable[tblIdx] {
+	for i, assign := range e.OrderedList {
+		tblIdx := e.assign2TblColPosIdx[i]
+		if tblIdx > 0 && !e.updatable[tblIdx] {
 			continue
 		}
 		con := assign.Expr.(*expression.Constant)
@@ -348,9 +349,9 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
-	for _, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
-		tblIdx, tblFound := e.tblColPosInfos.FindTblColPosIdx(assign.Col.Index)
-		if tblFound && !e.updatable[tblIdx] {
+	for i, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
+		tblIdx := e.assign2TblColPosIdx[i]
+		if tblIdx > 0 && !e.updatable[tblIdx] {
 			continue
 		}
 		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
@@ -377,9 +378,9 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 		return newRowData, nil
 	}
 	e.evalBuffer.SetDatums(newRowData...)
-	for _, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
-		tblIdx, tblFound := e.tblColPosInfos.FindTblColPosIdx(assign.Col.Index)
-		if tblFound && !e.updatable[tblIdx] {
+	for i, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
+		tblIdx := e.assign2TblColPosIdx[i]
+		if tblIdx > 0 && !e.updatable[tblIdx] {
 			continue
 		}
 		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
