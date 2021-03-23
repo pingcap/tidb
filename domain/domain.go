@@ -1067,15 +1067,15 @@ func (do *Domain) TelemetryUpdateLoop(ctx sessionctx.Context) {
 			logutil.BgLogger().Info("handleTelemetryUpdateLoop exited.")
 			util.Recover(metrics.LabelDomain, "handleTelemetryUpdateLoop", nil, false)
 		}()
-		ownerManger := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
+		ownerManager := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
 		for {
 			select {
 			case <-do.exit:
-				ownerManger.Cancel()
+				ownerManager.Cancel()
 				return
 			case task := <-telemetry.FeatureTaskChan:
 				// only owner do telemetry update.
-				if ownerManger.IsOwner() {
+				if ownerManager.IsOwner() {
 					telemetry.UpdateFeature(task)
 				}
 			}
