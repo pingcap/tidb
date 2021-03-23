@@ -474,7 +474,12 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		proxyStoreIdx  int
 	)
 	if c.enableForwarding && isLeaderReq {
-		if atomic.LoadInt32(&store.needForwarding) == 0 {
+		failpointForceForwarding := false
+		failpoint.Inject("tikvForceForwarding", func() {
+			failpointForceForwarding = true
+		})
+
+		if atomic.LoadInt32(&store.needForwarding) == 0 && !failpointForceForwarding {
 			regionStore.unsetProxyStoreIfNeeded(cachedRegion)
 		} else {
 			proxyStore, proxyAccessIdx, proxyStoreIdx, err = c.getProxyStore(cachedRegion, store, regionStore, accessIdx)
@@ -666,7 +671,14 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				// send fail but store is reachable, keep retry current peer for replica leader request.
 				// but we still need switch peer for follower-read or learner-read(i.e. tiflash)
 				if leaderReq {
-					if s.requestLiveness(bo, c) == reachable {
+					failpointForceForwarding := false
+					failpoint.Inject("tikvOnSendFailForceForwarding", func() {
+						failpointForceForwarding = true
+					})
+
+					if failpointForceForwarding {
+						startForwarding = true
+					} else if s.requestLiveness(bo, c) == reachable {
 						return
 					} else if c.enableForwarding {
 						s.startHealthCheckLoopIfNeeded(c)
