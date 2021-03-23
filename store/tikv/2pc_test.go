@@ -1391,3 +1391,6 @@ func allKeysNoDups(req *kvrpcpb.PrewriteRequest) bool {
 	}
 	return true
 }
+
+func (s *testCommitterSuite) TestTxnCommitCounter(c *C) {
+}

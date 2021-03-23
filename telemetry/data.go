@@ -23,6 +23,7 @@ type telemetryData struct {
 	Hardware           []*clusterHardwareItem  `json:"hardware"`
 	Instances          []*clusterInfoItem      `json:"instances"`
 	TelemetryHostExtra *telemetryHostExtraInfo `json:"hostExtra"`
+	FeatureUsage       *featureUsageInfo       `json:"featureUsage"`
 	ReportTimestamp    int64                   `json:"reportTimestamp"`
 	TrackingID         string                  `json:"trackingId"`
 }
