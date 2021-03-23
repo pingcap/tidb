@@ -54,6 +54,7 @@ var (
 	TiKVGRPCConnTransientFailureCounter    *prometheus.CounterVec
 	TiKVPanicCounter                       *prometheus.CounterVec
 	TiKVForwardRequestCounter              *prometheus.CounterVec
+	TiKVTSFutureWaitDuration               prometheus.Histogram
 )
 
 // Label constants.
@@ -382,7 +383,16 @@ func initMetrics(namespace, subsystem string) {
 			Subsystem: subsystem,
 			Name:      "forward_request_counter",
 			Help:      "Counter of tikv request being forwarded through another node",
-		}, []string{LblFromStore, LblToStore, LblResult})
+		}, []string{LblFromStore, LblToStore, LblType, LblResult})
+
+	TiKVTSFutureWaitDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "ts_future_wait_seconds",
+			Help:      "Bucketed histogram of seconds cost for waiting timestamp future.",
+			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 30), // 5us ~ 2560s
+		})
 
 	initShortcuts()
 }
@@ -436,4 +446,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVGRPCConnTransientFailureCounter)
 	prometheus.MustRegister(TiKVPanicCounter)
 	prometheus.MustRegister(TiKVForwardRequestCounter)
+	prometheus.MustRegister(TiKVTSFutureWaitDuration)
 }

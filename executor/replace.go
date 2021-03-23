@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -220,8 +221,8 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
-			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
-			defer snapshot.DelOption(kv.CollectRuntimeStats)
+			snapshot.SetOption(tikvstore.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(tikvstore.CollectRuntimeStats)
 		}
 	}
 	prefetchStart := time.Now()
