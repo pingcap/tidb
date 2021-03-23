@@ -21,7 +21,6 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/atomic"
 )
 
 type featureUsageInfo struct {
@@ -50,7 +49,9 @@ func UpdateFeature(task *FeatureTask) {
 		var i int
 		for i = 0; i < length && time.Since(*CoprocessorCacheTelemetry.MinuteWindow[i].BeginAt) >= ReportInterval; i++ {
 		}
-		CoprocessorCacheTelemetry.MinuteWindow = CoprocessorCacheTelemetry.MinuteWindow[i:]
+		if i < length {
+			CoprocessorCacheTelemetry.MinuteWindow = CoprocessorCacheTelemetry.MinuteWindow[i:]
+		}
 		CoprocessorCacheTelemetry.MinuteWindow = append(CoprocessorCacheTelemetry.MinuteWindow, CoprCacheUsedWindowItem{})
 		length -= i - 1
 		CoprocessorCacheTelemetry.MinuteWindow[length-1].BeginAt = new(time.Time)
@@ -60,28 +61,28 @@ func UpdateFeature(task *FeatureTask) {
 		ratio := float64(task.CoprCacheHitNum) / float64(task.CoprRespTimes)
 		switch {
 		case ratio >= 0:
-			CoprocessorCacheTelemetry.MinuteWindow[length-1].P0.Add(1)
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P0++
 			fallthrough
 		case ratio >= 0.01:
-			CoprocessorCacheTelemetry.MinuteWindow[length-1].P1.Add(1)
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P1++
 			fallthrough
 		case ratio >= 0.1:
-			CoprocessorCacheTelemetry.MinuteWindow[length-1].P10.Add(1)
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P10++
 			fallthrough
 		case ratio >= 0.2:
-			CoprocessorCacheTelemetry.MinuteWindow[length-1].P20.Add(1)
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P20++
 			fallthrough
 		case ratio >= 0.4:
-			CoprocessorCacheTelemetry.MinuteWindow[length-1].P40.Add(1)
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P40++
 			fallthrough
 		case ratio >= 0.8:
-			CoprocessorCacheTelemetry.MinuteWindow[length-1].P80.Add(1)
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P80++
 			fallthrough
 		case ratio >= 1:
-			CoprocessorCacheTelemetry.MinuteWindow[length-1].P100.Add(1)
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P100++
 		}
 	} else {
-		CoprocessorCacheTelemetry.MinuteWindow[length-1].P0.Add(1)
+		CoprocessorCacheTelemetry.MinuteWindow[length-1].P0++
 	}
 	CoprocessorCacheTelemetry.Lock.Unlock()
 
@@ -97,12 +98,12 @@ func UpdateFeature(task *FeatureTask) {
 		TiFlashUsageTelemetry.MinuteWindow[length-1].BeginAt = new(time.Time)
 		*TiFlashUsageTelemetry.MinuteWindow[length-1].BeginAt = time.Now()
 	}
-	TiFlashUsageTelemetry.MinuteWindow[length-1].TotalNumbers.Add(1)
+	TiFlashUsageTelemetry.MinuteWindow[length-1].TotalNumbers++
 	if task.TiFlashPushDown {
-		TiFlashUsageTelemetry.MinuteWindow[length-1].TiFlashPushDownNumbers.Add(1)
+		TiFlashUsageTelemetry.MinuteWindow[length-1].TiFlashPushDownNumbers++
 	}
 	if task.TiFLashExchangePushDown {
-		TiFlashUsageTelemetry.MinuteWindow[length-1].TiFlashExchangePushDownNumbers.Add(1)
+		TiFlashUsageTelemetry.MinuteWindow[length-1].TiFlashExchangePushDownNumbers++
 	}
 	TiFlashUsageTelemetry.Lock.Unlock()
 }
@@ -115,13 +116,13 @@ var CoprocessorCacheTelemetry = struct {
 
 // CoprCacheUsedWindowItem is the coprocessor cache telemetry data struct.
 type CoprCacheUsedWindowItem struct {
-	P0   atomic.Uint64 `json:"gte0"`
-	P1   atomic.Uint64 `json:"gte1"`
-	P10  atomic.Uint64 `json:"gte10"`
-	P20  atomic.Uint64 `json:"gte20"`
-	P40  atomic.Uint64 `json:"gte40"`
-	P80  atomic.Uint64 `json:"gte80"`
-	P100 atomic.Uint64 `json:"gte100"`
+	P0   uint64 `json:"gte0"`
+	P1   uint64 `json:"gte1"`
+	P10  uint64 `json:"gte10"`
+	P20  uint64 `json:"gte20"`
+	P40  uint64 `json:"gte40"`
+	P80  uint64 `json:"gte80"`
+	P100 uint64 `json:"gte100"`
 
 	BeginAt *time.Time `json:"beginAt"`
 }
@@ -134,9 +135,9 @@ var TiFlashUsageTelemetry = struct {
 
 // TiFlashUsageItem is the TiFlash usage telemetry data struct.
 type TiFlashUsageItem struct {
-	TotalNumbers                   atomic.Uint64 `json:"totalNumbers"`
-	TiFlashPushDownNumbers         atomic.Uint64 `json:"tiFlashPushDownNumbers"`
-	TiFlashExchangePushDownNumbers atomic.Uint64 `json:"tiFlashExchangePushDownNumbers"`
+	TotalNumbers                   uint64 `json:"totalNumbers"`
+	TiFlashPushDownNumbers         uint64 `json:"tiFlashPushDownNumbers"`
+	TiFlashExchangePushDownNumbers uint64 `json:"tiFlashExchangePushDownNumbers"`
 
 	BeginAt *time.Time `json:"beginAt"`
 }
@@ -162,13 +163,13 @@ func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, er
 		if len(usageInfo.CoprCacheUsed) <= i {
 			usageInfo.CoprCacheUsed = append(usageInfo.CoprCacheUsed, &CoprCacheUsedWindowItem{})
 		}
-		usageInfo.CoprCacheUsed[i].P0.Add(window.P0.Load())
-		usageInfo.CoprCacheUsed[i].P1.Add(window.P1.Load())
-		usageInfo.CoprCacheUsed[i].P10.Add(window.P10.Load())
-		usageInfo.CoprCacheUsed[i].P20.Add(window.P20.Load())
-		usageInfo.CoprCacheUsed[i].P40.Add(window.P40.Load())
-		usageInfo.CoprCacheUsed[i].P80.Add(window.P80.Load())
-		usageInfo.CoprCacheUsed[i].P100.Add(window.P100.Load())
+		usageInfo.CoprCacheUsed[i].P0 += window.P0
+		usageInfo.CoprCacheUsed[i].P1 += window.P1
+		usageInfo.CoprCacheUsed[i].P10 += window.P10
+		usageInfo.CoprCacheUsed[i].P20 += window.P20
+		usageInfo.CoprCacheUsed[i].P40 += window.P40
+		usageInfo.CoprCacheUsed[i].P80 += window.P80
+		usageInfo.CoprCacheUsed[i].P100 += window.P100
 		if usageInfo.CoprCacheUsed[i].BeginAt == nil {
 			usageInfo.CoprCacheUsed[i].BeginAt = window.BeginAt
 		}
@@ -188,9 +189,9 @@ func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, er
 		if len(usageInfo.TiFlashUsed) <= i {
 			usageInfo.TiFlashUsed = append(usageInfo.TiFlashUsed, &TiFlashUsageItem{})
 		}
-		usageInfo.TiFlashUsed[i].TotalNumbers.Add(window.TotalNumbers.Load())
-		usageInfo.TiFlashUsed[i].TiFlashPushDownNumbers.Add(window.TiFlashPushDownNumbers.Load())
-		usageInfo.TiFlashUsed[i].TiFlashExchangePushDownNumbers.Add(window.TiFlashExchangePushDownNumbers.Load())
+		usageInfo.TiFlashUsed[i].TotalNumbers += window.TotalNumbers
+		usageInfo.TiFlashUsed[i].TiFlashPushDownNumbers += window.TiFlashPushDownNumbers
+		usageInfo.TiFlashUsed[i].TiFlashExchangePushDownNumbers += window.TiFlashExchangePushDownNumbers
 		if usageInfo.TiFlashUsed[i].BeginAt == nil {
 			usageInfo.TiFlashUsed[i].BeginAt = window.BeginAt
 		}
