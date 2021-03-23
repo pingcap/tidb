@@ -889,10 +889,13 @@ var funcs = map[string]functionClass{
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
 
 	// HS functions
+	HSBuildDBJson: &hsBuildDbJsonFunctionClass{baseFunctionClass{HSBuildDBJson, 2, 2}},
+
 	HSMatch:        &hsMatchFunctionClass{baseFunctionClass{HSMatch, 2, 2}},
 	HSMatchDb:      &hsMatchDbFunctionClass{baseFunctionClass{HSMatchDb, 2, 2}},
 	HSMatchJson:    &hsMatchJsonFunctionClass{baseFunctionClass{HSMatchJson, 2, 2}},
-	HSBuildDBJson:  &hsBuildDbJsonFunctionClass{baseFunctionClass{HSBuildDBJson, 1, 1}},
+	HSMatchAll:     &hsMatchAllFunctionClass{baseFunctionClass{HSMatchAll, 2, 2}},
+	HSMatchAllJson: &hsMatchAllJsonFunctionClass{baseFunctionClass{HSMatchAllJson, 2, 2}},
 	HSMatchIds:     &hsMatchIdsFunctionClass{baseFunctionClass{HSMatchIds, 2, 2}},
 	HSMatchIdsJson: &hsMatchIdsJsonFunctionClass{baseFunctionClass{HSMatchIdsJson, 2, 2}},
 	HSMatchIdsDb:   &hsMatchIdsDbFunctionClass{baseFunctionClass{HSMatchIdsDb, 2, 2}},
