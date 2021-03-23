@@ -87,7 +87,12 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	timeoutString := r.FormValue("timeout")
 	curDB := strings.ToLower(r.FormValue("current_db"))
 	if curDB != "" {
-		_, err = sh.s.Execute(reqCtx, "use %v"+curDB)
+		sql, err := sqlexec.EscapeSQL("use %n", curDB)
+		if err != nil {
+			serveError(w, http.StatusBadRequest, "invalid value for current DB")
+			return
+		}
+		_, err = sh.s.Execute(reqCtx, sql)
 		if err != nil {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("use database %v failed, err: %v", curDB, err))
 			return
@@ -161,7 +166,12 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	}
 	// If we don't catch profile. We just get a explain result.
 	if pprofTime == 0 {
-		recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(reqCtx, fmt.Sprintf("explain %s", sql))
+		sql, err = sqlexec.EscapeSQL("explain " + sql)
+		if err != nil {
+			serveError(w, http.StatusBadRequest, fmt.Sprintf("invalid SQL text, err: %v", err))
+			return
+		}
+		recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(reqCtx, sql)
 		if len(recordSets) > 0 {
 			defer terror.Call(recordSets[0].Close)
 		}
@@ -239,7 +249,12 @@ type explainAnalyzeResult struct {
 }
 
 func (sh *sqlInfoFetcher) getExplainAnalyze(ctx context.Context, sql string, resultChan chan<- *explainAnalyzeResult) {
-	recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(ctx, fmt.Sprintf("explain analyze %s", sql))
+	sql, err := sqlexec.EscapeSQL("explain analyze " + sql)
+	if err != nil {
+		resultChan <- &explainAnalyzeResult{err: err}
+		return
+	}
+	recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if len(recordSets) > 0 {
 		defer terror.Call(recordSets[0].Close)
 	}
