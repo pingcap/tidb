@@ -856,11 +856,11 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		// Double check the index is exists
 		indexInfo := tblInfo.FindIndexByName(indexName.L)
 		if indexInfo == nil {
-			if !ifExists[i] {
-				job.State = model.JobStateCancelled
-				return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+			if ifExists[i] {
+					continue
 			}
-			continue
+			job.State = model.JobStateCancelled
+			return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		}
 
 		// Double check for drop index on auto_increment column.
