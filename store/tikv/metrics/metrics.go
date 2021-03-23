@@ -478,9 +478,9 @@ func readCounter(m prometheus.Counter) int64 {
 // TxnCommitCounter is the counter of transactions committed with
 // different protocols, i.e. 2PC, async-commit, 1PC.
 type TxnCommitCounter struct {
-	TwoPC       int64
-	AsyncCommit int64
-	OnePC       int64
+	TwoPC       int64 `json:"twoPC"`
+	AsyncCommit int64 `json:"asyncCommit"`
+	OnePC       int64 `json:"onePC"`
 }
 
 // Sub returns the difference of two counters.

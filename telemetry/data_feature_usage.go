@@ -20,11 +20,13 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 type featureUsageInfo struct {
-	AsyncCommitUsed  bool                       `json:"asyncCommitUsed"`
+	TxnUsageInfo     *TxnUsageInfo              `json:"txnUsageInfo"`
 	CoprCacheUsed    []*CoprCacheUsedWindowItem `json:"coprCacheUsed"`
 	ClusterIndexUsed map[string]bool            `json:"clusterIndexUsed"`
 	TiFlashUsed      []*TiFlashUsageItem        `json:"tiFlashUsed"`
@@ -225,20 +227,34 @@ func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, er
 		usageInfo.ClusterIndexUsed[row.GetString(0)] = isClustered
 	}
 
-	// async commit
-	stmt, err = exec.ParseWithParams(context.TODO(), `show config where name = 'storage.enable-async-apply-prewrite'`)
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) > 0 {
-		if rows[0].GetString(3) == "true" {
-			usageInfo.AsyncCommitUsed = true
-		}
-	}
+	// transaction related feature
+	usageInfo.TxnUsageInfo = GetTxnUsageInfo(ctx)
 
 	return &usageInfo, nil
+}
+
+// TxnUsageInfo records the usage info of transaction related features, including
+// async-commit, 1PC and counters of transactions committed with different protocols.
+type TxnUsageInfo struct {
+	AsyncCommitUsed  bool                     `json:"asyncCommitUsed"`
+	OnePCUsed        bool                     `json:"onePCUsed"`
+	TxnCommitCounter metrics.TxnCommitCounter `json:"txnCommitCounter"`
+}
+
+var initialTxnCommitCounter metrics.TxnCommitCounter
+
+// GetTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
+func GetTxnUsageInfo(ctx sessionctx.Context) *TxnUsageInfo {
+	asyncCommitUsed := false
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableAsyncCommit); err == nil {
+		asyncCommitUsed = val == variable.BoolOn
+	}
+	onePCUsed := false
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnable1PC); err == nil {
+		onePCUsed = val == variable.BoolOn
+	}
+	curr := metrics.GetTxnCommitCounter()
+	diff := curr.Sub(initialTxnCommitCounter)
+	initialTxnCommitCounter = curr
+	return &TxnUsageInfo{asyncCommitUsed, onePCUsed, diff}
 }
