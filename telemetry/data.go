@@ -26,6 +26,7 @@ type telemetryData struct {
 	FeatureUsage       *featureUsageInfo       `json:"featureUsage"`
 	ReportTimestamp    int64                   `json:"reportTimestamp"`
 	TrackingID         string                  `json:"trackingId"`
+	FeatureUsageInfo   *featureUsageInfo       `json:"featureUsageInfo"`
 }
 
 func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryData {
@@ -38,6 +39,9 @@ func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryD
 	}
 	if i, err := getClusterInfo(ctx); err == nil {
 		r.Instances = i
+	}
+	if f, err := getTelemetryFeatureUsageInfo(ctx); err == nil {
+		r.FeatureUsageInfo = f
 	}
 	r.TelemetryHostExtra = getTelemetryHostExtraInfo()
 	return r
