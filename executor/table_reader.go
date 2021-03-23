@@ -39,9 +39,12 @@ import (
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
-var _ Executor = &TableReaderExecutor{}
-var TiFlashExecuteSuccCounter = metrics.TiFlashExecuteSuccCounter
-var TiFlashExecuteErrorCounter = metrics.TiFlashExecuteErrorCounter
+var (
+	_ Executor = &TableReaderExecutor{}
+
+	TiFlashExecuteSuccCounter  = metrics.TiFlashExecuteSuccCounter
+	TiFlashExecuteErrorCounter = metrics.TiFlashExecuteErrorCounter
+)
 
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
