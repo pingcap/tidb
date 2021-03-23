@@ -69,6 +69,36 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 	return nil
 }
 
+func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregation) {
+	for _, af := range agg.AggFuncs {
+		if af.HasDistinct {
+			cols := make([]*expression.Column, 0, len(af.Args))
+			canEliminate := true
+			for _, arg := range af.Args {
+				if col, ok := arg.(*expression.Column); ok {
+					cols = append(cols, col)
+				} else {
+					canEliminate = false
+					break
+				}
+			}
+			if canEliminate {
+				distinctByUniqueKey := false
+				schemaByDistinct := expression.NewSchema(cols...)
+				for _, key := range agg.children[0].Schema().Keys {
+					if schemaByDistinct.ColumnsIndices(key) != nil {
+						distinctByUniqueKey = true
+						break
+					}
+				}
+				if len(agg.GetGroupByCols()) == 0 && distinctByUniqueKey {
+					af.HasDistinct = false
+				}
+			}
+		}
+	}
+}
+
 // ConvertAggToProj convert aggregation to projection.
 func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool, *LogicalProjection) {
 	proj := LogicalProjection{
@@ -156,6 +186,7 @@ func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan) (Lo
 	if !ok {
 		return p, nil
 	}
+	a.tryToEliminateDistinct(agg)
 	if proj := a.tryToEliminateAggregation(agg); proj != nil {
 		return proj, nil
 	}
