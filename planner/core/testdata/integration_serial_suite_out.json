@@ -1617,16 +1617,16 @@
         ]
       },
       {
-        "SQL": "desc format = 'brief' select /*+hash_agg()*/ sum(b),id from (select avg(value) as b, id from t group by id)A",
+        "SQL": "desc format = 'brief' select /*+hash_agg()*/ sum(b) from (select avg(value) as b, id from t group by id)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#4)->Column#5, funcs:firstrow(test.t.id)->test.t.id",
+          "HashAgg 1.00 root  funcs:sum(Column#4)->Column#5",
           "└─TableReader 8000.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection 8000.00 batchCop[tiflash]  div(Column#4, cast(case(eq(Column#10, 0), 1, Column#10), decimal(20,0) BINARY))->Column#4, test.t.id",
-          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#11)->Column#10, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "    └─Projection 8000.00 batchCop[tiflash]  div(Column#4, cast(case(eq(Column#9, 0), 1, Column#9), decimal(20,0) BINARY))->Column#4",
+          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#10)->Column#9, funcs:sum(Column#11)->Column#4",
           "        └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#11, funcs:sum(test.t.value)->Column#12",
+          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#10, funcs:sum(test.t.value)->Column#11",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
