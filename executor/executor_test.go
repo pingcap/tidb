@@ -4130,6 +4130,20 @@ func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
 }
 
+func (s *testSuiteP1) TestUpdateClusteredJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	for _, clustered := range []string{"", "clustered"} {
+		tk.MustExec("drop table if exists a, b")
+		tk.MustExec("create table a (k1 int, k2 int, v int)")
+		tk.MustExec(fmt.Sprintf("create table b (a int, k1 int, k2 int, v int, primary key(k1, k2) %s)", clustered))
+		tk.MustExec("insert into a values (1, 1, 1)")
+		tk.MustExec("update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.v = 2, b.v = 100")
+		tk.MustQuery("select * from b").Check(testkit.Rows())
+		tk.MustQuery("select * from a").Check(testkit.Rows("1 1 2"))
+	}
+}
+
 func (s *testSuite6) TestUpdateJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

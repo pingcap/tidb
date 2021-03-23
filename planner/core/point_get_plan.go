@@ -1231,11 +1231,10 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		OrderedList: orderedList,
 		TblColPosInfos: TblColPosInfoSlice{
 			TblColPosInfo{
-				TblID:          tbl.ID,
-				Start:          0,
-				End:            pointPlan.Schema().Len(),
-				HandleCols:     handleCols,
-				IsCommonHandle: tbl.IsCommonHandle,
+				TblID:      tbl.ID,
+				Start:      0,
+				End:        pointPlan.Schema().Len(),
+				HandleCols: handleCols,
 			},
 		},
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
@@ -1318,11 +1317,10 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		SelectPlan: pointPlan,
 		TblColPosInfos: TblColPosInfoSlice{
 			TblColPosInfo{
-				TblID:          tbl.ID,
-				Start:          0,
-				End:            pointPlan.Schema().Len(),
-				HandleCols:     handleCols,
-				IsCommonHandle: tbl.IsCommonHandle,
+				TblID:      tbl.ID,
+				Start:      0,
+				End:        pointPlan.Schema().Len(),
+				HandleCols: handleCols,
 			},
 		},
 	}.Init(ctx)
