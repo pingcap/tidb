@@ -65,6 +65,9 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 	return txn.KVTxn.GetSnapshot()
 }
 
+func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
+	return txn.KVTxn.GetMemBuffer()
+}
 func (txn *tikvTxn) extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikv.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())

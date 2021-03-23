@@ -25,8 +25,59 @@ var _ = Suite(testUtilsSuite{})
 type testUtilsSuite struct {
 }
 
+type mockMap struct {
+	index []Key
+	value [][]byte
+}
+
+func newMockMap() *mockMap {
+	return &mockMap{
+		index: make([]Key, 0),
+		value: make([][]byte, 0),
+	}
+}
+
+func (s *mockMap) Iter(k Key, upperBound Key) (Iterator, error) {
+	return nil, nil
+}
+func (s *mockMap) IterReverse(k Key) (Iterator, error) {
+	return nil, nil
+}
+
+func (s *mockMap) Get(ctx context.Context, k Key) ([]byte, error) {
+	for i, key := range s.index {
+		if key.Cmp(k) == 0 {
+			return s.value[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *mockMap) Set(k Key, v []byte) error {
+	for i, key := range s.index {
+		if key.Cmp(k) == 0 {
+			s.value[i] = v
+			return nil
+		}
+	}
+	s.index = append(s.index, k)
+	s.value = append(s.value, v)
+	return nil
+}
+
+func (s *mockMap) Delete(k Key) error {
+	for i, key := range s.index {
+		if key.Cmp(k) == 0 {
+			s.index = append(s.index[:i], s.index[i+1:]...)
+			s.value = append(s.value[:i], s.value[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
 func (s testUtilsSuite) TestIncInt64(c *C) {
-	mb := newMemDB()
+	mb := newMockMap()
 	key := Key("key")
 	v, err := IncInt64(mb, key, 1)
 	c.Check(err, IsNil)
@@ -51,7 +102,7 @@ func (s testUtilsSuite) TestIncInt64(c *C) {
 }
 
 func (s testUtilsSuite) TestGetInt64(c *C) {
-	mb := newMemDB()
+	mb := newMockMap()
 	key := Key("key")
 	v, err := GetInt64(context.TODO(), mb, key)
 	c.Check(v, Equals, int64(0))

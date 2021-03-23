@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package unionstore
 
 import (
 	"context"
@@ -24,8 +24,15 @@ import (
 
 	. "github.com/pingcap/check"
 	leveldb "github.com/pingcap/goleveldb/leveldb/memdb"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/util/testleak"
 )
+
+type Key = tidbkv.Key
+type KeyFlags = kv.KeyFlags
+type StagingHandle = tidbkv.StagingHandle
+type Iterator = tidbkv.Iterator
 
 func init() {
 	testMode = true
@@ -451,14 +458,14 @@ func (s *testMemDBSuite) TestDirty(c *C) {
 	// persistent flags will make memdb dirty.
 	db = newMemDB()
 	h = db.Staging()
-	db.SetWithFlags([]byte{1}, []byte{1}, SetKeyLocked)
+	db.SetWithFlags([]byte{1}, []byte{1}, kv.SetKeyLocked)
 	db.Cleanup(h)
 	c.Assert(db.Dirty(), IsTrue)
 
 	// non-persistent flags will not make memdb dirty.
 	db = newMemDB()
 	h = db.Staging()
-	db.SetWithFlags([]byte{1}, []byte{1}, SetPresumeKeyNotExists)
+	db.SetWithFlags([]byte{1}, []byte{1}, kv.SetPresumeKeyNotExists)
 	db.Cleanup(h)
 	c.Assert(db.Dirty(), IsFalse)
 }
@@ -471,9 +478,9 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 		var buf [4]byte
 		binary.BigEndian.PutUint32(buf[:], i)
 		if i%2 == 0 {
-			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists, SetKeyLocked)
+			db.SetWithFlags(buf[:], buf[:], kv.SetPresumeKeyNotExists, kv.SetKeyLocked)
 		} else {
-			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists)
+			db.SetWithFlags(buf[:], buf[:], kv.SetPresumeKeyNotExists)
 		}
 	}
 	db.Cleanup(h)
@@ -511,7 +518,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 	for i := uint32(0); i < cnt; i++ {
 		var buf [4]byte
 		binary.BigEndian.PutUint32(buf[:], i)
-		db.UpdateFlags(buf[:], DelKeyLocked)
+		db.UpdateFlags(buf[:], kv.DelKeyLocked)
 	}
 	for i := uint32(0); i < cnt; i++ {
 		var buf [4]byte
@@ -710,7 +717,7 @@ func (s *testKVSuite) TestIterNextUntil(c *C) {
 	iter, err := buffer.Iter(nil, nil)
 	c.Assert(err, IsNil)
 
-	err = NextUntil(iter, func(k Key) bool {
+	err = tidbkv.NextUntil(iter, func(k Key) bool {
 		return false
 	})
 	c.Assert(err, IsNil)
@@ -829,7 +836,7 @@ func (s *testKVSuite) TestBufferBatchGetter(c *C) {
 	buffer.Set(ka, []byte("a2"))
 	buffer.Delete(kb)
 
-	batchGetter := NewBufferBatchGetter(buffer, middle, snap)
+	batchGetter := tidbkv.NewBufferBatchGetter(buffer, middle, snap)
 	result, err := batchGetter.BatchGet(context.Background(), []Key{ka, kb, kc, kd})
 	c.Assert(err, IsNil)
 	c.Assert(len(result), Equals, 3)

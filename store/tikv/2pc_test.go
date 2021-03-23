@@ -145,7 +145,7 @@ func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
 
 	{
 		txn := s.begin(c)
-		err := txn.GetMemBuffer().SetWithFlags(tidbkv.Key("bb"), []byte{0}, tidbkv.SetPresumeKeyNotExists)
+		err := txn.GetMemBuffer().SetWithFlags(tidbkv.Key("bb"), []byte{0}, kv.SetPresumeKeyNotExists)
 		c.Assert(err, IsNil)
 		err = txn.Set(tidbkv.Key("ba"), []byte{1})
 		c.Assert(err, IsNil)
@@ -161,7 +161,7 @@ func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
 
 	{
 		txn := s.begin(c)
-		err := txn.GetMemBuffer().SetWithFlags(tidbkv.Key("dd"), []byte{0}, tidbkv.SetPresumeKeyNotExists)
+		err := txn.GetMemBuffer().SetWithFlags(tidbkv.Key("dd"), []byte{0}, kv.SetPresumeKeyNotExists)
 		c.Assert(err, IsNil)
 		err = txn.Set(tidbkv.Key("de"), []byte{1})
 		c.Assert(err, IsNil)
@@ -639,7 +639,7 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 	txn = s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
 	_, _ = txn.us.Get(context.TODO(), key)
-	c.Assert(txn.GetMemBuffer().SetWithFlags(key, key, tidbkv.SetPresumeKeyNotExists), IsNil)
+	c.Assert(txn.GetMemBuffer().SetWithFlags(key, key, kv.SetPresumeKeyNotExists), IsNil)
 	lockCtx := &tidbkv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now()}
 	err := txn.LockKeys(context.Background(), lockCtx, key)
 	c.Assert(err, NotNil)
@@ -750,7 +750,7 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	txn1.DelOption(kv.Pessimistic)
 	txn1.store.txnLatches = nil
 	txn1.Get(context.Background(), k1)
-	txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, tidbkv.SetPresumeKeyNotExists)
+	txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, kv.SetPresumeKeyNotExists)
 	txn1.Set(k2, []byte{1})
 	txn1.Set(k3, []byte{2})
 	txn1.Delete(k1)
@@ -791,11 +791,11 @@ func (s *testCommitterSuite) TestDeleteAllYourWrites(c *C) {
 	txn1 := s.begin(c)
 	txn1.DelOption(kv.Pessimistic)
 	txn1.store.txnLatches = nil
-	txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, tidbkv.SetPresumeKeyNotExists)
+	txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, kv.SetPresumeKeyNotExists)
 	txn1.Delete(k1)
-	txn1.GetMemBuffer().SetWithFlags(k2, []byte{1}, tidbkv.SetPresumeKeyNotExists)
+	txn1.GetMemBuffer().SetWithFlags(k2, []byte{1}, kv.SetPresumeKeyNotExists)
 	txn1.Delete(k2)
-	txn1.GetMemBuffer().SetWithFlags(k3, []byte{2}, tidbkv.SetPresumeKeyNotExists)
+	txn1.GetMemBuffer().SetWithFlags(k3, []byte{2}, kv.SetPresumeKeyNotExists)
 	txn1.Delete(k3)
 	err1 := txn1.Commit(context.Background())
 	c.Assert(err1, IsNil)
@@ -811,7 +811,7 @@ func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
 	txn1 := s.begin(c)
 	txn1.DelOption(kv.Pessimistic)
 	txn1.store.txnLatches = nil
-	txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, tidbkv.SetPresumeKeyNotExists)
+	txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, kv.SetPresumeKeyNotExists)
 	txn1.Delete(k1)
 	err := txn1.LockKeys(context.Background(), &tidbkv.LockCtx{}, k2, k3) // select * from t where x in (k2, k3) for update
 	c.Assert(err, IsNil)

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -107,13 +108,13 @@ type twoPhaseCommitter struct {
 }
 
 type memBufferMutations struct {
-	storage tidbkv.MemBuffer
-	handles []tidbkv.MemKeyHandle
+	storage unionstore.MemBuffer
+	handles []unionstore.MemKeyHandle
 }
 
-func newMemBufferMutations(sizeHint int, storage tidbkv.MemBuffer) *memBufferMutations {
+func newMemBufferMutations(sizeHint int, storage unionstore.MemBuffer) *memBufferMutations {
 	return &memBufferMutations{
-		handles: make([]tidbkv.MemKeyHandle, 0, sizeHint),
+		handles: make([]unionstore.MemKeyHandle, 0, sizeHint),
 		storage: storage,
 	}
 }
@@ -154,7 +155,7 @@ func (m *memBufferMutations) Slice(from, to int) CommitterMutations {
 	}
 }
 
-func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, handle tidbkv.MemKeyHandle) {
+func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, handle unionstore.MemKeyHandle) {
 	aux := uint16(op) << 1
 	if isPessimisticLock {
 		aux |= 1
@@ -358,7 +359,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 					// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
 					op = pb.Op_CheckNotExists
 					checkCnt++
-					memBuf.UpdateFlags(key, tidbkv.SetPrewriteOnly)
+					memBuf.UpdateFlags(key, kv.SetPrewriteOnly)
 				} else {
 					// normal delete keys in optimistic txn can be delete without not exists checking
 					// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them

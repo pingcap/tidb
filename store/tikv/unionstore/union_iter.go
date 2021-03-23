@@ -11,17 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package unionstore
 
 import (
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 // UnionIter is the iterator on an UnionStore.
 type UnionIter struct {
-	dirtyIt    Iterator
-	snapshotIt Iterator
+	dirtyIt    tidbkv.Iterator
+	snapshotIt tidbkv.Iterator
 
 	dirtyValid    bool
 	snapshotValid bool
@@ -32,7 +33,7 @@ type UnionIter struct {
 }
 
 // NewUnionIter returns a union iterator for BufferStore.
-func NewUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) (*UnionIter, error) {
+func NewUnionIter(dirtyIt tidbkv.Iterator, snapshotIt tidbkv.Iterator, reverse bool) (*UnionIter, error) {
 	it := &UnionIter{
 		dirtyIt:       dirtyIt,
 		snapshotIt:    snapshotIt,
@@ -161,7 +162,7 @@ func (iter *UnionIter) Value() []byte {
 }
 
 // Key implements the Iterator Key interface.
-func (iter *UnionIter) Key() Key {
+func (iter *UnionIter) Key() tidbkv.Key {
 	if !iter.curIsDirty {
 		return iter.snapshotIt.Key()
 	}

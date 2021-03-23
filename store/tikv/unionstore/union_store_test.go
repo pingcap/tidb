@@ -11,12 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package unionstore
 
 import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -24,7 +25,7 @@ var _ = Suite(&testUnionStoreSuite{})
 
 type testUnionStoreSuite struct {
 	store MemBuffer
-	us    UnionStore
+	us    kv.UnionStore
 }
 
 func (s *testUnionStoreSuite) SetUpTest(c *C) {
@@ -55,7 +56,7 @@ func (s *testUnionStoreSuite) TestDelete(c *C) {
 	err = s.us.GetMemBuffer().Delete([]byte("1"))
 	c.Assert(err, IsNil)
 	_, err = s.us.Get(context.TODO(), []byte("1"))
-	c.Assert(IsErrNotFound(err), IsTrue)
+	c.Assert(kv.IsErrNotFound(err), IsTrue)
 
 	err = s.us.GetMemBuffer().Set([]byte("1"), []byte("2"))
 	c.Assert(err, IsNil)
@@ -124,7 +125,7 @@ func (s *testUnionStoreSuite) TestIterReverse(c *C) {
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("0")}, [][]byte{[]byte("2"), []byte("0")})
 }
 
-func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
+func checkIterator(c *C, iter kv.Iterator, keys [][]byte, values [][]byte) {
 	defer iter.Close()
 	c.Assert(len(keys), Equals, len(values))
 	for i, k := range keys {

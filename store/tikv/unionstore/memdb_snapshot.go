@@ -11,18 +11,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package unionstore
 
-import "context"
+import (
+	"context"
 
-func (db *memdb) SnapshotGetter() Getter {
+	tidbkv "github.com/pingcap/tidb/kv"
+)
+
+func (db *memdb) SnapshotGetter() tidbkv.Getter {
 	return &memdbSnapGetter{
 		db: db,
 		cp: db.getSnapshot(),
 	}
 }
 
-func (db *memdb) SnapshotIter(start, end Key) Iterator {
+func (db *memdb) SnapshotIter(start, end tidbkv.Key) tidbkv.Iterator {
 	it := &memdbSnapIter{
 		memdbIterator: &memdbIterator{
 			db:    db,
@@ -47,18 +51,18 @@ type memdbSnapGetter struct {
 	cp memdbCheckpoint
 }
 
-func (snap *memdbSnapGetter) Get(_ context.Context, key Key) ([]byte, error) {
+func (snap *memdbSnapGetter) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
 	x := snap.db.traverse(key, false)
 	if x.isNull() {
-		return nil, ErrNotExist
+		return nil, tidbkv.ErrNotExist
 	}
 	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
-		return nil, ErrNotExist
+		return nil, tidbkv.ErrNotExist
 	}
 	v, ok := snap.db.vlog.getSnapshotValue(x.vptr, &snap.cp)
 	if !ok {
-		return nil, ErrNotExist
+		return nil, tidbkv.ErrNotExist
 	}
 	return v, nil
 }

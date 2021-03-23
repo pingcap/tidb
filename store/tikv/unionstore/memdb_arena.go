@@ -11,12 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package unionstore
 
 import (
 	"encoding/binary"
 	"math"
 	"unsafe"
+
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 const (
@@ -190,7 +193,7 @@ func (a *nodeAllocator) getNode(addr memdbArenaAddr) *memdbNode {
 	return (*memdbNode)(unsafe.Pointer(&a.blocks[addr.idx].buf[addr.off]))
 }
 
-func (a *nodeAllocator) allocNode(key Key) (memdbArenaAddr, *memdbNode) {
+func (a *nodeAllocator) allocNode(key tidbkv.Key) (memdbArenaAddr, *memdbNode) {
 	nodeSize := 8*4 + 2 + 1 + len(key)
 	addr, mem := a.alloc(nodeSize, true)
 	n := (*memdbNode)(unsafe.Pointer(&mem[0]))
@@ -311,7 +314,7 @@ func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {
 		// oldValue.isNull() == true means this is a newly added value.
 		if hdr.oldValue.isNull() {
 			// If there are no flags associated with this key, we need to delete this node.
-			keptFlags := node.getKeyFlags() & persistentFlags
+			keptFlags := node.getKeyFlags().AndPersistent()
 			if keptFlags == 0 {
 				db.deleteNode(node)
 			} else {
@@ -326,7 +329,7 @@ func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {
 	}
 }
 
-func (l *memdbVlog) inspectKVInLog(db *memdb, head, tail *memdbCheckpoint, f func(Key, KeyFlags, []byte)) {
+func (l *memdbVlog) inspectKVInLog(db *memdb, head, tail *memdbCheckpoint, f func(tidbkv.Key, kv.KeyFlags, []byte)) {
 	cursor := *tail
 	for !head.isSamePosition(&cursor) {
 		cursorAddr := memdbArenaAddr{idx: uint32(cursor.blocks - 1), off: uint32(cursor.offsetInBlock)}

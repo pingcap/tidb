@@ -49,6 +49,9 @@ var (
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
 
+// TODO:remove it when br is ready
+type FlagsOp = tikvstore.FlagsOp
+
 // Getter is the interface for the Get method.
 type Getter interface {
 	// Get gets the value for key k from kv store.
@@ -97,15 +100,6 @@ type RetrieverMutator interface {
 	Mutator
 }
 
-// MemBufferIterator is an Iterator with KeyFlags related functions.
-type MemBufferIterator interface {
-	Iterator
-	HasValue() bool
-	Flags() KeyFlags
-	UpdateFlags(...FlagsOp)
-	Handle() MemKeyHandle
-}
-
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
 type MemBuffer interface {
 	RetrieverMutator
@@ -119,20 +113,13 @@ type MemBuffer interface {
 	RUnlock()
 
 	// GetFlags returns the latest flags associated with key.
-	GetFlags(Key) (KeyFlags, error)
-	// IterWithFlags returns a MemBufferIterator.
-	IterWithFlags(k Key, upperBound Key) MemBufferIterator
-	// IterReverseWithFlags returns a reversed MemBufferIterator.
-	IterReverseWithFlags(k Key) MemBufferIterator
+	GetFlags(Key) (tikvstore.KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
-	SetWithFlags(Key, []byte, ...FlagsOp) error
+	SetWithFlags(Key, []byte, ...tikvstore.FlagsOp) error
 	// UpdateFlags update the flags associated with key.
-	UpdateFlags(Key, ...FlagsOp)
+	UpdateFlags(Key, ...tikvstore.FlagsOp)
 	// DeleteWithFlags delete key with the given KeyFlags
-	DeleteWithFlags(Key, ...FlagsOp) error
-
-	GetKeyByHandle(MemKeyHandle) []byte
-	GetValueByHandle(MemKeyHandle) ([]byte, bool)
+	DeleteWithFlags(Key, ...tikvstore.FlagsOp) error
 
 	// Reset reset the MemBuffer to initial states.
 	Reset()
@@ -150,7 +137,7 @@ type MemBuffer interface {
 	// If the changes are not published by `Release`, they will be discarded.
 	Cleanup(StagingHandle)
 	// InspectStage used to inspect the value updates in the given stage.
-	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
+	InspectStage(StagingHandle, func(Key, tikvstore.KeyFlags, []byte))
 
 	// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
 	SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error)

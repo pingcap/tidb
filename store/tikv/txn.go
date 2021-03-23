@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
@@ -84,7 +85,7 @@ func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, repl
 	snapshot := newTiKVSnapshot(store, startTS, replicaReadSeed)
 	newTiKVTxn := &KVTxn{
 		snapshot:  snapshot,
-		us:        tidbkv.NewUnionStore(snapshot),
+		us:        unionstore.NewUnionStore(snapshot),
 		store:     store,
 		startTS:   startTS,
 		startTime: time.Now(),
@@ -395,7 +396,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 			}
 		}
 	}()
-	memBuf := txn.us.GetMemBuffer()
+	memBuf := txn.us.GetMemBuffer().(unionstore.MemBuffer)
 	for _, key := range keysInput {
 		// The value of lockedMap is only used by pessimistic transactions.
 		var valueExist, locked, checkKeyExists bool
@@ -496,16 +497,16 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 		}
 	}
 	for _, key := range keys {
-		valExists := tidbkv.SetKeyLockedValueExists
+		valExists := kv.SetKeyLockedValueExists
 		// PointGet and BatchPointGet will return value in pessimistic lock response, the value may not exist.
 		// For other lock modes, the locked key values always exist.
 		if lockCtx.ReturnValues {
 			val, _ := lockCtx.Values[string(key)]
 			if len(val.Value) == 0 {
-				valExists = tidbkv.SetKeyLockedValueNotExists
+				valExists = kv.SetKeyLockedValueNotExists
 			}
 		}
-		memBuf.UpdateFlags(key, tidbkv.SetKeyLocked, tidbkv.DelNeedCheckExists, valExists)
+		memBuf.UpdateFlags(key, kv.SetKeyLocked, kv.DelNeedCheckExists, valExists)
 	}
 	txn.lockedCnt += len(keys)
 	return nil
@@ -608,8 +609,8 @@ func (txn *KVTxn) GetUnionStore() tidbkv.UnionStore {
 }
 
 // GetMemBuffer return the MemBuffer binding to this transaction.
-func (txn *KVTxn) GetMemBuffer() tidbkv.MemBuffer {
-	return txn.us.GetMemBuffer()
+func (txn *KVTxn) GetMemBuffer() unionstore.MemBuffer {
+	return txn.us.GetMemBuffer().(unionstore.MemBuffer)
 }
 
 // GetSnapshot returns the Snapshot binding to this transaction.

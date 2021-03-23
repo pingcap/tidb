@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package unionstore
 
 import (
 	"bytes"
@@ -20,119 +20,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"unsafe"
+
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
-
-const (
-	flagPresumeKNE KeyFlags = 1 << iota
-	flagKeyLocked
-	flagNeedLocked
-	flagKeyLockedValExist
-	flagNeedCheckExists
-	flagPrewriteOnly
-	flagIgnoredIn2PC
-
-	persistentFlags = flagKeyLocked | flagKeyLockedValExist
-	// bit 1 => red, bit 0 => black
-	nodeColorBit  uint8 = 0x80
-	nodeFlagsMask       = ^nodeColorBit
-)
-
-// KeyFlags are metadata associated with key
-type KeyFlags uint8
-
-// HasPresumeKeyNotExists returns whether the associated key use lazy check.
-func (f KeyFlags) HasPresumeKeyNotExists() bool {
-	return f&flagPresumeKNE != 0
-}
-
-// HasLocked returns whether the associated key has acquired pessimistic lock.
-func (f KeyFlags) HasLocked() bool {
-	return f&flagKeyLocked != 0
-}
-
-// HasNeedLocked return whether the key needed to be locked
-func (f KeyFlags) HasNeedLocked() bool {
-	return f&flagNeedLocked != 0
-}
-
-// HasLockedValueExists returns whether the value exists when key locked.
-func (f KeyFlags) HasLockedValueExists() bool {
-	return f&flagKeyLockedValExist != 0
-}
-
-// HasNeedCheckExists returns whether the key need to check existence when it has been locked.
-func (f KeyFlags) HasNeedCheckExists() bool {
-	return f&flagNeedCheckExists != 0
-}
-
-// HasPrewriteOnly returns whether the key should be used in 2pc commit phase.
-func (f KeyFlags) HasPrewriteOnly() bool {
-	return f&flagPrewriteOnly != 0
-}
-
-// HasIgnoredIn2PC returns whether the key will be ignored in 2pc.
-func (f KeyFlags) HasIgnoredIn2PC() bool {
-	return f&flagIgnoredIn2PC != 0
-}
-
-// FlagsOp describes KeyFlags modify operation.
-type FlagsOp uint16
-
-const (
-	// SetPresumeKeyNotExists marks the existence of the associated key is checked lazily.
-	// Implies KeyFlags.HasNeedCheckExists() == true.
-	SetPresumeKeyNotExists FlagsOp = 1 << iota
-	// DelPresumeKeyNotExists reverts SetPresumeKeyNotExists.
-	DelPresumeKeyNotExists
-	// SetKeyLocked marks the associated key has acquired lock.
-	SetKeyLocked
-	// DelKeyLocked reverts SetKeyLocked.
-	DelKeyLocked
-	// SetNeedLocked marks the associated key need to be acquired lock.
-	SetNeedLocked
-	// DelNeedLocked reverts SetKeyNeedLocked.
-	DelNeedLocked
-	// SetKeyLockedValueExists marks the value exists when key has been locked in Transaction.LockKeys.
-	SetKeyLockedValueExists
-	// SetKeyLockedValueNotExists marks the value doesn't exists when key has been locked in Transaction.LockKeys.
-	SetKeyLockedValueNotExists
-	// DelNeedCheckExists marks the key no need to be checked in Transaction.LockKeys.
-	DelNeedCheckExists
-	// SetPrewriteOnly marks the key shouldn't be used in 2pc commit phase.
-	SetPrewriteOnly
-	// SetIgnoredIn2PC marks the key will be ignored in 2pc.
-	SetIgnoredIn2PC
-)
-
-func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
-	for _, op := range ops {
-		switch op {
-		case SetPresumeKeyNotExists:
-			origin |= flagPresumeKNE | flagNeedCheckExists
-		case DelPresumeKeyNotExists:
-			origin &= ^(flagPresumeKNE | flagNeedCheckExists)
-		case SetKeyLocked:
-			origin |= flagKeyLocked
-		case DelKeyLocked:
-			origin &= ^flagKeyLocked
-		case SetNeedLocked:
-			origin |= flagNeedLocked
-		case DelNeedLocked:
-			origin &= ^flagNeedLocked
-		case SetKeyLockedValueExists:
-			origin |= flagKeyLockedValExist
-		case DelNeedCheckExists:
-			origin &= ^flagNeedCheckExists
-		case SetKeyLockedValueNotExists:
-			origin &= ^flagKeyLockedValExist
-		case SetPrewriteOnly:
-			origin |= flagPrewriteOnly
-		case SetIgnoredIn2PC:
-			origin |= flagIgnoredIn2PC
-		}
-	}
-	return origin
-}
 
 var tombstone = []byte{}
 
@@ -182,20 +73,20 @@ func newMemDB() *memdb {
 	db.allocator.init()
 	db.root = nullAddr
 	db.stages = make([]memdbCheckpoint, 0, 2)
-	db.entrySizeLimit = atomic.LoadUint64(&TxnEntrySizeLimit)
-	db.bufferSizeLimit = atomic.LoadUint64(&TxnTotalSizeLimit)
+	db.entrySizeLimit = atomic.LoadUint64(&tidbkv.TxnEntrySizeLimit)
+	db.bufferSizeLimit = atomic.LoadUint64(&tidbkv.TxnTotalSizeLimit)
 	return db
 }
 
-func (db *memdb) Staging() StagingHandle {
+func (db *memdb) Staging() tidbkv.StagingHandle {
 	db.Lock()
 	defer db.Unlock()
 
 	db.stages = append(db.stages, db.vlog.checkpoint())
-	return StagingHandle(len(db.stages))
+	return tidbkv.StagingHandle(len(db.stages))
 }
 
-func (db *memdb) Release(h StagingHandle) {
+func (db *memdb) Release(h tidbkv.StagingHandle) {
 	if int(h) != len(db.stages) {
 		// This should never happens in production environment.
 		// Use panic to make debug easier.
@@ -213,7 +104,7 @@ func (db *memdb) Release(h StagingHandle) {
 	db.stages = db.stages[:int(h)-1]
 }
 
-func (db *memdb) Cleanup(h StagingHandle) {
+func (db *memdb) Cleanup(h tidbkv.StagingHandle) {
 	if int(h) > len(db.stages) {
 		return
 	}
@@ -252,14 +143,14 @@ func (db *memdb) DiscardValues() {
 	db.vlog.reset()
 }
 
-func (db *memdb) InspectStage(handle StagingHandle, f func(Key, KeyFlags, []byte)) {
+func (db *memdb) InspectStage(handle tidbkv.StagingHandle, f func(tidbkv.Key, kv.KeyFlags, []byte)) {
 	idx := int(handle) - 1
 	tail := db.vlog.checkpoint()
 	head := db.stages[idx]
 	db.vlog.inspectKVInLog(db, &head, &tail, f)
 }
 
-func (db *memdb) Get(_ context.Context, key Key) ([]byte, error) {
+func (db *memdb) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
 	if db.vlogInvalid {
 		// panic for easier debugging.
 		panic("vlog is resetted")
@@ -267,23 +158,23 @@ func (db *memdb) Get(_ context.Context, key Key) ([]byte, error) {
 
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return nil, ErrNotExist
+		return nil, tidbkv.ErrNotExist
 	}
 	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
-		return nil, ErrNotExist
+		return nil, tidbkv.ErrNotExist
 	}
 	return db.vlog.getValue(x.vptr), nil
 }
 
-func (db *memdb) SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error) {
+func (db *memdb) SelectValueHistory(key tidbkv.Key, predicate func(value []byte) bool) ([]byte, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return nil, ErrNotExist
+		return nil, tidbkv.ErrNotExist
 	}
 	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
-		return nil, ErrNotExist
+		return nil, tidbkv.ErrNotExist
 	}
 	result := db.vlog.selectValueHistory(x.vptr, func(addr memdbArenaAddr) bool {
 		return predicate(db.vlog.getValue(addr))
@@ -294,38 +185,38 @@ func (db *memdb) SelectValueHistory(key Key, predicate func(value []byte) bool) 
 	return db.vlog.getValue(result), nil
 }
 
-func (db *memdb) GetFlags(key Key) (KeyFlags, error) {
+func (db *memdb) GetFlags(key tidbkv.Key) (kv.KeyFlags, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return 0, ErrNotExist
+		return 0, tidbkv.ErrNotExist
 	}
 	return x.getKeyFlags(), nil
 }
 
-func (db *memdb) UpdateFlags(key Key, ops ...FlagsOp) {
+func (db *memdb) UpdateFlags(key tidbkv.Key, ops ...kv.FlagsOp) {
 	err := db.set(key, nil, ops...)
 	_ = err // set without value will never fail
 }
 
-func (db *memdb) Set(key Key, value []byte) error {
+func (db *memdb) Set(key tidbkv.Key, value []byte) error {
 	if len(value) == 0 {
-		return ErrCannotSetNilValue
+		return tidbkv.ErrCannotSetNilValue
 	}
 	return db.set(key, value)
 }
 
-func (db *memdb) SetWithFlags(key Key, value []byte, ops ...FlagsOp) error {
+func (db *memdb) SetWithFlags(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) error {
 	if len(value) == 0 {
-		return ErrCannotSetNilValue
+		return tidbkv.ErrCannotSetNilValue
 	}
 	return db.set(key, value, ops...)
 }
 
-func (db *memdb) Delete(key Key) error {
+func (db *memdb) Delete(key tidbkv.Key) error {
 	return db.set(key, tombstone)
 }
 
-func (db *memdb) DeleteWithFlags(key Key, ops ...FlagsOp) error {
+func (db *memdb) DeleteWithFlags(key tidbkv.Key, ops ...kv.FlagsOp) error {
 	return db.set(key, tombstone, ops...)
 }
 
@@ -357,7 +248,7 @@ func (db *memdb) Dirty() bool {
 	return db.dirty
 }
 
-func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
+func (db *memdb) set(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) error {
 	if db.vlogInvalid {
 		// panic for easier debugging.
 		panic("vlog is resetted")
@@ -365,7 +256,7 @@ func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
 
 	if value != nil {
 		if size := uint64(len(key) + len(value)); size > db.entrySizeLimit {
-			return ErrEntryTooLarge.GenWithStackByArgs(db.entrySizeLimit, size)
+			return tidbkv.ErrEntryTooLarge.GenWithStackByArgs(db.entrySizeLimit, size)
 		}
 	}
 
@@ -378,8 +269,8 @@ func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
 	x := db.traverse(key, true)
 
 	if len(ops) != 0 {
-		flags := applyFlagsOps(x.getKeyFlags(), ops...)
-		if flags&persistentFlags != 0 {
+		flags := kv.ApplyFlagsOps(x.getKeyFlags(), ops...)
+		if flags.AndPersistent() != 0 {
 			db.dirty = true
 		}
 		x.setKeyFlags(flags)
@@ -391,7 +282,7 @@ func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
 
 	db.setValue(x, value)
 	if uint64(db.Size()) > db.bufferSizeLimit {
-		return ErrTxnTooLarge.GenWithStackByArgs(db.Size())
+		return tidbkv.ErrTxnTooLarge.GenWithStackByArgs(db.Size())
 	}
 	return nil
 }
@@ -421,7 +312,7 @@ func (db *memdb) setValue(x memdbNodeAddr, value []byte) {
 
 // traverse search for and if not found and insert is true, will add a new node in.
 // Returns a pointer to the new node, or the node found.
-func (db *memdb) traverse(key Key, insert bool) memdbNodeAddr {
+func (db *memdb) traverse(key tidbkv.Key, insert bool) memdbNodeAddr {
 	x := db.getRoot()
 	y := memdbNodeAddr{nil, nullAddr}
 	found := false
@@ -819,7 +710,7 @@ func (db *memdb) getRoot() memdbNodeAddr {
 	return db.getNode(db.root)
 }
 
-func (db *memdb) allocNode(key Key) memdbNodeAddr {
+func (db *memdb) allocNode(key tidbkv.Key) memdbNodeAddr {
 	db.size += len(key)
 	db.count++
 	x, xn := db.allocator.allocNode(key)
@@ -872,7 +763,7 @@ func (n *memdbNode) setBlack() {
 	n.flags &= ^nodeColorBit
 }
 
-func (n *memdbNode) getKey() Key {
+func (n *memdbNode) getKey() tidbkv.Key {
 	var ret []byte
 	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&ret))
 	hdr.Data = uintptr(unsafe.Pointer(&n.flags)) + 1
@@ -881,10 +772,16 @@ func (n *memdbNode) getKey() Key {
 	return ret
 }
 
-func (n *memdbNode) getKeyFlags() KeyFlags {
-	return KeyFlags(n.flags & nodeFlagsMask)
+const (
+	// bit 1 => red, bit 0 => black
+	nodeColorBit  uint8 = 0x80
+	nodeFlagsMask       = ^nodeColorBit
+)
+
+func (n *memdbNode) getKeyFlags() kv.KeyFlags {
+	return kv.KeyFlags(n.flags & nodeFlagsMask)
 }
 
-func (n *memdbNode) setKeyFlags(f KeyFlags) {
+func (n *memdbNode) setKeyFlags(f kv.KeyFlags) {
 	n.flags = (^nodeFlagsMask & n.flags) | uint8(f)
 }
