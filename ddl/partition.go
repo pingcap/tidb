@@ -1654,7 +1654,7 @@ func (cns columnNameSlice) At(i int) string {
 	return cns[i].Name.L
 }
 
-// isColUnsigned returns true if the partitioning key column type is unsigned bigint type.
+// isColUnsigned returns true if the partitioning key column is unsigned.
 func isColUnsigned(cols []*model.ColumnInfo, pi *model.PartitionInfo) bool {
 	for _, col := range cols {
 		isUnsigned := mysql.HasUnsignedFlag(col.Flag)
