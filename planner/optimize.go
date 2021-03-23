@@ -273,7 +273,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 			plannercore.EraseLastSemicolon(x)
-			normalizeExplainSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB))
+			normalizeExplainSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
 			idx := int(0)
 			switch n := x.Stmt.(type) {
 			case *ast.SelectStmt:
