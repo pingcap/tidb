@@ -1924,7 +1924,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	for _, bucket := range globalBuckets {
 		var repeat float64
 		for _, hist := range hists {
-			repeat += hist.equalRowCount(*bucket.upper, true)
+			repeat += hist.equalRowCount(*bucket.upper, isIndex) // only hists of indexes have bucket.NDV
 		}
 		bucket.Repeat = int64(repeat)
 	}
