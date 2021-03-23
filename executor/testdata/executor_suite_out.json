@@ -525,30 +525,28 @@
       {
         "SQL": "select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
         "Plan": [
-          "MergeJoin_9 0.00 root  inner join, left key:test.t.c1, right key:test.t.c1",
-          "├─TableDual_35(Build) 0.00 root  rows:0",
-          "└─TableDual_34(Probe) 0.00 root  rows:0"
+          "MergeJoin 0.00 root  inner join, left key:test.t.c1, right key:test.t.c1",
+          "├─TableDual(Build) 0.00 root  rows:0",
+          "└─TableDual(Probe) 0.00 root  rows:0"
         ],
-        "Res": [
-        ]
+        "Res": null
       },
       {
         "SQL": "select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
         "Plan": [
-          "MergeJoin_9 0.00 root  inner join, left key:test.t.c1, right key:test.t.c1",
-          "├─TableDual_41(Build) 0.00 root  rows:0",
-          "└─TableDual_40(Probe) 0.00 root  rows:0"
+          "MergeJoin 0.00 root  inner join, left key:test.t.c1, right key:test.t.c1",
+          "├─TableDual(Build) 0.00 root  rows:0",
+          "└─TableDual(Probe) 0.00 root  rows:0"
         ],
-        "Res": [
-        ]
+        "Res": null
       },
       {
         "SQL": "select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
         "Plan": [
-          "StreamAgg_11 1.00 root  funcs:count(1)->Column#7",
-          "└─MergeJoin_12 0.00 root  inner join, left key:test.t.c1, right key:test.t.c1",
-          "  ├─TableDual_38(Build) 0.00 root  rows:0",
-          "  └─TableDual_37(Probe) 0.00 root  rows:0"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─MergeJoin 0.00 root  inner join, left key:test.t.c1, right key:test.t.c1",
+          "  ├─TableDual(Build) 0.00 root  rows:0",
+          "  └─TableDual(Probe) 0.00 root  rows:0"
         ],
         "Res": [
           "0"
@@ -557,30 +555,28 @@
       {
         "SQL": "select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
         "Plan": [
-          "MergeJoin_7 0.00 root  left outer join, left key:test.t.c1, right key:test.t.c1",
-          "├─TableDual_22(Build) 0.00 root  rows:0",
-          "└─TableDual_21(Probe) 0.00 root  rows:0"
+          "MergeJoin 0.00 root  left outer join, left key:test.t.c1, right key:test.t.c1",
+          "├─TableDual(Build) 0.00 root  rows:0",
+          "└─TableDual(Probe) 0.00 root  rows:0"
         ],
-        "Res": [
-        ]
+        "Res": null
       },
       {
         "SQL": "select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
         "Plan": [
-          "MergeJoin_7 0.00 root  left outer join, left key:test.t.c1, right key:test.t.c1",
-          "├─TableDual_25(Build) 0.00 root  rows:0",
-          "└─TableDual_24(Probe) 0.00 root  rows:0"
+          "MergeJoin 0.00 root  left outer join, left key:test.t.c1, right key:test.t.c1",
+          "├─TableDual(Build) 0.00 root  rows:0",
+          "└─TableDual(Probe) 0.00 root  rows:0"
         ],
-        "Res": [
-        ]
+        "Res": null
       },
       {
         "SQL": "select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
         "Plan": [
-          "StreamAgg_9 1.00 root  funcs:count(1)->Column#7",
-          "└─MergeJoin_10 0.00 root  left outer join, left key:test.t.c1, right key:test.t.c1",
-          "  ├─TableDual_25(Build) 0.00 root  rows:0",
-          "  └─TableDual_24(Probe) 0.00 root  rows:0"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─MergeJoin 0.00 root  left outer join, left key:test.t.c1, right key:test.t.c1",
+          "  ├─TableDual(Build) 0.00 root  rows:0",
+          "  └─TableDual(Probe) 0.00 root  rows:0"
         ],
         "Res": [
           "0"
@@ -589,13 +585,13 @@
       {
         "SQL": "select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL",
         "Plan": [
-          "HashJoin_22 12487.50 root  left outer join, equal:[eq(test.t.c1, test.t.c1)]",
-          "├─TableReader_40(Build) 9990.00 root  data:Selection_39",
-          "│ └─Selection_39 9990.00 cop[tikv]  not(isnull(test.t.c1))",
-          "│   └─TableFullScan_38 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_34(Probe) 9990.00 root  data:Selection_33",
-          "  └─Selection_33 9990.00 cop[tikv]  not(isnull(test.t.c1))",
-          "    └─TableFullScan_32 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin 12487.50 root  left outer join, equal:[eq(test.t.c1, test.t.c1)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c1))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c1))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Res": [
           "2001 1 2001 1"
