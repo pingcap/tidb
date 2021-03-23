@@ -468,7 +468,9 @@ func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
 	var tps []*types.FieldType
 	if e.indexSidePagination {
 		for _, col := range e.idxCols {
-			tps = append(tps, col.RetType)
+			if col.ID != -1 {
+				tps = append(tps, col.RetType)
+			}
 		}
 	}
 	if e.isCommonHandle() {
