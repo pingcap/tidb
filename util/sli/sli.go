@@ -87,8 +87,8 @@ func (t *TxnWriteThroughputSLI) SetInvalid() {
 }
 
 // IsInvalid checks the transaction is valid to report SLI metrics. Currently, the following case will cause invalid:
-// 1. The transaction contain `insert|replace into ... select ... from ...` statement.
-// 2. The write sql statement has more read keys than write keys.
+// 1. The transaction contains `insert|replace into ... select ... from ...` statement.
+// 2. The write SQL statement has more read keys than write keys.
 func (t *TxnWriteThroughputSLI) IsInvalid() bool {
 	return t.invalid || t.readKeys > t.writeKeys || t.writeSize == 0 || t.writeTime == 0
 }
