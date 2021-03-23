@@ -176,6 +176,8 @@ var (
 	ErrDropLastPartition = dbterror.ClassDDL.NewStd(mysql.ErrDropLastPartition)
 	// ErrTooManyPartitions returns too many partitions were defined.
 	ErrTooManyPartitions = dbterror.ClassDDL.NewStd(mysql.ErrTooManyPartitions)
+	// ErrPartitionConstDomain returns partition constant is out of partition function domain.
+	ErrPartitionConstDomain = dbterror.ClassDDL.NewStd(mysql.ErrPartitionConstDomain)
 	// ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
 	ErrPartitionFunctionIsNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrPartitionFunctionIsNotAllowed)
 	// ErrPartitionFuncNotAllowed returns partition function returns the wrong type.

@@ -825,6 +825,11 @@ type SessionVars struct {
 
 	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
 	EnableDynamicPrivileges bool
+
+	// CoprCacheHitNum is to record coprocessor cache hit times for one statement.
+	CoprCacheHitNum atomic2.Uint64
+	// CoprRespTimes is to record coprocessor response times for one statement.
+	CoprRespTimes atomic2.Uint64
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
