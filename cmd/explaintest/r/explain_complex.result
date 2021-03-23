@@ -122,7 +122,7 @@ Projection	1.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.d
       └─HashJoin	0.00	root		inner join, equal:[eq(test.dd.aid, test.st.aid) eq(test.dd.ip, test.st.ip)], other cond:gt(test.dd.t, test.st.t)
         ├─IndexLookUp(Build)	0.00	root		
         │ ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:dd, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
-        │ └─Selection(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), not(isnull(test.dd.aid)), not(isnull(test.dd.ip))
+        │ └─Selection(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), not(isnull(test.dd.ip))
         │   └─TableRowIDScan	3333.33	cop[tikv]	table:dd	keep order:false, stats:pseudo
         └─IndexLookUp(Probe)	3.33	root		
           ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
@@ -138,10 +138,9 @@ Projection	0.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.d
     │ └─Selection(Probe)	0.00	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), not(isnull(test.st.dic))
     │   └─TableRowIDScan	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
     └─IndexLookUp(Probe)	0.00	root		
-      ├─Selection(Build)	9990.00	cop[tikv]		not(isnull(test.dd.aid))
-      │ └─IndexRangeScan	10000.00	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:false, stats:pseudo
+      ├─IndexRangeScan(Build)	10000.00	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:false, stats:pseudo
       └─Selection(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
-        └─TableRowIDScan	9990.00	cop[tikv]	table:sdk	keep order:false, stats:pseudo
+        └─TableRowIDScan	10000.00	cop[tikv]	table:sdk	keep order:false, stats:pseudo
 explain format = 'brief' SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	estRows	task	access object	operator info
 Projection	1.00	root		test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, Column#20, Column#21
@@ -156,7 +155,7 @@ Projection	0.01	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.
 └─Limit	0.01	root		offset:0, count:2000
   └─IndexJoin	0.01	root		inner join, inner:IndexLookUp, outer key:test.rr.aid, test.rr.dic, inner key:test.dt.aid, test.dt.dic, equal cond:eq(test.rr.aid, test.dt.aid), eq(test.rr.dic, test.dt.dic)
     ├─TableReader(Build)	3.33	root		data:Selection
-    │ └─Selection	3.33	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592), not(isnull(test.rr.aid)), not(isnull(test.rr.dic))
+    │ └─Selection	3.33	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
     │   └─TableFullScan	10000.00	cop[tikv]	table:rr	keep order:false, stats:pseudo
     └─IndexLookUp(Probe)	0.00	root		
       ├─Selection(Build)	1.00	cop[tikv]		not(isnull(test.dt.dic))

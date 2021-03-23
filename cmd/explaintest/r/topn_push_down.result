@@ -177,8 +177,7 @@ Limit	0.00	root		offset:0, count:5
   │   │ └─Selection(Probe)	0.00	cop[tikv]		eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
   │   │   └─TableRowIDScan	0.00	cop[tikv]	table:tr	keep order:false, stats:pseudo
   │   └─IndexLookUp(Probe)	1.25	root		
-  │     ├─Selection(Build)	50.00	cop[tikv]		not(isnull(test.te.trade_id))
-  │     │ └─IndexRangeScan	50.05	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:false, stats:pseudo
+  │     ├─IndexRangeScan(Build)	50.00	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:false, stats:pseudo
   │     └─Selection(Probe)	1.25	cop[tikv]		ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)
   │       └─TableRowIDScan	50.00	cop[tikv]	table:te	keep order:false, stats:pseudo
   └─IndexReader(Probe)	1.25	root		index:Selection
@@ -224,9 +223,8 @@ Limit	5.00	root		offset:0, count:5
 └─IndexJoin	5.00	root		inner join, inner:IndexReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
   ├─TableReader(Build)	4.00	root		data:TableFullScan
   │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─IndexReader(Probe)	1.25	root		index:Selection
-    └─Selection	1.25	cop[tikv]		not(isnull(test.t.a))
-      └─IndexRangeScan	1.25	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo
+  └─IndexReader(Probe)	1.25	root		index:IndexRangeScan
+    └─IndexRangeScan	1.25	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5
@@ -257,8 +255,8 @@ explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on 
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5
 └─HashJoin	5.00	root		inner join, equal:[eq(test.t.a, test.t.a)]
-  ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
-  │ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:idx(a)	keep order:false, stats:pseudo
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	4.00	root		data:TableFullScan
     └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;

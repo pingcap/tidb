@@ -133,7 +133,7 @@ Projection	424.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd
       │ └─Selection	424.00	cop[tikv]		eq(test.st.bm, 0), eq(test.st.pt, "android"), gt(test.st.t, 1478143908), not(isnull(test.st.ip))
       │   └─TableRangeScan	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
       └─TableReader(Probe)	455.80	root		data:Selection
-        └─Selection	455.80	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.aid)), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
+        └─Selection	455.80	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
           └─TableRangeScan	2000.00	cop[tikv]	table:dd	range:[0,+inf], keep order:false
 explain format = 'brief' select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	estRows	task	access object	operator info
@@ -144,8 +144,7 @@ Projection	170.34	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd
     │ └─Selection	170.34	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), gt(test.st.t, 1477971479), not(isnull(test.st.dic))
     │   └─TableRangeScan	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
     └─IndexLookUp(Probe)	1.00	root		
-      ├─Selection(Build)	3.93	cop[tikv]		not(isnull(test.dd.aid))
-      │ └─IndexRangeScan	3.93	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:false
+      ├─IndexRangeScan(Build)	3.93	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:false
       └─Selection(Probe)	1.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
         └─TableRowIDScan	3.93	cop[tikv]	table:sdk	keep order:false
 explain format = 'brief' SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
@@ -165,8 +164,7 @@ Projection	428.32	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.d
     │ └─Selection	428.32	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
     │   └─TableRangeScan	2000.00	cop[tikv]	table:dt	range:[0,+inf], keep order:false
     └─IndexLookUp(Probe)	1.00	root		
-      ├─Selection(Build)	1.00	cop[tikv]		not(isnull(test.rr.aid)), not(isnull(test.rr.dic))
-      │ └─IndexRangeScan	1.00	cop[tikv]	table:rr, index:PRIMARY(aid, dic)	range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false
+      ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:rr, index:PRIMARY(aid, dic)	range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false
       └─Selection(Probe)	1.00	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
         └─TableRowIDScan	1.00	cop[tikv]	table:rr	keep order:false
 explain format = 'brief' select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
