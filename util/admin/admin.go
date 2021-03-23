@@ -293,19 +293,13 @@ const (
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Add `` for some names like `table name`.
-	sql, err := sqlexec.EscapeSQL("SELECT COUNT(*) FROM %n.%n", dbName, tableName)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
+	sql := sqlexec.MustEscapeSQL("SELECT COUNT(*) FROM %n.%n", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	for i, idx := range indices {
-		sql, err = sqlexec.EscapeSQL("SELECT COUNT(*) FROM %n.%n USE INDEX(`%s`)", dbName, tableName, idx)
-		if err != nil {
-			return 0, 0, errors.Trace(err)
-		}
+		sql = sqlexec.MustEscapeSQL("SELECT COUNT(*) FROM %n.%n USE INDEX(`%s`)", dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
 			return 0, i, errors.Trace(err)
