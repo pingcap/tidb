@@ -433,76 +433,48 @@ func UnionRanges(sc *stmtctx.StatementContext, ranges []*Range, mergeConsecutive
 	return ranges, nil
 }
 
-func genSortRange(sc *stmtctx.StatementContext, ran *Range) (*sortRange, error) {
-	left, err := codec.EncodeKey(sc, nil, ran.LowVal...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if ran.LowExclude {
-		left = kv.Key(left).PrefixNext()
-	}
-	right, err := codec.EncodeKey(sc, nil, ran.HighVal...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if !ran.HighExclude {
-		right = kv.Key(right).PrefixNext()
-	}
-	return &sortRange{originalValue: ran, encodedStart: left, encodedEnd: right}, nil
-}
-
-func mergeRange(r1 *sortRange, r2 *sortRange) *Range {
-	if bytes.Compare(r1.encodedStart, r2.encodedEnd) > 0 {
-		return nil
-	}
-	if bytes.Compare(r1.encodedEnd, r2.encodedStart) < 0 {
-		return nil
-	}
-	tmp := &Range{}
-	if bytes.Compare(r1.encodedStart, r2.encodedStart) < 0 {
-		tmp.LowVal = r2.originalValue.LowVal
-		tmp.LowExclude = r2.originalValue.LowExclude
-	} else {
-		tmp.LowVal = r1.originalValue.LowVal
-		tmp.LowExclude = r1.originalValue.LowExclude
-	}
-
-	if bytes.Compare(r1.encodedEnd, r2.encodedEnd) < 0 {
-		tmp.HighVal = r1.originalValue.HighVal
-		tmp.HighExclude = r1.originalValue.HighExclude
-	} else {
-		tmp.HighVal = r2.originalValue.HighVal
-		tmp.HighExclude = r2.originalValue.HighExclude
-	}
-	return tmp
-}
-
-// MergeOneRange merge one range to ranges.
-// For two ranges ([a, b], [c, d]), ([e, f]) we have guaranteed that a <= c.
-// If a <= e <= b, c <= f <= d. this two ranges can be merged as ([e, b], [c, f]).
-// If they aren't overlapped, the function will return nil.
-func MergeOneRange(sc *stmtctx.StatementContext, ranges []*Range, src *Range) ([]*Range, error) {
+// SplitRange split one range by encode key.
+// For ranges ([a, b], [c, d]) we have guaranteed that a <= c.
+// If a <= val <= b. this two range can be split as ([a, val]),([val, b], [c, d]).
+func SplitRange(sc *stmtctx.StatementContext, ranges []*Range, val []types.Datum) (left []*Range, right []*Range, err error) {
 	if len(ranges) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	objects := make([]*sortRange, 0, len(ranges))
-	for _, ran := range ranges {
-		sr, err := genSortRange(sc, ran)
-		if err != nil {
-			return nil, err
-		}
-		objects = append(objects, sr)
-	}
-	mergeObject, err := genSortRange(sc, src)
+	encodeKey, err := codec.EncodeKey(sc, nil, val...)
 	if err != nil {
-		return nil, err
+		return nil, nil, errors.Trace(err)
 	}
-
-	var ret []*Range
-	for _, obj := range objects {
-		ret = append(ret, mergeRange(obj, mergeObject))
+	for _, ran := range ranges {
+		leftKey, err := codec.EncodeKey(sc, nil, ran.LowVal...)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		rightKey, err := codec.EncodeKey(sc, nil, ran.HighVal...)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if bytes.Compare(encodeKey, leftKey) < 0 {
+			right = append(right, ran)
+			continue
+		}
+		if bytes.Compare(encodeKey, rightKey) > 0 {
+			left = append(left, ran)
+			continue
+		}
+		left = append(left, &Range{
+			LowVal:      ran.LowVal,
+			HighVal:     val,
+			LowExclude:  ran.LowExclude,
+			HighExclude: true,
+		})
+		right = append(right, &Range{
+			LowVal:      val,
+			HighVal:     ran.HighVal,
+			LowExclude:  true,
+			HighExclude: ran.HighExclude,
+		})
 	}
-	return ret, nil
+	return left, right, nil
 }
 
 func hasPrefix(lengths []int) bool {

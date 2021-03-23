@@ -394,13 +394,13 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
 			e.indexSidePagination = false
 		case 0: // add Limit executor, init page size.
-			e.paginationSize = 1
+			e.paginationSize = int64(e.ctx.GetSessionVars().IndexLookupSize)
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
 		default:
 			e.paginationSize = e.paginationSize * 2
 			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
-			if e.paginationSize > 100000 {
+			if e.paginationSize > int64(e.ctx.GetSessionVars().IndexLookupSize)*int64(e.ctx.GetSessionVars().IndexSerialScanConcurrency()) {
 				e.paginationSize = -1
 			}
 		}
@@ -667,15 +667,12 @@ paginate:
 		return err
 	}
 	// rebuild ranges
-	var ran = ranger.FullRange()[0]
+	left, right, err := ranger.SplitRange(e.ctx.GetSessionVars().StmtCtx, e.ranges, e.lastRowKeys)
 	if e.desc {
-		ran.HighVal = e.lastRowKeys
-		ran.HighExclude = true
+		e.ranges = left
 	} else {
-		ran.LowVal = e.lastRowKeys
-		ran.LowExclude = true
+		e.ranges = right
 	}
-	e.ranges, err = ranger.MergeOneRange(e.ctx.GetSessionVars().StmtCtx, e.ranges, ran)
 	if err != nil {
 		return err
 	}
