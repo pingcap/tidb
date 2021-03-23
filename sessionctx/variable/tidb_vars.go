@@ -713,6 +713,8 @@ var FeatureSwitchVariables = []string{
 	TiDBAnalyzeVersion,
 	TiDBPartitionPruneMode,
 	TiDBIntPrimaryKeyDefaultAsClustered,
+	TiDBEnableExtendedStats,
+	TiDBEnableIndexMergeJoin,
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.

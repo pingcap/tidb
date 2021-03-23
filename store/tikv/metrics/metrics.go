@@ -51,6 +51,10 @@ var (
 	TiKVAsyncCommitTxnCounter              *prometheus.CounterVec
 	TiKVOnePCTxnCounter                    *prometheus.CounterVec
 	TiKVStoreLimitErrorCounter             *prometheus.CounterVec
+	TiKVGRPCConnTransientFailureCounter    *prometheus.CounterVec
+	TiKVPanicCounter                       *prometheus.CounterVec
+	TiKVForwardRequestCounter              *prometheus.CounterVec
+	TiKVTSFutureWaitDuration               prometheus.Histogram
 )
 
 // Label constants.
@@ -67,6 +71,8 @@ const (
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
 	LblAddress         = "address"
+	LblFromStore       = "from_store"
+	LblToStore         = "to_store"
 )
 
 func initMetrics(namespace, subsystem string) {
@@ -355,6 +361,39 @@ func initMetrics(namespace, subsystem string) {
 			Help:      "store token is up to the limit, probably because one of the stores is the hotspot or unavailable",
 		}, []string{LblAddress, LblStore})
 
+	TiKVGRPCConnTransientFailureCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "connection_transient_failure_count",
+			Help:      "Counter of gRPC connection transient failure",
+		}, []string{LblAddress, LblStore})
+
+	TiKVPanicCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "panic_total",
+			Help:      "Counter of panic.",
+		}, []string{LblType})
+
+	TiKVForwardRequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "forward_request_counter",
+			Help:      "Counter of tikv request being forwarded through another node",
+		}, []string{LblFromStore, LblToStore, LblType, LblResult})
+
+	TiKVTSFutureWaitDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "ts_future_wait_seconds",
+			Help:      "Bucketed histogram of seconds cost for waiting timestamp future.",
+			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 30), // 5us ~ 2560s
+		})
+
 	initShortcuts()
 }
 
@@ -404,4 +443,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVAsyncCommitTxnCounter)
 	prometheus.MustRegister(TiKVOnePCTxnCounter)
 	prometheus.MustRegister(TiKVStoreLimitErrorCounter)
+	prometheus.MustRegister(TiKVGRPCConnTransientFailureCounter)
+	prometheus.MustRegister(TiKVPanicCounter)
+	prometheus.MustRegister(TiKVForwardRequestCounter)
+	prometheus.MustRegister(TiKVTSFutureWaitDuration)
 }

@@ -1025,16 +1025,14 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 }
 
-func (s *testSerialSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+func (s *testSuite5) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists auto_random_db;")
 	defer tk.MustExec("drop database if exists auto_random_db;")
 	tk.MustExec("use auto_random_db;")
 	tk.MustExec("drop table if exists t;")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
+	tk.MustExec("create table t (a bigint unsigned auto_random primary key clustered);")
 	tk.MustExec("set @@global.tidb_scatter_region=1;")
 	// 18446744073709541615 is MaxUint64 - 10000.
 	// 18446744073709551615 is the MaxUint64.
@@ -1131,6 +1129,17 @@ func (s *testSuite5) TestInvisibleCoprCacheConfig(c *C) {
 			"\t\t\t\"capacity-mb\": 1000\n" +
 			"\t\t},\n"
 	c.Assert(strings.Contains(configValue, coprCacheVal), Equals, true)
+}
+
+func (s *testSuite5) TestInvisibleGlobalKillConfig(c *C) {
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKitWithSession(c, s.store, se1)
+	rows := tk.MustQuery("show variables like '%config%'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	configValue := rows[0][1].(string)
+	globalKillVal := "global-kill"
+	c.Assert(strings.Contains(configValue, globalKillVal), Equals, false)
 }
 
 func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c *C) {

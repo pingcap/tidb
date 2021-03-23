@@ -668,6 +668,17 @@ type RecoverInfo struct {
 	CurAutoRandID int64
 }
 
+// delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
+// It should be called before any DDL that could break data consistency.
+// This provides a safe window for async commit and 1PC to commit with an old schema.
+func delayForAsyncCommit() {
+	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
+	duration := cfg.SafeWindow + cfg.AllowedClockDrift
+	logutil.BgLogger().Info("sleep before DDL finishes to make async commit and 1PC safe",
+		zap.Duration("duration", duration))
+	time.Sleep(duration)
+}
+
 var (
 	// RunInGoTest is used to identify whether ddl in running in the test.
 	RunInGoTest bool
