@@ -246,7 +246,12 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 	}
 
 	if !sessVars.InTxn() {
-		txnSize := se.txn.Size()
+		var txnSize, txnKeys int
+		if se.txn.Valid() && !se.txn.IsReadOnly() {
+			txnSize = se.txn.Size()
+			txnKeys = se.txn.Len()
+		}
+
 		if err := se.CommitTxn(ctx); err != nil {
 			if _, ok := sql.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
 				err = errors.Annotatef(err, "previous statement: %s", se.GetSessionVars().PrevStmt)
@@ -254,7 +259,7 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 			return err
 		}
 		if txnSize > 0 {
-			se.txn.writeSLI.CommittedTxn(uint64(txnSize))
+			se.txn.writeSLI.CommittedTxn(txnSize, txnKeys)
 		}
 		return nil
 	}

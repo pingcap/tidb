@@ -14,53 +14,102 @@
 package sli
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
 )
 
+// TxnWriteThroughputSLI uses to report transaction write throughput metrics for SLI.
 type TxnWriteThroughputSLI struct {
 	invalid   bool
 	affectRow uint64
-	writeSize uint64
+	writeSize int
+	readKeys  int
+	writeKeys int
 	writeTime time.Duration
 }
 
-func (t *TxnWriteThroughputSLI) AddAffectRow(num uint64) {
-	t.affectRow += num
+// FinishExecuteStmt records the cost for write statement which affect rows more than 0.
+// And report metrics when the transaction is committed.
+func (t *TxnWriteThroughputSLI) FinishExecuteStmt(cost time.Duration, affectRow uint64, readKeys int64) {
+	if affectRow > 0 {
+		// Only record the read keys in write statement which affect row more than 0.
+		t.readKeys += int(readKeys)
+		t.writeTime += cost
+		t.affectRow += affectRow
+	}
+
+	if t.IsTxnCommitted() {
+		if affectRow == 0 {
+			// AffectRows is 0 when statement is commit.
+			t.writeTime += cost
+		}
+		// Report metrics after commit this transaction.
+		t.reportMetric()
+
+		// Skip reset for test.
+		failpoint.Inject("CheckTxnWriteThroughput", func() {
+			failpoint.Return()
+		})
+
+		// Reset for next transaction.
+		t.Reset()
+	}
 }
 
-func (t *TxnWriteThroughputSLI) AddWriteTime(d time.Duration) {
-	t.writeTime += d
-}
-
-func (t *TxnWriteThroughputSLI) CommittedTxn(size uint64) {
+// CommittedTxn marks the transaction is committed and record the write size and keys.
+func (t *TxnWriteThroughputSLI) CommittedTxn(size, keys int) {
 	t.writeSize += size
+	t.writeKeys += keys
 }
 
+// IsTxnCommitted exports for testing.
 func (t *TxnWriteThroughputSLI) IsTxnCommitted() bool {
 	return t.writeSize > 0
 }
 
-func (t *TxnWriteThroughputSLI) SetInvalid() {
-	t.invalid = true
-}
-
-func (t *TxnWriteThroughputSLI) ReportMetric() {
-	if t.invalid || t.writeSize == 0 || t.writeTime == 0 {
+func (t *TxnWriteThroughputSLI) reportMetric() {
+	if t.IsInvalid() {
 		return
 	}
-	if t.affectRow <= 20 && t.writeSize <= 1*1024*1024 {
-		// small transaction
+	if t.IsSmallTxn() {
 		metrics.SmallTxnWriteDuration.Observe(t.writeTime.Seconds())
 	} else {
 		metrics.TxnWriteThroughput.Observe(float64(t.writeSize) / t.writeTime.Seconds())
 	}
 }
 
+// SetInvalid marks this transaction is invalid to report SLI metrics.
+func (t *TxnWriteThroughputSLI) SetInvalid() {
+	t.invalid = true
+}
+
+// IsInvalid checks the transaction is valid to report SLI metrics. Currently, the following case will case invalid:
+// 1. The transaction contain `insert|replace into ... select ... from ...` statement.
+// 2. The write sql statement has more read keys than write keys.
+func (t *TxnWriteThroughputSLI) IsInvalid() bool {
+	return t.invalid || t.readKeys > t.writeKeys || t.writeSize == 0 || t.writeTime == 0
+}
+
+// IsSmallTxn exports for testing.
+func (t *TxnWriteThroughputSLI) IsSmallTxn() bool {
+	return t.affectRow <= 20 && t.writeSize <= 1*1024*1024
+}
+
+// Reset exports for testing.
 func (t *TxnWriteThroughputSLI) Reset() {
 	t.invalid = false
 	t.affectRow = 0
 	t.writeSize = 0
+	t.readKeys = 0
+	t.writeKeys = 0
 	t.writeTime = 0
+}
+
+// String exports for testing.
+func (t *TxnWriteThroughputSLI) String() string {
+	return fmt.Sprintf("invalid: %v, affectRow: %v, writeSize: %v, readKeys: %v, writeKeys: %v, writeTime: %v",
+		t.invalid, t.affectRow, t.writeSize, t.readKeys, t.writeKeys, t.writeTime.String())
 }

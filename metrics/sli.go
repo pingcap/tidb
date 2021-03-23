@@ -18,6 +18,7 @@ import (
 )
 
 var (
+	// SmallTxnWriteDuration uses to collect small transaction write duration.
 	SmallTxnWriteDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -27,6 +28,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 74h
 		})
 
+	// TxnWriteThroughput uses to collect transaction write throughput which transaction is not small.
 	TxnWriteThroughput = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",

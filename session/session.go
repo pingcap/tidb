@@ -76,6 +76,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -2857,20 +2858,7 @@ func (s *session) SetPort(port string) {
 	s.sessionVars.Port = port
 }
 
-// RecordSLI implements the Session interface.
-func (s *session) RecordSLI(stmtStartTime time.Time) {
-	affect := s.AffectedRows()
-	if affect > 0 {
-		s.txn.writeSLI.AddWriteTime(time.Since(stmtStartTime))
-		s.txn.writeSLI.AddAffectRow(affect)
-	}
-
-	if s.txn.writeSLI.IsTxnCommitted() {
-		if affect == 0 {
-			// AffectRows is 0 when statement is commit.
-			s.txn.writeSLI.AddWriteTime(time.Since(stmtStartTime))
-		}
-		s.txn.writeSLI.ReportMetric()
-		s.txn.writeSLI.Reset()
-	}
+// GetTxnWriteThroughputSLI implements the Session interface.
+func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return &s.txn.writeSLI
 }
