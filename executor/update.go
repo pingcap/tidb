@@ -96,6 +96,9 @@ func (e *UpdateExec) prepare(ctx context.Context, schema *expression.Schema, row
 				break
 			}
 		}
+		if e.unmatchedOuterRow(content, row) {
+			updatable = false
+		}
 		e.updatable = append(e.updatable, updatable)
 
 		changed, ok := e.updatedRowKeys[content.Start].Get(handle)
@@ -110,7 +113,7 @@ func (e *UpdateExec) prepare(ctx context.Context, schema *expression.Schema, row
 	return nil
 }
 
-func (e *UpdateExec) merge(ctx context.Context, row, newData []types.Datum, mergeGenerated bool) error {
+func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) error {
 	if e.mergedRowData == nil {
 		e.mergedRowData = make(map[int64]*kv.HandleMap)
 	}
@@ -198,14 +201,15 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 	return nil
 }
 
-// canNotUpdate checks the handle of a record to decide whether that record
+// unmatchedOuterRow checks the tableCols of a record to decide whether that record
 // can not be updated. The handle is NULL only when it is the inner side of an
 // outer join: the outer row can not match any inner rows, and in this scenario
 // the inner handle field is filled with a NULL value.
 //
 // This fixes: https://github.com/pingcap/tidb/issues/7176.
-func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
-	return handle.IsNull()
+func (e *UpdateExec) unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpdateRow []types.Datum) bool {
+	firstHandleIdx := tblPos.HandleCols.GetCol(0)
+	return waitUpdateRow[firstHandleIdx.Index].IsNull()
 }
 
 // Next implements the Executor Next interface.
@@ -273,7 +277,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				return 0, err
 			}
 			// merge non-generated columns
-			if err := e.merge(ctx, datumRow, newRow, false); err != nil {
+			if err := e.merge(datumRow, newRow, false); err != nil {
 				return 0, err
 			}
 			if e.virtualAssignmentsOffset < len(e.OrderedList) {
@@ -283,7 +287,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 					return 0, err
 				}
 				// merge generated columns
-				if err := e.merge(ctx, datumRow, newRow, true); err != nil {
+				if err := e.merge(datumRow, newRow, true); err != nil {
 					return 0, err
 				}
 			}
@@ -317,11 +321,10 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	for _, assign := range e.OrderedList {
-		handleIdx, handleFound := e.tblColPosInfos.FindHandle(assign.Col.Index)
-		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
+		tblIdx, tblFound := e.tblColPosInfos.FindTblColPosIdx(assign.Col.Index)
+		if tblFound && !e.updatable[tblIdx] {
 			continue
 		}
-
 		con := assign.Expr.(*expression.Constant)
 		val, err := con.Eval(emptyRow)
 		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
@@ -346,8 +349,8 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 	newRowData := types.CloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
 	for _, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
-		handleIdx, handleFound := e.tblColPosInfos.FindHandle(assign.Col.Index)
-		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
+		tblIdx, tblFound := e.tblColPosInfos.FindTblColPosIdx(assign.Col.Index)
+		if tblFound && !e.updatable[tblIdx] {
 			continue
 		}
 		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
@@ -375,8 +378,8 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 	}
 	e.evalBuffer.SetDatums(newRowData...)
 	for _, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
-		handleIdx, handleFound := e.tblColPosInfos.FindHandle(assign.Col.Index)
-		if handleFound && e.canNotUpdate(newRowData[handleIdx]) {
+		tblIdx, tblFound := e.tblColPosInfos.FindTblColPosIdx(assign.Col.Index)
+		if tblFound && !e.updatable[tblIdx] {
 			continue
 		}
 		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
