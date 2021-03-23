@@ -16,7 +16,6 @@ package admin
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"math"
 	"sort"
@@ -289,13 +288,13 @@ const (
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Add `` for some names like `table name`.
-	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX()", dbName, tableName)
+	sql := sqlexec.MustEscapeSQL("SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	for i, idx := range indices {
-		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
+		sql = sqlexec.MustEscapeSQL("SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
 			return 0, i, errors.Trace(err)
