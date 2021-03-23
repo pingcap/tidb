@@ -51,7 +51,7 @@
       "Join{DataScan(t1)->DataScan(t2)}->Projection",
       "Join{DataScan(t1)->DataScan(t2)}->Projection",
       "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(Column#25, Column#38)])->Projection->Delete",
-      "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(test.t.b,test.t.c)->Update"
+      "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg}(test.t.b,test.t.c)->Update"
     ]
   },
   {
@@ -136,7 +136,7 @@
       "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,test.t.a)->Limit->Projection",
       "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
       "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
-      "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([Column#25],0,5)->Projection",
+      "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([Column#37],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)->TopN([test.t.a],0,5)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a test.t.b],0,5)->Projection",
@@ -194,7 +194,7 @@
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over())->Sort->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over(partition by test.t.a))->Sort->Projection",
       "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(Column#13)->Column#15 over())->Sort->Projection",
-      "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)]))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#26 over())->MaxOneRow->Sel([Column#26])}->Projection",
+      "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)]))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#38 over())->MaxOneRow->Sel([Column#38])}->Projection",
       "[planner:3594]You cannot use the alias 'w' of an expression containing a window function in this context.'",
       "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
       "[planner:3579]Window name 'w2' is not defined.",
@@ -267,7 +267,7 @@
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over())->Sort->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over(partition by test.t.a))->Sort->Projection",
       "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(Column#13)->Column#15 over())->Sort->Projection",
-      "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)]))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#26 over())->MaxOneRow->Sel([Column#26])}->Projection",
+      "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)]))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#38 over())->MaxOneRow->Sel([Column#38])}->Projection",
       "[planner:3594]You cannot use the alias 'w' of an expression containing a window function in this context.'",
       "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
       "[planner:3579]Window name 'w2' is not defined.",
@@ -650,7 +650,7 @@
         "1": [
           "test.t.a"
         ],
-        "2": [
+        "4": [
           "test.t.a",
           "test.t.b"
         ]
@@ -665,7 +665,7 @@
           "test.t.a",
           "test.t.b"
         ],
-        "2": [
+        "4": [
           "test.t.b"
         ]
       },
@@ -673,7 +673,7 @@
         "1": [
           "test.t.a"
         ],
-        "2": [
+        "4": [
           "test.t.b"
         ]
       },

@@ -300,32 +300,12 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	return plan4Agg, aggIndexMap, nil
 }
 
-func (b *PlanBuilder) buildTableRefsWithCache(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
-	return b.buildTableRefs(ctx, from, true)
-}
-
-func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause, useCache bool) (p LogicalPlan, err error) {
+func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
 	if from == nil {
 		p = b.buildTableDual()
 		return
 	}
-	if !useCache {
-		return b.buildResultSetNode(ctx, from.TableRefs)
-	}
-	var ok bool
-	p, ok = b.cachedResultSetNodes[from.TableRefs]
-	if ok {
-		m := b.cachedHandleHelperMap[from.TableRefs]
-		b.handleHelper.pushMap(m)
-		return
-	}
-	p, err = b.buildResultSetNode(ctx, from.TableRefs)
-	if err != nil {
-		return nil, err
-	}
-	b.cachedResultSetNodes[from.TableRefs] = p
-	b.cachedHandleHelperMap[from.TableRefs] = b.handleHelper.tailMap()
-	return
+	return b.buildResultSetNode(ctx, from.TableRefs)
 }
 
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode) (p LogicalPlan, err error) {
@@ -2261,17 +2241,13 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 // Finally it restore the original SELECT stmt.
 func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err error) {
 	// collect correlated aggregate from sub-queries inside FROM clause.
-	useCache, err := r.collectFromTableRefs(r.ctx, sel.From)
+	_, err = r.collectFromTableRefs(r.ctx, sel.From)
 	if err != nil {
 		return err
 	}
-	// do not use cache when for update read
-	if isForUpdateReadSelectLock(sel.LockInfo) {
-		useCache = false
-	}
 	// we cannot use cache if there are correlated aggregates inside FROM clause,
 	// since the plan we are building now is not correct and need to be rebuild later.
-	p, err := r.b.buildTableRefs(r.ctx, sel.From, useCache)
+	p, err := r.b.buildTableRefs(r.ctx, sel.From)
 	if err != nil {
 		return err
 	}
@@ -2546,12 +2522,6 @@ func tblInfoFromCol(from ast.ResultSetNode, name *types.FieldName) *model.TableI
 	tableList = extractTableList(from, tableList, true)
 	for _, field := range tableList {
 		if field.Name.L == name.TblName.L {
-			return field.TableInfo
-		}
-		if field.Name.L != name.TblName.L {
-			continue
-		}
-		if field.Schema.L == name.DBName.L {
 			return field.TableInfo
 		}
 	}
@@ -3339,7 +3309,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
 	// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
 	// existing ResultSetNode from the cache.
-	p, err = b.buildTableRefsWithCache(ctx, sel.From)
+	p, err = b.buildTableRefs(ctx, sel.From)
 	if err != nil {
 		return nil, err
 	}
@@ -3535,8 +3505,10 @@ func (b *PlanBuilder) buildTableDual() *LogicalTableDual {
 }
 
 func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.Flag = mysql.NotNullFlag | mysql.PriKeyFlag
 	return &expression.Column{
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  tp,
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
@@ -5486,6 +5458,21 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 				input = append(input, &newTableName)
 			} else {
 				input = append(input, s)
+			}
+		} else if s, ok := x.Source.(*ast.SelectStmt); ok {
+			if s.From != nil {
+				var innerList []*ast.TableName
+				innerList = extractTableList(s.From.TableRefs, innerList, asName)
+				if len(innerList) > 0 {
+					innerTableName := innerList[0]
+					if x.AsName.L != "" && asName {
+						newTableName := *innerList[0]
+						newTableName.Name = x.AsName
+						newTableName.Schema = model.NewCIStr("")
+						innerTableName = &newTableName
+					}
+					input = append(input, innerTableName)
+				}
 			}
 		}
 	}

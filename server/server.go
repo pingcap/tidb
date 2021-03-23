@@ -173,6 +173,9 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		if err := tcpConn.SetKeepAlive(s.cfg.Performance.TCPKeepAlive); err != nil {
 			logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
 		}
+		if err := tcpConn.SetNoDelay(s.cfg.Performance.TCPNoDelay); err != nil {
+			logutil.BgLogger().Error("failed to set tcp no delay option", zap.Error(err))
+		}
 	}
 	cc.setConn(conn)
 	cc.salt = fastrand.Buf(20)
