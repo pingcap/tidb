@@ -108,7 +108,6 @@ type TableReaderExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
-	// isTiflash indicates whether this query is involve TiFlash
 }
 
 // Open initializes necessary variables for using this executor.
