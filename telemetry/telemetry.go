@@ -33,9 +33,7 @@ const (
 	// Prompt is the prompt for telemetry owner manager.
 	Prompt = "telemetry"
 	// ReportInterval is the interval of the report.
-	ReportInterval = 24 * time.Hour
-	// UpdateInterval means the max time window for saved data.
-	UpdateInterval = 6 * time.Hour
+	ReportInterval = 6 * time.Hour
 )
 
 const (

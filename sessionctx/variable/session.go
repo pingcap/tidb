@@ -825,8 +825,8 @@ type SessionVars struct {
 
 	// CoprCacheHitNum is to record coprocessor cache hit times for one statement.
 	CoprCacheHitNum atomic2.Uint64
-	// CopRespTimes is to record coprocessor response times for one statement.
-	CopRespTimes atomic2.Uint64
+	// CoprRespTimes is to record coprocessor response times for one statement.
+	CoprRespTimes atomic2.Uint64
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.

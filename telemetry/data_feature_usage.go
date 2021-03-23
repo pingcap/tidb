@@ -31,6 +31,82 @@ type featureUsageInfo struct {
 	TiFlashUsed      []*TiFlashUsageItem        `json:"tiFlashUsed"`
 }
 
+// FeatureTaskChan is the update task channel for telemetry feature data.
+var FeatureTaskChan = make(chan *FeatureTask, 1<<18)
+
+// FeatureTask is the update task for telemetry feature data.
+type FeatureTask struct {
+	TiFlashPushDown         bool
+	TiFLashExchangePushDown bool
+	CoprRespTimes           uint64
+	CoprCacheHitNum         uint64
+}
+
+// UpdateFeature update feature data for one task.
+func UpdateFeature(task *FeatureTask) {
+	CoprocessorCacheTelemetry.Lock.Lock()
+	length := len(CoprocessorCacheTelemetry.MinuteWindow)
+	if length == 0 || time.Since(*CoprocessorCacheTelemetry.MinuteWindow[length-1].BeginAt) >= time.Minute {
+		var i int
+		for i = 0; i < length && time.Since(*CoprocessorCacheTelemetry.MinuteWindow[i].BeginAt) >= ReportInterval; i++ {
+		}
+		CoprocessorCacheTelemetry.MinuteWindow = CoprocessorCacheTelemetry.MinuteWindow[i:]
+		CoprocessorCacheTelemetry.MinuteWindow = append(CoprocessorCacheTelemetry.MinuteWindow, CoprCacheUsedWindowItem{})
+		length -= i - 1
+		CoprocessorCacheTelemetry.MinuteWindow[length-1].BeginAt = new(time.Time)
+		*CoprocessorCacheTelemetry.MinuteWindow[length-1].BeginAt = time.Now()
+	}
+	if task.CoprRespTimes > 0 {
+		ratio := float64(task.CoprCacheHitNum) / float64(task.CoprRespTimes)
+		switch {
+		case ratio >= 0:
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P0.Add(1)
+			fallthrough
+		case ratio >= 0.01:
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P1.Add(1)
+			fallthrough
+		case ratio >= 0.1:
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P10.Add(1)
+			fallthrough
+		case ratio >= 0.2:
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P20.Add(1)
+			fallthrough
+		case ratio >= 0.4:
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P40.Add(1)
+			fallthrough
+		case ratio >= 0.8:
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P80.Add(1)
+			fallthrough
+		case ratio >= 1:
+			CoprocessorCacheTelemetry.MinuteWindow[length-1].P100.Add(1)
+		}
+	} else {
+		CoprocessorCacheTelemetry.MinuteWindow[length-1].P0.Add(1)
+	}
+	CoprocessorCacheTelemetry.Lock.Unlock()
+
+	TiFlashUsageTelemetry.Lock.Lock()
+	length = len(TiFlashUsageTelemetry.MinuteWindow)
+	if length == 0 || time.Since(*TiFlashUsageTelemetry.MinuteWindow[length-1].BeginAt) >= time.Minute {
+		var i int
+		for i = 0; i < length && time.Since(*TiFlashUsageTelemetry.MinuteWindow[i].BeginAt) >= ReportInterval; i++ {
+		}
+		TiFlashUsageTelemetry.MinuteWindow = TiFlashUsageTelemetry.MinuteWindow[i:]
+		TiFlashUsageTelemetry.MinuteWindow = append(TiFlashUsageTelemetry.MinuteWindow, TiFlashUsageItem{})
+		length -= i - 1
+		TiFlashUsageTelemetry.MinuteWindow[length-1].BeginAt = new(time.Time)
+		*TiFlashUsageTelemetry.MinuteWindow[length-1].BeginAt = time.Now()
+	}
+	TiFlashUsageTelemetry.MinuteWindow[length-1].TotalNumbers.Add(1)
+	if task.TiFlashPushDown {
+		TiFlashUsageTelemetry.MinuteWindow[length-1].TiFlashPushDownNumbers.Add(1)
+	}
+	if task.TiFLashExchangePushDown {
+		TiFlashUsageTelemetry.MinuteWindow[length-1].TiFlashExchangePushDownNumbers.Add(1)
+	}
+	TiFlashUsageTelemetry.Lock.Unlock()
+}
+
 // CoprocessorCacheTelemetry is to save the global coprocessor cache telemetry data.
 var CoprocessorCacheTelemetry = struct {
 	MinuteWindow []CoprCacheUsedWindowItem
@@ -68,9 +144,9 @@ type TiFlashUsageItem struct {
 func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, error) {
 	// init
 	usageInfo := featureUsageInfo{
-		CoprCacheUsed:    make([]*CoprCacheUsedWindowItem, 0, UpdateInterval/time.Hour),
+		CoprCacheUsed:    make([]*CoprCacheUsedWindowItem, 0, ReportInterval/time.Hour),
 		ClusterIndexUsed: make(map[string]bool),
-		TiFlashUsed:      make([]*TiFlashUsageItem, 0, UpdateInterval/time.Hour),
+		TiFlashUsed:      make([]*TiFlashUsageItem, 0, ReportInterval/time.Hour),
 	}
 
 	// coprocessor cache
@@ -78,7 +154,7 @@ func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, er
 	maxLen := 0
 	for _, window := range CoprocessorCacheTelemetry.MinuteWindow {
 		timeSince := time.Since(*window.BeginAt)
-		if timeSince >= UpdateInterval {
+		if timeSince >= ReportInterval {
 			continue
 		}
 		maxLen = mathutil.Max(maxLen, int(timeSince/time.Hour))
@@ -104,7 +180,7 @@ func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, er
 	maxLen = 0
 	for _, window := range TiFlashUsageTelemetry.MinuteWindow {
 		timeSince := time.Since(*window.BeginAt)
-		if timeSince >= UpdateInterval {
+		if timeSince >= ReportInterval {
 			continue
 		}
 		maxLen = mathutil.Max(maxLen, int(timeSince/time.Hour))

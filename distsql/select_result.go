@@ -283,7 +283,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, r.stats)
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
-	r.ctx.GetSessionVars().CopRespTimes.Add(1)
+	r.ctx.GetSessionVars().CoprRespTimes.Add(1)
 	if copStats.CoprCacheHit {
 		r.ctx.GetSessionVars().CoprCacheHitNum.Add(1)
 	}
