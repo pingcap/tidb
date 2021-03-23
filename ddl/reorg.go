@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -83,14 +83,6 @@ type reorgCtx struct {
 // Storing a nil object to atomic.Value can lead to panic. This is a workaround.
 type nullableKey struct {
 	key kv.Key
-}
-
-// toString is used in log to avoid nil dereference panic.
-func toString(handle kv.Handle) string {
-	if handle == nil {
-		return "<nil>"
-	}
-	return handle.String()
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
@@ -166,15 +158,9 @@ func (rc *reorgCtx) clean() {
 }
 
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
-	// Sleep for reorgDelay before doing reorganization.
-	// This provides a safe window for async commit and 1PC to commit with an old schema.
 	// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
 	if lease > 0 {
-		cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
-		reorgDelay := cfg.SafeWindow + cfg.AllowedClockDrift
-		logutil.BgLogger().Info("sleep before reorganization to make async commit safe",
-			zap.Duration("duration", reorgDelay))
-		time.Sleep(reorgDelay)
+		delayForAsyncCommit()
 	}
 
 	job := reorgInfo.Job
@@ -319,8 +305,12 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	if !ok {
 		return statistics.PseudoRowCount
 	}
-	sql := fmt.Sprintf("select table_rows from information_schema.tables where tidb_table_id=%v;", tblInfo.ID)
-	rows, _, err := executor.ExecRestrictedSQL(sql)
+	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
+	stmt, err := executor.ParseWithParams(context.Background(), sql, tblInfo.ID)
+	if err != nil {
+		return statistics.PseudoRowCount
+	}
+	rows, _, err := executor.ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
@@ -435,7 +425,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 		SetConcurrency(1).SetDesc(true)
 
 	builder.Request.NotFillCache = true
-	builder.Request.Priority = kv.PriorityLow
+	builder.Request.Priority = tikvstore.PriorityLow
 
 	kvReq, err := builder.Build()
 	if err != nil {
@@ -533,7 +523,7 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 		return startHandleKey, nil, errors.Trace(err)
 	}
 	if maxHandle != nil {
-		endHandleKey = tbl.RecordKey(maxHandle)
+		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
 		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),

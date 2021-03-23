@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -44,9 +45,8 @@ func init() {
 // shared by all sessions.
 var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
-var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+\s*`)
-var preSplitPat = regexp.MustCompile(`PRE_SPLIT_REGIONS\s*=\s*\d+\s*`)
-var autoRandomPat = regexp.MustCompile(`AUTO_RANDOM\s*\(\s*\d+\s*\)\s*`)
+var shardPat = regexp.MustCompile(`(?P<REPLACE>SHARD_ROW_ID_BITS\s*=\s*\d+\s*)`)
+var preSplitPat = regexp.MustCompile(`(?P<REPLACE>PRE_SPLIT_REGIONS\s*=\s*\d+\s*)`)
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {
@@ -295,13 +295,13 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 		},
 		Client: client,
 	}
-	txn.SetOption(kv.BinlogInfo, info)
+	txn.SetOption(tikvstore.BinlogInfo, info)
 }
 
 const specialPrefix = `/*T! `
 
 // AddSpecialComment uses to add comment for table option in DDL query.
-// Export for testing.
+// Used by pingcap/ticdc.
 func AddSpecialComment(ddlQuery string) string {
 	if strings.Contains(ddlQuery, specialPrefix) || strings.Contains(ddlQuery, driver.SpecialCommentVersionPrefix) {
 		return ddlQuery
@@ -321,7 +321,17 @@ func addSpecialCommentByRegexps(ddlQuery string, prefix string, regs ...*regexp.
 	minIdx := math.MaxInt64
 	for i := 0; i < len(regs); {
 		reg := regs[i]
-		loc := reg.FindStringIndex(upperQuery)
+		locs := reg.FindStringSubmatchIndex(upperQuery)
+		ns := reg.SubexpNames()
+		var loc []int
+		if len(locs) > 0 {
+			for i, n := range ns {
+				if n == "REPLACE" {
+					loc = locs[i*2 : (i+1)*2]
+					break
+				}
+			}
+		}
 		if len(loc) < 2 {
 			i++
 			continue

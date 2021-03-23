@@ -28,25 +28,15 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-var (
-	_ kv.Transaction = (*tikvTxn)(nil)
-)
-
-var (
-	tikvTxnCmdHistogramWithCommit   = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblCommit)
-	tikvTxnCmdHistogramWithRollback = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblRollback)
-	tikvTxnCmdHistogramWithBatchGet = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblBatchGet)
-	tikvTxnCmdHistogramWithGet      = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblGet)
-	tikvTxnCmdHistogramWithLockKeys = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblLockKeys)
 )
 
 // SchemaAmender is used by pessimistic transactions to amend commit mutations for schema change during 2pc.
@@ -56,39 +46,31 @@ type SchemaAmender interface {
 	AmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange, mutations CommitterMutations) (CommitterMutations, error)
 }
 
-// tikvTxn implements kv.Transaction.
-type tikvTxn struct {
-	snapshot  *tikvSnapshot
-	us        kv.UnionStore
-	store     *tikvStore // for connection to region.
+// KVTxn contains methods to interact with a TiKV transaction.
+type KVTxn struct {
+	snapshot  *KVSnapshot
+	us        tidbkv.UnionStore
+	store     *KVStore // for connection to region.
 	startTS   uint64
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	setCnt    int64
-	vars      *kv.Variables
+	vars      *tidbkv.Variables
 	committer *twoPhaseCommitter
 	lockedCnt int
 
-	// For data consistency check.
-	// assertions[:confirmed] is the assertion of current transaction.
-	// assertions[confirmed:len(assertions)] is the assertions of current statement.
-	// StmtCommit/StmtRollback may change the confirmed position.
-	assertions []assertionPair
-	confirmed  int
-
 	valid bool
-	dirty bool
 
 	// txnInfoSchema is the infoSchema fetched at startTS.
 	txnInfoSchema SchemaVer
 	// SchemaAmender is used amend pessimistic txn commit mutations for schema change
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
-	commitCallback func(info kv.TxnInfo, err error)
+	commitCallback func(info tidbkv.TxnInfo, err error)
 }
 
-func newTiKVTxn(store *tikvStore, txnScope string) (*tikvTxn, error) {
+func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := store.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
@@ -98,23 +80,22 @@ func newTiKVTxn(store *tikvStore, txnScope string) (*tikvTxn, error) {
 }
 
 // newTiKVTxnWithStartTS creates a txn with startTS.
-func newTiKVTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
-	ver := kv.NewVersion(startTS)
-	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
-	newTiKVTxn := &tikvTxn{
+func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*KVTxn, error) {
+	snapshot := newTiKVSnapshot(store, startTS, replicaReadSeed)
+	newTiKVTxn := &KVTxn{
 		snapshot:  snapshot,
-		us:        kv.NewUnionStore(snapshot),
+		us:        tidbkv.NewUnionStore(snapshot),
 		store:     store,
 		startTS:   startTS,
 		startTime: time.Now(),
 		valid:     true,
-		vars:      kv.DefaultVars,
+		vars:      tidbkv.DefaultVars,
 	}
 	newTiKVTxn.SetOption(kv.TxnScope, txnScope)
 	return newTiKVTxn, nil
 }
 
-func newTiKVTxnWithExactStaleness(store *tikvStore, txnScope string, prevSec uint64) (*tikvTxn, error) {
+func newTiKVTxnWithExactStaleness(store *KVStore, txnScope string, prevSec uint64) (*KVTxn, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := store.getStalenessTimestamp(bo, txnScope, prevSec)
 	if err != nil {
@@ -123,19 +104,11 @@ func newTiKVTxnWithExactStaleness(store *tikvStore, txnScope string, prevSec uin
 	return newTiKVTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed())
 }
 
-type assertionPair struct {
-	key       kv.Key
-	assertion kv.AssertionType
-}
-
-func (a assertionPair) String() string {
-	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
-}
-
 // SetSuccess is used to probe if kv variables are set or not. It is ONLY used in test cases.
 var SetSuccess = false
 
-func (txn *tikvTxn) SetVars(vars *kv.Variables) {
+// SetVars sets variables to the transaction.
+func (txn *KVTxn) SetVars(vars *tidbkv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
 	failpoint.Inject("probeSetVars", func(val failpoint.Value) {
@@ -145,14 +118,15 @@ func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	})
 }
 
-func (txn *tikvTxn) GetVars() *kv.Variables {
+// GetVars gets variables from the transaction.
+func (txn *KVTxn) GetVars() *tidbkv.Variables {
 	return txn.vars
 }
 
 // Get implements transaction interface.
-func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+func (txn *KVTxn) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
 	ret, err := txn.us.Get(ctx, k)
-	if kv.IsErrNotFound(err) {
+	if tidbkv.IsErrNotFound(err) {
 		return nil, err
 	}
 	if err != nil {
@@ -162,38 +136,51 @@ func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return ret, nil
 }
 
-func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+// Do not use len(value) == 0 or value == nil to represent non-exist.
+// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
+func (txn *KVTxn) BatchGet(ctx context.Context, keys []tidbkv.Key) (map[string][]byte, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	return kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
+	return tidbkv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
 }
 
-func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
+// Set sets the value for key k as v into kv store.
+// v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
+func (txn *KVTxn) Set(k tidbkv.Key, v []byte) error {
 	txn.setCnt++
 	return txn.us.GetMemBuffer().Set(k, v)
 }
 
-func (txn *tikvTxn) String() string {
+// String implements fmt.Stringer interface.
+func (txn *KVTxn) String() string {
 	return fmt.Sprintf("%d", txn.StartTS())
 }
 
-func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+// Iter creates an Iterator positioned on the first entry that k <= entry's key.
+// If such entry is not found, it returns an invalid Iterator with no error.
+// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
+// The Iterator must be Closed after use.
+func (txn *KVTxn) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
 	return txn.us.Iter(k, upperBound)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
+func (txn *KVTxn) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 	return txn.us.IterReverse(k)
 }
 
-func (txn *tikvTxn) Delete(k kv.Key) error {
+// Delete removes the entry for key k from kv store.
+func (txn *KVTxn) Delete(k tidbkv.Key) error {
 	return txn.us.GetMemBuffer().Delete(k)
 }
 
-func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
+// SetOption sets an option with a value, when val is nil, uses the default
+// value of this option.
+func (txn *KVTxn) SetOption(opt int, val interface{}) {
 	txn.us.SetOption(opt, val)
 	txn.snapshot.SetOption(opt, val)
 	switch opt {
@@ -202,19 +189,27 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
 	case kv.CommitHook:
-		txn.commitCallback = val.(func(info kv.TxnInfo, err error))
+		txn.commitCallback = val.(func(info tidbkv.TxnInfo, err error))
 	}
 }
 
-func (txn *tikvTxn) DelOption(opt kv.Option) {
+// GetOption returns the option
+func (txn *KVTxn) GetOption(opt int) interface{} {
+	return txn.us.GetOption(opt)
+}
+
+// DelOption deletes an option.
+func (txn *KVTxn) DelOption(opt int) {
 	txn.us.DelOption(opt)
 }
 
-func (txn *tikvTxn) IsPessimistic() bool {
+// IsPessimistic returns true if it is pessimistic.
+func (txn *KVTxn) IsPessimistic() bool {
 	return txn.us.GetOption(kv.Pessimistic) != nil
 }
 
-func (txn *tikvTxn) Commit(ctx context.Context) error {
+// Commit commits the transaction operations to KV store.
+func (txn *KVTxn) Commit(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvTxn.Commit", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -223,43 +218,38 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	defer trace.StartRegion(ctx, "CommitTxn").End()
 
 	if !txn.valid {
-		return kv.ErrInvalidTxn
+		return tidbkv.ErrInvalidTxn
 	}
 	defer txn.close()
 
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
-		if val.(bool) && kv.IsMockCommitErrorEnable() {
-			kv.MockCommitErrorDisable()
+		if val.(bool) && IsMockCommitErrorEnable() {
+			MockCommitErrorDisable()
 			failpoint.Return(errors.New("mock commit error"))
 		}
 	})
 
 	start := time.Now()
-	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
+	defer func() { metrics.TxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
 
-	// connID is used for log.
-	var connID uint64
-	val := ctx.Value(sessionctx.ConnID)
+	// sessionID is used for log.
+	var sessionID uint64
+	val := ctx.Value(util.SessionID)
 	if val != nil {
-		connID = val.(uint64)
+		sessionID = val.(uint64)
 	}
 
 	var err error
 	// If the txn use pessimistic lock, committer is initialized.
 	committer := txn.committer
 	if committer == nil {
-		committer, err = newTwoPhaseCommitter(txn, connID)
+		committer, err = newTwoPhaseCommitter(txn, sessionID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		txn.committer = committer
 	}
-	defer func() {
-		// For async commit transactions, the ttl manager will be closed in the asynchronous commit goroutine.
-		if !committer.isAsyncCommit() {
-			committer.ttlManager.close()
-		}
-	}()
+	defer committer.ttlManager.close()
 
 	initRegion := trace.StartRegion(ctx, "InitKeys")
 	err = committer.initKeysAndMutations()
@@ -286,7 +276,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// pessimistic transaction should also bypass latch.
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.execute(ctx)
-		if val == nil || connID > 0 {
+		if val == nil || sessionID > 0 {
 			txn.onCommitted(err)
 		}
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
@@ -304,10 +294,10 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
+		return tidbkv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
 	err = committer.execute(ctx)
-	if val == nil || connID > 0 {
+	if val == nil || sessionID > 0 {
 		txn.onCommitted(err)
 	}
 	if err == nil {
@@ -317,13 +307,14 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-func (txn *tikvTxn) close() {
+func (txn *KVTxn) close() {
 	txn.valid = false
 }
 
-func (txn *tikvTxn) Rollback() error {
+// Rollback undoes the transaction operations to KV store.
+func (txn *KVTxn) Rollback() error {
 	if !txn.valid {
-		return kv.ErrInvalidTxn
+		return tidbkv.ErrInvalidTxn
 	}
 	start := time.Now()
 	// Clean up pessimistic lock.
@@ -336,11 +327,11 @@ func (txn *tikvTxn) Rollback() error {
 	}
 	txn.close()
 	logutil.BgLogger().Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
-	tikvTxnCmdHistogramWithRollback.Observe(time.Since(start).Seconds())
+	metrics.TxnCmdHistogramWithRollback.Observe(time.Since(start).Seconds())
 	return nil
 }
 
-func (txn *tikvTxn) rollbackPessimisticLocks() error {
+func (txn *KVTxn) rollbackPessimisticLocks() error {
 	if txn.lockedCnt == 0 {
 		return nil
 	}
@@ -349,7 +340,7 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 	return txn.committer.pessimisticRollbackMutations(bo, &PlainMutations{keys: keys})
 }
 
-func (txn *tikvTxn) collectLockedKeys() [][]byte {
+func (txn *KVTxn) collectLockedKeys() [][]byte {
 	keys := make([][]byte, 0, txn.lockedCnt)
 	buf := txn.GetMemBuffer()
 	var err error
@@ -362,9 +353,9 @@ func (txn *tikvTxn) collectLockedKeys() [][]byte {
 	return keys
 }
 
-func (txn *tikvTxn) onCommitted(err error) {
+func (txn *KVTxn) onCommitted(err error) {
 	if txn.commitCallback != nil {
-		info := kv.TxnInfo{TxnScope: txn.GetUnionStore().GetOption(kv.TxnScope).(string), StartTS: txn.startTS, CommitTS: txn.commitTS}
+		info := tidbkv.TxnInfo{TxnScope: txn.GetUnionStore().GetOption(kv.TxnScope).(string), StartTS: txn.startTS, CommitTS: txn.commitTS}
 		if err != nil {
 			info.ErrMsg = err.Error()
 		}
@@ -372,8 +363,9 @@ func (txn *tikvTxn) onCommitted(err error) {
 	}
 }
 
-// lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
-func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
+// LockKeys tries to lock the entries with the keys in KV store.
+// lockWaitTime in ms, except that tidbkv.LockAlwaysWait(0) means always wait lock, tidbkv.LockNowait(-1) means nowait lock
+func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInput ...tidbkv.Key) error {
 	// Exclude keys that are already locked.
 	var err error
 	keys := make([][]byte, 0, len(keysInput))
@@ -381,7 +373,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	defer func() {
-		tikvTxnCmdHistogramWithLockKeys.Observe(time.Since(startTime).Seconds())
+		metrics.TxnCmdHistogramWithLockKeys.Observe(time.Since(startTime).Seconds())
 		if err == nil {
 			if lockCtx.PessimisticLockWaited != nil {
 				if atomic.LoadInt32(lockCtx.PessimisticLockWaited) > 0 {
@@ -416,13 +408,15 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			keys = append(keys, key)
 		} else if txn.IsPessimistic() {
 			if checkKeyExists && valueExist {
-				return txn.committer.extractKeyExistsErr(key)
+				alreadyExist := kvrpcpb.AlreadyExist{Key: key}
+				e := &ErrKeyExist{AlreadyExist: &alreadyExist}
+				return txn.committer.extractKeyExistsErr(e)
 			}
 		}
 		if lockCtx.ReturnValues && locked {
 			// An already locked key can not return values, we add an entry to let the caller get the value
 			// in other ways.
-			lockCtx.Values[string(key)] = kv.ReturnedValue{AlreadyLocked: true}
+			lockCtx.Values[string(key)] = tidbkv.ReturnedValue{AlreadyLocked: true}
 		}
 	}
 	if len(keys) == 0 {
@@ -431,14 +425,14 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	keys = deduplicateKeys(keys)
 	if txn.IsPessimistic() && lockCtx.ForUpdateTS > 0 {
 		if txn.committer == nil {
-			// connID is used for log.
-			var connID uint64
+			// sessionID is used for log.
+			var sessionID uint64
 			var err error
-			val := ctx.Value(sessionctx.ConnID)
+			val := ctx.Value(util.SessionID)
 			if val != nil {
-				connID = val.(uint64)
+				sessionID = val.(uint64)
 			}
-			txn.committer, err = newTwoPhaseCommitter(txn, connID)
+			txn.committer, err = newTwoPhaseCommitter(txn, sessionID)
 			if err != nil {
 				return err
 			}
@@ -476,7 +470,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 					txn.us.UnmarkPresumeKeyNotExists(key)
 				}
 			}
-			keyMayBeLocked := terror.ErrorNotEqual(kv.ErrWriteConflict, err) && terror.ErrorNotEqual(kv.ErrKeyExists, err)
+			keyMayBeLocked := terror.ErrorNotEqual(tidbkv.ErrWriteConflict, err) && terror.ErrorNotEqual(tidbkv.ErrKeyExists, err)
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
 				wg := txn.asyncPessimisticRollback(ctx, keys)
@@ -502,16 +496,16 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 	}
 	for _, key := range keys {
-		valExists := kv.SetKeyLockedValueExists
+		valExists := tidbkv.SetKeyLockedValueExists
 		// PointGet and BatchPointGet will return value in pessimistic lock response, the value may not exist.
 		// For other lock modes, the locked key values always exist.
 		if lockCtx.ReturnValues {
 			val, _ := lockCtx.Values[string(key)]
 			if len(val.Value) == 0 {
-				valExists = kv.SetKeyLockedValueNotExists
+				valExists = tidbkv.SetKeyLockedValueNotExists
 			}
 		}
-		memBuf.UpdateFlags(key, kv.SetKeyLocked, kv.DelNeedCheckExists, valExists)
+		memBuf.UpdateFlags(key, tidbkv.SetKeyLocked, tidbkv.DelNeedCheckExists, valExists)
 	}
 	txn.lockedCnt += len(keys)
 	return nil
@@ -531,11 +525,11 @@ func deduplicateKeys(keys [][]byte) [][]byte {
 	return deduped
 }
 
-func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *sync.WaitGroup {
+func (txn *KVTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *sync.WaitGroup {
 	// Clone a new committer for execute in background.
 	committer := &twoPhaseCommitter{
 		store:       txn.committer.store,
-		connID:      txn.committer.connID,
+		sessionID:   txn.committer.sessionID,
 		startTS:     txn.committer.startTS,
 		forUpdateTS: txn.committer.forUpdateTS,
 		primaryKey:  txn.committer.primaryKey,
@@ -577,38 +571,48 @@ func hashInKeys(deadlockKeyHash uint64, keys [][]byte) bool {
 	return false
 }
 
-func (txn *tikvTxn) IsReadOnly() bool {
+// IsReadOnly checks if the transaction has only performed read operations.
+func (txn *KVTxn) IsReadOnly() bool {
 	return !txn.us.GetMemBuffer().Dirty()
 }
 
-func (txn *tikvTxn) StartTS() uint64 {
+// StartTS returns the transaction start timestamp.
+func (txn *KVTxn) StartTS() uint64 {
 	return txn.startTS
 }
 
-func (txn *tikvTxn) Valid() bool {
+// Valid returns if the transaction is valid.
+// A transaction become invalid after commit or rollback.
+func (txn *KVTxn) Valid() bool {
 	return txn.valid
 }
 
-func (txn *tikvTxn) Len() int {
+// Len returns the number of entries in the DB.
+func (txn *KVTxn) Len() int {
 	return txn.us.GetMemBuffer().Len()
 }
 
-func (txn *tikvTxn) Size() int {
+// Size returns sum of keys and values length.
+func (txn *KVTxn) Size() int {
 	return txn.us.GetMemBuffer().Size()
 }
 
-func (txn *tikvTxn) Reset() {
+// Reset reset the Transaction to initial states.
+func (txn *KVTxn) Reset() {
 	txn.us.GetMemBuffer().Reset()
 }
 
-func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
+// GetUnionStore returns the UnionStore binding to this transaction.
+func (txn *KVTxn) GetUnionStore() tidbkv.UnionStore {
 	return txn.us
 }
 
-func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
+// GetMemBuffer return the MemBuffer binding to this transaction.
+func (txn *KVTxn) GetMemBuffer() tidbkv.MemBuffer {
 	return txn.us.GetMemBuffer()
 }
 
-func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
+// GetSnapshot returns the Snapshot binding to this transaction.
+func (txn *KVTxn) GetSnapshot() *KVSnapshot {
 	return txn.snapshot
 }

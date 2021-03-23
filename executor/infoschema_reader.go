@@ -28,6 +28,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -35,7 +36,9 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -43,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
@@ -142,6 +144,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
 		case infoschema.TablePlacementPolicy:
 			err = e.setDataForPlacementPolicy(sctx)
+		case infoschema.TableClientErrorsSummaryGlobal,
+			infoschema.TableClientErrorsSummaryByUser,
+			infoschema.TableClientErrorsSummaryByHost:
+			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		}
 		if err != nil {
 			return nil, err
@@ -165,10 +171,16 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 }
 
 func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select table_id, count from mysql.stats_meta")
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), "select table_id, count from mysql.stats_meta")
 	if err != nil {
 		return nil, err
 	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return nil, err
+	}
+
 	rowCountMap := make(map[int64]uint64, len(rows))
 	for _, row := range rows {
 		tableID := row.GetInt64(0)
@@ -184,10 +196,16 @@ type tableHistID struct {
 }
 
 func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
 		return nil, err
 	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return nil, err
+	}
+
 	colLengthMap := make(map[tableHistID]uint64, len(rows))
 	for _, row := range rows {
 		tableID := row.GetInt64(0)
@@ -440,7 +458,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			pkType := "NON-CLUSTERED"
+			pkType := "NONCLUSTERED"
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
@@ -455,7 +473,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				}
 
 				var rowCount, dataLength, indexLength uint64
-				if table.GetPartitionInfo() == nil || ctx.GetSessionVars().UseDynamicPartitionPrune() {
+				if table.GetPartitionInfo() == nil {
 					rowCount = tableRowsMap[table.ID]
 					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
 				} else {
@@ -474,10 +492,8 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
 				}
-				if table.PKIsHandle {
-					pkType = "INT CLUSTERED"
-				} else if table.IsCommonHandle {
-					pkType = "COMMON CLUSTERED"
+				if table.PKIsHandle || table.IsCommonHandle {
+					pkType = "CLUSTERED"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				record := types.MakeDatums(
@@ -703,6 +719,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 					nil,                   // PARTITION_COMMENT
 					nil,                   // NODEGROUP
 					nil,                   // TABLESPACE_NAME
+					nil,                   // TIDB_PARTITION_ID
 				)
 				rows = append(rows, record)
 			} else {
@@ -785,6 +802,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 						pi.Comment,            // PARTITION_COMMENT
 						nil,                   // NODEGROUP
 						nil,                   // TABLESPACE_NAME
+						pi.ID,                 // TIDB_PARTITION_ID
 					)
 					rows = append(rows, record)
 				}
@@ -824,12 +842,17 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					nil,           // Expression
 					0,             // INDEX_ID
 					"YES",         // IS_VISIBLE
+					"YES",         // CLUSTERED
 				)
 				rows = append(rows, record)
 			}
 			for _, idxInfo := range tb.Indices {
 				if idxInfo.State != model.StatePublic {
 					continue
+				}
+				isClustered := "NO"
+				if tb.IsCommonHandle && idxInfo.Primary {
+					isClustered = "YES"
 				}
 				for i, col := range idxInfo.Columns {
 					nonUniq := 1
@@ -864,6 +887,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						expression,      // Expression
 						idxInfo.ID,      // INDEX_ID
 						visible,         // IS_VISIBLE
+						isClustered,     // CLUSTERED
 					)
 					rows = append(rows, record)
 				}
@@ -911,7 +935,7 @@ func (e *memtableRetriever) setDataFromViews(ctx sessionctx.Context, schemas []*
 }
 
 func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err error) {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
 	}
@@ -1272,7 +1296,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 }
 
 func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) error {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
@@ -1329,7 +1353,7 @@ func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo,
 }
 
 func (e *memtableRetriever) setDataForTikVRegionPeers(ctx sessionctx.Context) error {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
@@ -1392,7 +1416,7 @@ const (
 )
 
 func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) error {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
@@ -1581,7 +1605,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	}
 
 	// Cache the helper and return an error if PD unavailable.
-	tikvStore, ok := sctx.GetStore().(tikv.Storage)
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.Errorf("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
@@ -1836,11 +1860,21 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 			continue
 		}
 		// Currently, only partitions have placement rules.
+		var tbName, dbName, ptName string
+		skip := true
 		tb, db, part := is.FindTableByPartitionID(id)
-		if tb == nil {
-			return errors.Errorf("Can't find partition by id %d", id)
+		if tb != nil && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv)) {
+			dbName = db.Name.L
+			tbName = tb.Meta().Name.L
+			ptName = part.Name.L
+			skip = false
 		}
-		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
+		failpoint.Inject("outputInvalidPlacementRules", func(val failpoint.Value) {
+			if val.(bool) {
+				skip = false
+			}
+		})
+		if skip {
 			continue
 		}
 		for _, rule := range bundle.Rules {
@@ -1852,15 +1886,91 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 				bundle.ID,
 				bundle.Index,
 				rule.ID,
-				db.Name.L,
-				tb.Meta().Name.L,
-				part.Name.L,
+				dbName,
+				tbName,
+				ptName,
 				nil,
 				string(rule.Role),
 				rule.Count,
 				constraint,
 			)
 			rows = append(rows, row)
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context, tableName string) error {
+	// Seeing client errors should require the PROCESS privilege, with the exception of errors for your own user.
+	// This is similar to information_schema.processlist, which is the closest comparison.
+	var hasProcessPriv bool
+	loginUser := ctx.GetSessionVars().User
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+
+	var rows [][]types.Datum
+	switch tableName {
+	case infoschema.TableClientErrorsSummaryGlobal:
+		if !hasProcessPriv {
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
+		for code, summary := range errno.GlobalStats() {
+			firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
+			lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
+			row := types.MakeDatums(
+				int(code),                    // ERROR_NUMBER
+				errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
+				summary.ErrorCount,           // ERROR_COUNT
+				summary.WarningCount,         // WARNING_COUNT
+				firstSeen,                    // FIRST_SEEN
+				lastSeen,                     // LAST_SEEN
+			)
+			rows = append(rows, row)
+		}
+	case infoschema.TableClientErrorsSummaryByUser:
+		for user, agg := range errno.UserStats() {
+			for code, summary := range agg {
+				// Allow anyone to see their own errors.
+				if !hasProcessPriv && loginUser != nil && loginUser.Username != user {
+					continue
+				}
+				firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				row := types.MakeDatums(
+					user,                         // USER
+					int(code),                    // ERROR_NUMBER
+					errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
+					summary.ErrorCount,           // ERROR_COUNT
+					summary.WarningCount,         // WARNING_COUNT
+					firstSeen,                    // FIRST_SEEN
+					lastSeen,                     // LAST_SEEN
+				)
+				rows = append(rows, row)
+			}
+		}
+	case infoschema.TableClientErrorsSummaryByHost:
+		if !hasProcessPriv {
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
+		for host, agg := range errno.HostStats() {
+			for code, summary := range agg {
+				firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				row := types.MakeDatums(
+					host,                         // HOST
+					int(code),                    // ERROR_NUMBER
+					errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
+					summary.ErrorCount,           // ERROR_COUNT
+					summary.WarningCount,         // WARNING_COUNT
+					firstSeen,                    // FIRST_SEEN
+					lastSeen,                     // LAST_SEEN
+				)
+				rows = append(rows, row)
+			}
 		}
 	}
 	e.rows = rows
@@ -1969,7 +2079,7 @@ type tiflashInstanceInfo struct {
 
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
 	store := sctx.GetStore()
-	if etcd, ok := store.(tikv.EtcdBackend); ok {
+	if etcd, ok := store.(kv.EtcdBackend); ok {
 		var addrs []string
 		var err error
 		if addrs, err = etcd.EtcdAddrs(); err != nil {

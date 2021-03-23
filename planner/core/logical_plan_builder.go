@@ -300,32 +300,12 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	return plan4Agg, aggIndexMap, nil
 }
 
-func (b *PlanBuilder) buildTableRefsWithCache(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
-	return b.buildTableRefs(ctx, from, true)
-}
-
-func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause, useCache bool) (p LogicalPlan, err error) {
+func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
 	if from == nil {
 		p = b.buildTableDual()
 		return
 	}
-	if !useCache {
-		return b.buildResultSetNode(ctx, from.TableRefs)
-	}
-	var ok bool
-	p, ok = b.cachedResultSetNodes[from.TableRefs]
-	if ok {
-		m := b.cachedHandleHelperMap[from.TableRefs]
-		b.handleHelper.pushMap(m)
-		return
-	}
-	p, err = b.buildResultSetNode(ctx, from.TableRefs)
-	if err != nil {
-		return nil, err
-	}
-	b.cachedResultSetNodes[from.TableRefs] = p
-	b.cachedHandleHelperMap[from.TableRefs] = b.handleHelper.tailMap()
-	return
+	return b.buildResultSetNode(ctx, from.TableRefs)
 }
 
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode) (p LogicalPlan, err error) {
@@ -767,6 +747,13 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 			return nil, errors.New("ON condition doesn't support subqueries yet")
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
+		// Keep these expressions as a LogicalSelection upon the inner join, in order to apply
+		// possible decorrelate optimizations. The ON clause is actually treated as a WHERE clause now.
+		if joinPlan.JoinType == InnerJoin {
+			sel := LogicalSelection{Conditions: onCondition}.Init(b.ctx, b.getSelectOffset())
+			sel.SetChildren(joinPlan)
+			return sel, nil
+		}
 		joinPlan.AttachOnConds(onCondition)
 	} else if joinPlan.JoinType == InnerJoin {
 		// If a inner join without "ON" or "USING" clause, it's a cartesian
@@ -2254,17 +2241,13 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 // Finally it restore the original SELECT stmt.
 func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err error) {
 	// collect correlated aggregate from sub-queries inside FROM clause.
-	useCache, err := r.collectFromTableRefs(r.ctx, sel.From)
+	_, err = r.collectFromTableRefs(r.ctx, sel.From)
 	if err != nil {
 		return err
 	}
-	// do not use cache when for update read
-	if isForUpdateReadSelectLock(sel.LockInfo) {
-		useCache = false
-	}
 	// we cannot use cache if there are correlated aggregates inside FROM clause,
 	// since the plan we are building now is not correct and need to be rebuild later.
-	p, err := r.b.buildTableRefs(r.ctx, sel.From, useCache)
+	p, err := r.b.buildTableRefs(r.ctx, sel.From)
 	if err != nil {
 		return err
 	}
@@ -2541,67 +2524,73 @@ func tblInfoFromCol(from ast.ResultSetNode, name *types.FieldName) *model.TableI
 		if field.Name.L == name.TblName.L {
 			return field.TableInfo
 		}
-		if field.Name.L != name.TblName.L {
-			continue
-		}
-		if field.Schema.L == name.DBName.L {
-			return field.TableInfo
-		}
 	}
 	return nil
 }
 
-func buildFuncDependCol(p LogicalPlan, cond ast.ExprNode) (*types.FieldName, *types.FieldName) {
+func buildFuncDependCol(p LogicalPlan, cond ast.ExprNode) (*types.FieldName, *types.FieldName, error) {
 	binOpExpr, ok := cond.(*ast.BinaryOperationExpr)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if binOpExpr.Op != opcode.EQ {
-		return nil, nil
+		return nil, nil, nil
 	}
 	lColExpr, ok := binOpExpr.L.(*ast.ColumnNameExpr)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	rColExpr, ok := binOpExpr.R.(*ast.ColumnNameExpr)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	lIdx, err := expression.FindFieldName(p.OutputNames(), lColExpr.Name)
 	if err != nil {
-		return nil, nil
+		return nil, nil, err
 	}
 	rIdx, err := expression.FindFieldName(p.OutputNames(), rColExpr.Name)
 	if err != nil {
-		return nil, nil
+		return nil, nil, err
 	}
-	return p.OutputNames()[lIdx], p.OutputNames()[rIdx]
+	if lIdx == -1 {
+		return nil, nil, ErrUnknownColumn.GenWithStackByArgs(lColExpr.Name, "where clause")
+	}
+	if rIdx == -1 {
+		return nil, nil, ErrUnknownColumn.GenWithStackByArgs(rColExpr.Name, "where clause")
+	}
+	return p.OutputNames()[lIdx], p.OutputNames()[rIdx], nil
 }
 
-func buildWhereFuncDepend(p LogicalPlan, where ast.ExprNode) map[*types.FieldName]*types.FieldName {
+func buildWhereFuncDepend(p LogicalPlan, where ast.ExprNode) (map[*types.FieldName]*types.FieldName, error) {
 	whereConditions := splitWhere(where)
 	colDependMap := make(map[*types.FieldName]*types.FieldName, 2*len(whereConditions))
 	for _, cond := range whereConditions {
-		lCol, rCol := buildFuncDependCol(p, cond)
+		lCol, rCol, err := buildFuncDependCol(p, cond)
+		if err != nil {
+			return nil, err
+		}
 		if lCol == nil || rCol == nil {
 			continue
 		}
 		colDependMap[lCol] = rCol
 		colDependMap[rCol] = lCol
 	}
-	return colDependMap
+	return colDependMap, nil
 }
 
-func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) map[*types.FieldName]*types.FieldName {
+func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) (map[*types.FieldName]*types.FieldName, error) {
 	switch x := from.(type) {
 	case *ast.Join:
 		if x.On == nil {
-			return nil
+			return nil, nil
 		}
 		onConditions := splitWhere(x.On.Expr)
 		colDependMap := make(map[*types.FieldName]*types.FieldName, len(onConditions))
 		for _, cond := range onConditions {
-			lCol, rCol := buildFuncDependCol(p, cond)
+			lCol, rCol, err := buildFuncDependCol(p, cond)
+			if err != nil {
+				return nil, err
+			}
 			if lCol == nil || rCol == nil {
 				continue
 			}
@@ -2619,9 +2608,9 @@ func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) map[*types.Field
 				colDependMap[lCol] = rCol
 			}
 		}
-		return colDependMap
+		return colDependMap, nil
 	default:
-		return nil
+		return nil, nil
 	}
 }
 
@@ -2831,8 +2820,14 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 		return nil
 	}
 
-	whereDepends := buildWhereFuncDepend(p, sel.Where)
-	joinDepends := buildJoinFuncDepend(p, sel.From.TableRefs)
+	whereDepends, err := buildWhereFuncDepend(p, sel.Where)
+	if err != nil {
+		return err
+	}
+	joinDepends, err := buildJoinFuncDepend(p, sel.From.TableRefs)
+	if err != nil {
+		return err
+	}
 	tblMap := make(map[*model.TableInfo]struct{}, len(notInGbyOrSingleValueColNames))
 	for name, errExprLoc := range notInGbyOrSingleValueColNames {
 		tblInfo := tblInfoFromCol(sel.From.TableRefs, name)
@@ -2887,8 +2882,15 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, sel 
 	}
 	singleValueColNames := make(map[*types.FieldName]struct{}, len(sel.Fields.Fields))
 	extractSingeValueColNamesFromWhere(p, sel.Where, singleValueColNames)
-	whereDepends := buildWhereFuncDepend(p, sel.Where)
-	joinDepends := buildJoinFuncDepend(p, sel.From.TableRefs)
+	whereDepends, err := buildWhereFuncDepend(p, sel.Where)
+	if err != nil {
+		return err
+	}
+
+	joinDepends, err := buildJoinFuncDepend(p, sel.From.TableRefs)
+	if err != nil {
+		return err
+	}
 	tblMap := make(map[*model.TableInfo]struct{}, len(resolver.nonAggCols))
 	for i, colName := range resolver.nonAggCols {
 		idx, err := expression.FindFieldName(p.OutputNames(), colName)
@@ -3307,7 +3309,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
 	// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
 	// existing ResultSetNode from the cache.
-	p, err = b.buildTableRefsWithCache(ctx, sel.From)
+	p, err = b.buildTableRefs(ctx, sel.From)
 	if err != nil {
 		return nil, err
 	}
@@ -3503,8 +3505,10 @@ func (b *PlanBuilder) buildTableDual() *LogicalTableDual {
 }
 
 func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.Flag = mysql.NotNullFlag | mysql.PriKeyFlag
 	return &expression.Column{
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  tp,
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
@@ -4651,53 +4655,50 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		return nil, err
 	}
 
-	var tableList []*ast.TableName
-	tableList = extractTableList(delete.TableRefs.TableRefs, tableList, true)
-
 	// Collect visitInfo.
 	if delete.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
+		updatableList := make(map[string]bool)
+		tbInfoList := make(map[string]*ast.TableName)
+		collectTableName(delete.TableRefs.TableRefs, &updatableList, &tbInfoList)
 		for _, tn := range delete.Tables.Tables {
-			foundMatch := false
-			for _, v := range tableList {
-				dbName := v.Schema
-				if dbName.L == "" {
-					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-				}
-				if (tn.Schema.L == "" || tn.Schema.L == dbName.L) && tn.Name.L == v.Name.L {
-					tn.Schema = dbName
-					tn.DBInfo = v.DBInfo
-					tn.TableInfo = v.TableInfo
-					foundMatch = true
-					break
-				}
+			var canUpdate, foundMatch = false, false
+			name := tn.Name.L
+			if tn.Schema.L == "" {
+				canUpdate, foundMatch = updatableList[name]
 			}
+
 			if !foundMatch {
-				var asNameList []string
-				asNameList = extractTableSourceAsNames(delete.TableRefs.TableRefs, asNameList, false)
-				for _, asName := range asNameList {
-					tblName := tn.Name.L
-					if tn.Schema.L != "" {
-						tblName = tn.Schema.L + "." + tblName
-					}
-					if asName == tblName {
-						// check sql like: `delete a from (select * from t) as a, t`
-						return nil, ErrNonUpdatableTable.GenWithStackByArgs(tn.Name.O, "DELETE")
-					}
+				if tn.Schema.L == "" {
+					name = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB).L + "." + tn.Name.L
+				} else {
+					name = tn.Schema.L + "." + tn.Name.L
 				}
-				// check sql like: `delete b from (select * from t) as a, t`
+				canUpdate, foundMatch = updatableList[name]
+			}
+			// check sql like: `delete b from (select * from t) as a, t`
+			if !foundMatch {
 				return nil, ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
 			}
+			// check sql like: `delete a from (select * from t) as a, t`
+			if !canUpdate {
+				return nil, ErrNonUpdatableTable.GenWithStackByArgs(tn.Name.O, "DELETE")
+			}
+			tb := tbInfoList[name]
+			tn.DBInfo = tb.DBInfo
+			tn.TableInfo = tb.TableInfo
 			if tn.TableInfo.IsView() {
 				return nil, errors.Errorf("delete view %s is not supported now.", tn.Name.O)
 			}
 			if tn.TableInfo.IsSequence() {
 				return nil, errors.Errorf("delete sequence %s is not supported now.", tn.Name.O)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tn.Schema.L, tn.TableInfo.Name.L, "", nil)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tb.DBInfo.Name.L, tb.Name.L, "", nil)
 		}
 	} else {
 		// Delete from a, b, c, d.
+		var tableList []*ast.TableName
+		tableList = extractTableList(delete.TableRefs.TableRefs, tableList, false)
 		for _, v := range tableList {
 			if v.TableInfo.IsView() {
 				return nil, errors.Errorf("delete view %s is not supported now.", v.Name.O)
@@ -4781,7 +4782,7 @@ func (p *Delete) cleanTblID2HandleMap(
 // matchingDeletingTable checks whether this column is from the table which is in the deleting list.
 func (p *Delete) matchingDeletingTable(names []*ast.TableName, name *types.FieldName) bool {
 	for _, n := range names {
-		if (name.DBName.L == "" || name.DBName.L == n.Schema.L) && name.TblName.L == n.Name.L {
+		if (name.DBName.L == "" || name.DBName.L == n.DBInfo.Name.L) && name.TblName.L == n.Name.L {
 			return true
 		}
 	}
@@ -5458,9 +5459,43 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			} else {
 				input = append(input, s)
 			}
+		} else if s, ok := x.Source.(*ast.SelectStmt); ok {
+			if s.From != nil {
+				var innerList []*ast.TableName
+				innerList = extractTableList(s.From.TableRefs, innerList, asName)
+				if len(innerList) > 0 {
+					innerTableName := innerList[0]
+					if x.AsName.L != "" && asName {
+						newTableName := *innerList[0]
+						newTableName.Name = x.AsName
+						newTableName.Schema = model.NewCIStr("")
+						innerTableName = &newTableName
+					}
+					input = append(input, innerTableName)
+				}
+			}
 		}
 	}
 	return input
+}
+
+func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, info *map[string]*ast.TableName) {
+	switch x := node.(type) {
+	case *ast.Join:
+		collectTableName(x.Left, updatableName, info)
+		collectTableName(x.Right, updatableName, info)
+	case *ast.TableSource:
+		name := x.AsName.L
+		var canUpdate bool
+		var s *ast.TableName
+		if s, canUpdate = x.Source.(*ast.TableName); canUpdate {
+			if name == "" {
+				name = s.Schema.L + "." + s.Name.L
+			}
+			(*info)[name] = s
+		}
+		(*updatableName)[name] = canUpdate
+	}
 }
 
 // extractTableSourceAsNames extracts TableSource.AsNames from node.

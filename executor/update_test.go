@@ -24,8 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -34,7 +33,6 @@ type testUpdateSuite struct {
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
-	ctx *mock.Context
 }
 
 func (s *testUpdateSuite) SetUpSuite(c *C) {
@@ -336,8 +334,8 @@ type testSuite11 struct {
 
 func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
 	tk.MustExec(`use test`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
@@ -388,8 +386,8 @@ func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 
 func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
 	tk.MustExec(`use test`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
@@ -423,8 +421,8 @@ func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 
 func (s *testSuite11) TestReplaceClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
 	tk.MustExec(`use test`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec(`drop table if exists rt1pk`)
 	tk.MustExec(`create table rt1pk(id varchar(200) primary key, v int)`)
@@ -455,7 +453,7 @@ func (s *testSuite11) TestPessimisticUpdatePKLazyCheck(c *C) {
 }
 
 func (s *testSuite11) testUpdatePKLazyCheck(c *C, tk *testkit.TestKit, clusteredIndex bool) {
-	tk.MustExec(fmt.Sprintf(`set @@tidb_enable_clustered_index=%v`, clusteredIndex))
+	tk.Se.GetSessionVars().EnableClusteredIndex = clusteredIndex
 	tk.MustExec(`drop table if exists upk`)
 	tk.MustExec(`create table upk (a int, b int, c int, primary key (a, b))`)
 	tk.MustExec(`insert upk values (1, 1, 1), (2, 2, 2), (3, 3, 3)`)

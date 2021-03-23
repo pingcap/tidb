@@ -150,7 +150,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		if err != nil {
 			return "", false, err
 		}
-		return string(j), true, nil
+		return config.HideConfig(string(j)), true, nil
 	case TiDBForcePriority:
 		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
 	case TiDBDDLSlowOprThreshold:
@@ -177,6 +177,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return BoolToOnOff(s.PrevFoundInBinding), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
+	case TiDBTxnScope:
+		return s.TxnScope.GetVarValue(), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {

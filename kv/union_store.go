@@ -16,7 +16,14 @@ package kv
 import (
 	"context"
 
-	"github.com/pingcap/parser/model"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+)
+
+// Priority value for transaction priority.TODO:remove it when br is ready
+const (
+	PriorityNormal = tikvstore.PriorityNormal
+	PriorityLow    = tikvstore.PriorityLow
+	PriorityHigh   = tikvstore.PriorityHigh
 )
 
 // UnionStore is a store that wraps a snapshot for read and a MemBuffer for buffered write.
@@ -28,20 +35,14 @@ type UnionStore interface {
 	HasPresumeKeyNotExists(k Key) bool
 	// UnmarkPresumeKeyNotExists deletes the key presume key not exists error flag for the lazy check.
 	UnmarkPresumeKeyNotExists(k Key)
-	// CacheIndexName caches the index name.
-	// PresumeKeyNotExists will use this to help decode error message.
-	CacheTableInfo(id int64, info *model.TableInfo)
-	// GetIndexName returns the cached index name.
-	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
-	GetTableInfo(id int64) *model.TableInfo
 
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
-	SetOption(opt Option, val interface{})
+	SetOption(opt int, val interface{})
 	// DelOption deletes an option.
-	DelOption(opt Option)
+	DelOption(opt int)
 	// GetOption gets an option.
-	GetOption(opt Option) interface{}
+	GetOption(opt int) interface{}
 	// GetMemBuffer return the MemBuffer binding to this unionStore.
 	GetMemBuffer() MemBuffer
 }
@@ -56,31 +57,26 @@ const (
 	NotExist
 )
 
-// Option is used for customizing kv store's behaviors during a transaction.
-type Option int
-
 // Options is an interface of a set of options. Each option is associated with a value.
 type Options interface {
 	// Get gets an option value.
-	Get(opt Option) (v interface{}, ok bool)
+	Get(opt int) (v interface{}, ok bool)
 }
 
 // unionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
-	memBuffer    *memdb
-	snapshot     Snapshot
-	idxNameCache map[int64]*model.TableInfo
-	opts         options
+	memBuffer *memdb
+	snapshot  Snapshot
+	opts      options
 }
 
 // NewUnionStore builds a new unionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
-		snapshot:     snapshot,
-		memBuffer:    newMemDB(),
-		idxNameCache: make(map[int64]*model.TableInfo),
-		opts:         make(map[Option]interface{}),
+		snapshot:  snapshot,
+		memBuffer: newMemDB(),
+		opts:      make(map[int]interface{}),
 	}
 }
 
@@ -144,32 +140,24 @@ func (us *unionStore) UnmarkPresumeKeyNotExists(k Key) {
 	us.memBuffer.UpdateFlags(k, DelPresumeKeyNotExists)
 }
 
-func (us *unionStore) GetTableInfo(id int64) *model.TableInfo {
-	return us.idxNameCache[id]
-}
-
-func (us *unionStore) CacheTableInfo(id int64, info *model.TableInfo) {
-	us.idxNameCache[id] = info
-}
-
 // SetOption implements the unionStore SetOption interface.
-func (us *unionStore) SetOption(opt Option, val interface{}) {
+func (us *unionStore) SetOption(opt int, val interface{}) {
 	us.opts[opt] = val
 }
 
 // DelOption implements the unionStore DelOption interface.
-func (us *unionStore) DelOption(opt Option) {
+func (us *unionStore) DelOption(opt int) {
 	delete(us.opts, opt)
 }
 
 // GetOption implements the unionStore GetOption interface.
-func (us *unionStore) GetOption(opt Option) interface{} {
+func (us *unionStore) GetOption(opt int) interface{} {
 	return us.opts[opt]
 }
 
-type options map[Option]interface{}
+type options map[int]interface{}
 
-func (opts options) Get(opt Option) (interface{}, bool) {
+func (opts options) Get(opt int) (interface{}, bool) {
 	v, ok := opts[opt]
 	return v, ok
 }
