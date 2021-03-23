@@ -200,9 +200,10 @@ func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, er
 	// cluster index
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	stmt, err := exec.ParseWithParams(context.TODO(), `
-		SELECT sha2(TABLE_NAME, 256) name, TIDB_PK_TYPE
+		SELECT left(sha2(TABLE_NAME, 256), 6) name, TIDB_PK_TYPE
 		FROM information_schema.tables
 		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')
+		ORDER BY name
 		limit 10000`)
 	if err != nil {
 		return nil, err
