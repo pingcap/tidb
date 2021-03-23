@@ -370,7 +370,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt("select * from t where i          >      30.0", "", "")
 	c.Assert(err, IsNil)
-	sql, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test"))
+	sql, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
 	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where i > ?")
