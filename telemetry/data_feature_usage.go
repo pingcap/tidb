@@ -153,8 +153,9 @@ func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, er
 	// coprocessor cache
 	CoprocessorCacheTelemetry.Lock.Lock()
 	maxLen := 0
+	timeNow := time.Now()
 	for _, window := range CoprocessorCacheTelemetry.MinuteWindow {
-		timeSince := time.Since(*window.BeginAt)
+		timeSince := timeNow.Sub(*window.BeginAt)
 		if timeSince >= ReportInterval {
 			continue
 		}
@@ -180,7 +181,7 @@ func getTelemetryFeatureUsageInfo(ctx sessionctx.Context) (*featureUsageInfo, er
 	TiFlashUsageTelemetry.Lock.Lock()
 	maxLen = 0
 	for _, window := range TiFlashUsageTelemetry.MinuteWindow {
-		timeSince := time.Since(*window.BeginAt)
+		timeSince := timeNow.Sub(*window.BeginAt)
 		if timeSince >= ReportInterval {
 			continue
 		}
