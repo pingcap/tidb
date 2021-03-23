@@ -7,6 +7,45 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+func (b *baseBuiltinHsSig) vecUpdateSourceType(input *chunk.Chunk, n int) error {
+	if len(b.args) == 3 {
+		bufStp, err := b.bufAllocator.get(types.ETString, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(bufStp)
+
+		if err := b.args[2].VecEvalString(b.ctx, input, bufStp); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if bufStp.IsNull(i) {
+				continue
+			}
+			switch strings.ToLower(bufStp.GetString(i)) {
+			case "hex":
+				if !b.supportDBSource {
+					return errInvalidHSSourceTypeWithoutDBSource
+				}
+				b.sourceType = hsSourceType_Hex
+			case "base64":
+				if !b.supportDBSource {
+					return errInvalidHSSourceTypeWithoutDBSource
+				}
+				b.sourceType = hsSourceType_Base64
+			case "json":
+				b.sourceType = hsSourceType_JSON
+			case "lines":
+				b.sourceType = hsSourceType_Lines
+			default:
+				return errInvalidHSSourceType
+			}
+			break
+		}
+	}
+	return nil
+}
+
 func (b *baseBuiltinHsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	bufVal, err := b.bufAllocator.get(types.ETString, n)
@@ -27,6 +66,12 @@ func (b *baseBuiltinHsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[1].VecEvalString(b.ctx, input, bufPat); err != nil {
 		return err
 	}
+
+	err = b.vecUpdateSourceType(input, n)
+	if err != nil {
+		return err
+	}
+
 	if b.db == nil && n > 0 {
 		for i := 0; i < n; i++ {
 			if bufPat.IsNull(i) {
@@ -74,6 +119,12 @@ func (b *baseBuiltinHsSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[1].VecEvalString(b.ctx, input, bufPat); err != nil {
 		return err
 	}
+
+	err = b.vecUpdateSourceType(input, n)
+	if err != nil {
+		return err
+	}
+
 	if b.db == nil && n > 0 {
 		for i := 0; i < n; i++ {
 			if bufPat.IsNull(i) {
