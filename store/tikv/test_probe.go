@@ -136,6 +136,11 @@ func (c CommitterProbe) GetCommitTS() uint64 {
 	return c.commitTS
 }
 
+// GetMinCommittTS returns the minimal commit ts can be used.
+func (c CommitterProbe) GetMinCommittS() uint64 {
+	return c.minCommitTS
+}
+
 // SetMinCommitTS sets the minimal commit ts can be used.
 func (c CommitterProbe) SetMinCommitTS(ts uint64) {
 	c.minCommitTS = ts
@@ -144,6 +149,11 @@ func (c CommitterProbe) SetMinCommitTS(ts uint64) {
 // SetSessionID sets the session id of the committer.
 func (c CommitterProbe) SetSessionID(id uint64) {
 	c.sessionID = id
+}
+
+// GetForUpdateTS returns the pessimistic ForUpdate ts.
+func (c CommitterProbe) GetForUpdateTS() uint64 {
+	return c.forUpdateTS
 }
 
 // SetForUpdateTS sets pessimistic ForUpdate ts.
@@ -165,6 +175,11 @@ func (c CommitterProbe) GetLockTTL() uint64 {
 func (c CommitterProbe) SetTxnSize(sz int) {
 	c.txnSize = sz
 	c.lockTTL = txnLockTTL(c.txn.startTime, sz)
+}
+
+// SetUseAsyncCommit enables async commit feature.
+func (c CommitterProbe) SetUseAsyncCommit() {
+	c.useAsyncCommit = 1
 }
 
 // Execute runs the commit process.

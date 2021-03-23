@@ -11,16 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv"
 )
 
 type testPrewriteSuite struct {
-	store *KVStore
+	store *tikv.KVStore
 }
 
 var _ = Suite(&testPrewriteSuite{})
@@ -29,7 +30,7 @@ func (s *testPrewriteSuite) SetUpTest(c *C) {
 	client, pdClient, cluster, err := unistore.New("")
 	c.Assert(err, IsNil)
 	unistore.BootstrapWithSingleStore(cluster)
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 	s.store = store
 }
@@ -37,31 +38,30 @@ func (s *testPrewriteSuite) SetUpTest(c *C) {
 func (s *testPrewriteSuite) TestSetMinCommitTSInAsyncCommit(c *C) {
 	t, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn := t
+	txn := tikv.TxnProbe{KVTxn: t}
 	err = txn.Set([]byte("k"), []byte("v"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
+	committer, err := txn.NewCommitter(1)
 	c.Assert(err, IsNil)
-	committer.useAsyncCommit = 1
+	committer.SetUseAsyncCommit()
 
 	buildRequest := func() *pb.PrewriteRequest {
-		batch := batchMutations{mutations: committer.mutations}
-		req := committer.buildPrewriteRequest(batch, 1)
+		req := committer.BuildPrewriteRequest(1, 1, 1, committer.GetMutations(), 1)
 		return req.Req.(*pb.PrewriteRequest)
 	}
 
 	// no forUpdateTS
 	req := buildRequest()
-	c.Assert(req.MinCommitTs, Equals, txn.startTS+1)
+	c.Assert(req.MinCommitTs, Equals, txn.StartTS()+1)
 
 	// forUpdateTS is set
-	committer.forUpdateTS = txn.startTS + (5 << 18)
+	committer.SetForUpdateTS(txn.StartTS() + (5 << 18))
 	req = buildRequest()
-	c.Assert(req.MinCommitTs, Equals, committer.forUpdateTS+1)
+	c.Assert(req.MinCommitTs, Equals, committer.GetForUpdateTS()+1)
 
 	// minCommitTS is set
-	committer.minCommitTS = txn.startTS + (10 << 18)
+	committer.SetMinCommitTS(txn.StartTS() + (10 << 18))
 	req = buildRequest()
-	c.Assert(req.MinCommitTs, Equals, committer.minCommitTS)
+	c.Assert(req.MinCommitTs, Equals, committer.GetMinCommittS())
 
 }
