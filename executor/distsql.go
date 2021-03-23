@@ -347,6 +347,7 @@ type IndexLookUpExecutor struct {
 	stats *IndexLookUpRunTimeStats
 
 	indexSidePagination bool
+	hasAddLimit         bool
 	paginationSize      int64
 	openCloseByInside   bool
 	originRange         []*ranger.Range
@@ -387,14 +388,13 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	}
 	if !e.openCloseByInside {
 		e.originRange = e.ranges
-		e.paginationSize = int64(e.ctx.GetSessionVars().IndexLookupSize)
+		e.paginationSize = 1
 	}
 	if e.indexSidePagination {
-		switch e.paginationSize {
-		case 0: // add Limit executor, init page size.
-			e.paginationSize = 1
+		if !e.hasAddLimit {
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
-		default:
+			e.hasAddLimit = true
+		} else {
 			e.paginationSize = e.paginationSize * 2
 			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
