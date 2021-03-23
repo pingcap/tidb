@@ -17,8 +17,8 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -288,7 +288,7 @@ func (s *testOnePCSuite) TestTxnCommitCounter(c *C) {
 
 	// AsyncCommit
 	txn = s.beginAsyncCommit(c)
-	err = txn.Set(kv.Key("k1"), []byte("v1"))
+	err = txn.Set([]byte("k1"), []byte("v1"))
 	c.Assert(err, IsNil)
 	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
@@ -300,7 +300,7 @@ func (s *testOnePCSuite) TestTxnCommitCounter(c *C) {
 
 	// 1PC
 	txn = s.begin1PC(c)
-	err = txn.Set(kv.Key("k2"), []byte("v2"))
+	err = txn.Set([]byte("k2"), []byte("v2"))
 	c.Assert(err, IsNil)
 	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)

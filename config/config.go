@@ -14,6 +14,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -411,6 +412,7 @@ type Performance struct {
 	TxnEntrySizeLimit     uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
 	TxnTotalSizeLimit     uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
@@ -596,6 +598,7 @@ var defaultConf = Config{
 		ServerMemoryQuota:     0,
 		MemoryUsageAlarmRatio: 0.8,
 		TCPKeepAlive:          true,
+		TCPNoDelay:            true,
 		CrossJoin:             true,
 		StatsLease:            "3s",
 		RunAutoAnalyze:        true,
@@ -987,3 +990,44 @@ const (
 	OOMActionCancel = "cancel"
 	OOMActionLog    = "log"
 )
+
+/// hideConfig is used to filter a single line of config for hiding.
+var hideConfig = []string{
+	"index-usage-sync-lease",
+}
+
+// HideConfig is used to filter the configs that needs to be hidden.
+func HideConfig(s string) string {
+	configs := strings.Split(s, "\n")
+	hideMap := make([]bool, len(configs))
+	for i, c := range configs {
+		for _, hc := range hideConfig {
+			if strings.Contains(c, hc) {
+				hideMap[i] = true
+				break
+			}
+		}
+	}
+	var buf bytes.Buffer
+	for i, c := range configs {
+		if hideMap[i] {
+			continue
+		}
+		if i != 0 {
+			buf.WriteString("\n")
+		}
+		buf.WriteString(c)
+	}
+	return buf.String()
+}
+
+// ContainHiddenConfig checks whether it contains the configuration that needs to be hidden.
+func ContainHiddenConfig(s string) bool {
+	s = strings.ToLower(s)
+	for _, hc := range hideConfig {
+		if strings.Contains(s, hc) {
+			return true
+		}
+	}
+	return false
+}
