@@ -417,7 +417,7 @@ func initMetrics(namespace, subsystem string) {
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "tiflash_execute_total",
-			Help:      "Counter of TiFlash execute.",
+			Help:      "Counter of TiFlash execute successfully.",
 		})
 	initShortcuts()
 }
