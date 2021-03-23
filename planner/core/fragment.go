@@ -74,10 +74,8 @@ func (f *Fragment) init(p PhysicalPlan) error {
 			return errors.New("one task contains at most one table scan")
 		}
 		f.TableScan = x
-		return nil
 	case *PhysicalExchangeReceiver:
 		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
-		return nil
 	default:
 		for _, ch := range p.Children() {
 			if err := f.init(ch); err != nil {
