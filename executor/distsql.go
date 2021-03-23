@@ -387,12 +387,10 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	}
 	if !e.openCloseByInside {
 		e.originRange = e.ranges
+		e.paginationSize = int64(e.ctx.GetSessionVars().IndexLookupSize)
 	}
 	if e.indexSidePagination {
 		switch e.paginationSize {
-		case -1: // run too many times, remove Limit executor and read all rest data.
-			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
-			e.indexSidePagination = false
 		case 0: // add Limit executor, init page size.
 			e.paginationSize = int64(e.ctx.GetSessionVars().IndexLookupSize)
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
@@ -400,9 +398,6 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			e.paginationSize = e.paginationSize * 2
 			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
-			if e.paginationSize > int64(e.ctx.GetSessionVars().IndexLookupSize)*int64(e.ctx.GetSessionVars().IndexSerialScanConcurrency()) {
-				e.paginationSize = -1
-			}
 		}
 	}
 	err = e.open(ctx)
