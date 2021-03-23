@@ -1319,10 +1319,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	sql, err := sqlexec.EscapeSQL(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
+	sql := sqlexec.MustEscapeSQL(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
 	rs, err := se.Execute(ctx, sql)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
@@ -1348,16 +1345,13 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 }
 
 func (w *GCWorker) saveValueToSysTable(key, value string) error {
-	sql, err := sqlexec.EscapeSQL(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
+	sql := sqlexec.MustEscapeSQL(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = %?, comment = %?`,
 		key, value, gcVariableComments[key], value, gcVariableComments[key])
-	if err != nil {
-		return err
-	}
 	se := createSession(w.store)
 	defer se.Close()
-	_, err = se.Execute(context.Background(), sql)
+	_, err := se.Execute(context.Background(), sql)
 	logutil.Logger(context.Background()).Debug("[gc worker] save kv",
 		zap.String("key", key),
 		zap.String("value", value),
