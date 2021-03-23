@@ -16,6 +16,7 @@ package core
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -45,11 +46,9 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 		plan.Children()[i] = pe.inject(child)
 	}
 
-	if tr, ok := plan.(*PhysicalTableReader); ok {
-		if _, ok = tr.tablePlan.(*PhysicalExchangeSender); ok {
-			tr.tablePlan = pe.inject(tr.tablePlan)
-			tr.TablePlans = flattenPushDownPlan(tr.tablePlan)
-		}
+	if tr, ok := plan.(*PhysicalTableReader); ok && tr.StoreType == kv.TiFlash {
+		tr.tablePlan = pe.inject(tr.tablePlan)
+		tr.TablePlans = flattenPushDownPlan(tr.tablePlan)
 	}
 
 	switch p := plan.(type) {

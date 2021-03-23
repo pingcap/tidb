@@ -801,11 +801,11 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	tk.MustExec("set @@tidb_allow_batch_cop=1; set @@tidb_allow_mpp=0;")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
-	testFallbackWork(c, tk, cc, "select sum(a) from t")
+	testFallbackWork(c, tk, cc, "select count(*) from t")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout", "return(true)"), IsNil)
-	testFallbackWork(c, tk, cc, "select sum(a) from t")
+	testFallbackWork(c, tk, cc, "select count(*) from t")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout"), IsNil)
 
 	// TiFlash MPP query (MPP + streaming)

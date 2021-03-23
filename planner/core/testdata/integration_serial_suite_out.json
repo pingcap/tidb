@@ -22,12 +22,14 @@
         "SQL": "explain format = 'brief' select * from t where b > 'a' order by convert(b, unsigned) limit 2",
         "Plan": [
           "Projection 2.00 root  test.t.a, test.t.b",
-          "└─TopN 2.00 root  Column#3, offset:0, count:2",
-          "  └─Projection 2.00 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
-          "    └─TableReader 2.00 root  data:TopN",
-          "      └─TopN 2.00 batchCop[tiflash]  cast(test.t.b, bigint(22) UNSIGNED BINARY), offset:0, count:2",
-          "        └─Selection 3333.33 batchCop[tiflash]  gt(test.t.b, \"a\")",
-          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TopN 2.00 root  Column#4, offset:0, count:2",
+          "  └─Projection 2.00 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#4",
+          "    └─TableReader 2.00 root  data:Projection",
+          "      └─Projection 2.00 batchCop[tiflash]  test.t.a, test.t.b",
+          "        └─TopN 2.00 batchCop[tiflash]  Column#3, offset:0, count:2",
+          "          └─Projection 3333.33 batchCop[tiflash]  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
+          "            └─Selection 3333.33 batchCop[tiflash]  gt(test.t.b, \"a\")",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -854,8 +856,9 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#10)->Column#7, funcs:sum(Column#10)->Column#8",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(test.t.a, decimal(15,4) BINARY)->Column#9, Column#9",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -864,8 +867,9 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#10)->Column#7, funcs:sum(Column#10)->Column#8",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(test.t.a, decimal(15,4) BINARY)->Column#9, Column#9",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -874,8 +878,9 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(test.t.a)->Column#6",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#6",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(test.t.a, decimal(32,0) BINARY)->Column#7",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -884,8 +889,9 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(plus(test.t.a, 1))->Column#6",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#6",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.a, 1), decimal(41,0) BINARY)->Column#7",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -894,8 +900,9 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(isnull(test.t.a))->Column#6",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#6",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#7",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1204,8 +1211,9 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(plus(test.t.id, 1))->Column#7",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#9",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1222,8 +1230,9 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(plus(test.t.id, 1))->Column#7",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#9)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#9",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1231,8 +1240,9 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(plus(test.t.id, 1))->Column#7",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#9",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1249,8 +1259,9 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:sum(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(plus(test.t.id, 1))->Column#7",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#9)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#9",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1376,8 +1387,9 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(plus(test.t.id, 1))->Column#7",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#9",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1394,8 +1406,9 @@
         "Plan": [
           "StreamAgg 1.00 root  funcs:sum(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(plus(test.t.id, 1))->Column#7",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#9)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#9",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
