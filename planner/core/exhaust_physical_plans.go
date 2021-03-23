@@ -1667,7 +1667,8 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		return nil, false
 	}
 	joins := make([]PhysicalPlan, 0, 8)
-	if p.ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() {
+	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
+	if p.ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() && canPushToTiFlash {
 		if p.shouldUseMPPBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			if (p.preferJoinType & preferBCJoin) > 0 {
@@ -1678,7 +1679,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 			mppJoins := p.tryToGetMppHashJoin(prop, false)
 			joins = append(joins, mppJoins...)
 		}
-	} else if p.ctx.GetSessionVars().AllowBCJ {
+	} else if p.ctx.GetSessionVars().AllowBCJ && canPushToTiFlash {
 		broadCastJoins := p.tryToGetBroadCastJoin(prop)
 		if (p.preferJoinType & preferBCJoin) > 0 {
 			return broadCastJoins, true
@@ -1956,13 +1957,9 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	return []PhysicalPlan{proj}, true
 }
 
-func (lt *LogicalTopN) canPushToCop() bool {
-	return lt.canChildPushDown()
-}
-
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
 	if lt.limitHints.preferLimitToCop {
-		if !lt.canPushToCop() {
+		if !lt.canPushToCop(kv.TiKV) {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -1993,7 +1990,7 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 	}
 
 	if lt.limitHints.preferLimitToCop {
-		if !lt.canPushToCop() {
+		if !lt.canPushToCop(kv.TiKV) {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -2116,18 +2113,35 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) ([]
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
-// canChildPushDown only checks if it can be pushed to TiKV.
-func (p *baseLogicalPlan) canChildPushDown() bool {
-	switch p.children[0].(type) {
-	case *DataSource:
-		return true
-	default:
-		return false
+// canPushToCop checks if it can be pushed to some stores. For TiKV, it only checks datasource.
+// For TiFlash, it will check whether the operator is supported, but note that the check might be inaccrute.
+func (p *baseLogicalPlan) canPushToCop(storeTp kv.StoreType) bool {
+	ret := true
+	for _, ch := range p.children {
+		switch c := ch.(type) {
+		case *DataSource:
+			validDs := false
+			for _, path := range c.possibleAccessPaths {
+				if path.StoreType == storeTp {
+					validDs = true
+				}
+			}
+			ret = ret && validDs
+		case *LogicalAggregation, *LogicalProjection, *LogicalSelection, *LogicalJoin:
+			if storeTp == kv.TiFlash {
+				ret = ret && c.canPushToCop(storeTp)
+			} else {
+				return false
+			}
+		default:
+			return false
+		}
 	}
+	return ret
 }
 
-func (la *LogicalAggregation) canPushToCop() bool {
-	return la.canChildPushDown() && !la.noCopPushDown
+func (la *LogicalAggregation) canPushToCop(storeTp kv.StoreType) bool {
+	return la.baseLogicalPlan.canPushToCop(storeTp) && !la.noCopPushDown
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -2149,7 +2163,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	if la.HasDistinct() {
 		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-		if !la.canPushToCop() || !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+		if !la.canPushToCop(kv.TiKV) || !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
@@ -2229,7 +2243,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		} else if !la.aggHints.preferAggToCop {
 			taskTypes = append(taskTypes, property.RootTaskType)
 		}
-		if !la.canPushToCop() {
+		if !la.canPushToCop(kv.TiKV) {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 		for _, taskTp := range taskTypes {
@@ -2341,7 +2355,8 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if la.ctx.GetSessionVars().AllowBCJ {
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
-	canPushDownToMPP := la.ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() && la.checkCanPushDownToMPP()
+	canPushDownToTiFlash := la.canPushToCop(kv.TiFlash)
+	canPushDownToMPP := la.ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() && la.checkCanPushDownToMPP() && canPushDownToTiFlash
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
 		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
@@ -2350,8 +2365,11 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	} else if !la.aggHints.preferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
-	if !la.canPushToCop() {
-		taskTypes = []property.TaskType{property.RootTaskType, property.CopTiFlashLocalReadTaskType}
+	if !la.canPushToCop(kv.TiKV) {
+		taskTypes = []property.TaskType{property.RootTaskType}
+		if canPushDownToTiFlash {
+			taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
+		}
 	}
 	if canPushDownToMPP {
 		taskTypes = append(taskTypes, property.MppTaskType)
@@ -2391,7 +2409,7 @@ func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferSt
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if la.aggHints.preferAggToCop {
-		if !la.canPushToCop() {
+		if !la.canPushToCop(kv.TiKV) {
 			errMsg := "Optimizer Hint AGG_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -2430,17 +2448,13 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	return []PhysicalPlan{sel}, true
 }
 
-func (p *LogicalLimit) canPushToCop() bool {
-	return p.canChildPushDown()
-}
-
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if !prop.IsEmpty() {
 		return nil, true
 	}
 
 	if p.limitHints.preferLimitToCop {
-		if !p.canPushToCop() {
+		if !p.canPushToCop(kv.TiKV) {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)

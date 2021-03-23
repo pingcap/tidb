@@ -691,10 +691,10 @@ func (s *testIntegrationSerialSuite) TestAggPushDownEngine(c *C) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
 	tk.MustQuery("desc select approx_count_distinct(a) from t").Check(testkit.Rows(
-		"StreamAgg_16 1.00 root  funcs:approx_count_distinct(Column#5)->Column#3",
-		"└─TableReader_17 1.00 root  data:StreamAgg_8",
-		"  └─StreamAgg_8 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#5",
-		"    └─TableFullScan_15 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+		"HashAgg_11 1.00 root  funcs:approx_count_distinct(Column#4)->Column#3",
+		"└─TableReader_12 1.00 root  data:HashAgg_6",
+		"  └─HashAgg_6 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#4",
+		"    └─TableFullScan_10 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
 

@@ -248,30 +248,30 @@ StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
 explain format="dot" select sum(t1.c1 in (select c1 from t2)) from t1;
 dot contents
 
-digraph StreamAgg_12 {
-subgraph cluster12{
+digraph StreamAgg_10 {
+subgraph cluster10{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"StreamAgg_12" -> "Projection_23"
-"Projection_23" -> "HashJoin_22"
-"HashJoin_22" -> "TableReader_15"
-"HashJoin_22" -> "IndexReader_21"
+"StreamAgg_10" -> "Projection_21"
+"Projection_21" -> "HashJoin_20"
+"HashJoin_20" -> "TableReader_13"
+"HashJoin_20" -> "IndexReader_19"
 }
-subgraph cluster14{
+subgraph cluster12{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_14"
+"TableFullScan_12"
 }
-subgraph cluster20{
+subgraph cluster18{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"IndexFullScan_20"
+"IndexFullScan_18"
 }
-"TableReader_15" -> "TableFullScan_14"
-"IndexReader_21" -> "IndexFullScan_20"
+"TableReader_13" -> "TableFullScan_12"
+"IndexReader_19" -> "IndexFullScan_18"
 }
 
 explain format="dot" select 1 in (select c2 from t2) from t1;

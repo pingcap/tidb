@@ -838,10 +838,9 @@
       {
         "SQL": "explain format = 'brief' select /*+ agg_to_cop() */ count(*), id from table_1 group by id",
         "Plan": [
-          "HashAgg 2.00 root  group by:test.table_1.id, funcs:count(Column#5)->Column#4, funcs:firstrow(test.table_1.id)->test.table_1.id",
-          "└─TableReader 2.00 root  data:HashAgg",
-          "  └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_1.id, funcs:count(1)->Column#5",
-          "    └─TableFullScan 2.00 batchCop[tiflash] table:table_1 keep order:false"
+          "HashAgg 2.00 root  group by:test.table_1.id, funcs:count(1)->Column#4, funcs:firstrow(test.table_1.id)->test.table_1.id",
+          "└─TableReader 2.00 root  data:TableFullScan",
+          "  └─TableFullScan 2.00 cop[tiflash] table:table_1 keep order:false"
         ]
       }
     ]
