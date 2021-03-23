@@ -156,12 +156,14 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
 		}
 		r.partialCount++
-		scanSummary := r.selectResp.ExecutionSummaries[0]
+		scanSummary := r.selectResp.GetExecutionSummaries()[0]
 		hasStats, ok := resultSubset.(CopRuntimeStats)
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()
 			if copStats != nil {
-				tikvSmallReadDuration.Observe(float64(*scanSummary.TimeProcessedNs))
+				if *(scanSummary.NumProducedRows) > 20 {
+					tikvSmallReadDuration.Observe(float64(*scanSummary.TimeProcessedNs))
+				}
 				r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime())
 				copStats.CopTime = duration
 				sc.MergeExecDetails(&copStats.ExecDetails, nil)
