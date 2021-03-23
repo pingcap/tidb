@@ -679,6 +679,7 @@ paginate:
 	if err = e.Open(ctx); err != nil {
 		return err
 	}
+	// Guaranteed to reach chk.RequiredRows.
 	goto start
 }
 
