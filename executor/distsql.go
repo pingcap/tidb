@@ -392,7 +392,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	if e.indexSidePagination {
 		switch e.paginationSize {
 		case 0: // add Limit executor, init page size.
-			e.paginationSize = int64(e.ctx.GetSessionVars().IndexLookupSize)
+			e.paginationSize = 1
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
 		default:
 			e.paginationSize = e.paginationSize * 2
@@ -676,6 +676,7 @@ paginate:
 	if err = e.Open(ctx); err != nil {
 		return err
 	}
+	e.lastRowKeys = nil
 	// Guaranteed to reach chk.RequiredRows.
 	goto start
 }
