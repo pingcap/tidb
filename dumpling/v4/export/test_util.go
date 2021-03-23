@@ -15,7 +15,7 @@ type mockPoisonWriter struct {
 	buf string
 }
 
-func (m *mockPoisonWriter) Write(ctx context.Context, p []byte) (int, error) {
+func (m *mockPoisonWriter) Write(_ context.Context, p []byte) (int, error) {
 	s := string(p)
 	if s == "poison" {
 		return 0, fmt.Errorf("poison_error")
@@ -24,7 +24,7 @@ func (m *mockPoisonWriter) Write(ctx context.Context, p []byte) (int, error) {
 	return len(s), nil
 }
 
-func (m *mockPoisonWriter) Close(ctx context.Context) error {
+func (m *mockPoisonWriter) Close(_ context.Context) error {
 	// noop
 	return nil
 }
@@ -82,7 +82,7 @@ func (m *mockTableIR) ShowCreateView() string {
 	return ""
 }
 
-func (m *mockTableIR) Start(ctx context.Context, conn *sql.Conn) error {
+func (m *mockTableIR) Start(_ context.Context, conn *sql.Conn) error {
 	return nil
 }
 
