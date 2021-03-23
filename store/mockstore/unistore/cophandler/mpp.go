@@ -275,6 +275,7 @@ func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 		}
 		e.aggExprs = append(e.aggExprs, aggExpr)
 	}
+	e.sc = b.sc
 
 	for _, gby := range agg.GroupBy {
 		ft := expression.PbTypeToFieldType(gby.FieldType)

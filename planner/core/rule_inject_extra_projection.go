@@ -45,6 +45,13 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 		plan.Children()[i] = pe.inject(child)
 	}
 
+	if tr, ok := plan.(*PhysicalTableReader); ok {
+		if _, ok = tr.tablePlan.(*PhysicalExchangeSender); ok {
+			tr.tablePlan = pe.inject(tr.tablePlan)
+			tr.TablePlans = flattenPushDownPlan(tr.tablePlan)
+		}
+	}
+
 	switch p := plan.(type) {
 	case *PhysicalHashAgg:
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
