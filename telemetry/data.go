@@ -41,3 +41,7 @@ func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryD
 	r.TelemetryHostExtra = getTelemetryHostExtraInfo()
 	return r
 }
+
+func postReportTelemetryData() {
+	postReportTxnUsage()
+}

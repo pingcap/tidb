@@ -108,6 +108,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 	}
 
 	data := generateTelemetryData(ctx, trackingID)
+	postReportTelemetryData()
 
 	rawJSON, err := json.Marshal(data)
 	if err != nil {
