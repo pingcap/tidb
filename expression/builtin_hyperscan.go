@@ -79,7 +79,7 @@
  *      ```
  *      pattern1
  *      pattern2
- *      pattern3
+ *      /pattern3/i
  *      ```
  *   2. `json`
  *      json array for pattern, example:
@@ -87,7 +87,7 @@
  *      [
  *        {"id": 1, "pattern": "pattern1"},
  *        {"id": 2, "pattern": "pattern2"},
- *        {"id": 3, "pattern": "pattern3"}
+ *        {"id": 3, "pattern": "/pattern3/i"}
  *      ]
  *      ```
  *      `pattern` field is required contain regexp pattern, `id` field can be ignored, if ignored id will assigned as array index plus 1.
@@ -403,6 +403,9 @@ func (b *baseBuiltinHsSig) cloneDb() hs.BlockDatabase {
 	if err != nil {
 		return nil
 	}
+
+	// expression function cannot know when query finished, so call SetFinalizer is
+	// the only way to free CGO allocated memory.
 	runtime.SetFinalizer(ret, func(hsdb hs.BlockDatabase) {
 		hsdb.Close()
 	})
@@ -492,6 +495,9 @@ func buildHsBlockDB(patterns []*hs.Pattern) (hs.BlockDatabase, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
+
+	// expression function cannot know when query finished, so call SetFinalizer is
+	// the only way to free CGO allocated memory.
 	runtime.SetFinalizer(db.(hs.BlockDatabase), func(hsdb hs.BlockDatabase) {
 		hsdb.Close()
 	})

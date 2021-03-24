@@ -55,8 +55,8 @@ func (s *testEvaluatorSuite) TestHyperscanMatch(c *C) {
 	}{
 		{"test def", []string{"test$", "abc$"}, 0},
 		{"test abc", []string{"test$", "abc$"}, 1},
-		{"test ABC", []string{"test$", "/abc$/"}, 0},
 		{"test ABC", []string{"test$", "/abc$/i"}, 1},
+		{"test ABC", []string{"test$", "/abc$/"}, 0},
 		{"this is a test", []string{"test$", "abc$"}, 1},
 	}
 
