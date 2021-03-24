@@ -15,7 +15,6 @@ package core
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
@@ -24,8 +23,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -155,6 +156,41 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 // single physical table means a table without partitions or a single partition in a partition table.
 func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *PhysicalTableScan) ([]*kv.MPPTask, error) {
 	if ts != nil {
+		// update ranges according to correlated columns in access conditions like in the Open() of TableReaderExecutor
+		hasCorCol := false
+		for _, cond := range ts.AccessCondition {
+			if len(expression.ExtractCorColumns(cond)) > 0 {
+				hasCorCol = true
+				break
+			}
+		}
+		if hasCorCol {
+			access := ts.AccessCondition
+			if ts.Table.IsCommonHandle {
+				pkIdx := tables.FindPrimaryIndex(ts.Table)
+				idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
+				for _, cond := range access {
+					newCond, err := expression.SubstituteCorCol2Constant(cond)
+					if err != nil {
+						return nil, err
+					}
+					access = append(access, newCond)
+				}
+				res, err := ranger.DetachCondAndBuildRangeForIndex(e.ctx, access, idxCols, idxColLens)
+				if err != nil {
+					return nil, err
+				}
+				ts.Ranges = res.Ranges
+			} else {
+				var err error
+				pkTP := ts.Table.GetPkColInfo().FieldType
+				ts.Ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+
 		splitedRanges, _ := distsql.SplitRangesBySign(ts.Ranges, false, false, ts.Table.IsCommonHandle)
 		if ts.Table.GetPartitionInfo() != nil {
 			tmp, _ := e.is.TableByID(ts.Table.ID)
