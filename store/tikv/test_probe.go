@@ -136,7 +136,7 @@ func (c CommitterProbe) GetCommitTS() uint64 {
 	return c.commitTS
 }
 
-// GetMinCommittTS returns the minimal commit ts can be used.
+// GetMinCommitTS returns the minimal commit ts can be used.
 func (c CommitterProbe) GetMinCommitTS() uint64 {
 	return c.minCommitTS
 }
