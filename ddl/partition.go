@@ -493,7 +493,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 
 func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	if isRangePartitionColUnsignedBigint(tbInfo.Columns, tbInfo.Partition) {
+	if isColUnsigned(tbInfo.Columns, tbInfo.Partition) {
 		tp.Flag |= mysql.UnsignedFlag
 	}
 	for _, exp := range exprs {
@@ -505,12 +505,17 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinit
 			return err
 		}
 		switch val.Kind() {
-		case types.KindInt64, types.KindUint64, types.KindNull:
+		case types.KindUint64, types.KindNull:
+		case types.KindInt64:
+			if mysql.HasUnsignedFlag(tp.Flag) && val.GetInt64() < 0 {
+				return ErrPartitionConstDomain.GenWithStackByArgs()
+			}
 		default:
 			return ErrValuesIsNotIntType.GenWithStackByArgs(def.Name)
 		}
+
 		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
-		if err != nil {
+		if err != nil && !types.ErrOverflow.Equal(err) {
 			return ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
 	}
@@ -644,14 +649,14 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	isUnsignedBigint := isRangePartitionColUnsignedBigint(cols, pi)
+	isUnsigned := isColUnsigned(cols, pi)
 	var prevRangeValue interface{}
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
 
-		currentRangeValue, fromExpr, err := getRangeValue(ctx, defs[i].LessThan[0], isUnsignedBigint)
+		currentRangeValue, fromExpr, err := getRangeValue(ctx, defs[i].LessThan[0], isUnsigned)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -665,7 +670,7 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 			continue
 		}
 
-		if isUnsignedBigint {
+		if isUnsigned {
 			if currentRangeValue.(uint64) <= prevRangeValue.(uint64) {
 				return errors.Trace(ErrRangeNotIncreasing)
 			}
@@ -707,7 +712,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	cols := make([]*model.ColumnInfo, 0, len(pi.Columns))
 	if len(pi.Columns) == 0 {
 		tp := types.NewFieldType(mysql.TypeLonglong)
-		if isRangePartitionColUnsignedBigint(tblInfo.Columns, tblInfo.Partition) {
+		if isColUnsigned(tblInfo.Columns, tblInfo.Partition) {
 			tp.Flag |= mysql.UnsignedFlag
 		}
 		colTps = []*types.FieldType{tp}
@@ -758,9 +763,9 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 
 // getRangeValue gets an integer from the range value string.
 // The returned boolean value indicates whether the input string is a constant expression.
-func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (interface{}, bool, error) {
+func getRangeValue(ctx sessionctx.Context, str string, unsigned bool) (interface{}, bool, error) {
 	// Unsigned bigint was converted to uint64 handle.
-	if unsignedBigint {
+	if unsigned {
 		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
 			return value, false, nil
 		}
@@ -1649,10 +1654,10 @@ func (cns columnNameSlice) At(i int) string {
 	return cns[i].Name.L
 }
 
-// isRangePartitionColUnsignedBigint returns true if the partitioning key column type is unsigned bigint type.
-func isRangePartitionColUnsignedBigint(cols []*model.ColumnInfo, pi *model.PartitionInfo) bool {
+// isColUnsigned returns true if the partitioning key column is unsigned.
+func isColUnsigned(cols []*model.ColumnInfo, pi *model.PartitionInfo) bool {
 	for _, col := range cols {
-		isUnsigned := col.Tp == mysql.TypeLonglong && mysql.HasUnsignedFlag(col.Flag)
+		isUnsigned := mysql.HasUnsignedFlag(col.Flag)
 		if isUnsigned && strings.Contains(strings.ToLower(pi.Expr), col.Name.L) {
 			return true
 		}
