@@ -21,14 +21,23 @@ import (
 )
 
 var (
-	CurrentExecuteCount                 atomic.Uint64
-	CurrentTiFlashPushDownCount         atomic.Uint64
+	// CurrentExecuteCount is CurrentExecuteCount
+	CurrentExecuteCount atomic.Uint64
+	// CurrentTiFlashPushDownCount is CurrentTiFlashPushDownCount
+	CurrentTiFlashPushDownCount atomic.Uint64
+	// CurrentTiFlashExchangePushDownCount is CurrentTiFlashExchangePushDownCount
 	CurrentTiFlashExchangePushDownCount atomic.Uint64
-	CurrentCoprCacheHitRatioGTE1Count   atomic.Uint64
-	CurrentCoprCacheHitRatioGTE10Count  atomic.Uint64
-	CurrentCoprCacheHitRatioGTE20Count  atomic.Uint64
-	CurrentCoprCacheHitRatioGTE40Count  atomic.Uint64
-	CurrentCoprCacheHitRatioGTE80Count  atomic.Uint64
+	// CurrentCoprCacheHitRatioGTE1Count is CurrentCoprCacheHitRatioGTE1Count
+	CurrentCoprCacheHitRatioGTE1Count atomic.Uint64
+	// CurrentCoprCacheHitRatioGTE10Count is CurrentCoprCacheHitRatioGTE10Count
+	CurrentCoprCacheHitRatioGTE10Count atomic.Uint64
+	// CurrentCoprCacheHitRatioGTE20Count is CurrentCoprCacheHitRatioGTE20Count
+	CurrentCoprCacheHitRatioGTE20Count atomic.Uint64
+	// CurrentCoprCacheHitRatioGTE40Count is CurrentCoprCacheHitRatioGTE40Count
+	CurrentCoprCacheHitRatioGTE40Count atomic.Uint64
+	// CurrentCoprCacheHitRatioGTE80Count is CurrentCoprCacheHitRatioGTE80Count
+	CurrentCoprCacheHitRatioGTE80Count atomic.Uint64
+	// CurrentCoprCacheHitRatioGTE100Count is CurrentCoprCacheHitRatioGTE100Count
 	CurrentCoprCacheHitRatioGTE100Count atomic.Uint64
 )
 
@@ -68,8 +77,7 @@ var (
 	subWindowsLock    = sync.RWMutex{}
 )
 
-// RotateSubWindow rotates the telemetry sub window. This function is not thread safe. It should
-// be called from domain loop.
+// RotateSubWindow rotates the telemetry sub window.
 func RotateSubWindow() {
 	thisSubWindow := windowData{
 		BeginAt:      time.Now(),
@@ -96,7 +104,7 @@ func RotateSubWindow() {
 	subWindowsLock.Unlock()
 }
 
-// GetWindowData returns data in window size.
+// getWindowData returns data aggregated by window size.
 func getWindowData() []*windowData {
 	results := make([]*windowData, 0)
 
