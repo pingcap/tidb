@@ -62,6 +62,6 @@ func (s *testPrewriteSuite) TestSetMinCommitTSInAsyncCommit(c *C) {
 	// minCommitTS is set
 	committer.SetMinCommitTS(txn.StartTS() + (10 << 18))
 	req = buildRequest()
-	c.Assert(req.MinCommitTs, Equals, committer.GetMinCommittS())
+	c.Assert(req.MinCommitTs, Equals, committer.GetMinCommitTS())
 
 }
