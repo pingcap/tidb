@@ -2,7 +2,7 @@
 This is a template for TiDB's change proposal process, documented [here](./README.md).
 -->
 
-# Proposal: <!-- Title -->
+# Proposal: Multi-Pattern-Match use Hyperscan
 
 - Author(s): [blacktear23](https://github.com/blacktear23)
 - Last updated:  2021-03-24
