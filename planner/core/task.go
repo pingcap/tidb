@@ -900,7 +900,9 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {
-		reader.TryIndexPaging = true
+		if p.ctx.GetSessionVars().IndexLookupSize % 10 == 1 {
+			reader.TryIndexPaging = true
+		}
 		return false
 	}
 	reader.PushedLimit = &PushedDownLimit{

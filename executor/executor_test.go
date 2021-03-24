@@ -7825,6 +7825,7 @@ func (s *testSuiteP1) TestIssue22941(c *C) {
 func (s *testSuite) TestApplyAndPageIndexLookUp(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_index_lookup_size=1")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (pk int(11) primary key, a int(11) not null, b int(11), key idx_b(b), key idx_a(a))")
 	tk.MustExec("insert into `t1` values (1,1,0),(2,7,6),(3,2,null),(4,1,null),(5,4,5)")

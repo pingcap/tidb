@@ -388,7 +388,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	}
 	if !e.isImplicitClose {
 		e.originRange = e.ranges
-		e.pageSize = 1
+		e.pageSize = int64(e.ctx.GetSessionVars().IndexLookupSize)
 	}
 	if e.needIndexPaging {
 		if !e.hasAddLimit {
