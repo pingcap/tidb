@@ -433,14 +433,14 @@ func UnionRanges(sc *stmtctx.StatementContext, ranges []*Range, mergeConsecutive
 	return ranges, nil
 }
 
-// SplitRange split one range by encode key.
+// GetNextRangeByLastKey get next Range by last key.
 // For ranges ([a, b], [c, d]) we have guaranteed that a <= c.
 // If a <= val <= b. this two range can be split as ([a, val]),([val, b], [c, d]).
-func SplitRange(sc *stmtctx.StatementContext, ranges []*Range, val []types.Datum) (left []*Range, right []*Range, err error) {
+func GetNextRangeByLastKey(sc *stmtctx.StatementContext, ranges []*Range, lastKey []types.Datum) (left []*Range, right []*Range, err error) {
 	if len(ranges) == 0 {
 		return nil, nil, nil
 	}
-	encodeKey, err := codec.EncodeKey(sc, nil, val...)
+	encodeKey, err := codec.EncodeKey(sc, nil, lastKey...)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -463,12 +463,12 @@ func SplitRange(sc *stmtctx.StatementContext, ranges []*Range, val []types.Datum
 		}
 		left = append(left, &Range{
 			LowVal:      ran.LowVal,
-			HighVal:     val,
+			HighVal:     lastKey,
 			LowExclude:  ran.LowExclude,
 			HighExclude: true,
 		})
 		right = append(right, &Range{
-			LowVal:      val,
+			LowVal:      lastKey,
 			HighVal:     ran.HighVal,
 			LowExclude:  true,
 			HighExclude: ran.HighExclude,

@@ -1279,9 +1279,9 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 	counts := make([]float64, 0, len(ranges))
 	sum := 0.0
 	for i, r := range ranges {
-		// Though after `SplitRange`, we may have ranges like `[l, r]`, we still use
+		// Though after `GetNextRangeByLastKey`, we may have ranges like `[l, r]`, we still use
 		// `betweenRowCount` to compute the estimation since the ranges of feedback are all in `[l, r)`
-		// form, that is to say, we ignore the exclusiveness of ranges from `SplitRange` and just use
+		// form, that is to say, we ignore the exclusiveness of ranges from `GetNextRangeByLastKey` and just use
 		// its result of boundary values.
 		count := q.Hist.BetweenRowCount(r.LowVal[0], r.HighVal[0])
 		// We have to include `NullCount` of histogram for [l, r) cases where l is null because `betweenRowCount`

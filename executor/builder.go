@@ -2942,7 +2942,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		// Should output pid col.
 		handleLen++
 	}
-	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleLen, v.IndexPlans, v.IndexSidePagination && is.KeepOrder)
+	needIndexPaging := v.TryIndexPaging && is.KeepOrder
+	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleLen, v.IndexPlans, needIndexPaging)
 	if err != nil {
 		return nil, err
 	}
@@ -2965,17 +2966,17 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		tableRequest:        tableReq,
 		columns:             ts.Columns,
 		indexStreaming:      indexStreaming,
-		tableStreaming:      tableStreaming,
-		dataReaderBuilder:   &dataReaderBuilder{executorBuilder: b},
-		corColInIdxSide:     b.corColInDistPlan(v.IndexPlans),
-		corColInTblSide:     b.corColInDistPlan(v.TablePlans),
-		corColInAccess:      b.corColInAccess(v.IndexPlans[0]),
-		idxCols:             is.IdxCols,
-		colLens:             is.IdxColLens,
-		idxPlans:            v.IndexPlans,
-		tblPlans:            v.TablePlans,
-		PushedLimit:         v.PushedLimit,
-		indexSidePagination: v.IndexSidePagination && is.KeepOrder,
+		tableStreaming:    tableStreaming,
+		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
+		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
+		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
+		corColInAccess:    b.corColInAccess(v.IndexPlans[0]),
+		idxCols:           is.IdxCols,
+		colLens:           is.IdxColLens,
+		idxPlans:          v.IndexPlans,
+		tblPlans:          v.TablePlans,
+		PushedLimit:       v.PushedLimit,
+		needIndexPaging:   needIndexPaging,
 	}
 
 	if containsLimit(indexReq.Executors) {

@@ -580,7 +580,7 @@ func (hg *Histogram) GetIncreaseFactor(totalCount int64) float64 {
 	return float64(totalCount) / columnCount
 }
 
-// validRange checks if the range is Valid, it is used by `SplitRange` to remove the invalid range,
+// validRange checks if the range is Valid, it is used by `GetNextRangeByLastKey` to remove the invalid range,
 // the possible types of range are index key range and handle key range.
 func validRange(sc *stmtctx.StatementContext, ran *ranger.Range, encoded bool) bool {
 	var low, high []byte

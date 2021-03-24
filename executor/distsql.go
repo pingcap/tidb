@@ -346,12 +346,12 @@ type IndexLookUpExecutor struct {
 
 	stats *IndexLookUpRunTimeStats
 
-	indexSidePagination bool
-	hasAddLimit         bool
-	paginationSize      int64
-	openCloseByInside   bool
-	originRange         []*ranger.Range
-	lastRowKeys         []types.Datum
+	needIndexPaging bool
+	hasAddLimit     bool
+	pageSize        int64
+	isImplicitClose bool
+	originRange     []*ranger.Range
+	lastRowKeys     []types.Datum
 }
 
 type getHandleType int8
@@ -386,18 +386,18 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-	if !e.openCloseByInside {
+	if !e.isImplicitClose {
 		e.originRange = e.ranges
-		e.paginationSize = 1
+		e.pageSize = 1
 	}
-	if e.indexSidePagination {
+	if e.needIndexPaging {
 		if !e.hasAddLimit {
-			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
+			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.pageSize)))
 			e.hasAddLimit = true
 		} else {
-			e.paginationSize = e.paginationSize * 2
+			e.pageSize = e.pageSize * 2
 			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
-			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.paginationSize)))
+			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.pageSize)))
 		}
 	}
 	err = e.open(ctx)
@@ -461,7 +461,7 @@ func (e *IndexLookUpExecutor) isCommonHandle() bool {
 
 func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
 	var tps []*types.FieldType
-	if e.indexSidePagination {
+	if e.needIndexPaging {
 		for _, col := range e.idxCols {
 			if col.ID != -1 {
 				tps = append(tps, col.RetType)
@@ -603,7 +603,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
-	if !e.openCloseByInside {
+	if !e.isImplicitClose {
 		e.ranges = e.originRange
 	}
 	if !e.workerStarted || e.finished == nil {
@@ -639,7 +639,7 @@ start:
 			return err
 		}
 		if resultTask == nil {
-			if e.indexSidePagination {
+			if e.needIndexPaging {
 				goto paginate
 			}
 			return nil
@@ -658,20 +658,20 @@ paginate:
 		return nil
 	}
 
-	e.openCloseByInside = true
-	defer func() { e.openCloseByInside = false }()
+	e.isImplicitClose = true
+	defer func() { e.isImplicitClose = false }()
 	if err := e.Close(); err != nil {
 		return err
 	}
 	// rebuild ranges
-	left, right, err := ranger.SplitRange(e.ctx.GetSessionVars().StmtCtx, e.ranges, e.lastRowKeys)
+	left, right, err := ranger.GetNextRangeByLastKey(e.ctx.GetSessionVars().StmtCtx, e.ranges, e.lastRowKeys)
+	if err != nil {
+		return err
+	}
 	if e.desc {
 		e.ranges = left
 	} else {
 		e.ranges = right
-	}
-	if err != nil {
-		return err
 	}
 	if err = e.Open(ctx); err != nil {
 		return err
@@ -875,7 +875,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			}
 			handles = append(handles, h)
 		}
-		if w.idxLookup.indexSidePagination && chk.NumRows() != 0 {
+		if w.idxLookup.needIndexPaging && chk.NumRows() != 0 {
 			w.idxLookup.lastRowKeys = w.constructLookUpContent(chk.GetRow(chk.NumRows() - 1))
 		}
 
