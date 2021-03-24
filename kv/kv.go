@@ -121,12 +121,6 @@ type MemBuffer interface {
 	// DeleteWithFlags delete key with the given KeyFlags
 	DeleteWithFlags(Key, ...tikvstore.FlagsOp) error
 
-	// Reset reset the MemBuffer to initial states.
-	Reset()
-	// DiscardValues releases the memory used by all values.
-	// NOTE: any operation need value will panic after this function.
-	DiscardValues()
-
 	// Staging create a new staging buffer inside the MemBuffer.
 	// Subsequent writes will be temporarily stored in this new staging buffer.
 	// When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
@@ -139,19 +133,13 @@ type MemBuffer interface {
 	// InspectStage used to inspect the value updates in the given stage.
 	InspectStage(StagingHandle, func(Key, tikvstore.KeyFlags, []byte))
 
-	// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
-	SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error)
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 	SnapshotGetter() Getter
 	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
 	SnapshotIter(k, upperbound Key) Iterator
 
-	// Size returns sum of keys and values length.
-	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
-	// Dirty returns whether the root staging buffer is updated.
-	Dirty() bool
 }
 
 // Transaction defines the interface for operations inside a Transaction.

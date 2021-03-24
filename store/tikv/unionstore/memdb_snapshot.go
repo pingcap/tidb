@@ -19,6 +19,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/kv"
 )
 
+// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 func (db *MemDB) SnapshotGetter() tidbkv.Getter {
 	return &memdbSnapGetter{
 		db: db,
@@ -26,6 +27,7 @@ func (db *MemDB) SnapshotGetter() tidbkv.Getter {
 	}
 }
 
+// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
 func (db *MemDB) SnapshotIter(start, end tidbkv.Key) tidbkv.Iterator {
 	it := &memdbSnapIter{
 		memdbIterator: &memdbIterator{

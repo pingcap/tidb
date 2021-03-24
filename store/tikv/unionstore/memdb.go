@@ -78,6 +78,9 @@ func newMemDB() *MemDB {
 	return db
 }
 
+// Staging create a new staging buffer inside the MemBuffer.
+// Subsequent writes will be temporarily stored in this new staging buffer.
+// When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
 func (db *MemDB) Staging() tidbkv.StagingHandle {
 	db.Lock()
 	defer db.Unlock()
@@ -86,6 +89,7 @@ func (db *MemDB) Staging() tidbkv.StagingHandle {
 	return tidbkv.StagingHandle(len(db.stages))
 }
 
+// Release publish all modifications in the latest staging buffer to upper level.
 func (db *MemDB) Release(h tidbkv.StagingHandle) {
 	if int(h) != len(db.stages) {
 		// This should never happens in production environment.
@@ -104,6 +108,8 @@ func (db *MemDB) Release(h tidbkv.StagingHandle) {
 	db.stages = db.stages[:int(h)-1]
 }
 
+// Cleanup cleanup the resources referenced by the StagingHandle.
+// If the changes are not published by `Release`, they will be discarded.
 func (db *MemDB) Cleanup(h tidbkv.StagingHandle) {
 	if int(h) > len(db.stages) {
 		return
@@ -127,6 +133,7 @@ func (db *MemDB) Cleanup(h tidbkv.StagingHandle) {
 	db.stages = db.stages[:int(h)-1]
 }
 
+// Reset resets the MemBuffer to initial states.
 func (db *MemDB) Reset() {
 	db.root = nullAddr
 	db.stages = db.stages[:0]
@@ -138,11 +145,14 @@ func (db *MemDB) Reset() {
 	db.allocator.reset()
 }
 
+// DiscardValues releases the memory used by all values.
+// NOTE: any operation need value will panic after this function.
 func (db *MemDB) DiscardValues() {
 	db.vlogInvalid = true
 	db.vlog.reset()
 }
 
+// InspectStage used to inspect the value updates in the given stage.
 func (db *MemDB) InspectStage(handle tidbkv.StagingHandle, f func(tidbkv.Key, kv.KeyFlags, []byte)) {
 	idx := int(handle) - 1
 	tail := db.vlog.checkpoint()
@@ -150,6 +160,8 @@ func (db *MemDB) InspectStage(handle tidbkv.StagingHandle, f func(tidbkv.Key, kv
 	db.vlog.inspectKVInLog(db, &head, &tail, f)
 }
 
+// Get gets the value for key k from kv store.
+// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
 func (db *MemDB) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
 	if db.vlogInvalid {
 		// panic for easier debugging.
@@ -167,6 +179,7 @@ func (db *MemDB) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
 	return db.vlog.getValue(x.vptr), nil
 }
 
+// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
 func (db *MemDB) SelectValueHistory(key tidbkv.Key, predicate func(value []byte) bool) ([]byte, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
@@ -185,6 +198,7 @@ func (db *MemDB) SelectValueHistory(key tidbkv.Key, predicate func(value []byte)
 	return db.vlog.getValue(result), nil
 }
 
+// GetFlags returns the latest flags associated with key.
 func (db *MemDB) GetFlags(key tidbkv.Key) (kv.KeyFlags, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
@@ -193,11 +207,14 @@ func (db *MemDB) GetFlags(key tidbkv.Key) (kv.KeyFlags, error) {
 	return x.getKeyFlags(), nil
 }
 
+// UpdateFlags update the flags associated with key.
 func (db *MemDB) UpdateFlags(key tidbkv.Key, ops ...kv.FlagsOp) {
 	err := db.set(key, nil, ops...)
 	_ = err // set without value will never fail
 }
 
+// Set sets the value for key k as v into kv store.
+// v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
 func (db *MemDB) Set(key tidbkv.Key, value []byte) error {
 	if len(value) == 0 {
 		return tidbkv.ErrCannotSetNilValue
@@ -205,6 +222,7 @@ func (db *MemDB) Set(key tidbkv.Key, value []byte) error {
 	return db.set(key, value)
 }
 
+// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
 func (db *MemDB) SetWithFlags(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) error {
 	if len(value) == 0 {
 		return tidbkv.ErrCannotSetNilValue
@@ -212,19 +230,23 @@ func (db *MemDB) SetWithFlags(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) e
 	return db.set(key, value, ops...)
 }
 
+// Delete removes the entry for key k from kv store.
 func (db *MemDB) Delete(key tidbkv.Key) error {
 	return db.set(key, tombstone)
 }
 
+// DeleteWithFlags delete key with the given KeyFlags
 func (db *MemDB) DeleteWithFlags(key tidbkv.Key, ops ...kv.FlagsOp) error {
 	return db.set(key, tombstone, ops...)
 }
 
+// GetKeyByHandle returns key by handle.
 func (db *MemDB) GetKeyByHandle(handle MemKeyHandle) []byte {
 	x := db.getNode(handle.toAddr())
 	return x.getKey()
 }
 
+// GetValueByHandle returns value by handle.
 func (db *MemDB) GetValueByHandle(handle MemKeyHandle) ([]byte, bool) {
 	if db.vlogInvalid {
 		return nil, false
@@ -236,14 +258,17 @@ func (db *MemDB) GetValueByHandle(handle MemKeyHandle) ([]byte, bool) {
 	return db.vlog.getValue(x.vptr), true
 }
 
+// Len returns the number of entries in the DB.
 func (db *MemDB) Len() int {
 	return db.count
 }
 
+// Size returns sum of keys and values length.
 func (db *MemDB) Size() int {
 	return db.size
 }
 
+// Dirty returns whether the root staging buffer is updated.
 func (db *MemDB) Dirty() bool {
 	return db.dirty
 }

@@ -29,6 +29,10 @@ type memdbIterator struct {
 	includeFlags bool
 }
 
+// Iter creates an Iterator positioned on the first entry that k <= entry's key.
+// If such entry is not found, it returns an invalid Iterator with no error.
+// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
+// The Iterator must be Closed after use.
 func (db *MemDB) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
 	i := &memdbIterator{
 		db:    db,
@@ -39,6 +43,10 @@ func (db *MemDB) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, err
 	return i, nil
 }
 
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+// The returned iterator will iterate from greater key to smaller key.
+// If k is nil, the returned iterator will be positioned at the last key.
+// TODO: Add lower bound limit
 func (db *MemDB) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 	i := &memdbIterator{
 		db:      db,
@@ -49,6 +57,7 @@ func (db *MemDB) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 	return i, nil
 }
 
+// IterWithFlags returns a MemBufferIterator.
 func (db *MemDB) IterWithFlags(k tidbkv.Key, upperBound tidbkv.Key) MemBufferIterator {
 	i := &memdbIterator{
 		db:           db,
@@ -60,6 +69,7 @@ func (db *MemDB) IterWithFlags(k tidbkv.Key, upperBound tidbkv.Key) MemBufferIte
 	return i
 }
 
+// IterReverseWithFlags returns a reversed MemBufferIterator.
 func (db *MemDB) IterReverseWithFlags(k tidbkv.Key) MemBufferIterator {
 	i := &memdbIterator{
 		db:           db,

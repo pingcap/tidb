@@ -79,7 +79,7 @@ func (us *KVUnionStore) HasPresumeKeyNotExists(k tidbkv.Key) bool {
 	return flags.HasPresumeKeyNotExists()
 }
 
-// DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
+// UnmarkPresumeKeyNotExists deletes the key exist error info for the lazy check.
 func (us *KVUnionStore) UnmarkPresumeKeyNotExists(k tidbkv.Key) {
 	us.memBuffer.UpdateFlags(k, kv.DelPresumeKeyNotExists)
 }

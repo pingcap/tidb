@@ -91,8 +91,7 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if tblInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
 	}
-
-	value, err := txn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}
