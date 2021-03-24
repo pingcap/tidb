@@ -664,14 +664,9 @@ paginate:
 		return err
 	}
 	// rebuild ranges
-	left, right, err := ranger.GetNextRangeByLastKey(e.ctx.GetSessionVars().StmtCtx, e.ranges, e.lastRowKeys)
+	e.ranges, err = ranger.GetNextRangeByLastKey(e.ctx.GetSessionVars().StmtCtx, e.ranges, e.lastRowKeys, e.desc)
 	if err != nil {
 		return err
-	}
-	if e.desc {
-		e.ranges = left
-	} else {
-		e.ranges = right
 	}
 	if err = e.Open(ctx); err != nil {
 		return err
