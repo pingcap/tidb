@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -835,15 +834,14 @@ type indexJoinBuildHelper struct {
 	join      *LogicalJoin
 	innerPlan *DataSource
 
-	chosenIndexInfo *model.IndexInfo
-	usedColsLen     int
-	usedColsNDV     float64
-	chosenAccess    []expression.Expression
-	chosenRemained  []expression.Expression
-	idxOff2KeyOff   []int
-	lastColManager  *ColWithCmpFuncManager
-	chosenRanges    []*ranger.Range
-	chosenPath      *util.AccessPath
+	usedColsLen    int
+	usedColsNDV    float64
+	chosenAccess   []expression.Expression
+	chosenRemained []expression.Expression
+	idxOff2KeyOff  []int
+	lastColManager *ColWithCmpFuncManager
+	chosenRanges   []*ranger.Range
+	chosenPath     *util.AccessPath
 
 	curPossibleUsedKeys []*expression.Column
 	curNotUsedIndexCols []*expression.Column
