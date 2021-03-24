@@ -1685,7 +1685,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		// |-ratio-|
 		// ndv = ratio * left.ndv + max((1-ratio) * left.ndv, right.ndv)
 		ratio := calcFraction4Datums(left.lower, left.upper, right.lower)
-		res.NDV = int64(ratio*float64(left.NDV) + math.Max((1-ratio)*float64(left.NDV), float64(right.NDV)))
+		res.NDV = int64(math.Ceil(ratio*float64(left.NDV) + math.Max((1-ratio)*float64(left.NDV), float64(right.NDV))))
 		res.lower = left.lower.Clone()
 		return &res, nil
 	}
@@ -1722,9 +1722,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	//		+ (1-upperRatio) * right.ndv
 	if lowerCompare >= 0 {
 		lowerRatio := calcFraction4Datums(left.lower, left.upper, right.lower)
-		res.NDV = int64(lowerRatio*float64(left.NDV) +
+		res.NDV = int64(math.Ceil(lowerRatio*float64(left.NDV) +
 			math.Max((1-lowerRatio)*float64(left.NDV), upperRatio*float64(right.NDV)) +
-			(1-upperRatio)*float64(right.NDV))
+			(1-upperRatio)*float64(right.NDV)))
 		res.lower = left.lower.Clone()
 		return &res, nil
 	}
@@ -1736,9 +1736,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	//		+ max(left.ndv + (upperRatio - lowerRatio) * right.ndv)
 	//		+ (1-upperRatio) * right.ndv
 	lowerRatio := calcFraction4Datums(right.lower, right.upper, left.lower)
-	res.NDV = int64(lowerRatio*float64(right.NDV) +
+	res.NDV = int64(math.Ceil(lowerRatio*float64(right.NDV) +
 		math.Max(float64(left.NDV), (upperRatio-lowerRatio)*float64(right.NDV)) +
-		(1-upperRatio)*float64(right.NDV))
+		(1-upperRatio)*float64(right.NDV)))
 	return &res, nil
 }
 
@@ -1756,7 +1756,10 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	res := bucket4Merging{}
 	res.upper = buckets[len(buckets)-1].upper.Clone()
 	right := buckets[len(buckets)-1].Clone()
+
+	totNDV := int64(0)
 	for i := len(buckets) - 1; i >= 0; i-- {
+		totNDV += buckets[i].NDV
 		res.Count += buckets[i].Count
 		compare, err := buckets[i].upper.CompareDatum(sc, res.upper)
 		if err != nil {
@@ -1774,6 +1777,14 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		}
 	}
 	res.NDV = right.NDV + right.disjointNDV
+
+	// since `mergeBucketNDV` is based on uniform and inclusion assumptions, it has the trend to under-estimate,
+	// and as the number of buckets increases, these assumptions become weak,
+	// so to mitigate this problem, a damping factor based on the number of buckets is introduced.
+	res.NDV = int64(float64(res.NDV) * math.Pow(1.15, float64(len(buckets)-1)))
+	if res.NDV > totNDV {
+		res.NDV = totNDV
+	}
 	return &res, nil
 }
 
@@ -1855,6 +1866,16 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		buckets = append(buckets, meta.buildBucket4Merging(&d))
 	}
 
+	// Remove empty buckets
+	tail := 0
+	for i := range buckets {
+		if buckets[i].Count != 0 {
+			buckets[tail] = buckets[i]
+			tail++
+		}
+	}
+	buckets = buckets[:tail]
+
 	var sortError error
 	sort.Slice(buckets, func(i, j int) bool {
 		res, err := buckets[i].upper.CompareDatum(sc, buckets[j].upper)
@@ -1873,12 +1894,14 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if sortError != nil {
 		return nil, sortError
 	}
-	var sum int64
-	r := len(buckets)
+
+	var sum, prevSum int64
+	r, prevR := len(buckets), 0
 	bucketCount := int64(1)
+	gBucketThreshold := (totCount / expBucketNumber) * 99 / 100 // expectedBucketSize * 0.95
 	for i := len(buckets) - 1; i >= 0; i-- {
 		sum += buckets[i].Count
-		if sum >= totCount*bucketCount/expBucketNumber {
+		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketThreshold {
 			// if the buckets have the same upper, we merge them into the same new buckets.
 			for ; i > 0; i-- {
 				res, err := buckets[i-1].upper.CompareDatum(sc, buckets[i].upper)
@@ -1888,18 +1911,30 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				if res != 0 {
 					break
 				}
+				sum += buckets[i-1].Count
 			}
 			merged, err := mergePartitionBuckets(sc, buckets[i:r])
 			if err != nil {
 				return nil, err
 			}
 			globalBuckets = append(globalBuckets, merged)
+			prevR = r
 			r = i
 			bucketCount++
+			prevSum = sum
 		}
 	}
 	if r > 0 {
-		merged, err := mergePartitionBuckets(sc, buckets[0:r])
+		bucketSum := int64(0)
+		for _, b := range buckets[:r] {
+			bucketSum += b.Count
+		}
+		if bucketSum < gBucketThreshold && len(globalBuckets) > 0 { // merge them into the previous global bucket
+			r = prevR
+			globalBuckets = globalBuckets[:len(globalBuckets)-1]
+		}
+
+		merged, err := mergePartitionBuckets(sc, buckets[:r])
 		if err != nil {
 			return nil, err
 		}
@@ -1916,7 +1951,11 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 	globalBuckets[0].lower = minValue.Clone()
 	for i := 1; i < len(globalBuckets); i++ {
-		globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+		if globalBuckets[i].NDV == 1 {
+			globalBuckets[i].lower = globalBuckets[i].upper.Clone()
+		} else {
+			globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+		}
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}
 
