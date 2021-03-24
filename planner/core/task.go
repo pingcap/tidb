@@ -16,6 +16,7 @@ package core
 import (
 	"math"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -589,13 +590,8 @@ func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool,
 		cDec = lType.Decimal
 	}
 	lLen, rLen := lType.Flen+lExtend, rType.Flen+rExtend
-	cLen := lLen
-	if rLen > cLen {
-		cLen = rLen
-	}
-	if cLen > 65 {
-		cLen = 65
-	}
+	cLen := mathutil.Max(lLen, rLen)
+	cLen = mathutil.Min(65, cLen)
 	cType := types.NewFieldType(mysql.TypeNewDecimal)
 	cType.Decimal = cDec
 	cType.Flen = cLen
