@@ -323,6 +323,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
 		}()
 	}
+
 	if sctx.GetSessionVars().StmtCtx.HasMemQuotaHint {
 		sctx.GetSessionVars().StmtCtx.MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
@@ -398,6 +399,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 			}
 		}
 	}()
+
 	toCheck := e
 	isExplainAnalyze := false
 	if explain, ok := e.(*ExplainExec); ok {
@@ -824,7 +826,6 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-	fmt.Println(sessVars.StmtCtx.InSelectStmt)
 	if sessVars.StmtCtx.GetIsTiFlash() {
 		if succ {
 			totalTiFlashQuerySuccCounter.Inc()
