@@ -60,6 +60,11 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	return txn.extractKeyErr(err)
 }
 
+// GetSnapshot returns the Snapshot binding to this transaction.
+func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
+	return txn.KVTxn.GetSnapshot()
+}
+
 func (txn *tikvTxn) extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikv.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())

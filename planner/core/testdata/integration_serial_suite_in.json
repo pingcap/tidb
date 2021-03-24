@@ -69,6 +69,22 @@
     ]
   },
   {
+    "name": "TestJoinNotSupportedByTiFlash",
+    "cases": [
+      "explain format = 'brief' select * from table_1 a, table_1 b where a.bit_col = b.bit_col",
+      "explain format = 'brief' select * from table_1 a left join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > 100",
+      "explain format = 'brief' select * from table_1 a right join table_1 b on a.id = b.id and dayofmonth(b.datetime_col) > 100",
+      "explain format = 'brief' select * from table_1 a join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > dayofmonth(b.datetime_col)"
+    ]
+  },
+  {
+    "name": "TestMPPNotSupportedInNewCollation",
+    "cases": [
+      "explain format = 'brief' select * from table_1 a, table_1 b where a.id = b.id",
+      "explain format = 'brief' select /*+ agg_to_cop() */ count(*), id from table_1 group by id"
+    ]
+  },
+  {
     "name": "TestReadFromStorageHint",
     "cases": [
       "desc format = 'brief' select avg(a) from t",
@@ -178,7 +194,7 @@
       "desc format = 'brief' select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
       "desc format = 'brief' select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
       "desc format = 'brief' select avg(value) as b,id from t group by id",
-      "desc format = 'brief' select /*+hash_agg()*/ sum(b),id from (select avg(value) as b, id from t group by id)A",
+      "desc format = 'brief' select /*+hash_agg()*/ sum(b) from (select avg(value) as b, id from t group by id)A",
       "desc format = 'brief' select id from t group by id having avg(value)>0",
       "desc format = 'brief' select avg(value),id from t group by id having avg(value)>0",
       "desc format = 'brief' select avg(value) +1,id from t group by id",
