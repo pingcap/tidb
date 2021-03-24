@@ -191,6 +191,27 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustQuery("select count(*) k, t2.a div 2 from t2 group by t2.a div 2 order by k").Check(testkit.Rows("1 0", "2 1"))
 }
 
+func (s *tiflashTestSuite) TestInjectExtraProj(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(20))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+
+	tk.MustQuery("select avg(a) from t").Check(testkit.Rows("9223372036854775807.0000"))
+	tk.MustQuery("select avg(a), a from t group by a").Check(testkit.Rows("9223372036854775807.0000 9223372036854775807"))
+
+}
+
 func (s *tiflashTestSuite) TestPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
