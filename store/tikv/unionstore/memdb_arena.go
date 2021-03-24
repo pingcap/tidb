@@ -300,7 +300,7 @@ func (l *memdbVlog) selectValueHistory(addr memdbArenaAddr, predicate func(memdb
 	return nullAddr
 }
 
-func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {
+func (l *memdbVlog) revertToCheckpoint(db *MemDB, cp *memdbCheckpoint) {
 	cursor := l.checkpoint()
 	for !cp.isSamePosition(&cursor) {
 		hdrOff := cursor.offsetInBlock - memdbVlogHdrSize
@@ -329,7 +329,7 @@ func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {
 	}
 }
 
-func (l *memdbVlog) inspectKVInLog(db *memdb, head, tail *memdbCheckpoint, f func(tidbkv.Key, kv.KeyFlags, []byte)) {
+func (l *memdbVlog) inspectKVInLog(db *MemDB, head, tail *memdbCheckpoint, f func(tidbkv.Key, kv.KeyFlags, []byte)) {
 	cursor := *tail
 	for !head.isSamePosition(&cursor) {
 		cursorAddr := memdbArenaAddr{idx: uint32(cursor.blocks - 1), off: uint32(cursor.offsetInBlock)}

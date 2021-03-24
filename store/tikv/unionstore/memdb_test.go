@@ -51,7 +51,7 @@ var (
 type testMemDBSuite struct{}
 
 // DeleteKey is used in test to verify the `deleteNode` used in `vlog.revertToCheckpoint`.
-func (db *memdb) DeleteKey(key []byte) {
+func (db *MemDB) DeleteKey(key []byte) {
 	x := db.traverse(key, false)
 	if x.isNull() {
 		return
@@ -533,7 +533,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 	}
 }
 
-func (s *testMemDBSuite) checkConsist(c *C, p1 *memdb, p2 *leveldb.DB) {
+func (s *testMemDBSuite) checkConsist(c *C, p1 *MemDB, p2 *leveldb.DB) {
 	c.Assert(p1.Len(), Equals, p2.Len())
 	c.Assert(p1.Size(), Equals, p2.Size())
 
@@ -572,14 +572,14 @@ func (s *testMemDBSuite) checkConsist(c *C, p1 *memdb, p2 *leveldb.DB) {
 	}
 }
 
-func (s *testMemDBSuite) fillDB(cnt int) *memdb {
+func (s *testMemDBSuite) fillDB(cnt int) *MemDB {
 	db := newMemDB()
 	h := s.deriveAndFill(0, cnt, 0, db)
 	db.Release(h)
 	return db
 }
 
-func (s *testMemDBSuite) deriveAndFill(start, end, valueBase int, db *memdb) StagingHandle {
+func (s *testMemDBSuite) deriveAndFill(start, end, valueBase int, db *MemDB) StagingHandle {
 	h := db.Staging()
 	var kbuf, vbuf [4]byte
 	for i := start; i < end; i++ {
@@ -597,11 +597,11 @@ const (
 )
 
 type testKVSuite struct {
-	bs []MemBuffer
+	bs []*MemDB
 }
 
 func (s *testKVSuite) SetUpSuite(c *C) {
-	s.bs = make([]MemBuffer, 1)
+	s.bs = make([]*MemDB, 1)
 	s.bs[0] = newMemDB()
 }
 
@@ -609,7 +609,7 @@ func (s *testKVSuite) ResetMembuffers() {
 	s.bs[0] = newMemDB()
 }
 
-func insertData(c *C, buffer MemBuffer) {
+func insertData(c *C, buffer *MemDB) {
 	for i := startIndex; i < testCount; i++ {
 		val := encodeInt(i * indexStep)
 		err := buffer.Set(val, val)
@@ -632,7 +632,7 @@ func valToStr(c *C, iter Iterator) string {
 	return string(val)
 }
 
-func checkNewIterator(c *C, buffer MemBuffer) {
+func checkNewIterator(c *C, buffer *MemDB) {
 	for i := startIndex; i < testCount; i++ {
 		val := encodeInt(i * indexStep)
 		iter, err := buffer.Iter(val, nil)
@@ -677,7 +677,7 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 	iter.Close()
 }
 
-func mustGet(c *C, buffer MemBuffer) {
+func mustGet(c *C, buffer *MemDB) {
 	for i := startIndex; i < testCount; i++ {
 		s := encodeInt(i * indexStep)
 		val, err := buffer.Get(context.TODO(), s)

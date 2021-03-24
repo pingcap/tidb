@@ -108,11 +108,11 @@ type twoPhaseCommitter struct {
 }
 
 type memBufferMutations struct {
-	storage unionstore.MemBuffer
+	storage *unionstore.MemDB
 	handles []unionstore.MemKeyHandle
 }
 
-func newMemBufferMutations(sizeHint int, storage unionstore.MemBuffer) *memBufferMutations {
+func newMemBufferMutations(sizeHint int, storage *unionstore.MemDB) *memBufferMutations {
 	return &memBufferMutations{
 		handles: make([]unionstore.MemKeyHandle, 0, sizeHint),
 		storage: storage,

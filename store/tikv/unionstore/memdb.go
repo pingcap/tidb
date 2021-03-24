@@ -42,15 +42,15 @@ func (h MemKeyHandle) toAddr() memdbArenaAddr {
 	return memdbArenaAddr{idx: uint32(h.idx), off: h.off}
 }
 
-// memdb is rollbackable Red-Black Tree optimized for TiDB's transaction states buffer use scenario.
-// You can think memdb is a combination of two separate tree map, one for key => value and another for key => keyFlags.
+// MemDB is rollbackable Red-Black Tree optimized for TiDB's transaction states buffer use scenario.
+// You can think MemDB is a combination of two separate tree map, one for key => value and another for key => keyFlags.
 //
 // The value map is rollbackable, that means you can use the `Staging`, `Release` and `Cleanup` API to safely modify KVs.
 //
 // The flags map is not rollbackable. There are two types of flag, persistent and non-persistent.
 // When discarding a newly added KV in `Cleanup`, the non-persistent flags will be cleared.
 // If there are persistent flags associated with key, we will keep this key in node without value.
-type memdb struct {
+type MemDB struct {
 	// This RWMutex only used to ensure memdbSnapGetter.Get will not race with
 	// concurrent memdb.Set, memdb.SetWithFlags, memdb.Delete and memdb.UpdateFlags.
 	sync.RWMutex
@@ -68,8 +68,8 @@ type memdb struct {
 	stages      []memdbCheckpoint
 }
 
-func newMemDB() *memdb {
-	db := new(memdb)
+func newMemDB() *MemDB {
+	db := new(MemDB)
 	db.allocator.init()
 	db.root = nullAddr
 	db.stages = make([]memdbCheckpoint, 0, 2)
@@ -78,7 +78,7 @@ func newMemDB() *memdb {
 	return db
 }
 
-func (db *memdb) Staging() tidbkv.StagingHandle {
+func (db *MemDB) Staging() tidbkv.StagingHandle {
 	db.Lock()
 	defer db.Unlock()
 
@@ -86,7 +86,7 @@ func (db *memdb) Staging() tidbkv.StagingHandle {
 	return tidbkv.StagingHandle(len(db.stages))
 }
 
-func (db *memdb) Release(h tidbkv.StagingHandle) {
+func (db *MemDB) Release(h tidbkv.StagingHandle) {
 	if int(h) != len(db.stages) {
 		// This should never happens in production environment.
 		// Use panic to make debug easier.
@@ -104,7 +104,7 @@ func (db *memdb) Release(h tidbkv.StagingHandle) {
 	db.stages = db.stages[:int(h)-1]
 }
 
-func (db *memdb) Cleanup(h tidbkv.StagingHandle) {
+func (db *MemDB) Cleanup(h tidbkv.StagingHandle) {
 	if int(h) > len(db.stages) {
 		return
 	}
@@ -127,7 +127,7 @@ func (db *memdb) Cleanup(h tidbkv.StagingHandle) {
 	db.stages = db.stages[:int(h)-1]
 }
 
-func (db *memdb) Reset() {
+func (db *MemDB) Reset() {
 	db.root = nullAddr
 	db.stages = db.stages[:0]
 	db.dirty = false
@@ -138,19 +138,19 @@ func (db *memdb) Reset() {
 	db.allocator.reset()
 }
 
-func (db *memdb) DiscardValues() {
+func (db *MemDB) DiscardValues() {
 	db.vlogInvalid = true
 	db.vlog.reset()
 }
 
-func (db *memdb) InspectStage(handle tidbkv.StagingHandle, f func(tidbkv.Key, kv.KeyFlags, []byte)) {
+func (db *MemDB) InspectStage(handle tidbkv.StagingHandle, f func(tidbkv.Key, kv.KeyFlags, []byte)) {
 	idx := int(handle) - 1
 	tail := db.vlog.checkpoint()
 	head := db.stages[idx]
 	db.vlog.inspectKVInLog(db, &head, &tail, f)
 }
 
-func (db *memdb) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
+func (db *MemDB) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
 	if db.vlogInvalid {
 		// panic for easier debugging.
 		panic("vlog is resetted")
@@ -167,7 +167,7 @@ func (db *memdb) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
 	return db.vlog.getValue(x.vptr), nil
 }
 
-func (db *memdb) SelectValueHistory(key tidbkv.Key, predicate func(value []byte) bool) ([]byte, error) {
+func (db *MemDB) SelectValueHistory(key tidbkv.Key, predicate func(value []byte) bool) ([]byte, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
 		return nil, tidbkv.ErrNotExist
@@ -185,7 +185,7 @@ func (db *memdb) SelectValueHistory(key tidbkv.Key, predicate func(value []byte)
 	return db.vlog.getValue(result), nil
 }
 
-func (db *memdb) GetFlags(key tidbkv.Key) (kv.KeyFlags, error) {
+func (db *MemDB) GetFlags(key tidbkv.Key) (kv.KeyFlags, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
 		return 0, tidbkv.ErrNotExist
@@ -193,39 +193,39 @@ func (db *memdb) GetFlags(key tidbkv.Key) (kv.KeyFlags, error) {
 	return x.getKeyFlags(), nil
 }
 
-func (db *memdb) UpdateFlags(key tidbkv.Key, ops ...kv.FlagsOp) {
+func (db *MemDB) UpdateFlags(key tidbkv.Key, ops ...kv.FlagsOp) {
 	err := db.set(key, nil, ops...)
 	_ = err // set without value will never fail
 }
 
-func (db *memdb) Set(key tidbkv.Key, value []byte) error {
+func (db *MemDB) Set(key tidbkv.Key, value []byte) error {
 	if len(value) == 0 {
 		return tidbkv.ErrCannotSetNilValue
 	}
 	return db.set(key, value)
 }
 
-func (db *memdb) SetWithFlags(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) error {
+func (db *MemDB) SetWithFlags(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) error {
 	if len(value) == 0 {
 		return tidbkv.ErrCannotSetNilValue
 	}
 	return db.set(key, value, ops...)
 }
 
-func (db *memdb) Delete(key tidbkv.Key) error {
+func (db *MemDB) Delete(key tidbkv.Key) error {
 	return db.set(key, tombstone)
 }
 
-func (db *memdb) DeleteWithFlags(key tidbkv.Key, ops ...kv.FlagsOp) error {
+func (db *MemDB) DeleteWithFlags(key tidbkv.Key, ops ...kv.FlagsOp) error {
 	return db.set(key, tombstone, ops...)
 }
 
-func (db *memdb) GetKeyByHandle(handle MemKeyHandle) []byte {
+func (db *MemDB) GetKeyByHandle(handle MemKeyHandle) []byte {
 	x := db.getNode(handle.toAddr())
 	return x.getKey()
 }
 
-func (db *memdb) GetValueByHandle(handle MemKeyHandle) ([]byte, bool) {
+func (db *MemDB) GetValueByHandle(handle MemKeyHandle) ([]byte, bool) {
 	if db.vlogInvalid {
 		return nil, false
 	}
@@ -236,19 +236,19 @@ func (db *memdb) GetValueByHandle(handle MemKeyHandle) ([]byte, bool) {
 	return db.vlog.getValue(x.vptr), true
 }
 
-func (db *memdb) Len() int {
+func (db *MemDB) Len() int {
 	return db.count
 }
 
-func (db *memdb) Size() int {
+func (db *MemDB) Size() int {
 	return db.size
 }
 
-func (db *memdb) Dirty() bool {
+func (db *MemDB) Dirty() bool {
 	return db.dirty
 }
 
-func (db *memdb) set(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) error {
+func (db *MemDB) set(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) error {
 	if db.vlogInvalid {
 		// panic for easier debugging.
 		panic("vlog is resetted")
@@ -287,7 +287,7 @@ func (db *memdb) set(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) error {
 	return nil
 }
 
-func (db *memdb) setValue(x memdbNodeAddr, value []byte) {
+func (db *MemDB) setValue(x memdbNodeAddr, value []byte) {
 	var activeCp *memdbCheckpoint
 	if len(db.stages) > 0 {
 		activeCp = &db.stages[len(db.stages)-1]
@@ -312,7 +312,7 @@ func (db *memdb) setValue(x memdbNodeAddr, value []byte) {
 
 // traverse search for and if not found and insert is true, will add a new node in.
 // Returns a pointer to the new node, or the node found.
-func (db *memdb) traverse(key tidbkv.Key, insert bool) memdbNodeAddr {
+func (db *MemDB) traverse(key tidbkv.Key, insert bool) memdbNodeAddr {
 	x := db.getRoot()
 	y := memdbNodeAddr{nil, nullAddr}
 	found := false
@@ -440,7 +440,7 @@ func (db *memdb) traverse(key tidbkv.Key, insert bool) memdbNodeAddr {
 // We assume that neither X nor Y is NULL
 //
 
-func (db *memdb) leftRotate(x memdbNodeAddr) {
+func (db *MemDB) leftRotate(x memdbNodeAddr) {
 	y := x.getRight(db)
 
 	// Turn Y's left subtree into X's right subtree (move B)
@@ -474,7 +474,7 @@ func (db *memdb) leftRotate(x memdbNodeAddr) {
 	x.up = y.addr
 }
 
-func (db *memdb) rightRotate(y memdbNodeAddr) {
+func (db *MemDB) rightRotate(y memdbNodeAddr) {
 	x := y.getLeft(db)
 
 	// Turn X's right subtree into Y's left subtree (move B)
@@ -508,7 +508,7 @@ func (db *memdb) rightRotate(y memdbNodeAddr) {
 	y.up = x.addr
 }
 
-func (db *memdb) deleteNode(z memdbNodeAddr) {
+func (db *MemDB) deleteNode(z memdbNodeAddr) {
 	var x, y memdbNodeAddr
 
 	db.count--
@@ -554,7 +554,7 @@ func (db *memdb) deleteNode(z memdbNodeAddr) {
 	db.allocator.freeNode(z.addr)
 }
 
-func (db *memdb) replaceNode(old memdbNodeAddr, new memdbNodeAddr) {
+func (db *MemDB) replaceNode(old memdbNodeAddr, new memdbNodeAddr) {
 	if !old.up.isNull() {
 		oldUp := old.getUp(db)
 		if old.addr == oldUp.left {
@@ -582,7 +582,7 @@ func (db *memdb) replaceNode(old memdbNodeAddr, new memdbNodeAddr) {
 	}
 }
 
-func (db *memdb) deleteNodeFix(x memdbNodeAddr) {
+func (db *MemDB) deleteNodeFix(x memdbNodeAddr) {
 	for x.addr != db.root && x.isBlack() {
 		xUp := x.getUp(db)
 		if x.addr == xUp.left {
@@ -652,7 +652,7 @@ func (db *memdb) deleteNodeFix(x memdbNodeAddr) {
 	x.setBlack()
 }
 
-func (db *memdb) successor(x memdbNodeAddr) (y memdbNodeAddr) {
+func (db *MemDB) successor(x memdbNodeAddr) (y memdbNodeAddr) {
 	if !x.right.isNull() {
 		// If right is not NULL then go right one and
 		// then keep going left until we find a node with
@@ -677,7 +677,7 @@ func (db *memdb) successor(x memdbNodeAddr) (y memdbNodeAddr) {
 	return y
 }
 
-func (db *memdb) predecessor(x memdbNodeAddr) (y memdbNodeAddr) {
+func (db *MemDB) predecessor(x memdbNodeAddr) (y memdbNodeAddr) {
 	if !x.left.isNull() {
 		// If left is not NULL then go left one and
 		// then keep going right until we find a node with
@@ -702,15 +702,15 @@ func (db *memdb) predecessor(x memdbNodeAddr) (y memdbNodeAddr) {
 	return y
 }
 
-func (db *memdb) getNode(x memdbArenaAddr) memdbNodeAddr {
+func (db *MemDB) getNode(x memdbArenaAddr) memdbNodeAddr {
 	return memdbNodeAddr{db.allocator.getNode(x), x}
 }
 
-func (db *memdb) getRoot() memdbNodeAddr {
+func (db *MemDB) getRoot() memdbNodeAddr {
 	return db.getNode(db.root)
 }
 
-func (db *memdb) allocNode(key tidbkv.Key) memdbNodeAddr {
+func (db *MemDB) allocNode(key tidbkv.Key) memdbNodeAddr {
 	db.size += len(key)
 	db.count++
 	x, xn := db.allocator.allocNode(key)
@@ -726,15 +726,15 @@ func (a *memdbNodeAddr) isNull() bool {
 	return a.addr.isNull()
 }
 
-func (a memdbNodeAddr) getUp(db *memdb) memdbNodeAddr {
+func (a memdbNodeAddr) getUp(db *MemDB) memdbNodeAddr {
 	return db.getNode(a.up)
 }
 
-func (a memdbNodeAddr) getLeft(db *memdb) memdbNodeAddr {
+func (a memdbNodeAddr) getLeft(db *MemDB) memdbNodeAddr {
 	return db.getNode(a.left)
 }
 
-func (a memdbNodeAddr) getRight(db *memdb) memdbNodeAddr {
+func (a memdbNodeAddr) getRight(db *MemDB) memdbNodeAddr {
 	return db.getNode(a.right)
 }
 

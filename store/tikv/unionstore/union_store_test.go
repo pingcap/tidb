@@ -24,7 +24,7 @@ import (
 var _ = Suite(&testUnionStoreSuite{})
 
 type testUnionStoreSuite struct {
-	store MemBuffer
+	store *MemDB
 	us    *KVUnionStore
 }
 

@@ -396,7 +396,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 			}
 		}
 	}()
-	memBuf := txn.us.GetMemBuffer().(unionstore.MemBuffer)
+	memBuf := txn.us.GetMemBuffer()
 	for _, key := range keysInput {
 		// The value of lockedMap is only used by pessimistic transactions.
 		var valueExist, locked, checkKeyExists bool
@@ -609,7 +609,7 @@ func (txn *KVTxn) GetUnionStore() *unionstore.KVUnionStore {
 }
 
 // GetMemBuffer return the MemBuffer binding to this transaction.
-func (txn *KVTxn) GetMemBuffer() unionstore.MemBuffer {
+func (txn *KVTxn) GetMemBuffer() *unionstore.MemDB {
 	return txn.us.GetMemBuffer()
 }
 

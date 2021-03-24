@@ -20,7 +20,7 @@ import (
 )
 
 type mockSnapshot struct {
-	store MemBuffer
+	store *MemDB
 }
 
 func (s *mockSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {

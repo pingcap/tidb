@@ -19,14 +19,14 @@ import (
 	tidbkv "github.com/pingcap/tidb/kv"
 )
 
-func (db *memdb) SnapshotGetter() tidbkv.Getter {
+func (db *MemDB) SnapshotGetter() tidbkv.Getter {
 	return &memdbSnapGetter{
 		db: db,
 		cp: db.getSnapshot(),
 	}
 }
 
-func (db *memdb) SnapshotIter(start, end tidbkv.Key) tidbkv.Iterator {
+func (db *MemDB) SnapshotIter(start, end tidbkv.Key) tidbkv.Iterator {
 	it := &memdbSnapIter{
 		memdbIterator: &memdbIterator{
 			db:    db,
@@ -39,7 +39,7 @@ func (db *memdb) SnapshotIter(start, end tidbkv.Key) tidbkv.Iterator {
 	return it
 }
 
-func (db *memdb) getSnapshot() memdbCheckpoint {
+func (db *MemDB) getSnapshot() memdbCheckpoint {
 	if len(db.stages) > 0 {
 		return db.stages[0]
 	}
@@ -47,7 +47,7 @@ func (db *memdb) getSnapshot() memdbCheckpoint {
 }
 
 type memdbSnapGetter struct {
-	db *memdb
+	db *MemDB
 	cp memdbCheckpoint
 }
 

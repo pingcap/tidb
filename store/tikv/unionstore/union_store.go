@@ -10,7 +10,7 @@ import (
 // KVUnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type KVUnionStore struct {
-	memBuffer *memdb
+	memBuffer *MemDB
 	snapshot  tidbkv.Snapshot
 	opts      options
 }
@@ -25,7 +25,7 @@ func NewUnionStore(snapshot tidbkv.Snapshot) *KVUnionStore {
 }
 
 // GetMemBuffer return the MemBuffer binding to this unionStore.
-func (us *KVUnionStore) GetMemBuffer() MemBuffer {
+func (us *KVUnionStore) GetMemBuffer() *MemDB {
 	return us.memBuffer
 }
 

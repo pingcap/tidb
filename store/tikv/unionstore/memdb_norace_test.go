@@ -69,7 +69,7 @@ func (s testMemDBSuite) TestRandomDerive(c *C) {
 	s.testRandomDeriveRecur(c, db, golden, 0)
 }
 
-func (s testMemDBSuite) testRandomDeriveRecur(c *C, db *memdb, golden *leveldb.DB, depth int) [][2][]byte {
+func (s testMemDBSuite) testRandomDeriveRecur(c *C, db *MemDB, golden *leveldb.DB, depth int) [][2][]byte {
 	var keys [][]byte
 	if op := rand.Float64(); op < 0.33 {
 		start, end := rand.Intn(512), rand.Intn(512)+512

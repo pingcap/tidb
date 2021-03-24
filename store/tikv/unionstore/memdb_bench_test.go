@@ -26,7 +26,7 @@ const (
 	valueSize = 128
 )
 
-func newMemDBForBench() *memdb {
+func newMemDBForBench() *MemDB {
 	db := newMemDB()
 	db.bufferSizeLimit = math.MaxUint64
 	db.entrySizeLimit = math.MaxUint64
@@ -152,7 +152,7 @@ func shuffle(slc [][]byte) {
 		slc[r], slc[i] = slc[i], slc[r]
 	}
 }
-func benchmarkSetGet(b *testing.B, buffer MemBuffer, data [][]byte) {
+func benchmarkSetGet(b *testing.B, buffer *MemDB, data [][]byte) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, k := range data {
@@ -164,7 +164,7 @@ func benchmarkSetGet(b *testing.B, buffer MemBuffer, data [][]byte) {
 	}
 }
 
-func benchIterator(b *testing.B, buffer MemBuffer) {
+func benchIterator(b *testing.B, buffer *MemDB) {
 	for k := 0; k < opCnt; k++ {
 		buffer.Set(encodeInt(k), encodeInt(k))
 	}

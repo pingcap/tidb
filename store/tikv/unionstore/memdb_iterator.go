@@ -21,7 +21,7 @@ import (
 )
 
 type memdbIterator struct {
-	db           *memdb
+	db           *MemDB
 	curr         memdbNodeAddr
 	start        tidbkv.Key
 	end          tidbkv.Key
@@ -29,7 +29,7 @@ type memdbIterator struct {
 	includeFlags bool
 }
 
-func (db *memdb) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
+func (db *MemDB) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
 	i := &memdbIterator{
 		db:    db,
 		start: k,
@@ -39,7 +39,7 @@ func (db *memdb) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, err
 	return i, nil
 }
 
-func (db *memdb) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
+func (db *MemDB) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 	i := &memdbIterator{
 		db:      db,
 		end:     k,
@@ -49,7 +49,7 @@ func (db *memdb) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 	return i, nil
 }
 
-func (db *memdb) IterWithFlags(k tidbkv.Key, upperBound tidbkv.Key) MemBufferIterator {
+func (db *MemDB) IterWithFlags(k tidbkv.Key, upperBound tidbkv.Key) MemBufferIterator {
 	i := &memdbIterator{
 		db:           db,
 		start:        k,
@@ -60,7 +60,7 @@ func (db *memdb) IterWithFlags(k tidbkv.Key, upperBound tidbkv.Key) MemBufferIte
 	return i
 }
 
-func (db *memdb) IterReverseWithFlags(k tidbkv.Key) MemBufferIterator {
+func (db *MemDB) IterReverseWithFlags(k tidbkv.Key) MemBufferIterator {
 	i := &memdbIterator{
 		db:           db,
 		end:          k,
