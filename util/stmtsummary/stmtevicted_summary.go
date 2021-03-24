@@ -2,15 +2,17 @@ package stmtsummary
 
 import (
 	"container/list"
+	"strconv"
+	"sync"
+	"time"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
-	"strconv"
-	"sync"
-	"time"
 )
 
+// StmtEvictedMap is a global map containing all statement summaries evicted.
 var StmtEvictedMap = newstmtEvictedMap()
 
 type stmtSummaryEvictedMap struct {
@@ -98,13 +100,15 @@ func (eb *stmtSummaryEvictedInfo) add(value kvcache.Value, begintime int64, inte
 		eb.init(begintime, begintime+intervalSeconds, historysize)
 	}
 	EvictedCol := value.(*stmtSummaryByDigest)
-	for i := EvictedCol.history.Front(); i != nil; i = i.Next() {
-		if i.Value.(*stmtSummaryByDigestElement).endTime > begintime {
-			eb.history.PushFront(i.Value.(*stmtSummaryByDigestElement))
-			if eb.history.Len() > eb.historyMax {
-				eb.history.Remove(eb.history.Back())
+	if EvictedCol.history != nil {
+		for i := EvictedCol.history.Front(); i != nil; i = i.Next() {
+			if i.Value.(*stmtSummaryByDigestElement).endTime > begintime {
+				if eb.history.Len() >= eb.historyMax {
+					eb.history.Remove(eb.history.Back())
+				}
+				eb.history.PushFront(i.Value.(*stmtSummaryByDigestElement))
+				eb.Count++
 			}
-			eb.Count++
 		}
 	}
 }

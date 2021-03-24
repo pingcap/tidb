@@ -69,6 +69,7 @@ type stmtSummaryByDigestMap struct {
 	summaryMap *kvcache.SimpleLRUCache
 	// beginTimeForCurInterval is the begin time for current summary.
 	beginTimeForCurInterval int64
+
 	// sysVars encapsulates system variables needed to control statement summary.
 	sysVars *systemVars
 }
@@ -282,7 +283,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
 			if ssMap.summaryMap.Size() == ssMap.maxStmtCount() {
-				_, oldestValue, err := ssMap.summaryMap.RemoveOldest()
+				_, oldestValue, err := ssMap.summaryMap.GetOldest()
 				if err {
 					StmtEvictedMap.AddEvictedRecord(now, oldestValue)
 				}

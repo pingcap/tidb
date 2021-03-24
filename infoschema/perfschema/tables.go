@@ -45,6 +45,7 @@ const (
 	tableNameSetupConsumers                  = "setup_consumers"
 	tableNameEventsStatementsCurrent         = "events_statements_current"
 	tableNameEventsStatementsHistory         = "events_statements_history"
+	tableNameStatementsSummaryEvicted        = "events_statements_summary_evicted"
 	tableNameEventsStatementsHistoryLong     = "events_statements_history_long"
 	tableNamePreparedStatementsInstances     = "prepared_statements_instances"
 	tableNameEventsTransactionsCurrent       = "events_transactions_current"
@@ -67,7 +68,6 @@ const (
 	tableNamePDProfileAllocs                 = "pd_profile_allocs"
 	tableNamePDProfileBlock                  = "pd_profile_block"
 	tableNamePDProfileGoroutines             = "pd_profile_goroutines"
-	TableNameStatementsSummaryEvited         = "STATEMENTS_SUMMARY_EVICTED"
 )
 
 var tableIDMap = map[string]int64{
@@ -101,7 +101,7 @@ var tableIDMap = map[string]int64{
 	tableNamePDProfileAllocs:                 autoid.PerformanceSchemaDBID + 28,
 	tableNamePDProfileBlock:                  autoid.PerformanceSchemaDBID + 29,
 	tableNamePDProfileGoroutines:             autoid.PerformanceSchemaDBID + 30,
-	TableNameStatementsSummaryEvited:         autoid.PerformanceSchemaDBID + 31,
+	tableNameStatementsSummaryEvicted:        autoid.PerformanceSchemaDBID + 31,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.

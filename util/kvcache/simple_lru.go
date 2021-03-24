@@ -210,3 +210,12 @@ func (l *SimpleLRUCache) RemoveOldest() (key Key, value Value, ok bool) {
 	}
 	return nil, nil, false
 }
+
+// GetOldest get the oldest element from the cache.
+func (l *SimpleLRUCache) GetOldest() (key Key,value Value,ok bool) {
+	if l.size >0 {
+		ele:=l.cache.Back()
+		return ele.Value.(*cacheEntry).key,ele.Value.(*cacheEntry).value,true
+	}
+	return nil, nil, false
+}

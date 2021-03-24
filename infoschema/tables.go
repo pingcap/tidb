@@ -161,8 +161,8 @@ const (
 	TableClientErrorsSummaryByUser = "CLIENT_ERRORS_SUMMARY_BY_USER"
 	// TableClientErrorsSummaryByHost is the string constant of client errors table.
 	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
-	//is the string constant of statement summary evicted table.
-	TableStatementsSummaryEvited = "STATEMENTS_SUMMARY_EVICTED"
+	// TableStatementsSummaryEvicted is the string constant of statement summary evicted table.
+	TableStatementsSummaryEvicted = "STATEMENTS_SUMMARY_EVICTED"
 )
 
 var tableIDMap = map[string]int64{
@@ -235,7 +235,7 @@ var tableIDMap = map[string]int64{
 	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
 	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
 	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
-	TableStatementsSummaryEvited:            autoid.InformationSchemaDBID + 70,
+	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 70,
 }
 
 type columnInfo struct {
@@ -1708,7 +1708,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
-	TableStatementsSummaryEvited:            tableStmtEvictedCols,
+	TableStatementsSummaryEvicted:           tableStmtEvictedCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
