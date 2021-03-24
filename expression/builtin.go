@@ -887,16 +887,6 @@ var funcs = map[string]functionClass{
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
 	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
-
-	// HS functions
-	HSBuildDBJson: &hsBuildDbJsonFunctionClass{baseFunctionClass{HSBuildDBJson, 1, 2}},
-
-	HSMatch:        &hsMatchFunctionClass{baseFunctionClass{HSMatch, 2, 3}},
-	HSMatchJson:    &hsMatchJsonFunctionClass{baseFunctionClass{HSMatchJson, 2, 2}},
-	HSMatchAll:     &hsMatchAllFunctionClass{baseFunctionClass{HSMatchAll, 2, 2}},
-	HSMatchAllJson: &hsMatchAllJsonFunctionClass{baseFunctionClass{HSMatchAllJson, 2, 2}},
-	HSMatchIds:     &hsMatchIdsFunctionClass{baseFunctionClass{HSMatchIds, 2, 3}},
-	HSMatchIdsJson: &hsMatchIdsJsonFunctionClass{baseFunctionClass{HSMatchIdsJson, 2, 2}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.
