@@ -7835,7 +7835,12 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 
 	mustExec := func(sql string) {
 		tk.MustExec(sql)
-		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().StmtCtx.GetExecScanProcessKeys())
+		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().StmtCtx.GetExecScanProcessKeys(), tk.Se.GetSessionVars().InTxn())
+	}
+	errExec := func(sql string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().StmtCtx.GetExecScanProcessKeys(), tk.Se.GetSessionVars().InTxn())
 	}
 
 	// Test insert in small txn
@@ -7843,7 +7848,6 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 	writeSLI := tk.Se.GetTxnWriteThroughputSLI()
 	c.Assert(writeSLI.IsInvalid(), Equals, false)
 	c.Assert(writeSLI.IsSmallTxn(), Equals, true)
-	c.Assert(writeSLI.IsTxnCommitted(), Equals, true)
 	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s")
 	tk.Se.GetTxnWriteThroughputSLI().Reset()
 
@@ -7851,7 +7855,6 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 	mustExec("insert into t select b, a from t")
 	c.Assert(writeSLI.IsInvalid(), Equals, true)
 	c.Assert(writeSLI.IsSmallTxn(), Equals, true)
-	c.Assert(writeSLI.IsTxnCommitted(), Equals, true)
 	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: true, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s")
 	tk.Se.GetTxnWriteThroughputSLI().Reset()
 
@@ -7865,7 +7868,6 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 	for i := 0; i < 20; i++ {
 		mustExec(fmt.Sprintf("insert into t values (%v,%v)", i, i))
 		c.Assert(writeSLI.IsSmallTxn(), Equals, true)
-		c.Assert(writeSLI.IsTxnCommitted(), Equals, false)
 	}
 	// The statement which affect rows is 0 shouldn't record into time.
 	mustExec("select count(*) from t")
@@ -7874,7 +7876,6 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 	c.Assert(writeSLI.IsSmallTxn(), Equals, false)
 	mustExec("commit")
 	c.Assert(writeSLI.IsInvalid(), Equals, false)
-	c.Assert(writeSLI.IsTxnCommitted(), Equals, true)
 	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 21, writeSize: 609, readKeys: 0, writeKeys: 21, writeTime: 22s")
 	tk.Se.GetTxnWriteThroughputSLI().Reset()
 
@@ -7884,10 +7885,24 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 	mustExec("begin")
 	mustExec("insert into t values (1,3),(2,4)")
 	mustExec("replace into t select b, a from t")
-	c.Assert(writeSLI.IsTxnCommitted(), Equals, false)
 	mustExec("commit")
 	c.Assert(writeSLI.IsInvalid(), Equals, true)
 	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: true, affectRow: 4, writeSize: 116, readKeys: 0, writeKeys: 4, writeTime: 3s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test clean last failed transaction information.
+	err := failpoint.Disable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput")
+	c.Assert(err, IsNil)
+	mustExec("begin")
+	mustExec("insert into t values (1,3),(2,4)")
+	errExec("commit")
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput", "return(true)"), IsNil)
+	mustExec("begin")
+	mustExec("insert into t values (5, 6)")
+	mustExec("commit")
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 1, writeSize: 29, readKeys: 0, writeKeys: 1, writeTime: 2s")
 
 	// Test for reset
 	tk.Se.GetTxnWriteThroughputSLI().Reset()

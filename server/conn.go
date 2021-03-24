@@ -895,7 +895,8 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	}
 
 	cost := time.Since(startTime)
-	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, cc.ctx.AffectedRows(), cc.ctx.GetSessionVars().StmtCtx.GetExecScanProcessKeys())
+	sessionVar := cc.ctx.GetSessionVars()
+	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, cc.ctx.AffectedRows(), sessionVar.StmtCtx.GetExecScanProcessKeys(), sessionVar.InTxn())
 
 	switch sqlType {
 	case "Use":
