@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1242,12 +1243,30 @@ func (c *RegionCache) getProxyStore(region *Region, store *Store, rs *RegionStor
 	}
 
 	tikvNum := rs.accessStoreNum(TiKVOnly)
-	for index := 0; index < tikvNum; index++ {
+	if tikvNum <= 1 {
+		return
+	}
+
+	// Randomly select an non-leader peer
+	first := rand.Intn(tikvNum - 1)
+	if first >= int(workStoreIdx) {
+		first = (first + 1) % tikvNum
+	}
+
+	// If the current selected peer is not reachable, switch to the next one, until a reachable peer is found or all
+	// peers are checked.
+	for i := 0; i < tikvNum; i++ {
+		index := (i + first) % tikvNum
 		// Skip work store which is the actual store to be accessed
 		if index == int(workStoreIdx) {
 			continue
 		}
 		storeIdx, store := rs.accessStore(TiKVOnly, AccessIndex(index))
+		// Skip unreachable stores.
+		if atomic.LoadInt32(&store.needForwarding) != 0 {
+			continue
+		}
+
 		rs.setProxyStoreIdx(region, AccessIndex(index))
 		return store, AccessIndex(index), storeIdx, nil
 	}
@@ -1535,17 +1554,32 @@ func (r *RegionStore) switchNextTiKVPeer(rr *Region, currentPeerIdx AccessIndex)
 }
 
 // switchNextProxyStore switches the index of the peer that will forward requests to the leader to the next peer.
-// If proxy is currently not used on this region, the value of `currentProxyIdx` should be -1, and it will be moved to
-// the first peer that can be the proxy.
+// If proxy is currently not used on this region, the value of `currentProxyIdx` should be -1, and a random peer will
+// be select in this case.
 func (r *RegionStore) switchNextProxyStore(rr *Region, currentProxyIdx AccessIndex, incEpochStoreIdx int) {
 	if r.proxyTiKVIdx != currentProxyIdx {
 		return
 	}
-	nextIdx := (currentProxyIdx + 1) % AccessIndex(r.accessStoreNum(TiKVOnly))
-	// skips the current workTiKVIdx
-	if nextIdx == r.workTiKVIdx {
-		nextIdx = (nextIdx + 1) % AccessIndex(r.accessStoreNum(TiKVOnly))
+
+	tikvNum := r.accessStoreNum(TiKVOnly)
+	var nextIdx AccessIndex
+
+	// If the region is not using proxy before, randomly select a non-leader peer for the first try.
+	if currentProxyIdx == -1 {
+		// Randomly select an non-leader peer
+		// TODO: Skip unreachable peers here.
+		nextIdx = AccessIndex(rand.Intn(tikvNum - 1))
+		if nextIdx >= r.workTiKVIdx {
+			nextIdx++
+		}
+	} else {
+		nextIdx = (currentProxyIdx + 1) % AccessIndex(tikvNum)
+		// skips the current workTiKVIdx
+		if nextIdx == r.workTiKVIdx {
+			nextIdx = (nextIdx + 1) % AccessIndex(tikvNum)
+		}
 	}
+
 	newRegionStore := r.clone()
 	newRegionStore.proxyTiKVIdx = nextIdx
 	if incEpochStoreIdx >= 0 {
