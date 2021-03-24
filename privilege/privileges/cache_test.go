@@ -362,7 +362,10 @@ func (s *testCacheSuite) TestRoleGraphBFS(c *C) {
 func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 

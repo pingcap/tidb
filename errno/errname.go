@@ -965,7 +965,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnknownTypeLength:          mysql.Message("Unknown length for type %d", nil),
 	ErrUnknownFractionLength:      mysql.Message("Unknown length for type %d and fraction %d", nil),
 	ErrInvalidDDLJobVersion:       mysql.Message("Version %d of DDL job is greater than current one: %d", nil),
-	ErrInvalidSplitRegionRanges:   mysql.Message("Failed to split region ranges", nil),
+	ErrInvalidSplitRegionRanges:   mysql.Message("Failed to split region ranges: %s", nil),
 	ErrReorgPanic:                 mysql.Message("Reorg worker panic", nil),
 	ErrInvalidDDLState:            mysql.Message("Invalid %s state: %v", nil),
 	ErrCancelledDDLJob:            mysql.Message("Cancelled DDL job", nil),
@@ -1032,8 +1032,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 
-	ErrJSONObjectKeyTooLong:        mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
-	ErrBuildGlobalLevelStatsFailed: mysql.Message("Build global-level stats failed due to missing partition-level stats", nil),
+	ErrJSONObjectKeyTooLong:  mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+	ErrPartitionStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
 
 	ErrInvalidPlacementSpec:   mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck:   mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),

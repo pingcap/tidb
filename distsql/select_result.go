@@ -283,6 +283,10 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, r.stats)
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
+	r.ctx.GetSessionVars().CoprRespTimes.Add(1)
+	if copStats.CoprCacheHit {
+		r.ctx.GetSessionVars().CoprCacheHitNum.Add(1)
+	}
 
 	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
@@ -455,7 +459,7 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(", rpc_time: ")
 			buf.WriteString(execdetails.FormatDuration(time.Duration(copRPC.Consume)))
 		}
-		if config.GetGlobalConfig().TiKVClient.CoprCache.Enable {
+		if config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB > 0 {
 			buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
 				strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(len(s.copRespTime)), 'f', 2, 64)))
 		} else {

@@ -20,27 +20,9 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
-
-// TestCommitMultipleRegions tests commit multiple regions.
-// The test takes too long under the race detector.
-func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
-	m := make(map[string]string)
-	for i := 0; i < 100; i++ {
-		k, v := randKV(10, 10)
-		m[k] = v
-	}
-	s.mustCommit(c, m)
-
-	// Test big values.
-	m = make(map[string]string)
-	for i := 0; i < 50; i++ {
-		k, v := randKV(11, txnCommitBatchSize/7)
-		m[k] = v
-	}
-	s.mustCommit(c, m)
-}
 
 func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 	if *WithTiKV {
@@ -83,9 +65,9 @@ func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 		txn := s.beginTxn(c)
 		if m == "pessimistic" {
 			txn.SetOption(kv.Pessimistic, true)
-			lockCtx := &kv.LockCtx{}
+			lockCtx := &tidbkv.LockCtx{}
 			lockCtx.ForUpdateTS = txn.startTS
-			keys := make([]kv.Key, 0, preSplitThresholdInTest)
+			keys := make([]tidbkv.Key, 0, preSplitThresholdInTest)
 			for i := 0; i < preSplitThresholdInTest; i++ {
 				keys = append(keys, encodeKey(s.prefix, s08d("pkey", i)))
 			}
