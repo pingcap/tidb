@@ -25,7 +25,7 @@ var _ = Suite(&testUnionStoreSuite{})
 
 type testUnionStoreSuite struct {
 	store MemBuffer
-	us    kv.UnionStore
+	us    *KVUnionStore
 }
 
 func (s *testUnionStoreSuite) SetUpTest(c *C) {

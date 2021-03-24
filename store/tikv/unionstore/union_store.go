@@ -7,17 +7,17 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
-// unionStore is an in-memory Store which contains a buffer for write and a
+// KVUnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
-type unionStore struct {
+type KVUnionStore struct {
 	memBuffer *memdb
 	snapshot  tidbkv.Snapshot
 	opts      options
 }
 
 // NewUnionStore builds a new unionStore.
-func NewUnionStore(snapshot tidbkv.Snapshot) tidbkv.UnionStore {
-	return &unionStore{
+func NewUnionStore(snapshot tidbkv.Snapshot) *KVUnionStore {
+	return &KVUnionStore{
 		snapshot:  snapshot,
 		memBuffer: newMemDB(),
 		opts:      make(map[int]interface{}),
@@ -25,12 +25,12 @@ func NewUnionStore(snapshot tidbkv.Snapshot) tidbkv.UnionStore {
 }
 
 // GetMemBuffer return the MemBuffer binding to this unionStore.
-func (us *unionStore) GetMemBuffer() tidbkv.MemBuffer {
+func (us *KVUnionStore) GetMemBuffer() MemBuffer {
 	return us.memBuffer
 }
 
 // Get implements the Retriever interface.
-func (us *unionStore) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
+func (us *KVUnionStore) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
 	v, err := us.memBuffer.Get(ctx, k)
 	if tidbkv.IsErrNotFound(err) {
 		v, err = us.snapshot.Get(ctx, k)
@@ -45,7 +45,7 @@ func (us *unionStore) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
 }
 
 // Iter implements the Retriever interface.
-func (us *unionStore) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
+func (us *KVUnionStore) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
 	bufferIt, err := us.memBuffer.Iter(k, upperBound)
 	if err != nil {
 		return nil, err
@@ -58,7 +58,7 @@ func (us *unionStore) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator
 }
 
 // IterReverse implements the Retriever interface.
-func (us *unionStore) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
+func (us *KVUnionStore) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 	bufferIt, err := us.memBuffer.IterReverse(k)
 	if err != nil {
 		return nil, err
@@ -71,7 +71,7 @@ func (us *unionStore) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 }
 
 // HasPresumeKeyNotExists gets the key exist error info for the lazy check.
-func (us *unionStore) HasPresumeKeyNotExists(k tidbkv.Key) bool {
+func (us *KVUnionStore) HasPresumeKeyNotExists(k tidbkv.Key) bool {
 	flags, err := us.memBuffer.GetFlags(k)
 	if err != nil {
 		return false
@@ -80,22 +80,22 @@ func (us *unionStore) HasPresumeKeyNotExists(k tidbkv.Key) bool {
 }
 
 // DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
-func (us *unionStore) UnmarkPresumeKeyNotExists(k tidbkv.Key) {
+func (us *KVUnionStore) UnmarkPresumeKeyNotExists(k tidbkv.Key) {
 	us.memBuffer.UpdateFlags(k, kv.DelPresumeKeyNotExists)
 }
 
 // SetOption implements the unionStore SetOption interface.
-func (us *unionStore) SetOption(opt int, val interface{}) {
+func (us *KVUnionStore) SetOption(opt int, val interface{}) {
 	us.opts[opt] = val
 }
 
 // DelOption implements the unionStore DelOption interface.
-func (us *unionStore) DelOption(opt int) {
+func (us *KVUnionStore) DelOption(opt int) {
 	delete(us.opts, opt)
 }
 
 // GetOption implements the unionStore GetOption interface.
-func (us *unionStore) GetOption(opt int) interface{} {
+func (us *KVUnionStore) GetOption(opt int) interface{} {
 	return us.opts[opt]
 }
 

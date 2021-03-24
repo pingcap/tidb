@@ -50,7 +50,7 @@ type SchemaAmender interface {
 // KVTxn contains methods to interact with a TiKV transaction.
 type KVTxn struct {
 	snapshot  *KVSnapshot
-	us        tidbkv.UnionStore
+	us        *unionstore.KVUnionStore
 	store     *KVStore // for connection to region.
 	startTS   uint64
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
@@ -604,13 +604,13 @@ func (txn *KVTxn) Reset() {
 }
 
 // GetUnionStore returns the UnionStore binding to this transaction.
-func (txn *KVTxn) GetUnionStore() tidbkv.UnionStore {
+func (txn *KVTxn) GetUnionStore() *unionstore.KVUnionStore {
 	return txn.us
 }
 
 // GetMemBuffer return the MemBuffer binding to this transaction.
 func (txn *KVTxn) GetMemBuffer() unionstore.MemBuffer {
-	return txn.us.GetMemBuffer().(unionstore.MemBuffer)
+	return txn.us.GetMemBuffer()
 }
 
 // GetSnapshot returns the Snapshot binding to this transaction.

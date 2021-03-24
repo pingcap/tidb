@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 )
 
 // StoreProbe wraps KVSTore and exposes internal states for testing purpose.
@@ -50,7 +50,7 @@ func (txn TxnProbe) GetCommitTS() uint64 {
 }
 
 // GetUnionStore returns transaction's embedded unionstore.
-func (txn TxnProbe) GetUnionStore() kv.UnionStore {
+func (txn TxnProbe) GetUnionStore() *unionstore.KVUnionStore {
 	return txn.us
 }
 

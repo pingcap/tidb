@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -68,6 +69,11 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return txn.KVTxn.GetMemBuffer()
 }
+
+func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
+	return &tikvUnionStore{txn.KVTxn.GetUnionStore()}
+}
+
 func (txn *tikvTxn) extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikv.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())
@@ -195,4 +201,13 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		valueStr = append(valueStr, str)
 	}
 	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
+}
+
+//tikvUnionStore implements kv.UnionStore
+type tikvUnionStore struct {
+	*unionstore.KVUnionStore
+}
+
+func (u *tikvUnionStore) GetMemBuffer() kv.MemBuffer {
+	return u.KVUnionStore.GetMemBuffer()
 }
