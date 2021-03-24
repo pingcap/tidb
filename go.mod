@@ -16,7 +16,7 @@ require (
 	github.com/dgraph-io/ristretto v0.0.1
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
 	github.com/fatih/color v1.10.0 // indirect
-	github.com/flier/gohs v1.0.0 // indirect
+	github.com/flier/gohs v1.0.0
 	github.com/frankban/quicktest v1.11.1 // indirect
 	github.com/fsouza/fake-gcs-server v1.17.0 // indirect
 	github.com/go-sql-driver/mysql v1.5.0

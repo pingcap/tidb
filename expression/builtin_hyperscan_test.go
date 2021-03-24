@@ -33,7 +33,7 @@ func generateSource(patterns []string, sourceType string) string {
 		pats := []hsPatternObj{}
 		for id, pat := range patterns {
 			patObj := hsPatternObj{
-				Id:      id + 1,
+				ID:      id + 1,
 				Pattern: pat,
 			}
 			pats = append(pats, patObj)

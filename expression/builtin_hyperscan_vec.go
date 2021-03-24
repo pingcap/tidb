@@ -42,16 +42,16 @@ func (b *baseBuiltinHsSig) vecUpdateSourceType(input *chunk.Chunk, n int) error 
 				if !b.supportDBSource {
 					return errInvalidHSSourceTypeWithoutDBSource
 				}
-				b.sourceType = hsSourceType_Hex
+				b.sourceType = hsSourceTypeHex
 			case "base64":
 				if !b.supportDBSource {
 					return errInvalidHSSourceTypeWithoutDBSource
 				}
-				b.sourceType = hsSourceType_Base64
+				b.sourceType = hsSourceTypeBase64
 			case "json":
-				b.sourceType = hsSourceType_JSON
+				b.sourceType = hsSourceTypeJSON
 			case "lines":
-				b.sourceType = hsSourceType_Lines
+				b.sourceType = hsSourceTypeLines
 			default:
 				return errInvalidHSSourceType
 			}
