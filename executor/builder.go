@@ -1842,13 +1842,13 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
-	assign2TblColPosIdx := make([]int, len(v.OrderedList))
+	assign2TblIdx := make([]int, len(v.OrderedList))
 	for idx, assignment := range v.OrderedList {
-		tblColIdx, found := v.TblColPosInfos.FindTblColPosIdx(assignment.Col.Index)
+		tblIdx, found := v.TblColPosInfos.FindTblIdx(assignment.Col.Index)
 		if !found {
-			tblColIdx = -1
+			tblIdx = -1
 		}
-		assign2TblColPosIdx[idx] = tblColIdx
+		assign2TblIdx[idx] = tblIdx
 	}
 	updateExec := &UpdateExec{
 		baseExecutor:              base,
@@ -1858,7 +1858,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		multiUpdateOnSameTable:    multiUpdateOnSameTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
-		assign2TblColPosIdx:       assign2TblColPosIdx,
+		assign2TblIdx:             assign2TblIdx,
 	}
 	return updateExec
 }

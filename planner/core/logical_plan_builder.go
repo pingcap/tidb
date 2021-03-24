@@ -4171,8 +4171,8 @@ func (c TblColPosInfoSlice) Less(i, j int) bool {
 	return c[i].Start < c[j].Start
 }
 
-// FindTblColPosIdx finds the ordinal of the corresponding access column.
-func (c TblColPosInfoSlice) FindTblColPosIdx(colOrdinal int) (int, bool) {
+// FindTblIdx finds the ordinal of the corresponding access column.
+func (c TblColPosInfoSlice) FindTblIdx(colOrdinal int) (int, bool) {
 	if len(c) == 0 {
 		return 0, false
 	}

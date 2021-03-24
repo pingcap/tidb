@@ -50,7 +50,7 @@ type UpdateExec struct {
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos            plannercore.TblColPosInfoSlice
-	assign2TblColPosIdx       []int
+	assign2TblIdx             []int
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
 	virtualAssignmentsOffset  int
@@ -322,7 +322,7 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	for i, assign := range e.OrderedList {
-		tblIdx := e.assign2TblColPosIdx[i]
+		tblIdx := e.assign2TblIdx[i]
 		if tblIdx > 0 && !e.updatable[tblIdx] {
 			continue
 		}
@@ -350,7 +350,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 	newRowData := types.CloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
 	for i, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
-		tblIdx := e.assign2TblColPosIdx[i]
+		tblIdx := e.assign2TblIdx[i]
 		if tblIdx > 0 && !e.updatable[tblIdx] {
 			continue
 		}
@@ -379,7 +379,7 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 	}
 	e.evalBuffer.SetDatums(newRowData...)
 	for i, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
-		tblIdx := e.assign2TblColPosIdx[i]
+		tblIdx := e.assign2TblIdx[i]
 		if tblIdx > 0 && !e.updatable[tblIdx] {
 			continue
 		}
