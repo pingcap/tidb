@@ -23,7 +23,6 @@ type telemetryData struct {
 	Hardware           []*clusterHardwareItem  `json:"hardware"`
 	Instances          []*clusterInfoItem      `json:"instances"`
 	TelemetryHostExtra *telemetryHostExtraInfo `json:"hostExtra"`
-	FeatureUsage       *featureUsageInfo       `json:"featureUsage"`
 	ReportTimestamp    int64                   `json:"reportTimestamp"`
 	TrackingID         string                  `json:"trackingId"`
 	FeatureUsageInfo   *featureUsageInfo       `json:"featureUsageInfo"`
@@ -45,4 +44,8 @@ func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryD
 	}
 	r.TelemetryHostExtra = getTelemetryHostExtraInfo()
 	return r
+}
+
+func postReportTelemetryData() {
+	postReportTxnUsage()
 }

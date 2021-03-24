@@ -255,6 +255,9 @@ func GetTxnUsageInfo(ctx sessionctx.Context) *TxnUsageInfo {
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
-	initialTxnCommitCounter = curr
 	return &TxnUsageInfo{asyncCommitUsed, onePCUsed, diff}
+}
+
+func postReportTxnUsage() {
+	initialTxnCommitCounter = metrics.GetTxnCommitCounter()
 }
