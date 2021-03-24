@@ -826,7 +826,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-	if sessVars.StmtCtx.GetIsTiFlash() {
+	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
 			totalTiFlashQuerySuccCounter.Inc()
 		} else {
