@@ -503,7 +503,98 @@ func (s *session) doCommit(ctx context.Context) error {
 			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
 
+	// Handle cached table case first before actual commit.
+	if val := s.txn.GetOption(kv.ModifyCachedTable); val != nil {
+		cachedTables := val.(map[int64]struct{})
+		var d time.Duration
+		xx, err := s.sysSessionPool().Get()
+		if err != nil {
+			return err
+		}
+		defer s.sysSessionPool().Put(xx)
+
+		tm := oracle.GetTimeFromTS(s.txn.StartTS())
+		tm = tm.Add(5 * time.Second)
+		lease := oracle.GoTimeToTS(tm)
+
+		sr := stateRemote{xx.(sqlexec.RestrictedSQLExecutor)}
+		for tid, _ := range cachedTables {
+			tmp, err := sr.LockForWrite(ctx, tid, lease)
+			if err != nil {
+				return err
+			}
+			if tmp > d {
+				d = tmp
+			}
+		}
+
+		fmt.Println("before commit === sleep to wait read lock timeout:", d)
+		time.Sleep(d)
+
+		// TODO: Refresh TSO? in the async commit case, the commit ts is calculated via start TS,
+		// so refresh TSO is necessary.
+		// Otherwise, commit ts > read lock lease always hold!
+
+		// TODO: Clean up the lock key?
+	}
+
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
+}
+
+type stateRemote struct {
+	sqlexec.RestrictedSQLExecutor
+}
+
+func (sr stateRemote) LockForWrite(ctx context.Context, tid int64, lease uint64) (time.Duration, error) {
+	stmt, err := sr.ParseWithParams(ctx, "BEGIN")
+	if err != nil {
+		return 0, err
+	}
+	_, _, err = sr.ExecRestrictedStmt(ctx, stmt)
+	if err != nil {
+		return 0, err
+	}
+
+
+	stmt, err = sr.ParseWithParams(ctx, `SELECT lock_type, lease FROM mysql.table_cache WHERE tid = %?`, tid)
+	if err != nil {
+		return 0, err
+	}
+	rows, _, err := sr.ExecRestrictedStmt(ctx, stmt)
+	if err != nil {
+		return 0, err
+	}
+	lock, oldLease := rows[0].GetEnum(0), rows[0].GetInt64(1)
+
+	stmt, err = sr.ParseWithParams(ctx, `UPDATE mysql.table_cache SET lock_type = 'WRITE', lease = %? WHERE tid = %?`, lease, tid)
+	if err != nil {
+		return 0, err
+	}
+	_, _, err = sr.ExecRestrictedStmt(ctx, stmt)
+	if err != nil {
+		return 0, err
+	}
+
+	stmt, err = sr.ParseWithParams(ctx, "COMMIT")
+	if err != nil {
+		return 0, err
+	}
+	_, _, err = sr.ExecRestrictedStmt(ctx, stmt)
+	if err != nil {
+		return 0, err
+	}
+
+	switch lock.String() {
+	case "READ":
+		tm := oracle.GetTimeFromTS(uint64(oldLease))
+		now := time.Now()
+		if tm.After(now) {
+			return tm.Sub(now), nil
+		}
+	case "WRITE":
+	case "NONE":
+	}
+	return 0, nil
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {

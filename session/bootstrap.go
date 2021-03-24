@@ -331,9 +331,11 @@ const (
 	);`
 
 	CreateTableCacheTable = `CREATE TABLE mysql.table_cache (
-		tid int primary key,
-		lock_type enum('NONE', 'READ', 'WRITE'),
-		lease uint64)`
+		tid int(11) NOT NULL,
+		lock_type enum('NONE','READ','WRITE') DEFAULT 'NONE',
+		lease bigint(20) DEFAULT 0,
+		PRIMARY KEY (tid)
+	);`
 )
 
 // bootstrap initiates system DB for a store.

@@ -73,6 +73,8 @@ const (
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
+
+	ModifyCachedTable
 )
 
 // Priority value for transaction priority.

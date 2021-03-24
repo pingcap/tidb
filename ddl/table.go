@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
@@ -1115,7 +1116,7 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 }
 
-func onCacheTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCacheTable(d *ddlCtx, t *meta.Meta, job *model.Job, pool *sessionPool) (ver int64, _ error) {
 	var enable bool
 	if err := job.DecodeArgs(&enable); err != nil {
 		job.State = model.JobStateCancelled
@@ -1148,13 +1149,14 @@ func onCacheTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 
 	fmt.Println("update table info  ...", job.SchemaID, *tbInfo)
 
-	se, err := w.sessPool.get()
+	se, err := pool.get()
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	defer w.sessPool.put(se)
-	if stmt, err := ctx.ParseWithParams(context.Background(), "REPLACE INTO mysql.table_cache VALUES (%?, 'NONE', 0)", tbInfo.ID); err == nil {
-		ctx.ExecRestrictedStmt(stmt)
+	defer pool.put(se)
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	if stmt, err := exec.ParseWithParams(context.Background(), "REPLACE INTO mysql.table_cache VALUES (%?, 'NONE', 0)", tbInfo.ID); err == nil {
+		exec.ExecRestrictedStmt(context.Background(), stmt)
 	}
 
 	return ver, nil

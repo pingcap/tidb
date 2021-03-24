@@ -15,12 +15,15 @@ package tables
 
 import (
 	"fmt"
+	"time"
+	"context"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 )
@@ -85,10 +88,11 @@ func (t *CachedTable) readAll(sctx sessionctx.Context) (data [][]types.Datum, ha
 		fmt.Println("lease is OUTDATED, read from remote startTS =", startTS, " and lease = ", lease)
 		tm := oracle.GetTimeFromTS(startTS)
 		tm = tm.Add(3 * time.Second)
-		lease := tm.GoTimeToTS(tm)
-		ok, err := t.r.LockForRead(tid, lease)
+		lease := oracle.GoTimeToTS(tm)
+		sr := stateRemote{sctx.(sqlexec.RestrictedSQLExecutor)}
+		ok, err := sr.LockForRead(context.Background(), t.Meta().ID, lease)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 
 		data, handles, err = t.readAllFromRemote(sctx)
@@ -115,7 +119,9 @@ func (t *CachedTable) readAllFromRemote(sctx sessionctx.Context) ([][]types.Datu
 }
 
 func (t *CachedTable) notifyUpdate(sctx sessionctx.Context, tid int64, startTS uint64) {
-	ok, err := t.r.RenewLease(tid, startTS, lease + 3*time.Second)
+	lease := tsoAddDuration(startTS, 3*time.Second)
+	sr := stateRemote{sctx.(sqlexec.RestrictedSQLExecutor)}
+	ok, err := sr.RenewLease(context.Background(), tid, startTS, lease)
 	if err != nil || !ok {
 		// log print on err?
 		return
@@ -127,7 +133,7 @@ func (t *CachedTable) notifyUpdate(sctx sessionctx.Context, tid int64, startTS u
 	}
 	t.fullRows = rows
 	t.handles = handles
-	t.lease = 42
+	t.lease = lease
 }
 
 
@@ -136,15 +142,43 @@ func leaseValid(lease, startTS uint64) bool {
 }
 
 func leaseShouldRenew(lease, startTS uint64) bool {
-	tm := GetTimeFromTS(startTS)
-	tm = tm.Add(time.Second + 500*time.Millisecond)
-	return GoTimeToTS(tm) >= lease
+	return tsoAddDuration(startTS, time.Second + 500*time.Millisecond) >= lease
+}
+
+func tsoAddDuration(ts uint64, dur time.Duration) uint64 {
+	t := oracle.GetTimeFromTS(ts)
+	t = t.Add(dur)
+	return oracle.GoTimeToTS(t)
+}
+
+func setTableCacheOptionForTxn(ctx sessionctx.Context, tid int64) error {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	val := txn.GetOption(kv.ModifyCachedTable)
+	if val == nil {
+		m := make(map[int64]struct{})
+		m[tid] = struct{}{}
+		txn.SetOption(kv.ModifyCachedTable, m)
+	} else {
+		ref := val.(map[int64]struct{})
+		ref[tid] = struct{}{}
+	}
+	return nil
+}
+
+func (t *CachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	if err := setTableCacheOptionForTxn(ctx, t.Meta().ID); err != nil {
+		return nil, err
+	}
+	return t.Table.AddRecord(ctx, r, opts...)
 }
 
 type StateRemote interface {
-	LockForRead(tid int, lease uint64)
-	RenewLease(tid int, startTS, lease int64)
-	// LockForWrite()
+	LockForRead(ctx context.Context, tid int64, lease uint64) (bool, error)
+	RenewLease(ctx context.Context, tid int64, startTS, lease uint64) (bool, error)
+	LockForWrite(ctx context.Context, tid int64) (time.Duration, error)
 	// WriteAndUnlock()
 	// CleanOrphanLock()
 }
@@ -153,30 +187,32 @@ type stateRemote struct {
 	sqlexec.RestrictedSQLExecutor
 }
 
-func (sr stateRemote) LockForRead(tid int, lease uint64) (bool, error) {
-	ctx := context.Background()
-	stmt, err := sr.ParseWithParams(ctx, `UPDATE mysql.table_cache SET lock_type = 'READ', lease = %? WHERE tid = %? AND lock_type != 'WRITE'`, tid, lease)
+func (sr stateRemote) LockForRead(ctx context.Context, tid int64, lease uint64) (bool, error) {
+	stmt, err := sr.ParseWithParams(ctx, `UPDATE mysql.table_cache SET lock_type = 'READ', lease = %? WHERE tid = %? AND lock_type != 'WRITE'`, lease, tid)
 	if err != nil {
 		return false, err
 	}
 
-	_, _, err := sr.ExecRestrictedStmt(ctx, stmt)
+	_, _, err = sr.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return false, err
 	}
 
+	fmt.Println("LockForRead ===", tid, lease)
 	return true, nil
 }
 
-func (sr stateRemote) RenewLease(tid int, startTS, lease int64) (bool, error) {
-	stmt, err := sr.ParseWithParams(ctx, `UPDATE mysql.table_cache SET lease = %? WHERE tid = %? AND lock_type = 'READ'`, tid, lease)
+func (sr stateRemote) RenewLease(ctx context.Context, tid int64, startTS, lease uint64) (bool, error) {
+	stmt, err := sr.ParseWithParams(ctx, `UPDATE mysql.table_cache SET lease = %? WHERE tid = %? AND lock_type = 'READ'`, lease, tid)
 	if err != nil {
 		return false, err
 	}
 
-	_, _, err := sr.ExecRestrictedStmt(ctx, stmt)
+	_, _, err = sr.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return false, err
 	}
+
+	fmt.Println("RenewLease ===", tid, lease)
 	return true, nil
 }
