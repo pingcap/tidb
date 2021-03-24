@@ -4341,6 +4341,7 @@ type tblUpdateInfo struct {
 	pkUpdated bool
 }
 
+// CheckUpdateList checks all related columns in updatable state.
 func CheckUpdateList(assignFlags []int, updt *Update) error {
 	updateFromOtherAlias := make(map[int64]tblUpdateInfo)
 	for _, content := range updt.TblColPosInfos {
