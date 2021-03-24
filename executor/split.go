@@ -49,7 +49,6 @@ type SplitIndexRegionExec struct {
 	lower          []types.Datum
 	upper          []types.Datum
 	num            int
-	handleCols     core.HandleCols
 	valueLists     [][]types.Datum
 	splitIdxKeys   [][]byte
 
