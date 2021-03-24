@@ -261,6 +261,11 @@ error = '''
 Duplicate partition name %-.192s
 '''
 
+["ddl:1563"]
+error = '''
+Partition constant is out of partition function domain
+'''
+
 ["ddl:1564"]
 error = '''
 This partition function is not allowed

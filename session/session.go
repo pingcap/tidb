@@ -68,6 +68,7 @@ import (
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1391,6 +1392,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.sessionVars.StartTime = time.Now()
+	s.sessionVars.CoprCacheHitNum.Store(0)
+	s.sessionVars.CoprRespTimes.Store(0)
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -1437,6 +1440,19 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				zap.String("session", s.String()))
 		}
 		return nil, err
+	}
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.GetTiFlashTelemetry(stmt.Plan)
+		select {
+		case telemetry.FeatureTaskChan <- &telemetry.FeatureTask{
+			TiFlashPushDown:         tiFlashPushDown,
+			TiFLashExchangePushDown: tiFlashExchangePushDown,
+			CoprRespTimes:           s.sessionVars.CoprRespTimes.Load(),
+			CoprCacheHitNum:         s.sessionVars.CoprCacheHitNum.Load(),
+		}:
+		default:
+			// When telemetry channel is full, we don't push any new task, in case to block user session.
+		}
 	}
 	return recordSet, nil
 }
@@ -2238,6 +2254,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	dom.TelemetryLoop(se4)
+	dom.TelemetryUpdateLoop(se4)
 
 	se5, err := createSession(store)
 	if err != nil {
