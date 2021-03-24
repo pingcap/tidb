@@ -1921,6 +1921,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 
 	// Recalculate repeats
+	// TODO: optimize it later since it's a simple but not the fastest implementation whose complexity is O(nBkt * nHist * log(nBkt))
 	for _, bucket := range globalBuckets {
 		var repeat float64
 		for _, hist := range hists {
