@@ -17,8 +17,9 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/util"
 )
@@ -267,4 +268,45 @@ func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
 	err = globalTxn.Commit(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(globalTxn.GetCommitter().IsOnePC(), IsTrue)
+}
+
+func (s *testOnePCSuite) TestTxnCommitCounter(c *C) {
+	initial := metrics.GetTxnCommitCounter()
+
+	// 2PC
+	txn := s.begin(c)
+	err := txn.Set([]byte("k"), []byte("v"))
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	curr := metrics.GetTxnCommitCounter()
+	diff := curr.Sub(initial)
+	c.Assert(diff.TwoPC, Equals, int64(1))
+	c.Assert(diff.AsyncCommit, Equals, int64(0))
+	c.Assert(diff.OnePC, Equals, int64(0))
+
+	// AsyncCommit
+	txn = s.beginAsyncCommit(c)
+	err = txn.Set([]byte("k1"), []byte("v1"))
+	c.Assert(err, IsNil)
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	curr = metrics.GetTxnCommitCounter()
+	diff = curr.Sub(initial)
+	c.Assert(diff.TwoPC, Equals, int64(1))
+	c.Assert(diff.AsyncCommit, Equals, int64(1))
+	c.Assert(diff.OnePC, Equals, int64(0))
+
+	// 1PC
+	txn = s.begin1PC(c)
+	err = txn.Set([]byte("k2"), []byte("v2"))
+	c.Assert(err, IsNil)
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	curr = metrics.GetTxnCommitCounter()
+	diff = curr.Sub(initial)
+	c.Assert(diff.TwoPC, Equals, int64(1))
+	c.Assert(diff.AsyncCommit, Equals, int64(1))
+	c.Assert(diff.OnePC, Equals, int64(1))
 }

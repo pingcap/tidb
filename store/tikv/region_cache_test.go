@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
@@ -26,8 +27,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -527,6 +528,11 @@ func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
 	newPeers := s.cluster.AllocIDs(2)
 	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
 
+	var storeState uint32 = uint32(unreachable)
+	s.cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+		return livenessState(atomic.LoadUint32(&storeState))
+	}
+
 	// Check the two regions.
 	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
@@ -556,9 +562,7 @@ func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
 	c.Assert(ctx.ProxyStore.storeID, Equals, s.store2)
 
 	// Recover the store
-	s.cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
-		return reachable
-	}
+	atomic.StoreUint32(&storeState, uint32(reachable))
 	// The proxy should be unset after several retries
 	for retry := 0; retry < 15; retry++ {
 		ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)

@@ -769,6 +769,7 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	// test COM_STMT_EXECUTE
 	ctx := context.Background()
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
+	tk.MustExec("set @@tidb_allow_mpp=OFF")
 	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
