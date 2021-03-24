@@ -1540,7 +1540,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (k int, v int)")
 	_, err = tk.Exec("update t, (select * from t) as b set b.k = t.k")
-	c.Assert(err.Error(), Equals, "[planner:1288]The target table b of the UPDATE is not tableUpdatable")
+	c.Assert(err.Error(), Equals, "[planner:1288]The target table b of the UPDATE is not updatable")
 	tk.MustExec("update t, (select * from t) as b set t.k = b.k")
 
 	// issue 8045
