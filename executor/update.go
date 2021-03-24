@@ -50,7 +50,7 @@ type UpdateExec struct {
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos            plannercore.TblColPosInfoSlice
-	assign2TblIdx             []int
+	assignFlag                []int
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
 	virtualAssignmentsOffset  int
@@ -59,24 +59,19 @@ type UpdateExec struct {
 
 	stats *runtimeStatsWithSnapshot
 
-	handles    []kv.Handle
-	updatable  []bool
-	changed    []bool
-	matches    []bool
-	assignFlag []bool
+	handles        []kv.Handle
+	tableUpdatable []bool
+	changed        []bool
+	matches        []bool
 }
 
-// prepare `handles`, `updatable`, `changed` and `assignFlag` to avoid re-computations.
-func (e *UpdateExec) prepare(ctx context.Context, schema *expression.Schema, row []types.Datum) (err error) {
-	e.assignFlag, err = plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
-	if err != nil {
-		return err
-	}
+// prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
+func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 	if e.updatedRowKeys == nil {
 		e.updatedRowKeys = make(map[int]*kv.HandleMap)
 	}
 	e.handles = e.handles[:0]
-	e.updatable = e.updatable[:0]
+	e.tableUpdatable = e.tableUpdatable[:0]
 	e.changed = e.changed[:0]
 	e.matches = e.matches[:0]
 	for _, content := range e.tblColPosInfos {
@@ -92,7 +87,7 @@ func (e *UpdateExec) prepare(ctx context.Context, schema *expression.Schema, row
 		updatable := false
 		flags := e.assignFlag[content.Start:content.End]
 		for _, flag := range flags {
-			if flag {
+			if flag >= 0 {
 				updatable = true
 				break
 			}
@@ -100,7 +95,7 @@ func (e *UpdateExec) prepare(ctx context.Context, schema *expression.Schema, row
 		if e.unmatchedOuterRow(content, row) {
 			updatable = false
 		}
-		e.updatable = append(e.updatable, updatable)
+		e.tableUpdatable = append(e.tableUpdatable, updatable)
 
 		changed, ok := e.updatedRowKeys[content.Start].Get(handle)
 		if ok {
@@ -125,7 +120,7 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 			// No need to merge if not multi-updated
 			continue
 		}
-		if !e.updatable[i] {
+		if !e.tableUpdatable[i] {
 			// If there's nothing to update, we can just skip current row
 			continue
 		}
@@ -149,7 +144,7 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 					continue
 				}
 				mergedData[i].Copy(&oldData[i])
-				if flag {
+				if flag >= 0 {
 					newTableData[i].Copy(&mergedData[i])
 				} else {
 					mergedData[i].Copy(&newTableData[i])
@@ -165,8 +160,12 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
 	defer trace.StartRegion(ctx, "UpdateExec").End()
+	bAssignFlag := make([]bool, len(e.assignFlag))
+	for i, flag := range e.assignFlag {
+		bAssignFlag[i] = flag >= 0
+	}
 	for i, content := range e.tblColPosInfos {
-		if !e.updatable[i] {
+		if !e.tableUpdatable[i] {
 			// If there's nothing to update, we can just skip current row
 			continue
 		}
@@ -183,7 +182,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
-		flags := e.assignFlag[content.Start:content.End]
+		flags := bAssignFlag[content.Start:content.End]
 
 		// Update row
 		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
@@ -269,7 +268,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
 			// precomputes handles
-			if err := e.prepare(ctx, e.children[0].Schema(), datumRow); err != nil {
+			if err := e.prepare(datumRow); err != nil {
 				return 0, err
 			}
 			// compose non-generated columns
@@ -321,9 +320,9 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 
 func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
-	for i, assign := range e.OrderedList {
-		tblIdx := e.assign2TblIdx[i]
-		if tblIdx > 0 && !e.updatable[tblIdx] {
+	for _, assign := range e.OrderedList {
+		tblIdx := e.assignFlag[assign.Col.Index]
+		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
 		con := assign.Expr.(*expression.Constant)
@@ -349,9 +348,9 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
-	for i, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
-		tblIdx := e.assign2TblIdx[i]
-		if tblIdx > 0 && !e.updatable[tblIdx] {
+	for _, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
+		tblIdx := e.assignFlag[assign.Col.Index]
+		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
 		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
@@ -378,9 +377,9 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 		return newRowData, nil
 	}
 	e.evalBuffer.SetDatums(newRowData...)
-	for i, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
-		tblIdx := e.assign2TblIdx[i]
-		if tblIdx > 0 && !e.updatable[tblIdx] {
+	for _, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
+		tblIdx := e.assignFlag[assign.Col.Index]
+		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
 		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
