@@ -172,8 +172,11 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	return cc
 }
 
+// isUnixSocket should ideally be a function of clientConnection!
+// But currently since unix-socket connections are forwarded to TCP when the server listens on both, it can really only be accurate on a server-level.
+// If the server is listening on both, it *must* return FALSE for remote-host authentication to be performed correctly. See #23460.
 func (s *Server) isUnixSocket() bool {
-	return s.cfg.Socket != ""
+	return s.cfg.Socket != "" && s.cfg.Port == 0
 }
 
 func (s *Server) forwardUnixSocketToTCP() {
