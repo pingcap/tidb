@@ -1793,6 +1793,21 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 		}
 	}
 	c.Assert(foundS1 && foundS2, IsTrue)
+
+	// Check that table with NULLs won't cause panic
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values(1,null,2), (2,null,null)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"2 [1,2] 0.000000 1",
+		"2 [1,3] 1.000000 1",
+	))
+	tk.MustExec("insert into t values(3,3,3)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"2 [1,2] 1.000000 1",
+		"2 [1,3] 1.000000 1",
+	))
 }
 
 func (s *testStatsSuite) TestSyncStatsExtendedRemoval(c *C) {
@@ -2147,6 +2162,16 @@ func (s *testStatsSuite) TestExtendedStatsPartitionTable(c *C) {
 	c.Assert(err.Error(), Equals, "Extended statistics on partitioned tables are not supported now")
 	err = tk.ExecToErr("alter table t2 add stats_extended s1 correlation(b,c)")
 	c.Assert(err.Error(), Equals, "Extended statistics on partitioned tables are not supported now")
+}
+
+func (s *testStatsSuite) TestHideIndexUsageSyncLease(c *C) {
+	// NOTICE: remove this test when index usage is GA.
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	rs := tk.MustQuery("select @@tidb_config").Rows()
+	for _, r := range rs {
+		c.Assert(strings.Contains(strings.ToLower(r[0].(string)), "index-usage-sync-lease"), IsFalse)
+	}
 }
 
 func (s *testStatsSuite) TestHideExtendedStatsSwitch(c *C) {

@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -212,7 +213,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 	if err != nil {
 		return nil, err
 	}
-	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
+	a.Ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityHigh
 
 	// try to reuse point get executor
 	if a.PsStmt.Executor != nil {
@@ -625,7 +626,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 		newForUpdateTS = version.Ver
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
-	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
+	txn.SetOption(tikvstore.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
 	return nil
 }
 
@@ -729,15 +730,15 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 			if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
 				switch {
 				case useMaxTS:
-					stmtCtx.Priority = kv.PriorityHigh
+					stmtCtx.Priority = tikvstore.PriorityHigh
 				case a.LowerPriority:
-					stmtCtx.Priority = kv.PriorityLow
+					stmtCtx.Priority = tikvstore.PriorityLow
 				}
 			}
 		}
 	}
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
-		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+		ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityLow
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema)
@@ -757,7 +758,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		if executorExec.lowerPriority {
-			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+			ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityLow
 		}
 		e = executorExec.stmtExec
 	}
