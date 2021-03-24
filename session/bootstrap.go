@@ -479,11 +479,9 @@ const (
 	version67 = 67
 )
 
-// currentBootstrapVersion is modified to a function so we can hook its value for testing.
+// currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion = func() int64 {
-	return version67
-}
+var currentBootstrapVersion int64 = version67
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -615,7 +613,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
 	terror.MustNil(err)
-	if ver >= currentBootstrapVersion() {
+	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
@@ -637,13 +635,13 @@ func upgrade(s Session) {
 		if err1 != nil {
 			logutil.BgLogger().Fatal("upgrade failed", zap.Error(err1))
 		}
-		if v >= currentBootstrapVersion() {
+		if v >= currentBootstrapVersion {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
 			return
 		}
 		logutil.BgLogger().Fatal("[Upgrade] upgrade failed",
 			zap.Int64("from", ver),
-			zap.Int64("to", currentBootstrapVersion()),
+			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
 	}
 }
@@ -1474,7 +1472,7 @@ func writeOOMAction(s Session) {
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
-		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion(), currentBootstrapVersion(),
+		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion, currentBootstrapVersion,
 	)
 }
 
@@ -1596,7 +1594,7 @@ func doDMLWorks(s Session) {
 	)
 
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "Bootstrap version. Do not delete.")`,
-		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion(),
+		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion,
 	)
 
 	writeSystemTZ(s)

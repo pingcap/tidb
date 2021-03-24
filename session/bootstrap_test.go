@@ -210,13 +210,13 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
 	c.Assert(row.Len(), Equals, 1)
-	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion())))
+	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
 	c.Assert(r.Close(), IsNil)
 
 	se1 := newSession(c, store, s.dbName)
 	ver, err := getBootstrapVersion(se1)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion())
+	c.Assert(ver, Equals, currentBootstrapVersion)
 
 	// Do something to downgrade the store.
 	// downgrade meta bootstrap version
@@ -256,12 +256,12 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(req.NumRows() == 0, IsFalse)
 	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
-	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion())))
+	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
 	c.Assert(r.Close(), IsNil)
 
 	ver, err = getBootstrapVersion(se2)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion())
+	c.Assert(ver, Equals, currentBootstrapVersion)
 
 	// Verify that 'new_collation_enabled' is false.
 	r = mustExecSQL(c, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s';`, tidbNewCollationEnabled))
@@ -308,7 +308,7 @@ func (s *testBootstrapSuite) TestIssue17979_1(c *C) {
 	seV4 := newSession(c, store, s.dbName)
 	ver, err = getBootstrapVersion(seV4)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion())
+	c.Assert(ver, Equals, currentBootstrapVersion)
 	r := mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk()
 	r.Next(ctx, req)
@@ -351,7 +351,7 @@ func (s *testBootstrapSuite) TestIssue17979_2(c *C) {
 	seV4 := newSession(c, store, s.dbName)
 	ver, err = getBootstrapVersion(seV4)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion())
+	c.Assert(ver, Equals, currentBootstrapVersion)
 	r := mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk()
 	r.Next(ctx, req)
@@ -388,7 +388,7 @@ func (s *testBootstrapSuite) TestIssue20900_1(c *C) {
 	seV4 := newSession(c, store, s.dbName)
 	ver, err = getBootstrapVersion(seV4)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion())
+	c.Assert(ver, Equals, currentBootstrapVersion)
 	r := mustExecSQL(c, seV4, "select @@tidb_mem_quota_query")
 	req := r.NewChunk()
 	r.Next(ctx, req)
@@ -429,7 +429,7 @@ func (s *testBootstrapSuite) TestIssue20900_2(c *C) {
 	seV4 := newSession(c, store, s.dbName)
 	ver, err = getBootstrapVersion(seV4)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion())
+	c.Assert(ver, Equals, currentBootstrapVersion)
 	r := mustExecSQL(c, seV4, "select @@tidb_mem_quota_query")
 	req := r.NewChunk()
 	r.Next(ctx, req)
@@ -638,7 +638,7 @@ func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
 	seV66 := newSession(c, store, s.dbName)
 	ver, err = getBootstrapVersion(seV66)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion())
+	c.Assert(ver, Equals, currentBootstrapVersion)
 	r := mustExecSQL(c, seV66, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
 	req := r.NewChunk()
 	c.Assert(r.Next(ctx, req), IsNil)
@@ -651,9 +651,7 @@ func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
 func (s *testBootstrapSuite) TestForIssue23387(c *C) {
 	// For issue https://github.com/pingcap/tidb/issues/23387
 	saveCurrentBootstrapVersion := currentBootstrapVersion
-	currentBootstrapVersion = func() int64 {
-		return version57
-	}
+	currentBootstrapVersion = version57
 
 	// Bootstrap to an old version, create a user.
 	store, err := mockstore.NewMockStore()
