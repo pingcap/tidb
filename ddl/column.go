@@ -1295,6 +1295,10 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	})
 
 	w.rowMap[w.newColInfo.ID] = newColVal
+	if !w.sqlMode.HasStrictMode() && !mysql.HasNotNullFlag(w.oldColInfo.Flag) && mysql.HasNotNullFlag(w.newColInfo.Flag) && newColVal.IsNull() {
+		w.rowMap[w.newColInfo.ID] = table.GetZeroValue(w.newColInfo)
+	}
+
 	newColumnIDs := make([]int64, 0, len(w.rowMap))
 	newRow := make([]types.Datum, 0, len(w.rowMap))
 	for colID, val := range w.rowMap {
