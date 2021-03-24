@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/store/tikv/metrics"
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
@@ -39,12 +38,7 @@ import (
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
-var (
-	_ Executor = &TableReaderExecutor{}
-
-	TiFlashExecuteSuccCounter  = metrics.TiFlashExecuteSuccCounter
-	TiFlashExecuteErrorCounter = metrics.TiFlashExecuteErrorCounter
-)
+var _ Executor = &TableReaderExecutor{}
 
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
@@ -124,15 +118,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	var err error
-	defer func() {
-		if e.storeType == kv.TiFlash {
-			if err != nil {
-				TiFlashExecuteErrorCounter.Inc()
-				return
-			}
-			TiFlashExecuteSuccCounter.Inc()
-		}
-	}()
 	if e.corColInFilter {
 		if e.storeType == kv.TiFlash {
 			execs, _, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)

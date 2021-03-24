@@ -323,7 +323,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
 		}()
 	}
-
 	if sctx.GetSessionVars().StmtCtx.HasMemQuotaHint {
 		sctx.GetSessionVars().StmtCtx.MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
@@ -399,7 +398,6 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 			}
 		}
 	}()
-
 	toCheck := e
 	isExplainAnalyze := false
 	if explain, ok := e.(*ExplainExec); ok {
@@ -803,6 +801,8 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 var (
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
+	totalTiFlashQueryFailCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.LblError)
+	totalTiFlashQuerySuccCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.LblOK)
 )
 
 // FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
@@ -824,6 +824,14 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
+	fmt.Println(sessVars.StmtCtx.InSelectStmt)
+	if sessVars.StmtCtx.GetIsTiFlash() {
+		if succ {
+			totalTiFlashQuerySuccCounter.Inc()
+		} else {
+			totalTiFlashQueryFailCounter.Inc()
+		}
+	}
 	prevStmt := a.GetTextToLog()
 	if sessVars.EnableRedactLog {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)

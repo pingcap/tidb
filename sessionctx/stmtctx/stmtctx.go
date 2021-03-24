@@ -134,6 +134,7 @@ type StatementContext struct {
 	NotFillCache     bool
 	MemTracker       *memory.Tracker
 	DiskTracker      *disk.Tracker
+	IsTiFlash        atomic.Value
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexNames       []string
@@ -252,6 +253,20 @@ func (sc *StatementContext) GetPlanHint() (string, bool) {
 func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHintSet = true
 	sc.planHint = hint
+}
+
+// SetIsTiFlash sets the isTiFlash for this sql.
+func (sc *StatementContext) SetIsTiFlash(relate bool) {
+	sc.IsTiFlash.Store(relate)
+}
+
+// GetIsTiFlash gets the isTiFlash about this sql.
+func (sc *StatementContext) GetIsTiFlash() bool {
+	relate := sc.IsTiFlash.Load()
+	if relate == nil {
+		return false
+	}
+	return relate.(bool)
 }
 
 // TableEntry presents table in db.

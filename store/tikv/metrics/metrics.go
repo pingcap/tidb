@@ -54,8 +54,6 @@ var (
 	TiKVGRPCConnTransientFailureCounter    *prometheus.CounterVec
 	TiKVPanicCounter                       *prometheus.CounterVec
 	TiKVForwardRequestCounter              *prometheus.CounterVec
-	TiFlashExecuteErrorCounter             prometheus.Counter
-	TiFlashExecuteSuccCounter              prometheus.Counter
 	TiKVTSFutureWaitDuration               prometheus.Histogram
 )
 
@@ -404,21 +402,6 @@ func initMetrics(namespace, subsystem string) {
 			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 30), // 5us ~ 2560s
 		})
 
-	TiFlashExecuteErrorCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: namespace,
-			Subsystem: subsystem,
-			Name:      "tiflash_execute_error_total",
-			Help:      "Counter of TiFlash execute errors.",
-		})
-
-	TiFlashExecuteSuccCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: namespace,
-			Subsystem: subsystem,
-			Name:      "tiflash_execute_total",
-			Help:      "Counter of TiFlash execute successfully.",
-		})
 	initShortcuts()
 }
 
@@ -471,7 +454,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVGRPCConnTransientFailureCounter)
 	prometheus.MustRegister(TiKVPanicCounter)
 	prometheus.MustRegister(TiKVForwardRequestCounter)
-	prometheus.MustRegister(TiFlashExecuteErrorCounter)
-	prometheus.MustRegister(TiFlashExecuteSuccCounter)
 	prometheus.MustRegister(TiKVTSFutureWaitDuration)
 }
