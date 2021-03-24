@@ -171,5 +171,5 @@ func (r *streamResult) Close() error {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
-	return nil
+	return r.resp.Close()
 }
