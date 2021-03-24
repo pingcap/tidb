@@ -822,6 +822,11 @@ type SessionVars struct {
 	// IntPrimaryKeyDefaultAsClustered indicates whether create integer primary table as clustered
 	// If it's true, the behavior is the same as the TiDB 4.0 and the below versions.
 	IntPrimaryKeyDefaultAsClustered bool
+
+	// CoprCacheHitNum is to record coprocessor cache hit times for one statement.
+	CoprCacheHitNum atomic2.Uint64
+	// CoprRespTimes is to record coprocessor response times for one statement.
+	CoprRespTimes atomic2.Uint64
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -944,7 +949,7 @@ func NewSessionVars() *SessionVars {
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:            kv.PriorityLow,
+		DDLReorgPriority:            tikvstore.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		preferRangeScan:             DefOptPreferRangeScan,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
@@ -1290,13 +1295,13 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	val = strings.ToLower(val)
 	switch val {
 	case "priority_low":
-		s.DDLReorgPriority = kv.PriorityLow
+		s.DDLReorgPriority = tikvstore.PriorityLow
 	case "priority_normal":
-		s.DDLReorgPriority = kv.PriorityNormal
+		s.DDLReorgPriority = tikvstore.PriorityNormal
 	case "priority_high":
-		s.DDLReorgPriority = kv.PriorityHigh
+		s.DDLReorgPriority = tikvstore.PriorityHigh
 	default:
-		s.DDLReorgPriority = kv.PriorityLow
+		s.DDLReorgPriority = tikvstore.PriorityLow
 	}
 }
 
