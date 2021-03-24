@@ -6614,9 +6614,12 @@ func (s *testSerialDBSuite) TestIssue23419(c *C) {
 		tk.MustExec("drop table if exists t;")
 	}()
 
+	r := tk.MustQuery("select @@sql_mode")
+	sqlMode := r.Rows()[0][0].(string)
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("create table t(a int, b varchar(20))")
 	tk.MustExec("insert into t values (1, NULL), (2, 'A')")
 	tk.MustExec("alter table t modify column b varchar(20) not null")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 ", "2 A"))
+	tk.MustExec("set @@sql_mode= '" + sqlMode + "'")
 }
