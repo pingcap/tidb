@@ -1275,14 +1275,14 @@ func BuildFinalModeAggregation(
 				partialCursor++
 			}
 			if aggFunc.Name == ast.AggFuncAvg {
-				cntAgg := *aggFunc
+				cntAgg := aggFunc.Clone()
 				cntAgg.Name = ast.AggFuncCount
 				cntAgg.RetTp = partial.Schema.Columns[partialCursor-2].GetType()
 				cntAgg.RetTp.Flag = aggFunc.RetTp.Flag
-				sumAgg := *aggFunc
+				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
 				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
-				partial.AggFuncs = append(partial.AggFuncs, &cntAgg, &sumAgg)
+				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
 				approxCountDistinctAgg := *aggFunc
 				approxCountDistinctAgg.Name = ast.AggFuncApproxCountDistinct
