@@ -28,11 +28,13 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -278,6 +280,13 @@ func (s *testPessimisticSuite) TestInsertOnDup(c *C) {
 	tk.MustExec("insert dup values (1, 1) on duplicate key update c = c + 1")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from dup").Check(testkit.Rows("1 2"))
+}
+
+func (s *testPessimisticSuite) TestPointGetOverflow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(k tinyint, v int, unique key(k))")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t set v = 100 where k = -200;")
 }
 
 func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
@@ -2450,4 +2459,100 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		tk.MustExec("commit")
 		tk.MustQuery("select * from t1").Check(testkit.Rows("5 12 100"))
 	}
+}
+
+func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	ctx := context.Background()
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk3.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v int, unique index iv (v), vv int)")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (4, 4, 4)")
+
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
+	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
+
+	//generate plan cache
+	tk.MustExec("prepare update_stmt from 'update t set vv = vv + 1 where v = ?'")
+	tk.MustExec("set @v = 1")
+	tk.MustExec("execute update_stmt using @v")
+
+	stmtID, _, _, err := tk2.Se.PrepareStmt("update t set vv = vv + 1 where v = ?")
+	c.Assert(err, IsNil)
+	_, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+
+	tk3.MustExec("alter table t drop index iv")
+	tk3.MustExec("update t set v = 3 where v = 2")
+	tk3.MustExec("update t set v = 5 where v = 4")
+
+	tk.MustExec("set @v = 2")
+	tk.MustExec("execute update_stmt using @v")
+	tk.CheckExecResult(0, 0)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @v = 3")
+	tk.MustExec("execute update_stmt using @v")
+	tk.CheckExecResult(1, 0)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	_, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(4)})
+	c.Assert(err, IsNil)
+	tk2.CheckExecResult(0, 0)
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	_, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(5)})
+	c.Assert(err, IsNil)
+	tk2.CheckExecResult(1, 0)
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("commit")
+	tk2.MustExec("commit")
+
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 3", "2 3 3", "4 5 5"))
+}
+
+func (s *testPessimisticSuite) TestAsyncCommitCalTSFail(c *C) {
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 5000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+
+	tk := s.newAsyncCommitTestKitWithInit(c)
+	tk2 := s.newAsyncCommitTestKitWithInit(c)
+
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values (1, 1)")
+
+	tk.MustExec("set tidb_enable_1pc = true")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from tk for update").Check(testkit.Rows("1 1"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/failCheckSchemaValid", "return"), IsNil)
+	c.Assert(tk.ExecToErr("commit"), NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/failCheckSchemaValid"), IsNil)
+
+	// The lock should not be blocked.
+	tk2.MustExec("set innodb_lock_wait_timeout = 5")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update tk set c2 = c2 + 1")
+	tk2.MustExec("commit")
 }

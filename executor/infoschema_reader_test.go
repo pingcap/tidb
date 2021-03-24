@@ -371,7 +371,8 @@ func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
@@ -398,7 +399,8 @@ func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	// Test partition table.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16))`)
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
@@ -554,7 +556,10 @@ func (s *testInfoschemaTableSerialSuite) TestForServersInfo(c *C) {
 
 func (s *testInfoschemaTableSerialSuite) TestForTableTiFlashReplica(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
 
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
@@ -870,9 +875,9 @@ func (s *testInfoschemaTableSuite) TestTablesPKType(c *C) {
 	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_int'").Check(testkit.Rows("CLUSTERED"))
 	tk.Se.GetSessionVars().EnableClusteredIndex = false
 	tk.MustExec("create table t_implicit (a varchar(64) primary key, b int)")
-	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_implicit'").Check(testkit.Rows("NON-CLUSTERED"))
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_implicit'").Check(testkit.Rows("NONCLUSTERED"))
 	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table t_common (a varchar(64) primary key, b int)")
 	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_common'").Check(testkit.Rows("CLUSTERED"))
-	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'").Check(testkit.Rows("NON-CLUSTERED"))
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'").Check(testkit.Rows("NONCLUSTERED"))
 }

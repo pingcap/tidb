@@ -16,6 +16,7 @@ package core
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -197,9 +198,6 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		executorID = p.ExplainID().String()
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
-	if p.Table.IsCommonHandle {
-		tsExec.PrimaryPrefixColumnIds = tables.PrimaryPrefixColumnIDs(p.Table)
-	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
 }
 
@@ -280,7 +278,11 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.Sto
 
 	fieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
 	for _, column := range e.Schema().Columns {
-		fieldTypes = append(fieldTypes, expression.ToPBFieldType(column.RetType))
+		pbType := expression.ToPBFieldType(column.RetType)
+		if column.RetType.Tp == mysql.TypeEnum {
+			pbType.Elems = append(pbType.Elems, column.RetType.Elems...)
+		}
+		fieldTypes = append(fieldTypes, pbType)
 	}
 	ecExec := &tipb.ExchangeReceiver{
 		EncodedTaskMeta: encodedTask,

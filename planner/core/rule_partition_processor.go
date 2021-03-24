@@ -211,8 +211,48 @@ func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl tabl
 	return used, nil
 }
 
+// reconstructTableColNames reconstructs FieldsNames according to ds.TblCols.
+// ds.names may not match ds.TblCols since ds.names is pruned while ds.TblCols contains all original columns.
+// please see https://github.com/pingcap/tidb/issues/22635 for more details.
+func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.FieldName, error) {
+	names := make([]*types.FieldName, 0, len(ds.TblCols))
+	colsInfo := ds.table.FullHiddenColsAndVisibleCols()
+	colsInfoMap := make(map[int64]*table.Column, len(colsInfo))
+	for _, c := range colsInfo {
+		colsInfoMap[c.ID] = c
+	}
+	for _, colExpr := range ds.TblCols {
+		if colExpr.ID == model.ExtraHandleID {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.tableInfo.Name,
+				ColName:     model.ExtraHandleName,
+				OrigColName: model.ExtraHandleName,
+			})
+			continue
+		}
+		if colInfo, found := colsInfoMap[colExpr.ID]; found {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.tableInfo.Name,
+				ColName:     colInfo.Name,
+				OrigTblName: ds.tableInfo.Name,
+				OrigColName: colInfo.Name,
+				Hidden:      colInfo.Hidden,
+			})
+			continue
+		}
+		return nil, errors.New(fmt.Sprintf("information of column %v is not found", colExpr.String()))
+	}
+	return names, nil
+}
+
 func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	used, err := s.pruneHashPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, ds.names)
+	names, err := s.reconstructTableColNames(ds)
+	if err != nil {
+		return nil, err
+	}
+	used, err := s.pruneHashPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, names)
 	if err != nil {
 		return nil, err
 	}
@@ -742,13 +782,14 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 	var fn *expression.ScalarFunction
 	switch raw := partExpr.(type) {
 	case *expression.ScalarFunction:
+		args := raw.GetArgs()
 		// Special handle for floor(unix_timestamp(ts)) as partition expression.
 		// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
 		if raw.FuncName.L == ast.Floor {
-			if ut, ok := raw.GetArgs()[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
-				args := ut.GetArgs()
-				if len(args) == 1 {
-					if c, ok1 := args[0].(*expression.Column); ok1 {
+			if ut, ok := args[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
+				args1 := ut.GetArgs()
+				if len(args1) == 1 {
+					if c, ok1 := args1[0].(*expression.Column); ok1 {
 						return c, raw, monotoneModeNonStrict, nil
 					}
 				}
@@ -756,14 +797,14 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		}
 
 		fn = raw
-		args := fn.GetArgs()
-		if len(args) > 0 {
-			arg0 := args[0]
-			if c, ok1 := arg0.(*expression.Column); ok1 {
-				col = c
+		monotonous = getMonotoneMode(raw.FuncName.L)
+		// Check the partitionExpr is in the form: fn(col, ...)
+		// There should be only one column argument, and it should be the first parameter.
+		if expression.ExtractColumnSet(args).Len() == 1 {
+			if col1, ok := args[0].(*expression.Column); ok {
+				col = col1
 			}
 		}
-		monotonous = getMonotoneMode(raw.FuncName.L)
 	case *expression.Column:
 		col = raw
 	}
@@ -875,7 +916,16 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 		default:
 			return pruner.fullRange()
 		}
-		val, err := constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
+
+		var val int64
+		var err error
+		if pruner.partFn != nil {
+			// replace fn(col) to fn(const)
+			partFnConst := replaceColumnWithConst(pruner.partFn, constExpr)
+			val, _, err = partFnConst.EvalInt(sctx, chunk.Row{})
+		} else {
+			val, err = constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
+		}
 		if err != nil {
 			return pruner.fullRange()
 		}
@@ -901,6 +951,9 @@ var monotoneIncFuncs = map[string]monotoneMode{
 	ast.Year:          monotoneModeNonStrict,
 	ast.ToDays:        monotoneModeNonStrict,
 	ast.UnixTimestamp: monotoneModeStrict,
+	// Only when the function form is fn(column, const)
+	ast.Plus:  monotoneModeStrict,
+	ast.Minus: monotoneModeStrict,
 }
 
 func getMonotoneMode(fnName string) monotoneMode {

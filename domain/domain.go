@@ -692,6 +692,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
+	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	return do
 }
 
@@ -1056,6 +1057,32 @@ func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
 	}()
 }
 
+// TelemetryUpdateLoop create a goroutine that update the record data for telemetry data.
+func (do *Domain) TelemetryUpdateLoop(ctx sessionctx.Context) {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("handleTelemetryUpdateLoop exited.")
+			util.Recover(metrics.LabelDomain, "handleTelemetryUpdateLoop", nil, false)
+		}()
+		ownerManager := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
+		for {
+			select {
+			case <-do.exit:
+				ownerManager.Cancel()
+				return
+			case task := <-telemetry.FeatureTaskChan:
+				// only owner do telemetry update.
+				if ownerManager.IsOwner() {
+					telemetry.UpdateFeature(task)
+				}
+			}
+		}
+	}()
+}
+
 // StatsHandle returns the statistic handle.
 func (do *Domain) StatsHandle() *handle.Handle {
 	return (*handle.Handle)(atomic.LoadPointer(&do.statsHandle))
@@ -1294,11 +1321,6 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 // ExpensiveQueryHandle returns the expensive query handle.
 func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
-}
-
-// InitExpensiveQueryHandle init the expensive query handler.
-func (do *Domain) InitExpensiveQueryHandle() {
-	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 }
 
 const privilegeKey = "/tidb/privilege"

@@ -478,12 +478,10 @@ func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
 }
 
 func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
-	gcfg := config.GetGlobalConfig()
-	etl := gcfg.EnableTableLock
-	gcfg.EnableTableLock = true
-	defer func() {
-		gcfg.EnableTableLock = etl
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tbllock(id int, c int);")
@@ -599,4 +597,16 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 		plan.Check(testkit.Rows(output[i].Plan...))
 		res.Check(testkit.Rows(output[i].Res...))
 	}
+}
+
+func (s *testPointGetSuite) TestIssue18042(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), index ab(a, b));")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustExec("SELECT /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 MB) */ * FROM t where a = 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(1<<20))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
+	tk.MustExec("drop table t")
 }

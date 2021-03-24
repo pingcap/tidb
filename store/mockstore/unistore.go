@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 )
 
@@ -95,21 +96,30 @@ func (s *mockStorage) Begin() (kv.Transaction, error) {
 	return newTiKVTxn(txn, err)
 }
 
-func (s *mockStorage) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithTxnScope(txnScope)
-	return newTiKVTxn(txn, err)
+// BeginWithOption begins a transaction with given option
+func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+	txnScope := option.TxnScope
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
+	}
+	if option.StartTS != nil {
+		return newTiKVTxn(s.BeginWithStartTS(txnScope, *option.StartTS))
+	} else if option.PrevSec != nil {
+		return newTiKVTxn(s.BeginWithExactStaleness(txnScope, *option.PrevSec))
+	}
+	return newTiKVTxn(s.BeginWithTxnScope(txnScope))
 }
 
-// BeginWithStartTS begins a transaction with startTS.
-func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithStartTS(txnScope, startTS)
-	return newTiKVTxn(txn, err)
+// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
+// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+func (s *mockStorage) GetSnapshot(ver kv.Version) kv.Snapshot {
+	return s.KVStore.GetSnapshot(ver.Ver)
 }
 
-// BeginWithExactStaleness begins transaction with given staleness
-func (s *mockStorage) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithExactStaleness(txnScope, prevSec)
-	return newTiKVTxn(txn, err)
+// CurrentVersion returns current max committed version with the given txnScope (local or global).
+func (s *mockStorage) CurrentVersion(txnScope string) (kv.Version, error) {
+	ver, err := s.KVStore.CurrentTimestamp(txnScope)
+	return kv.NewVersion(ver), err
 }
 
 func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {

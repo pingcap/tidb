@@ -585,7 +585,10 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	// Run in a separate suite because this test need to set SkipGrantTable config.
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -600,9 +603,11 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	tk.MustExec("FLUSH PRIVILEGES")
 }
 
-func (s *testSuite3) TestDropPartitionStats(c *C) {
+func (s *testSerialSuite) TestDropPartitionStats(c *C) {
+	// Use the testSerialSuite to fix the unstable test
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t (
 	a int,
 	key(a)

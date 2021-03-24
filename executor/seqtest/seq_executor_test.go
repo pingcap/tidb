@@ -65,7 +65,10 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -320,18 +323,18 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|NULL",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|NULL",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
-		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
-		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|NULL",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|(`id` * 2 + 1)",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL|YES",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|NULL|NO",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL|NO",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL|NO",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|NULL|NO",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL|NO",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL|NO",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL|NO",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL|NO",
+		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL|NO",
+		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|NULL|NO",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|(`id` * 2 + 1)|NO",
 	))
 
 	// For show like with escape
@@ -661,18 +664,23 @@ func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (1), (2)")
 	do, _ := session.GetDomain(s.store)
-	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
+	err := do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
+	c.Assert(err, IsNil)
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
-	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
-	do.StatsHandle().Update(do.InfoSchema())
+	err = do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
+	c.Assert(err, IsNil)
+	err = do.StatsHandle().Update(do.InfoSchema())
+	c.Assert(err, IsNil)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
-	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
-	do.StatsHandle().Update(do.InfoSchema())
+	err = do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
+	c.Assert(err, IsNil)
+	err = do.StatsHandle().Update(do.InfoSchema())
+	c.Assert(err, IsNil)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 }
 
@@ -704,7 +712,7 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	time.Sleep(time.Millisecond * 10)
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
@@ -778,7 +786,10 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 func checkGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)
 	profile := pprof.Lookup("goroutine")
-	profile.WriteTo(buf, 1)
+	err := profile.WriteTo(buf, 1)
+	if err != nil {
+		panic(err)
+	}
 	str := buf.String()
 	return strings.Contains(str, keyword)
 }
@@ -837,12 +848,10 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	// Test for a table with auto_random primary key.
-	tk.MustExec("create table t3(id bigint primary key auto_random(5), c int)")
+	tk.MustExec("create table t3(id bigint primary key clustered auto_random(5), c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " t3 next_row_id")
 	r.Check(testkit.Rows("test1 t3 id 1 AUTO_RANDOM"))
@@ -1370,17 +1379,15 @@ func (s *seqTestSuite) TestInsertFromSelectConflictRetryAutoID(c *C) {
 func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("create database if not exists auto_random_retry")
 	tk.MustExec("use auto_random_retry")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id bigint auto_random(3) primary key)")
+	tk.MustExec("create table t (id bigint auto_random(3) primary key clustered)")
 
 	extractMaskedOrderedHandles := func() []int64 {
 		handles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "auto_random_retry", "t")
 		c.Assert(err, IsNil)
-		return testutil.ConfigTestUtils.MaskSortHandles(handles, 3, mysql.TypeLong)
+		return testutil.MaskSortHandles(handles, 3, mysql.TypeLong)
 	}
 
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
@@ -1414,8 +1421,6 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 
 func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover_auto_rand")
@@ -1451,14 +1456,14 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	defer autoid.SetStep(stp)
 
 	// Check rebase auto_random id.
-	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key);")
+	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key clustered);")
 	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
 	tk.MustExec("drop table t_recover_auto_rand")
 	tk.MustExec("recover table t_recover_auto_rand")
 	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
 	hs, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_recover", "t_recover_auto_rand")
 	c.Assert(err, IsNil)
-	ordered := testutil.ConfigTestUtils.MaskSortHandles(hs, 5, mysql.TypeLong)
+	ordered := testutil.MaskSortHandles(hs, 5, mysql.TypeLong)
 
 	c.Assert(ordered, DeepEquals, []int64{1, 2, 3, autoRandIDStep + 1, autoRandIDStep + 2, autoRandIDStep + 3})
 }
