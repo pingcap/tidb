@@ -91,6 +91,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	hash := string(key.Hash())
 	element, exists := l.elements[hash]
 	if exists {
+		element.Value.(*cacheEntry).value = value
 		l.cache.MoveToFront(element)
 		return
 	}

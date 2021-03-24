@@ -20,8 +20,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type testSnapshotFailSuite struct {
@@ -48,7 +49,7 @@ func (s *testSnapshotFailSuite) TearDownSuite(c *C) {
 func (s *testSnapshotFailSuite) cleanup(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	iter, err := txn.Iter(kv.Key(""), kv.Key(""))
+	iter, err := txn.Iter(tidbkv.Key(""), tidbkv.Key(""))
 	c.Assert(err, IsNil)
 	for iter.Valid() {
 		err = txn.Delete(iter.Key())
@@ -83,7 +84,7 @@ func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	res, err := txn.BatchGet(context.Background(), []kv.Key{[]byte("k1"), []byte("k2")})
+	res, err := txn.BatchGet(context.Background(), []tidbkv.Key{[]byte("k1"), []byte("k2")})
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, map[string][]byte{"k1": []byte("v1"), "k2": []byte("v2")})
 }
@@ -112,13 +113,13 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	c.Assert(err, IsNil)
 	iter, err := txn.Iter([]byte("a"), []byte("z"))
 	c.Assert(err, IsNil)
-	c.Assert(iter.Key(), DeepEquals, kv.Key("k1"))
+	c.Assert(iter.Key(), DeepEquals, tidbkv.Key("k1"))
 	c.Assert(iter.Value(), DeepEquals, []byte("v1"))
 	c.Assert(iter.Next(), IsNil)
-	c.Assert(iter.Key(), DeepEquals, kv.Key("k2"))
+	c.Assert(iter.Key(), DeepEquals, tidbkv.Key("k2"))
 	c.Assert(iter.Value(), DeepEquals, []byte("v2"))
 	c.Assert(iter.Next(), IsNil)
-	c.Assert(iter.Key(), DeepEquals, kv.Key("k3"))
+	c.Assert(iter.Key(), DeepEquals, tidbkv.Key("k3"))
 	c.Assert(iter.Value(), DeepEquals, []byte("v3"))
 	c.Assert(iter.Next(), IsNil)
 	c.Assert(iter.Valid(), IsFalse)
@@ -129,10 +130,10 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	c.Assert(err, IsNil)
 	iter, err = txn.Iter([]byte("k2"), []byte("k4"))
 	c.Assert(err, IsNil)
-	c.Assert(iter.Key(), DeepEquals, kv.Key("k2"))
+	c.Assert(iter.Key(), DeepEquals, tidbkv.Key("k2"))
 	c.Assert(iter.Value(), DeepEquals, []byte("v2"))
 	c.Assert(iter.Next(), IsNil)
-	c.Assert(iter.Key(), DeepEquals, kv.Key("k3"))
+	c.Assert(iter.Key(), DeepEquals, tidbkv.Key("k3"))
 	c.Assert(iter.Value(), DeepEquals, []byte("v3"))
 	c.Assert(iter.Next(), IsNil)
 	c.Assert(iter.Valid(), IsFalse)
