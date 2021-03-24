@@ -50,6 +50,7 @@ func (f KeyFlags) HasIgnoredIn2PC() bool {
 	return f&flagIgnoredIn2PC != 0
 }
 
+// AndPersistent returns the value of current flags&persistentFlags
 func (f KeyFlags) AndPersistent() KeyFlags {
 	return f & persistentFlags
 }

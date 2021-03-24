@@ -49,7 +49,7 @@ var (
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
 
-// TODO:remove it when br is ready
+// FlagsOp  describes KeyFlags modify operation. TODO:remove it when br is ready
 type FlagsOp = tikvstore.FlagsOp
 
 // Getter is the interface for the Get method.
