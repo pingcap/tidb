@@ -238,7 +238,7 @@ func (d *Datum) SetMinNotNull() {
 	d.x = nil
 }
 
-// GetBinaryLiteral4Cmp gets Bit value, and remove it's prefix 0 for comparision.
+// GetBinaryLiteral4Cmp gets Bit value, and remove it's prefix 0 for comparison.
 func (d *Datum) GetBinaryLiteral4Cmp() BinaryLiteral {
 	bitLen := len(d.b)
 	if bitLen == 0 {
