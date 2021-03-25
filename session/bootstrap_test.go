@@ -656,6 +656,7 @@ func (s *testBootstrapSuite) TestForIssue23387(c *C) {
 	// Bootstrap to an old version, create a user.
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
+	defer store.Close()
 	_, err = BootstrapSession(store)
 	// domain leaked here, Close() is not called. For testing, it's OK.
 	// If we close it and BootstrapSession again, we'll get an error "session pool is closed".
@@ -667,8 +668,9 @@ func (s *testBootstrapSuite) TestForIssue23387(c *C) {
 
 	// Upgrade to a newer version, check the user's privilege.
 	currentBootstrapVersion = saveCurrentBootstrapVersion
-	_, err = BootstrapSession(store)
+	dom, err := BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 
 	se = newSession(c, store, s.dbName)
 	rs, err := exec(se, "show grants for quatest")
