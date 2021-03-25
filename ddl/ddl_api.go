@@ -1799,6 +1799,13 @@ func (d *ddl) CreateTableWithInfo(
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
 
+	if tbInfo.TiFlashReplica != nil {
+		// raise an error when the cluster has no tiflash replicas during restoration.
+		if err := checkTiFlashReplicaCount(ctx, tbInfo.TiFlashReplica.Count); err != nil {
+			return err
+		}
+	}
+
 	var oldViewTblID int64
 	if oldTable, err := is.TableByName(schema.Name, tbInfo.Name); err == nil {
 		err = infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schema.Name, Name: tbInfo.Name})
