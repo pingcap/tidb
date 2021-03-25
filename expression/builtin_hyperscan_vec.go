@@ -101,6 +101,10 @@ func (b *baseBuiltinHsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		}
 	}
 
+	if err := b.initScratch(); err != nil {
+		return err
+	}
+
 	result.ResizeInt64(n, false)
 	result.MergeNulls(bufVal, bufPat)
 	i64s := result.Int64s()
@@ -152,6 +156,10 @@ func (b *baseBuiltinHsSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 			b.db = db
 			break
 		}
+	}
+
+	if err := b.initScratch(); err != nil {
+		return err
 	}
 
 	result.ReserveString(n)

@@ -197,8 +197,9 @@ type baseBuiltinHsSig struct {
 	sourceType      int
 	matchType       int
 	numPatterns     int
-	db              hs.BlockDatabase
 	supportDBSource bool
+	db              hs.BlockDatabase
+	scratch         *hs.Scratch
 }
 
 // Sig classes
@@ -386,7 +387,26 @@ func newBaseBuiltinHsSig(name string, ctx sessionctx.Context, args []Expression,
 		return baseBuiltinHsSig{}, err
 	}
 	bf.tp.Flen = 1
-	return baseBuiltinHsSig{bf, sourceType, matchType, 0, nil, true}, nil
+	return baseBuiltinHsSig{bf, sourceType, matchType, 0, true, nil, nil}, nil
+}
+
+// initScratch must call after Hyperscan database is created.
+// And all expression function will not execute parallel, so
+// no need to create a pool or lock to make call `Scan` function
+// serialize.
+func (b *baseBuiltinHsSig) initScratch() error {
+	if b.scratch != nil {
+		return nil
+	}
+	scratch, err := hs.NewScratch(b.db)
+	if err != nil {
+		return err
+	}
+	b.scratch = scratch
+	runtime.SetFinalizer(scratch, func(hsScratch *hs.Scratch) {
+		hsScratch.Free()
+	})
+	return nil
 }
 
 func (b *baseBuiltinHsSig) cloneDb() hs.BlockDatabase {
@@ -432,7 +452,7 @@ func (b *baseBuiltinHsSig) hsMatchAll(val string) bool {
 		matchCount++
 		return nil
 	}
-	err := b.db.Scan([]byte(val), nil, handler, nil)
+	err := b.db.Scan([]byte(val), b.scratch, handler, nil)
 	if err != nil && err.(hs.HsError) != hs.ErrScanTerminated {
 		return false
 	}
@@ -453,7 +473,7 @@ func (b *baseBuiltinHsSig) hsMatchAny(val string) (int, bool) {
 		}
 		return nil
 	}
-	err := b.db.Scan([]byte(val), nil, handler, nil)
+	err := b.db.Scan([]byte(val), b.scratch, handler, nil)
 	if err != nil && err.(hs.HsError) != hs.ErrScanTerminated {
 		return 0, false
 	}
@@ -475,7 +495,7 @@ func (b *baseBuiltinHsSig) hsMatchIds(val string) []string {
 		}
 		return nil
 	}
-	err := b.db.Scan([]byte(val), nil, handler, nil)
+	err := b.db.Scan([]byte(val), b.scratch, handler, nil)
 	if err != nil && err.(hs.HsError) != hs.ErrScanTerminated {
 		return nil
 	}
@@ -642,6 +662,11 @@ func (b *baseBuiltinHsSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 		b.db = db
 	}
+
+	if err := b.initScratch(); err != nil {
+		return 0, false, err
+	}
+
 	matched := b.hsMatch(valStr)
 	return boolToInt64(matched), false, nil
 }
@@ -668,6 +693,11 @@ func (b *builtinHsMatchSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 		b.db = db
 	}
+
+	if err := b.initScratch(); err != nil {
+		return "", false, err
+	}
+
 	matchedIds := b.hsMatchIds(valStr)
 	if len(matchedIds) == 0 {
 		return "", false, nil
@@ -679,6 +709,7 @@ func (b *baseBuiltinHsSig) cloneFromBaseHsSig(source *baseBuiltinHsSig) {
 	b.sourceType = source.sourceType
 	b.matchType = source.matchType
 	b.numPatterns = source.numPatterns
+	b.scratch = nil
 	if source.db != nil {
 		b.db = b.cloneDb()
 	}
