@@ -94,15 +94,16 @@ func (s *testSuite1) TestRevokeTableScope(c *C) {
 		c.Assert(rows, HasLen, 1)
 		row := rows[0]
 		c.Assert(row, HasLen, 1)
+
 		op := mysql.Priv2SetStr[v]
 		found := false
-		for _, v := range strings.Split(fmt.Sprintf("%v", row[0]), ",") {
-			if v == op {
+		for _, p := range strings.Split(fmt.Sprintf("%s", row[0]), ",") {
+			if op == p {
 				found = true
 				break
 			}
 		}
-		c.Assert(found, IsFalse)
+		c.Assert(found, IsFalse, Commentf("%s", mysql.Priv2SetStr[v]))
 	}
 
 	// Revoke all table scope privs.
