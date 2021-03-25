@@ -122,7 +122,7 @@ func TestInfo(t *testing.T) {
 	dom.etcdClient = cli
 	// Mock new DDL and init the schema syncer with etcd client.
 	dom.ddl = ddl.NewDDL(
-		dom.Context,
+		dom.ctx,
 		ddl.WithEtcdClient(dom.GetEtcdClient()),
 		ddl.WithStore(s),
 		ddl.WithInfoHandle(dom.infoHandle),
@@ -151,20 +151,20 @@ func TestInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := infosync.GetServerInfoByID(dom.Context, ddlID)
+	info, err := infosync.GetServerInfoByID(dom.ctx, ddlID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if serverInfo.ID != info.ID {
 		t.Fatalf("server self info %v, info %v", serverInfo, info)
 	}
-	_, err = infosync.GetServerInfoByID(dom.Context, "not_exist_id")
+	_, err = infosync.GetServerInfoByID(dom.ctx, "not_exist_id")
 	if err == nil || (err != nil && err.Error() != "[info-syncer] get /tidb/server/info/not_exist_id failed") {
 		t.Fatal(err)
 	}
 
 	// Test for GetAllServerInfo.
-	infos, err := infosync.GetAllServerInfo(dom.Context)
+	infos, err := infosync.GetAllServerInfo(dom.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestInfo(t *testing.T) {
 
 	// Test for RemoveServerInfo.
 	dom.info.RemoveServerInfo()
-	infos, err = infosync.GetAllServerInfo(dom.Context)
+	infos, err = infosync.GetAllServerInfo(dom.ctx)
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("err %v, infos %v", err, infos)
 	}
