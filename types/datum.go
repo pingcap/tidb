@@ -238,8 +238,8 @@ func (d *Datum) SetMinNotNull() {
 	d.x = nil
 }
 
-// GetBinaryLiteral gets Bit value
-func (d *Datum) GetBinaryLiteral() BinaryLiteral {
+// GetBinaryLiteral4Cmp gets Bit value, and remove it's prefix 0 for comparision.
+func (d *Datum) GetBinaryLiteral4Cmp() BinaryLiteral {
 	bitLen := len(d.b)
 	if bitLen == 0 {
 		return d.b
@@ -252,6 +252,11 @@ func (d *Datum) GetBinaryLiteral() BinaryLiteral {
 	}
 	// The result is 0x000...00, we just the return 0x00.
 	return d.b[bitLen-1:]
+}
+
+// GetBinaryLiteral gets Bit value
+func (d *Datum) GetBinaryLiteral() BinaryLiteral {
+	return d.b
 }
 
 // GetMysqlBit gets MysqlBit value
@@ -583,7 +588,7 @@ func (d *Datum) CompareDatum(sc *stmtctx.StatementContext, ad *Datum) (int, erro
 	case KindMysqlEnum:
 		return d.compareMysqlEnum(sc, ad.GetMysqlEnum())
 	case KindBinaryLiteral, KindMysqlBit:
-		return d.compareBinaryLiteral(sc, ad.GetBinaryLiteral())
+		return d.compareBinaryLiteral(sc, ad.GetBinaryLiteral4Cmp())
 	case KindMysqlSet:
 		return d.compareMysqlSet(sc, ad.GetMysqlSet())
 	case KindMysqlJSON:
@@ -652,7 +657,7 @@ func (d *Datum) compareFloat64(sc *stmtctx.StatementContext, f float64) (int, er
 		fVal := d.GetMysqlEnum().ToNumber()
 		return CompareFloat64(fVal, f), nil
 	case KindBinaryLiteral, KindMysqlBit:
-		val, err := d.GetBinaryLiteral().ToInt(sc)
+		val, err := d.GetBinaryLiteral4Cmp().ToInt(sc)
 		fVal := float64(val)
 		return CompareFloat64(fVal, f), errors.Trace(err)
 	case KindMysqlSet:
@@ -689,7 +694,7 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, retCollati
 	case KindMysqlEnum:
 		return CompareString(d.GetMysqlEnum().String(), s, d.collation), nil
 	case KindBinaryLiteral, KindMysqlBit:
-		return CompareString(d.GetBinaryLiteral().ToString(), s, d.collation), nil
+		return CompareString(d.GetBinaryLiteral4Cmp().ToString(), s, d.collation), nil
 	default:
 		fVal, err := StrToFloat(sc, s, false)
 		if err != nil {
@@ -763,7 +768,7 @@ func (d *Datum) compareBinaryLiteral(sc *stmtctx.StatementContext, b BinaryLiter
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), b.ToString(), d.collation), nil
 	case KindBinaryLiteral, KindMysqlBit:
-		return CompareString(d.GetBinaryLiteral().ToString(), b.ToString(), d.collation), nil
+		return CompareString(d.GetBinaryLiteral4Cmp().ToString(), b.ToString(), d.collation), nil
 	default:
 		val, err := b.ToInt(sc)
 		if err != nil {
