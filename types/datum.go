@@ -240,7 +240,14 @@ func (d *Datum) SetMinNotNull() {
 
 // GetBinaryLiteral gets Bit value
 func (d *Datum) GetBinaryLiteral() BinaryLiteral {
-	return d.b
+	bitLen := len(d.b)
+	for i := 0; i < bitLen; i++ {
+		// Remove the prefix 0 in the bit array.
+		if d.b[i] != 0 {
+			return d.b[i:]
+		}
+	}
+	return d.b[bitLen:]
 }
 
 // GetMysqlBit gets MysqlBit value
