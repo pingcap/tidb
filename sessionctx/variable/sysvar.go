@@ -111,8 +111,18 @@ type SysVar struct {
 	AllowAutoValue bool
 	// Validation is a callback after the type validation has been performed
 	Validation func(*SessionVars, string, string, ScopeFlag) (string, error)
+	// SetSession is called after validation
+	SetSession func(*SessionVars, string) error
 	// IsHintUpdatable indicate whether it's updatable via SET_VAR() hint (optional)
 	IsHintUpdatable bool
+}
+
+// SetSessionFromHook calls the SetSession func if it exists.
+func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
+	if sv.SetSession != nil {
+		return sv.SetSession(s, val)
+	}
+	return nil
 }
 
 // ValidateFromType provides automatic validation based on the SysVar's type
@@ -804,7 +814,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMergeJoin, Value: BoolToOnOff(DefTiDBEnableIndexMergeJoin), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTrackAggregateMemoryUsage, Value: BoolToOnOff(DefTiDBTrackAggregateMemoryUsage), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMultiStatementMode, Value: Off, Type: TypeEnum, PossibleValues: []string{Off, On, Warn}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMultiStatementMode, Value: Off, Type: TypeEnum, PossibleValues: []string{Off, On, Warn}, SetSession: func(s *SessionVars, val string) error {
+		s.MultiStatementMode = TiDBOptMultiStmt(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExchangePartition, Value: BoolToOnOff(DefTiDBEnableExchangePartition), Type: TypeBool},
 
 	/* tikv gc metrics */
