@@ -758,7 +758,7 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	txn1.ClearStoreTxnLatches()
 	_, err := txn1.Get(context.Background(), k1)
 	// to fix: key not exist
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	err = txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, tidbkv.SetPresumeKeyNotExists)
 	c.Assert(err, IsNil)
 	err = txn1.Set(k2, []byte{1})
