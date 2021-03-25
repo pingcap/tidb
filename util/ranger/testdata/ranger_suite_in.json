@@ -26,5 +26,22 @@
       "select * from t2 where t='aaaa';",
       "select * from t2 where t='aaaa' or t = 'a';"
     ]
+  },
+  {
+    "name": "TestIndexRangeForDecimal",
+    "cases": [
+      "select * from t1 use index(a) where a in (-1,0);",
+      "select * from t1 use index(a) where a = -1;",
+      "select * from t1 use index(a) where a > -1;",
+      "select * from t1 use index(a) where a < -1;",
+      "select * from t1 use index(a) where a <= -1;",
+      "select * from t1 use index(a) where a >= -1;",
+      "select * from t2 use index(idx) where a = 1 and b in (-1,0);",
+      "select * from t2 use index(idx) where a = 1 and b = -1;",
+      "select * from t2 use index(idx) where a = 1 and b > -1;",
+      "select * from t2 use index(idx) where a = 1 and b < -1;",
+      "select * from t2 use index(idx) where a = 1 and b <= -1;",
+      "select * from t2 use index(idx) where a = 1 and b >= -1;"
+    ]
   }
 ]
