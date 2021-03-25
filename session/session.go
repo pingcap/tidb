@@ -1441,16 +1441,37 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
-		tiFlashPushDown, tiFlashExchangePushDown := plannercore.GetTiFlashTelemetry(stmt.Plan)
-		select {
-		case telemetry.FeatureTaskChan <- &telemetry.FeatureTask{
-			TiFlashPushDown:         tiFlashPushDown,
-			TiFLashExchangePushDown: tiFlashExchangePushDown,
-			CoprRespTimes:           s.sessionVars.CoprRespTimes.Load(),
-			CoprCacheHitNum:         s.sessionVars.CoprCacheHitNum.Load(),
-		}:
-		default:
-			// When telemetry channel is full, we don't push any new task, in case to block user session.
+		telemetry.CurrentExecuteCount.Inc()
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
+		coprRespTimes := s.sessionVars.CoprRespTimes.Load()
+		coprCacheHits := s.sessionVars.CoprCacheHitNum.Load()
+		if coprRespTimes > 0 {
+			ratio := float64(coprCacheHits) / float64(coprRespTimes)
+			switch {
+			case ratio >= 0.01:
+				telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
+				fallthrough
+			case ratio >= 0.1:
+				telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
+				fallthrough
+			case ratio >= 0.2:
+				telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
+				fallthrough
+			case ratio >= 0.4:
+				telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
+				fallthrough
+			case ratio >= 0.8:
+				telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
+				fallthrough
+			case ratio >= 1:
+				telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
+			}
 		}
 	}
 	return recordSet, nil
@@ -2252,8 +2273,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	dom.TelemetryLoop(se4)
-	dom.TelemetryUpdateLoop(se4)
+	dom.TelemetryReportLoop(se4)
+	dom.TelemetryRotateSubWindowLoop(se4)
 
 	se5, err := createSession(store)
 	if err != nil {
