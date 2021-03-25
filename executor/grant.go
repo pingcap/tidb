@@ -547,7 +547,7 @@ func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 // composeGlobalPrivUpdate composes update stmt assignment list string for global scope privilege update.
 func composeGlobalPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value string) error {
 	if priv != mysql.AllPriv {
-		if !hasPriv(mysql.AllGlobalPrivs, priv) {
+		if priv != mysql.GrantPriv && !hasPriv(mysql.AllGlobalPrivs, priv) {
 			return ErrWrongUsage.GenWithStackByArgs("GLOBAL GRANT", "NON-GLOBAL PRIVILEGES")
 		}
 
@@ -578,7 +578,7 @@ func composeGlobalPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, val
 // composeDBPrivUpdate composes update stmt assignment list for db scope privilege update.
 func composeDBPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value string) error {
 	if priv != mysql.AllPriv {
-		if !hasPriv(mysql.AllDBPrivs, priv) {
+		if priv != mysql.GrantPriv && !hasPriv(mysql.AllDBPrivs, priv) {
 			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")
 		}
 
@@ -626,7 +626,10 @@ func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder
 		newTablePriv = setFromString(currTablePriv)
 		newColumnPriv = setFromString(currColumnPriv)
 
-		if !hasPriv(mysql.AllTablePrivs, priv) {
+		// TODO: https://github.com/pingcap/parser/pull/581 removed privs from all priv lists
+		// it is to avoid add GRANT in GRANT ALL SQLs
+		// WithGRANT seems broken, fix it later
+		if priv != mysql.GrantPriv && !hasPriv(mysql.AllTablePrivs, priv) {
 			return ErrIllegalGrantForTable
 		}
 
