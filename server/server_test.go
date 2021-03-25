@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"go.uber.org/zap"
@@ -113,7 +112,7 @@ func (cli *testServerClient) getDSN(overriders ...configOverrider) string {
 	config.Net = "tcp"
 	config.Addr = fmt.Sprintf("127.0.0.1:%d", cli.port)
 	config.DBName = "test"
-	config.Params = map[string]string{variable.TiDBIntPrimaryKeyDefaultAsClustered: "true"}
+	config.Params = make(map[string]string)
 	for _, overrider := range overriders {
 		if overrider != nil {
 			overrider(config)

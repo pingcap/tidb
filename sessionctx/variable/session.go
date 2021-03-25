@@ -819,10 +819,6 @@ type SessionVars struct {
 	// Now we only support TiFlash.
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
 
-	// IntPrimaryKeyDefaultAsClustered indicates whether create integer primary table as clustered
-	// If it's true, the behavior is the same as the TiDB 4.0 and the below versions.
-	IntPrimaryKeyDefaultAsClustered bool
-
 	// CoprCacheHitNum is to record coprocessor cache hit times for one statement.
 	CoprCacheHitNum atomic2.Uint64
 	// CoprRespTimes is to record coprocessor response times for one statement.
@@ -1767,8 +1763,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
 			}
 		}
-	case TiDBIntPrimaryKeyDefaultAsClustered:
-		s.IntPrimaryKeyDefaultAsClustered = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
