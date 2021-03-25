@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
@@ -997,7 +998,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
+	stmt := sqlexec.MustEscapeSQL(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
 	rs, err := se.Execute(ctx, stmt)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
@@ -1023,10 +1024,10 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 }
 
 func (w *GCWorker) saveValueToSysTable(key, value string) error {
-	stmt := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	stmt := sqlexec.MustEscapeSQL(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
 			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
-		key, value, gcVariableComments[key])
+			       UPDATE variable_value = %?, comment = %?`,
+		key, value, gcVariableComments[key], value, gcVariableComments[key])
 	se := createSession(w.store)
 	defer se.Close()
 	_, err := se.Execute(context.Background(), stmt)
