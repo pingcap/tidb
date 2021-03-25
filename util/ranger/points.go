@@ -638,6 +638,8 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: types.MaxValueDatum()}
 		return []*point{startPoint, endPoint}
+	case ast.LogicAnd:
+		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	}
 	return nil
 }
