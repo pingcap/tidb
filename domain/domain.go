@@ -1067,17 +1067,12 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 			logutil.BgLogger().Info("TelemetryRotateSubWindowLoop exited.")
 			util.Recover(metrics.LabelDomain, "TelemetryRotateSubWindowLoop", nil, false)
 		}()
-		ownerManager := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
 		for {
 			select {
 			case <-do.exit:
-				ownerManager.Cancel()
 				return
 			case <-time.After(telemetry.SubWindowSize):
-				// only owner do telemetry update.
-				if ownerManager.IsOwner() {
-					telemetry.RotateSubWindow()
-				}
+				telemetry.RotateSubWindow()
 			}
 		}
 	}()

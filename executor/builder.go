@@ -3896,6 +3896,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, plan.IndexInfo, value)
 				if err != nil {
+					if kv.ErrNotExist.Equal(err) {
+						continue
+					}
 					b.err = err
 					return nil
 				}
