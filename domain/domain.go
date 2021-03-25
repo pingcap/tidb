@@ -1026,16 +1026,16 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 	}()
 }
 
-// TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
+// TelemetryReportLoop create a goroutine that reports usage data in a loop, it should be called only once
 // in BootstrapSession.
-func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
+func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.wg.Add(1)
 	go func() {
 		defer func() {
 			do.wg.Done()
-			logutil.BgLogger().Info("handleTelemetryLoop exited.")
-			util.Recover(metrics.LabelDomain, "handleTelemetryLoop", nil, false)
+			logutil.BgLogger().Info("TelemetryReportLoop exited.")
+			util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
 		}()
 		owner := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
 		for {
@@ -1050,22 +1050,22 @@ func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
 				err := telemetry.ReportUsageData(ctx, do.GetEtcdClient())
 				if err != nil {
 					// Only status update errors will be printed out
-					logutil.BgLogger().Warn("handleTelemetryLoop status update failed", zap.Error(err))
+					logutil.BgLogger().Warn("TelemetryReportLoop status update failed", zap.Error(err))
 				}
 			}
 		}
 	}()
 }
 
-// TelemetryUpdateLoop create a goroutine that update the record data for telemetry data.
-func (do *Domain) TelemetryUpdateLoop(ctx sessionctx.Context) {
+// TelemetryRotateSubWindowLoop create a goroutine that rotates the telemetry window regularly.
+func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.wg.Add(1)
 	go func() {
 		defer func() {
 			do.wg.Done()
-			logutil.BgLogger().Info("handleTelemetryUpdateLoop exited.")
-			util.Recover(metrics.LabelDomain, "handleTelemetryUpdateLoop", nil, false)
+			logutil.BgLogger().Info("TelemetryRotateSubWindowLoop exited.")
+			util.Recover(metrics.LabelDomain, "TelemetryRotateSubWindowLoop", nil, false)
 		}()
 		ownerManager := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
 		for {
@@ -1073,10 +1073,10 @@ func (do *Domain) TelemetryUpdateLoop(ctx sessionctx.Context) {
 			case <-do.exit:
 				ownerManager.Cancel()
 				return
-			case task := <-telemetry.FeatureTaskChan:
+			case <-time.After(telemetry.SubWindowSize):
 				// only owner do telemetry update.
 				if ownerManager.IsOwner() {
-					telemetry.UpdateFeature(task)
+					telemetry.RotateSubWindow()
 				}
 			}
 		}
