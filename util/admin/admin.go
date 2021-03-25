@@ -299,7 +299,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		return 0, 0, errors.Trace(err)
 	}
 	for i, idx := range indices {
-		sql = sqlexec.MustEscapeSQL("SELECT COUNT(*) FROM %n.%n USE INDEX(`%s`)", dbName, tableName, idx)
+		sql = sqlexec.MustEscapeSQL("SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
 			return 0, i, errors.Trace(err)
