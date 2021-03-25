@@ -336,7 +336,7 @@ type testSuite11 struct {
 func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
@@ -388,7 +388,7 @@ func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
@@ -423,7 +423,7 @@ func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 func (s *testSuite11) TestReplaceClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists rt1pk`)
 	tk.MustExec(`create table rt1pk(id varchar(200) primary key, v int)`)
@@ -449,9 +449,9 @@ func (s *testSuite11) TestReplaceClusterIndex(c *C) {
 
 func (s *testSuite11) TestPessimisticUpdatePKLazyCheck(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	s.testUpdatePKLazyCheck(c, tk, variable.OnClustered)
-	s.testUpdatePKLazyCheck(c, tk, variable.OffClustered)
-	s.testUpdatePKLazyCheck(c, tk, variable.IntOnlyClustered)
+	s.testUpdatePKLazyCheck(c, tk, variable.ClusteredIndexDefModeOn)
+	s.testUpdatePKLazyCheck(c, tk, variable.ClusteredIndexDefModeOff)
+	s.testUpdatePKLazyCheck(c, tk, variable.ClusteredIndexDefModeIntOnly)
 }
 
 func (s *testSuite11) testUpdatePKLazyCheck(c *C, tk *testkit.TestKit, clusteredIndex variable.ClusteredIndexDefMode) {

@@ -33,7 +33,7 @@ type testClusteredSerialSuite struct{ testClusteredSuiteBase }
 
 func (s *testClusteredSuiteBase) newTK(c *C) *testkit.TestKit {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	return tk
 }
 
@@ -311,7 +311,7 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 
 func (s *testClusteredSerialSuite) TestCreateClusteredTable(c *C) {
 	tk := s.newTK(c)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7, t8")
 	tk.MustExec("create table t1(id int primary key, v int)")
 	tk.MustExec("create table t2(id varchar(10) primary key, v int)")
@@ -329,7 +329,7 @@ func (s *testClusteredSerialSuite) TestCreateClusteredTable(c *C) {
 	tk.MustQuery("show index from t6").Check(testkit.Rows("t6 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
 	tk.MustQuery("show index from t7").Check(testkit.Rows("t7 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
 	tk.MustQuery("show index from t8").Check(testkit.Rows("t8 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OffClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7, t8")
 	tk.MustExec("create table t1(id int primary key, v int)")
 	tk.MustExec("create table t2(id varchar(10) primary key, v int)")
@@ -347,7 +347,7 @@ func (s *testClusteredSerialSuite) TestCreateClusteredTable(c *C) {
 	tk.MustQuery("show index from t6").Check(testkit.Rows("t6 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
 	tk.MustQuery("show index from t7").Check(testkit.Rows("t7 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
 	tk.MustQuery("show index from t8").Check(testkit.Rows("t8 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7, t8")
 	tk.MustExec("create table t1(id int primary key, v int)")
 	tk.MustExec("create table t2(id varchar(10) primary key, v int)")
@@ -365,7 +365,7 @@ func (s *testClusteredSerialSuite) TestCreateClusteredTable(c *C) {
 	tk.MustQuery("show index from t6").Check(testkit.Rows("t6 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
 	tk.MustQuery("show index from t7").Check(testkit.Rows("t7 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
 	tk.MustQuery("show index from t8").Check(testkit.Rows("t8 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = true
@@ -517,11 +517,11 @@ func (s *testClusteredSuite) TestClusteredIndexSyntax(c *C) {
 	assertPkType("create table t (a int, b int, primary key(a) /*T![clustered_index] nonclustered */);", nonClustered)
 
 	// Test for clustered index.
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a));", nonClustered)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", clustered)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a));", clusteredDefault)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] nonclustered */);", nonClustered)
@@ -570,7 +570,7 @@ func (s *testClusteredSerialSuite) TestClusteredIndexDecodeRestoredDataV5(c *C) 
 	defer collate.SetNewCollationEnabledForTest(false)
 	collate.SetNewCollationEnabledForTest(true)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id1 int, id2 varchar(10), a1 int, primary key(id1, id2) clustered) collate utf8mb4_general_ci;")
 	tk.MustExec("insert into t values (1, 'asd', 1), (1, 'dsa', 1);")
@@ -592,7 +592,7 @@ func (s *testClusteredSerialSuite) TestPrefixedClusteredIndexUniqueKeyWithNewCol
 	collate.SetNewCollationEnabledForTest(true)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a text collate utf8mb4_general_ci not null, b int(11) not null, " +
 		"primary key (a(10), b) clustered, key idx(a(2)) ) default charset=utf8mb4 collate=utf8mb4_bin;")
 	tk.MustExec("insert into t values ('aaa', 2);")
