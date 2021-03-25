@@ -1523,8 +1523,14 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
 func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption, isSingleIntPK bool) bool {
 	if opt == nil || opt.PrimaryKeyTp == model.PrimaryKeyTypeDefault {
-		return ctx.GetSessionVars().EnableClusteredIndex ||
-			(isSingleIntPK && ctx.GetSessionVars().IntPrimaryKeyDefaultAsClustered)
+		switch ctx.GetSessionVars().EnableClusteredIndex {
+		case variable.OffClustered:
+			return false
+		case variable.OnClustered:
+			return true
+		case variable.IntOnlyClustered:
+			return isSingleIntPK
+		}
 	}
 	return opt.PrimaryKeyTp == model.PrimaryKeyTypeClustered
 }
