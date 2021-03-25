@@ -351,7 +351,7 @@ type IndexLookUpExecutor struct {
 	pageSize        int64
 	isImplicitClose bool
 	originRange     []*ranger.Range
-	lastRowKeys     []types.Datum
+	lastIndexKey    []types.Datum
 }
 
 type getHandleType int8
@@ -645,7 +645,7 @@ start:
 		}
 		if resultTask == nil {
 			if e.needIndexPaging {
-				if e.lastRowKeys == nil {
+				if e.lastIndexKey == nil {
 					return nil
 				}
 				if err := e.paginate(ctx); err != nil {
@@ -674,14 +674,14 @@ func (e *IndexLookUpExecutor) paginate(ctx context.Context) (err error) {
 		return err
 	}
 	// rebuild ranges
-	e.ranges, err = ranger.GetNextRangeByLastKey(e.ctx.GetSessionVars().StmtCtx, e.ranges, e.lastRowKeys, e.desc)
+	e.ranges, err = ranger.GetNextRangeByLastKey(e.ctx.GetSessionVars().StmtCtx, e.ranges, e.lastIndexKey, e.desc)
 	if err != nil {
 		return err
 	}
 	if err = e.Open(ctx); err != nil {
 		return err
 	}
-	e.lastRowKeys = nil
+	e.lastIndexKey = nil
 	return nil
 }
 
@@ -750,7 +750,7 @@ type indexWorker struct {
 	PushedLimit *plannercore.PushedDownLimit
 }
 
-func (w *indexWorker) constructLookUpContent(row chunk.Row, handleIdx []int) []types.Datum {
+func (w *indexWorker) constructIndexKey(row chunk.Row, handleIdx []int) []types.Datum {
 	lookupKey := make([]types.Datum, 0, row.Len())
 	is := w.idxLookup.idxPlans[0].(*plannercore.PhysicalIndexScan)
 	for _, cols := range is.Index.Columns {
@@ -877,7 +877,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 				if (count + scannedKeys) > (w.PushedLimit.Offset + w.PushedLimit.Count) {
 					// Skip the handles after Offset+Count.
 					if w.idxLookup.needIndexPaging && i != 0 {
-						w.idxLookup.lastRowKeys = w.constructLookUpContent(chk.GetRow(i-1), handleOffset)
+						w.idxLookup.lastIndexKey = w.constructIndexKey(chk.GetRow(i-1), handleOffset)
 					}
 					return handles, nil, scannedKeys, nil
 				}
@@ -889,7 +889,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			handles = append(handles, h)
 		}
 		if w.idxLookup.needIndexPaging && chk.NumRows() != 0 {
-			w.idxLookup.lastRowKeys = w.constructLookUpContent(chk.GetRow(chk.NumRows()-1), handleOffset)
+			w.idxLookup.lastIndexKey = w.constructIndexKey(chk.GetRow(chk.NumRows()-1), handleOffset)
 		}
 
 		if w.checkIndexValue != nil {
