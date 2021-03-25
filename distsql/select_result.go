@@ -114,6 +114,9 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			if len(r.stats.copRespTime) > 0 {
 				ratio := float64(r.stats.CoprCacheHitNum) / float64(len(r.stats.copRespTime))
 				switch {
+				case ratio >= 0:
+					telemetry.CurrentCoprCacheHitRatioGTE0Count.Inc()
+					fallthrough
 				case ratio >= 0.01:
 					telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
 					fallthrough

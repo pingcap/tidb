@@ -27,6 +27,8 @@ var (
 	CurrentTiFlashPushDownCount atomic.Uint64
 	// CurrentTiFlashExchangePushDownCount is CurrentTiFlashExchangePushDownCount
 	CurrentTiFlashExchangePushDownCount atomic.Uint64
+	// CurrentCoprCacheHitRatioGTE0Count is CurrentCoprCacheHitRatioGTE1Count
+	CurrentCoprCacheHitRatioGTE0Count atomic.Uint64
 	// CurrentCoprCacheHitRatioGTE1Count is CurrentCoprCacheHitRatioGTE1Count
 	CurrentCoprCacheHitRatioGTE1Count atomic.Uint64
 	// CurrentCoprCacheHitRatioGTE10Count is CurrentCoprCacheHitRatioGTE10Count
@@ -59,6 +61,7 @@ type windowData struct {
 }
 
 type coprCacheUsageData struct {
+	GTE0   uint64 `json:"gte0"`
 	GTE1   uint64 `json:"gte1"`
 	GTE10  uint64 `json:"gte10"`
 	GTE20  uint64 `json:"gte20"`
@@ -87,6 +90,7 @@ func RotateSubWindow() {
 			ExchangePushDown: CurrentTiFlashExchangePushDownCount.Swap(0),
 		},
 		CoprCacheUsage: coprCacheUsageData{
+			GTE0:   CurrentCoprCacheHitRatioGTE0Count.Swap(0),
 			GTE1:   CurrentCoprCacheHitRatioGTE1Count.Swap(0),
 			GTE10:  CurrentCoprCacheHitRatioGTE10Count.Swap(0),
 			GTE20:  CurrentCoprCacheHitRatioGTE20Count.Swap(0),
@@ -120,6 +124,7 @@ func getWindowData() []*windowData {
 			thisWindow.ExecuteCount += rotatedSubWindows[i].ExecuteCount
 			thisWindow.TiFlashUsage.PushDown += rotatedSubWindows[i].TiFlashUsage.PushDown
 			thisWindow.TiFlashUsage.ExchangePushDown += rotatedSubWindows[i].TiFlashUsage.ExchangePushDown
+			thisWindow.CoprCacheUsage.GTE0 += rotatedSubWindows[i].CoprCacheUsage.GTE0
 			thisWindow.CoprCacheUsage.GTE1 += rotatedSubWindows[i].CoprCacheUsage.GTE1
 			thisWindow.CoprCacheUsage.GTE10 += rotatedSubWindows[i].CoprCacheUsage.GTE10
 			thisWindow.CoprCacheUsage.GTE20 += rotatedSubWindows[i].CoprCacheUsage.GTE20
