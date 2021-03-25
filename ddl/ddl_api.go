@@ -2971,12 +2971,19 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	pids := make([]int64, len(spec.PartitionNames))
-	for i, name := range spec.PartitionNames {
-		pid, err := tables.FindPartitionByName(meta, name.L)
-		if err != nil {
-			return errors.Trace(err)
+	if spec.OnAllPartitions {
+		pids = make([]int64, len(meta.GetPartitionInfo().Definitions))
+		for i, def := range meta.GetPartitionInfo().Definitions {
+			pids[i] = def.ID
 		}
-		pids[i] = pid
+	} else {
+		for i, name := range spec.PartitionNames {
+			pid, err := tables.FindPartitionByName(meta, name.L)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			pids[i] = pid
+		}
 	}
 
 	job := &model.Job{
@@ -4303,6 +4310,7 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 		return errors.New("Extended statistics on partitioned tables are not supported now")
 	}
 	colIDs := make([]int64, 0, 2)
+	colIDSet := make(map[int64]struct{}, 2)
 	// Check whether columns exist.
 	for _, colName := range stats.Columns {
 		col := table.FindCol(tbl.VisibleCols(), colName.Name.L)
@@ -4313,6 +4321,10 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("No need to create correlation statistics on the integer primary key column"))
 			return nil
 		}
+		if _, exist := colIDSet[col.ID]; exist {
+			return errors.Errorf("Cannot create extended statistics on duplicate column names '%s'", colName.Name.L)
+		}
+		colIDSet[col.ID] = struct{}{}
 		colIDs = append(colIDs, col.ID)
 	}
 	if len(colIDs) != 2 && (stats.StatsType == ast.StatsTypeCorrelation || stats.StatsType == ast.StatsTypeDependency) {

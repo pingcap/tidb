@@ -272,7 +272,7 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 		offset := colIDs[id]
 		if m.table.IsCommonHandle {
 			for i, colID := range m.pkColIDs {
-				if colID == col.ID && !types.CommonHandleNeedRestoredData(&col.FieldType) {
+				if colID == col.ID && !types.NeedRestoredData(&col.FieldType) {
 					// Only try to decode handle when there is no corresponding column in the value.
 					// This is because the information in handle may be incomplete in some cases.
 					// For example, prefixed clustered index like 'primary key(col1(1))' only store the leftmost 1 char in the handle.

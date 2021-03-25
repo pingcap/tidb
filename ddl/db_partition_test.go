@@ -530,7 +530,19 @@ create table log_message_1 (
 		},
 		{
 			"create table t1 (a bigint unsigned) partition by list (a) (partition p0 values in (10, 20, 30, -1));",
-			ddl.ErrWrongTypeColumnValue,
+			ddl.ErrPartitionConstDomain,
+		},
+		{
+			"create table t1 (a bigint unsigned) partition by range (a) (partition p0 values less than (-1));",
+			ddl.ErrPartitionConstDomain,
+		},
+		{
+			"create table t1 (a int unsigned) partition by range (a) (partition p0 values less than (-1));",
+			ddl.ErrPartitionConstDomain,
+		},
+		{
+			"create table t1 (a tinyint(20) unsigned) partition by range (a) (partition p0 values less than (-1));",
+			ddl.ErrPartitionConstDomain,
 		},
 		{
 			"CREATE TABLE new (a TIMESTAMP NOT NULL PRIMARY KEY) PARTITION BY RANGE (a % 2) (PARTITION p VALUES LESS THAN (20080819));",
@@ -568,6 +580,9 @@ create table log_message_1 (
 	tk.MustExec(`create table t(a int) partition by range columns (a) (
     	partition p0 values less than (10),
     	partition p1 values less than (20));`)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a int) partition by range (a) (partition p0 values less than (18446744073709551615));`)
 }
 
 func (s *testIntegrationSuite1) TestDisableTablePartition(c *C) {
