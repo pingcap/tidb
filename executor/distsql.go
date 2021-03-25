@@ -745,11 +745,17 @@ type indexWorker struct {
 	PushedLimit *plannercore.PushedDownLimit
 }
 
-func (w *indexWorker) constructLookUpContent(row chunk.Row) []types.Datum {
+func (w *indexWorker) constructLookUpContent(row chunk.Row, handleIdx []int) []types.Datum {
 	lookupKey := make([]types.Datum, 0, row.Len())
-	for i, cols := range w.idxLookup.idxCols {
-		val := row.GetDatum(i, cols.RetType)
+	is := w.idxLookup.idxPlans[0].(*plannercore.PhysicalIndexScan)
+	for _, cols := range is.Index.Columns {
+		val := row.GetDatum(cols.Offset, &is.Table.Columns[cols.Offset].FieldType)
 		lookupKey = append(lookupKey, val)
+	}
+	if len(handleIdx) == 0 {
+		lookupKey = append(lookupKey, row.GetDatum(0, types.NewFieldType(mysql.TypeLonglong)))
+	} else {
+		lookupKey = append(lookupKey, row.GetDatum(handleIdx[0], types.NewFieldType(mysql.TypeLonglong)))
 	}
 	return lookupKey
 }
@@ -809,6 +815,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		case w.workCh <- task:
 			w.resultCh <- task
 		}
+		if w.idxLookup.needIndexPaging && int64(count) >= w.idxLookup.pageSize {
+			return count, nil
+		}
 		if w.idxLookup.stats != nil {
 			atomic.AddInt64(&w.idxLookup.stats.FetchHandle, int64(finishFetch.Sub(startTime)))
 			atomic.AddInt64(&w.idxLookup.stats.TaskWait, int64(time.Since(finishBuild)))
@@ -844,6 +853,14 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 				requiredRows = int(leftCnt)
 			}
 		}
+		if w.idxLookup.needIndexPaging {
+			if uint64(w.idxLookup.pageSize) <= scannedKeys+count {
+				return handles, nil, scannedKeys, nil
+			}
+			if w.idxLookup.pageSize < int64(requiredRows)+int64(scannedKeys+count) {
+				requiredRows = int(w.idxLookup.pageSize - int64(scannedKeys+count))
+			}
+		}
 		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
 		startTime := time.Now()
 		err = errors.Trace(idxResult.Next(ctx, chk))
@@ -875,7 +892,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			handles = append(handles, h)
 		}
 		if w.idxLookup.needIndexPaging && chk.NumRows() != 0 {
-			w.idxLookup.lastRowKeys = w.constructLookUpContent(chk.GetRow(chk.NumRows() - 1))
+			w.idxLookup.lastRowKeys = w.constructLookUpContent(chk.GetRow(chk.NumRows()-1), handleOffset)
 		}
 
 		if w.checkIndexValue != nil {
