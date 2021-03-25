@@ -2,9 +2,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
-	"go.uber.org/zap"
 )
 
 // IsTiFlashContained returns whether the plan contains TiFlash related executors.
