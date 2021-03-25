@@ -310,20 +310,20 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, args []types.Datum) (sqlexec.Statement, error) {
+	ID uint32, args []types.Datum) (sqlexec.Statement, error, bool, bool) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
-		return nil, err
+		return nil, err, false, false
 	}
 	execStmt.BinaryArgs = args
 	is := infoschema.GetInfoSchema(sctx)
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
-		return nil, err
+		return nil, err, false, false
 	}
 
 	stmt := &ExecStmt{
@@ -337,12 +337,13 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+			return nil, errors.Errorf("invalid CachedPrepareStmt type"), false, false
 		}
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
 		stmtCtx.OriginalSQL = stmt.Text
 		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
-	return stmt, nil
+	tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+	return stmt, nil, tiFlashPushDown, tiFlashExchangePushDown
 }

@@ -1391,8 +1391,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.sessionVars.StartTime = time.Now()
-	s.sessionVars.CoprCacheHitNum.Store(0)
-	s.sessionVars.CoprRespTimes.Store(0)
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -1448,30 +1446,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 		if tiFlashExchangePushDown {
 			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
-		}
-		coprRespTimes := s.sessionVars.CoprRespTimes.Load()
-		coprCacheHits := s.sessionVars.CoprCacheHitNum.Load()
-		if coprRespTimes > 0 {
-			ratio := float64(coprCacheHits) / float64(coprRespTimes)
-			switch {
-			case ratio >= 0.01:
-				telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
-				fallthrough
-			case ratio >= 0.1:
-				telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
-				fallthrough
-			case ratio >= 0.2:
-				telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
-				fallthrough
-			case ratio >= 0.4:
-				telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
-				fallthrough
-			case ratio >= 0.8:
-				telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
-				fallthrough
-			case ratio >= 1:
-				telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
-			}
 		}
 	}
 	return recordSet, nil
@@ -1647,9 +1621,18 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 
 func (s *session) preparedStmtExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
+	st, err, tiFlashPushDown, tiFlashExchangePushDown := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
+	}
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
 	logQuery(st.OriginText(), s.sessionVars)
@@ -1696,6 +1679,17 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
 	logQuery(stmt.GetTextToLog(), s.sessionVars)
+
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
+	}
 
 	// run ExecStmt
 	var resultSet sqlexec.RecordSet

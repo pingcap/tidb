@@ -73,7 +73,7 @@ type tiFlashUsageData struct {
 }
 
 var (
-	rotatedSubWindows = []*windowData{}
+	rotatedSubWindows []*windowData
 	subWindowsLock    = sync.RWMutex{}
 )
 
