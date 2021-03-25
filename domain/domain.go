@@ -486,7 +486,7 @@ func (do *Domain) infoSyncerKeeper() {
 			} else {
 				logutil.BgLogger().Info("server info syncer restarted")
 			}
-		case <-do.Done():
+		case <-do.ctx.Done():
 			return
 		}
 	}
@@ -515,7 +515,7 @@ func (do *Domain) topologySyncerKeeper() {
 			} else {
 				logutil.BgLogger().Info("server topology syncer restarted")
 			}
-		case <-do.Done():
+		case <-do.ctx.Done():
 			return
 		}
 	}
@@ -574,7 +574,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			}
 			do.SchemaValidator.Restart()
 			logutil.BgLogger().Info("schema syncer restarted")
-		case <-do.Done():
+		case <-do.ctx.Done():
 			return
 		}
 	}
@@ -620,7 +620,7 @@ func (do *Domain) mustReload() (exitLoop bool) {
 
 func (do *Domain) isClose() bool {
 	select {
-	case <-do.Done():
+	case <-do.ctx.Done():
 		logutil.BgLogger().Info("domain is closed")
 		return true
 	default:
@@ -921,7 +921,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		for {
 			ok := true
 			select {
-			case <-do.Done():
+			case <-do.ctx.Done():
 				return
 			case _, ok = <-watchCh:
 			case <-time.After(duration):
@@ -985,7 +985,7 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 		defer bindWorkerTicker.Stop()
 		for {
 			select {
-			case <-do.Done():
+			case <-do.ctx.Done():
 				return
 			case <-bindWorkerTicker.C:
 				err := do.bindHandle.Update(false)
@@ -1013,7 +1013,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 		owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 		for {
 			select {
-			case <-do.Done():
+			case <-do.ctx.Done():
 				owner.Cancel()
 				return
 			case <-time.After(bindinfo.Lease):
@@ -1042,7 +1042,7 @@ func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
 		owner := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
 		for {
 			select {
-			case <-do.Done():
+			case <-do.ctx.Done():
 				owner.Cancel()
 				return
 			case <-time.After(telemetry.ReportInterval):
@@ -1176,7 +1176,7 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
 			}
-		case <-do.Done():
+		case <-do.ctx.Done():
 			return
 		}
 	}
@@ -1194,7 +1194,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	}()
 	for {
 		select {
-		case <-do.Done():
+		case <-do.ctx.Done():
 			// TODO: need flush index usage
 			return
 		case <-idxUsageSyncTicker.C:
@@ -1231,7 +1231,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	}()
 	for {
 		select {
-		case <-do.Done():
+		case <-do.ctx.Done():
 			statsHandle.FlushStats()
 			owner.Cancel()
 			return
@@ -1288,7 +1288,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 			if owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
-		case <-do.Done():
+		case <-do.ctx.Done():
 			return
 		}
 	}
@@ -1547,7 +1547,7 @@ func (do *Domain) serverIDKeeper() {
 			//   So just set `do.serverIDSession = nil` to restart `serverID` session in `retrieveServerIDSession()`.
 			logutil.BgLogger().Info("serverIDSession need restart")
 			do.serverIDSession = nil
-		case <-do.Done():
+		case <-do.ctx.Done():
 			return
 		}
 	}
