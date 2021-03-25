@@ -1018,7 +1018,7 @@ func (s *testIntegrationSuite) TestMaxMinEliminate(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key)")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("create table cluster_index_t(a int, b int, c int, primary key (a, b));")
 
 	var input []string
@@ -1053,7 +1053,7 @@ func (s *testIntegrationSuite) TestIndexJoinUniqueCompositeIndex(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
 	tk.MustExec("create table t1(a int not null, c int not null)")
 	tk.MustExec("create table t2(a int not null, b int not null, c int not null, primary key(a,b))")
 	tk.MustExec("insert into t1 values(1,1)")
@@ -1792,7 +1792,7 @@ func (s *testIntegrationSuite) TestIssue16935(c *C) {
 func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c))")
 	tk.MustExec(`insert into t1 values (1,"111",1.1,11), (2,"222",2.2,12), (3,"333",3.3,13)`)
@@ -1821,7 +1821,7 @@ func (s *testIntegrationSuite) TestClusterIndexUniqueDoubleRead(c *C) {
 	tk.MustExec("create database cluster_idx_unique_double_read;")
 	tk.MustExec("use cluster_idx_unique_double_read;")
 	defer tk.MustExec("drop database cluster_idx_unique_double_read;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("create table t (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk));")
@@ -1832,7 +1832,7 @@ func (s *testIntegrationSuite) TestClusterIndexUniqueDoubleRead(c *C) {
 func (s *testIntegrationSuite) TestIndexJoinOnClusteredIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c))")
 	tk.MustExec(`insert into t values (1,"111",1.1,11), (2,"222",2.2,12), (3,"333",3.3,13)`)
@@ -1859,7 +1859,7 @@ func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t2")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("create table t(a int, b int, c int, primary key(a, b))")
 	tk.MustExec("create table t2(a int, b int, c int, d int, primary key(a,b), index idx(c))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
@@ -2005,7 +2005,7 @@ func (s *testIntegrationSerialSuite) Test19942(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("CREATE TABLE test.`t` (" +
 		"  `a` int(11) NOT NULL," +
 		"  `b` varchar(10) COLLATE utf8_general_ci NOT NULL," +

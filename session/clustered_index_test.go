@@ -16,6 +16,7 @@ package session_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
@@ -31,7 +32,7 @@ type testClusteredSerialSuite struct{ testClusteredSuiteBase }
 
 func (s *testClusteredSuiteBase) newTK(c *C) *testkit.TestKit {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	return tk
 }
 
@@ -435,11 +436,11 @@ func (s *testClusteredSuite) TestClusteredIndexSyntax(c *C) {
 	assertPkType("create table t (a int, b int, primary key(a) /*T![clustered_index] nonclustered */);", nonClustered)
 
 	// Test for clustered index.
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a));", nonClustered)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", clustered)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a));", clusteredDefault)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] nonclustered */);", nonClustered)
@@ -488,7 +489,7 @@ func (s *testClusteredSerialSuite) TestClusteredIndexDecodeRestoredDataV5(c *C) 
 	defer collate.SetNewCollationEnabledForTest(false)
 	collate.SetNewCollationEnabledForTest(true)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id1 int, id2 varchar(10), a1 int, primary key(id1, id2) clustered) collate utf8mb4_general_ci;")
 	tk.MustExec("insert into t values (1, 'asd', 1), (1, 'dsa', 1);")
@@ -510,7 +511,7 @@ func (s *testClusteredSerialSuite) TestPrefixedClusteredIndexUniqueKeyWithNewCol
 	collate.SetNewCollationEnabledForTest(true)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("create table t (a text collate utf8mb4_general_ci not null, b int(11) not null, " +
 		"primary key (a(10), b) clustered, key idx(a(2)) ) default charset=utf8mb4 collate=utf8mb4_bin;")
 	tk.MustExec("insert into t values ('aaa', 2);")

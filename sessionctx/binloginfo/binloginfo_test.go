@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -199,7 +200,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	c.Assert(gotRows, DeepEquals, expected)
 
 	// Test table primary key is not integer.
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
 	tk.MustExec("create table local_binlog2 (name varchar(64) primary key, age int)")
 	tk.MustExec("insert local_binlog2 values ('abc', 16), ('def', 18)")
 	tk.MustExec("delete from local_binlog2 where name = 'def'")

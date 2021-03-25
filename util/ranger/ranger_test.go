@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -1219,7 +1220,7 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = false
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
 	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")
@@ -1339,7 +1340,7 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF1(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = true
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1373,7 +1374,7 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = true
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b,c));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")

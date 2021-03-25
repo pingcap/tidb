@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -512,7 +513,7 @@ func (s *testStatsSuite) TestPrimaryKeySelectivity(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = false
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	var input, output [][]string
 	s.testData.GetTestCases(c, &input, &output)
@@ -672,7 +673,7 @@ func (s *testStatsSuite) TestUniqCompEqualEst(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = true
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, primary key(a, b))")
 	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),(1,8),(1,9),(1,10)")

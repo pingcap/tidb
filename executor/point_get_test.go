@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
@@ -544,7 +545,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
 	tk.MustExec("create table t (a varchar(64) primary key, b int)")
 	tk.MustExec("insert t values ('a', 1), ('b', 2), ('c', 3)")
 	tk.MustExec("begin pessimistic")
@@ -567,7 +568,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("drop table if exists pgt")
 	tk.MustExec("create table pgt (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk))")
 	tk.MustExec("insert pgt values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33)")
@@ -590,7 +591,7 @@ func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
 func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec(`create table t1 (a int, b decimal(10,0), c int, primary key(a,b))`)
 	tk.MustExec(`create table t2 (a varchar(20), b int, primary key(a), unique key(b))`)
@@ -790,7 +791,7 @@ func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 
 		errCh <- tk1.ExecToErr("use test")
 		errCh <- tk2.ExecToErr("use test")
-		tk1.Se.GetSessionVars().EnableClusteredIndex = false
+		tk1.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
 
 		errCh <- tk1.ExecToErr(fmt.Sprintf("drop table if exists %s", tableName))
 		errCh <- tk1.ExecToErr(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))

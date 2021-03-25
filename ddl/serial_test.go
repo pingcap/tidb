@@ -117,7 +117,7 @@ func (s *testIntegrationSuite9) TestPrimaryKey(c *C) {
 	tk.MustExec("drop database if exists test_primary_key;")
 	tk.MustExec("create database test_primary_key;")
 	tk.MustExec("use test_primary_key;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
 
 	// Test add/drop primary key on a plain table.
 	tk.MustExec("drop table if exists t;")
@@ -325,7 +325,7 @@ func (s *testIntegrationSuite9) TestMultiRegionGetTableEndCommonHandle(c *C) {
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
 	tk.MustExec("use test_get_endhandle")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 
 	tk.MustExec("create table t(a varchar(20), b int, c float, d bigint, primary key (a, b, c))")
 	var builder strings.Builder
@@ -369,7 +369,7 @@ func (s *testIntegrationSuite9) TestGetTableEndCommonHandle(c *C) {
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
 	tk.MustExec("use test_get_endhandle")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 
 	tk.MustExec("create table t(a varchar(15), b bigint, c int, primary key (a, b))")
 	tk.MustExec("create table t1(a varchar(15), b bigint, c int, primary key (a(2), b))")
@@ -1406,7 +1406,7 @@ func (s *testIntegrationSuite9) TestInvisibleIndex(c *C) {
 
 func (s *testIntegrationSuite9) TestCreateClusteredIndex(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
 	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
 	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b))")
@@ -1447,7 +1447,7 @@ func (s *testIntegrationSuite9) TestCreateClusteredIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
 	tk.MustExec("CREATE TABLE t7 (a varchar(255) primary key, b int)")
 	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t7"))

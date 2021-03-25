@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -911,7 +912,7 @@ func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
 	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = false
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
 	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
 	err = s.loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom)
 	c.Assert(err, IsNil)
