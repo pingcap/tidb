@@ -631,13 +631,13 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	req.Reset()
 start:
 	if !e.workerStarted {
 		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
 			return err
 		}
 	}
-	req.Reset()
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
@@ -876,6 +876,9 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 				}
 				if (count + scannedKeys) > (w.PushedLimit.Offset + w.PushedLimit.Count) {
 					// Skip the handles after Offset+Count.
+					if w.idxLookup.needIndexPaging && i != 0 {
+						w.idxLookup.lastRowKeys = w.constructLookUpContent(chk.GetRow(i-1), handleOffset)
+					}
 					return handles, nil, scannedKeys, nil
 				}
 			}
