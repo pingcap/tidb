@@ -142,7 +142,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Se, stmtID, []types.Datum{types.NewDatum(1)})
+		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Se, stmtID, []types.Datum{types.NewDatum(1)})
 		c.Assert(err, IsNil)
 		c.Assert(stmt.OriginText(), Equals, query)
 
