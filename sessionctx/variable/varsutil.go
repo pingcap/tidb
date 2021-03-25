@@ -339,6 +339,25 @@ func TiDBOptMultiStmt(opt string) int {
 	return WarnInt
 }
 
+type ClusteredIndexMode int
+
+const (
+	IntOnlyClustered ClusteredIndexMode = 0
+	OnClustered      ClusteredIndexMode = 1
+	OffClustered     ClusteredIndexMode = 2
+)
+
+func TiDBOptEnableClustered(opt string) ClusteredIndexMode {
+	switch {
+	case strings.EqualFold(opt, IntOnly):
+		return IntOnlyClustered
+	case strings.EqualFold(opt, "ON") || opt == "1":
+		return OnClustered
+	default:
+		return OffClustered
+	}
+}
+
 func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil || val <= 0 {
