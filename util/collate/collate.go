@@ -211,6 +211,10 @@ func GetSupportedCollations() []*charset.Collation {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		newSupportedCollations := make([]*charset.Collation, 0, len(newCollatorMap))
 		for name := range newCollatorMap {
+			// utf8mb4_zh_pinyin_tidb_as_cs is under developing, should not be shown to user.
+			if name == "utf8mb4_zh_pinyin_tidb_as_cs" {
+				continue
+			}
 			if coll, err := charset.GetCollationByName(name); err != nil {
 				// Should never happens.
 				terror.Log(err)

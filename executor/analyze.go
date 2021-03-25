@@ -321,7 +321,6 @@ type AnalyzeIndexExec struct {
 	idxInfo        *model.IndexInfo
 	isCommonHandle bool
 	concurrency    int
-	priority       int
 	analyzePB      *tipb.AnalyzeReq
 	result         distsql.SelectResult
 	countNullRes   distsql.SelectResult
@@ -573,7 +572,6 @@ type AnalyzeColumnsExec struct {
 	colsInfo      []*model.ColumnInfo
 	handleCols    core.HandleCols
 	concurrency   int
-	priority      int
 	analyzePB     *tipb.AnalyzeReq
 	commonHandle  *model.IndexInfo
 	resultHandler *tableResultHandler

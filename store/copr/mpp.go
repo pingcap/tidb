@@ -305,7 +305,9 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
 
 	if err != nil {
-		m.sendError(err)
+		logutil.BgLogger().Error("establish mpp connection meet error", zap.String("error", err.Error()))
+		// we return timeout to trigger tikv's fallback
+		m.sendError(tikv.ErrTiFlashServerTimeout)
 		return
 	}
 

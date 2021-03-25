@@ -46,6 +46,7 @@ import (
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
 
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
+// nolint:structcheck
 type baseHashAggWorker struct {
 	ctx          sessionctx.Context
 	finishCh     <-chan struct{}
