@@ -1529,7 +1529,7 @@ func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption, isS
 		case variable.OnClustered:
 			return true
 		case variable.IntOnlyClustered:
-			return isSingleIntPK
+			return !config.GetGlobalConfig().AlterPrimaryKey && isSingleIntPK
 		}
 	}
 	return opt.PrimaryKeyTp == model.PrimaryKeyTypeClustered
