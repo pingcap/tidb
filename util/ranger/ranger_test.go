@@ -1529,7 +1529,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 			exprStr:     `a not in (-1, 1, 2)`,
 			accessConds: "[not(in(test.t.a, -1, 1, 2))]",
 			filterConds: "[]",
-			resultStr:   `[(NULL,0) [0,2001) (2002,+inf]]`,
+			resultStr:   `[(NULL,2001) (2002,+inf]]`,
 		},
 		{
 			indexPos:    0,
@@ -1557,7 +1557,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 			exprStr:     `a not in (1, 2, 15698)`,
 			accessConds: "[not(in(test.t.a, 1, 2, 15698))]",
 			filterConds: "[]",
-			resultStr:   `[(NULL,2001) (2002,2155] (2155,+inf]]`,
+			resultStr:   `[(NULL,2001) (2002,+inf]]`,
 		},
 		{
 			indexPos:    0,
@@ -1585,7 +1585,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 			exprStr:     `a != 2156`,
 			accessConds: "[ne(test.t.a, 2156)]",
 			filterConds: "[]",
-			resultStr:   `[[-inf,2155] (2155,+inf]]`,
+			resultStr:   `[[-inf,+inf]]`,
 		},
 		{
 			exprStr:     "a < 99 or a > 01",
