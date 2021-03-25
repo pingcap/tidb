@@ -264,11 +264,11 @@
     "Name": "TestCorrelatedEstimation",
     "Cases": [
       [
-        "Projection 10.00 root  Column#14",
-        "└─Apply 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#13)",
+        "Projection 10.00 root  Column#22",
+        "└─Apply 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)",
         "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
         "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
-        "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#13",
+        "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#21",
         "    └─HashJoin 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
         "      ├─TableReader(Build) 1.00 root  data:Selection",
         "      │ └─Selection 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
@@ -278,12 +278,12 @@
         "          └─TableFullScan 10.00 cop[tikv] table:s keep order:false"
       ],
       [
-        "Projection 10.00 root  Column#9",
+        "Projection 10.00 root  Column#13",
         "└─Apply 10.00 root  CARTESIAN left outer join",
         "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
         "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
         "  └─MaxOneRow(Probe) 1.00 root  ",
-        "    └─Projection 0.10 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#9",
+        "    └─Projection 0.10 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#13",
         "      └─IndexReader 0.10 root  index:Selection",
         "        └─Selection 0.10 cop[tikv]  eq(test.t.a, test.t.a)",
         "          └─IndexRangeScan 1.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"

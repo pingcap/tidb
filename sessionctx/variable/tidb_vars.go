@@ -529,6 +529,9 @@ const (
 	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
+
+	// TiDBIntPrimaryKeyDefaultAsClustered indicates whether create int primary key as clustered as 4.0 behavior.
+	TiDBIntPrimaryKeyDefaultAsClustered = "tidb_int_primary_key_default_as_clustered"
 )
 
 // TiDB vars that have only global scope
@@ -609,7 +612,7 @@ const (
 	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
-	DefTiDBAllowMPPExecution           = false
+	DefTiDBAllowMPPExecution           = true
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -707,6 +710,11 @@ var FeatureSwitchVariables = []string{
 	TiDBGuaranteeLinearizability,
 	TiDBEnableClusteredIndex,
 	TiDBTrackAggregateMemoryUsage,
+	TiDBAnalyzeVersion,
+	TiDBPartitionPruneMode,
+	TiDBIntPrimaryKeyDefaultAsClustered,
+	TiDBEnableExtendedStats,
+	TiDBEnableIndexMergeJoin,
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.

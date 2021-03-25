@@ -19,7 +19,8 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
@@ -71,16 +72,16 @@ func (s *testScanSuite) beginTxn(c *C) *KVTxn {
 }
 
 func (s *testScanSuite) TestScan(c *C) {
-	check := func(c *C, scan kv.Iterator, rowNum int, keyOnly bool) {
+	check := func(c *C, scan tidbkv.Iterator, rowNum int, keyOnly bool) {
 		for i := 0; i < rowNum; i++ {
 			k := scan.Key()
-			expectedKey := tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(i))
+			expectedKey := tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(i))
 			if ok := bytes.Equal([]byte(k), []byte(expectedKey)); !ok {
 				logutil.BgLogger().Error("bytes equal check fail",
 					zap.Int("i", i),
 					zap.Int("rowNum", rowNum),
 					zap.Stringer("obtained key", k),
-					zap.Stringer("obtained val", kv.Key(scan.Value())),
+					zap.Stringer("obtained val", tidbkv.Key(scan.Value())),
 					zap.Stringer("expected", expectedKey),
 					zap.Bool("keyOnly", keyOnly))
 			}
@@ -102,24 +103,24 @@ func (s *testScanSuite) TestScan(c *C) {
 	for _, rowNum := range s.rowNums {
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
-			err := txn.Set(tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(i)), genValueBytes(i))
+			err := txn.Set(tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(i)), genValueBytes(i))
 			c.Assert(err, IsNil)
 		}
 		err := txn.Commit(s.ctx)
 		c.Assert(err, IsNil)
 		mockTableID := int64(999)
 		if rowNum > 123 {
-			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(123))}, false, &mockTableID)
+			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(123))}, false, &mockTableID)
 			c.Assert(err, IsNil)
 		}
 
 		if rowNum > 456 {
-			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(456))}, false, &mockTableID)
+			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(456))}, false, &mockTableID)
 			c.Assert(err, IsNil)
 		}
 
 		txn2 := s.beginTxn(c)
-		val, err := txn2.Get(context.TODO(), tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(0)))
+		val, err := txn2.Get(context.TODO(), tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(0)))
 		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, genValueBytes(0))
 		// Test scan without upperBound
@@ -128,7 +129,7 @@ func (s *testScanSuite) TestScan(c *C) {
 		check(c, scan, rowNum, false)
 		// Test scan with upperBound
 		upperBound := rowNum / 2
-		scan, err = txn2.Iter(s.recordPrefix, tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(upperBound)))
+		scan, err = txn2.Iter(s.recordPrefix, tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(upperBound)))
 		c.Assert(err, IsNil)
 		check(c, scan, upperBound, false)
 
@@ -139,7 +140,7 @@ func (s *testScanSuite) TestScan(c *C) {
 		c.Assert(err, IsNil)
 		check(c, scan, rowNum, true)
 		// test scan with upper bound
-		scan, err = txn3.Iter(s.recordPrefix, tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(upperBound)))
+		scan, err = txn3.Iter(s.recordPrefix, tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(upperBound)))
 		c.Assert(err, IsNil)
 		check(c, scan, upperBound, true)
 
@@ -149,7 +150,7 @@ func (s *testScanSuite) TestScan(c *C) {
 		c.Assert(err, IsNil)
 		check(c, scan, rowNum, true)
 		// test scan with upper bound
-		scan, err = txn3.Iter(s.recordPrefix, tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(upperBound)))
+		scan, err = txn3.Iter(s.recordPrefix, tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(upperBound)))
 		c.Assert(err, IsNil)
 		check(c, scan, upperBound, true)
 	}

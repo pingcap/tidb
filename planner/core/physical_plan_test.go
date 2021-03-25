@@ -933,7 +933,7 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		p, _, err := planner.Optimize(ctx, tk.Se, stmt, is)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		planString := core.ToString(p)
 		s.testData.OnRecord(func() {
 			output[i].Best = planString

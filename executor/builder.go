@@ -2645,6 +2645,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 	if v.StoreType == kv.TiFlash {
+		sctx.IsTiFlash.Store(true)
 		partsExecutor := make([]Executor, 0, len(partitions))
 		for _, part := range partitions {
 			exec, err := buildNoRangeTableReader(b, v)
@@ -3895,6 +3896,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, plan.IndexInfo, value)
 				if err != nil {
+					if kv.ErrNotExist.Equal(err) {
+						continue
+					}
 					b.err = err
 					return nil
 				}
