@@ -392,14 +392,23 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 	sc := l.ctx.GetSessionVars().StmtCtx
 	helper := tables.NewListPartitionLocationHelper()
 	for _, r := range ranges {
+		if len(r.LowVal) != 1 || len(r.HighVal) != 1 {
+			return nil, true, nil
+		}
+		var locations []tables.ListPartitionLocation
 		if r.IsPointNullable(sc) {
-			if len(r.HighVal) != 1 {
-				return nil, true, nil
-			}
 			location, err := colPrune.LocatePartition(sc, r.HighVal[0])
 			if err != nil {
 				return nil, false, err
 			}
+			locations = []tables.ListPartitionLocation{location}
+		} else {
+			locations, err = colPrune.LocateRanges(sc, r)
+			if err != nil {
+				return nil, false, nil
+			}
+		}
+		for _, location := range locations {
 			if len(l.partitionNames) > 0 {
 				for _, pg := range location {
 					if l.findByName(l.partitionNames, l.pi.Definitions[pg.PartIdx].Name.L) {
@@ -408,28 +417,6 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 				}
 			} else {
 				helper.Union(location)
-			}
-		} else {
-			if r.LowVal[0].Kind() == types.KindMinNotNull {
-				r.LowVal[0] = types.GetMinValue(colPrune.ExprCol.GetType())
-			}
-			if r.HighVal[0].Kind() == types.KindMaxValue {
-				r.HighVal[0] = types.GetMaxValue(colPrune.ExprCol.GetType())
-			}
-			locations, err := colPrune.LocateRanges(sc, r)
-			if err != nil {
-				return nil, false, nil
-			}
-			for _, location := range locations {
-				if len(l.partitionNames) > 0 {
-					for _, pg := range location {
-						if l.findByName(l.partitionNames, l.pi.Definitions[pg.PartIdx].Name.L) {
-							helper.UnionPartitionGroup(pg)
-						}
-					}
-				} else {
-					helper.Union(location)
-				}
 			}
 		}
 	}

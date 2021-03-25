@@ -818,6 +818,12 @@ func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v 
 
 // LocateRanges locates partition ranges by the column range
 func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ranger.Range) ([]ListPartitionLocation, error) {
+	if r.LowVal[0].Kind() == types.KindMinNotNull {
+		r.LowVal[0] = types.GetMinValue(lp.ExprCol.GetType())
+	}
+	if r.HighVal[0].Kind() == types.KindMaxValue {
+		r.HighVal[0] = types.GetMaxValue(lp.ExprCol.GetType())
+	}
 	lowKey, err := lp.genKey(sc, r.LowVal[0])
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -826,12 +832,14 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	if r.LowExclude {
 		lowKey = kv.Key(lowKey).PrefixNext()
 	}
 	if !r.HighExclude {
 		highKey = kv.Key(highKey).PrefixNext()
 	}
+
 	locations := make([]ListPartitionLocation, 0, lp.sorted.Len())
 	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(lowKey)), newBtreeListColumnSearchItem(string(highKey)), func(item btree.Item) bool {
 		locations = append(locations, item.(*btreeListColumnItem).location)

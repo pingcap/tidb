@@ -254,7 +254,6 @@
         "SQL": "select * from t1 where id = 1 and a=1",
         "Pruner": "t1: p0"
       },
-      // For ranges
       {
         "SQL": "select * from t1 partition(p1) where a = 1 or b = 2",
         "Pruner": "t1: dual"
@@ -311,6 +310,7 @@
         "SQL": "select * from t1 where a in (1,2,3) union select * from t1 where b in (6,7,8) order by a",
         "Pruner": "t1: p0; t1: p1"
       },
+      // For ranges
       {
         "SQL": "select * from t1 where a < 1 or b < 2",
         "Pruner": "t1: p0"
