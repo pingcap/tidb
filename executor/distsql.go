@@ -394,10 +394,15 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		if !e.hasAddLimit {
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.pageSize)))
 			e.hasAddLimit = true
+			e.PushedLimit = &plannercore.PushedDownLimit{
+				Offset: 0,
+				Count:  uint64(e.pageSize),
+			}
 		} else {
 			e.pageSize = e.pageSize * 2
 			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.pageSize)))
+			e.PushedLimit.Count = uint64(e.pageSize)
 		}
 	}
 	err = e.open(ctx)
@@ -815,9 +820,6 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		case w.workCh <- task:
 			w.resultCh <- task
 		}
-		if w.idxLookup.needIndexPaging && int64(count) >= w.idxLookup.pageSize {
-			return count, nil
-		}
 		if w.idxLookup.stats != nil {
 			atomic.AddInt64(&w.idxLookup.stats.FetchHandle, int64(finishFetch.Sub(startTime)))
 			atomic.AddInt64(&w.idxLookup.stats.TaskWait, int64(time.Since(finishBuild)))
@@ -851,14 +853,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			leftCnt := w.PushedLimit.Offset + w.PushedLimit.Count - scannedKeys - count
 			if uint64(requiredRows) > leftCnt {
 				requiredRows = int(leftCnt)
-			}
-		}
-		if w.idxLookup.needIndexPaging {
-			if uint64(w.idxLookup.pageSize) <= scannedKeys+count {
-				return handles, nil, scannedKeys, nil
-			}
-			if w.idxLookup.pageSize < int64(requiredRows)+int64(scannedKeys+count) {
-				requiredRows = int(w.idxLookup.pageSize - int64(scannedKeys+count))
 			}
 		}
 		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
