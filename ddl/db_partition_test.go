@@ -3338,7 +3338,7 @@ func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
 
 	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (0x20))")
 	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	c.Assert(ddl.ErrRangeNotIncreasing.Equal(err), IsTrue)
 
 	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (10))")
 	c.Assert(err, NotNil)
