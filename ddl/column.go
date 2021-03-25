@@ -825,7 +825,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 	}
 
-	if job.ReorgMeta.SQLMode.HasStrictMode() && !needChangeColumnData(oldCol, jobParam.newCol) {
+	if (job.ReorgMeta != nil && job.ReorgMeta.SQLMode.HasStrictMode()) || !needChangeColumnData(oldCol, jobParam.newCol) {
 		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
 	}
 
@@ -1686,7 +1686,10 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	}
 	defer w.sessPool.put(ctx)
 
-	skipCheck := !job.ReorgMeta.SQLMode.HasStrictMode()
+	skipCheck := false
+	if job.ReorgMeta != nil && !job.ReorgMeta.SQLMode.HasStrictMode() {
+		skipCheck = true
+	}
 	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
 		if val.(bool) {
 			skipCheck = true
