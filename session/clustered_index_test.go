@@ -15,6 +15,7 @@ package session_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
@@ -306,6 +307,86 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.MustQuery(`select /*+ INL_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;`).Check(testkit.Rows("1 nifty elion 1 funny shaw"))
 	tk.MustQuery(`select /*+ INL_HASH_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;`).Check(testkit.Rows("1 nifty elion 1 funny shaw"))
 	tk.MustQuery(`select /*+ INL_MERGE_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;`).Check(testkit.Rows("1 nifty elion 1 funny shaw"))
+}
+
+func (s *testClusteredSerialSuite) TestCreateClusteredTable(c *C) {
+	tk := s.newTK(c)
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
+	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7, t8")
+	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("create table t2(id varchar(10) primary key, v int)")
+	tk.MustExec("create table t3(id int primary key clustered, v int)")
+	tk.MustExec("create table t4(id varchar(10) primary key clustered, v int)")
+	tk.MustExec("create table t5(id int primary key nonclustered, v int)")
+	tk.MustExec("create table t6(id varchar(10) primary key nonclustered, v int)")
+	tk.MustExec("create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */)")
+	tk.MustExec("create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */)")
+	tk.MustQuery("show index from t1").Check(testkit.Rows("t1 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t2").Check(testkit.Rows("t2 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t3").Check(testkit.Rows("t3 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t4").Check(testkit.Rows("t4 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t5").Check(testkit.Rows("t5 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t6").Check(testkit.Rows("t6 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t7").Check(testkit.Rows("t7 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t8").Check(testkit.Rows("t8 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OffClustered
+	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7, t8")
+	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("create table t2(id varchar(10) primary key, v int)")
+	tk.MustExec("create table t3(id int primary key clustered, v int)")
+	tk.MustExec("create table t4(id varchar(10) primary key clustered, v int)")
+	tk.MustExec("create table t5(id int primary key nonclustered, v int)")
+	tk.MustExec("create table t6(id varchar(10) primary key nonclustered, v int)")
+	tk.MustExec("create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */)")
+	tk.MustExec("create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */)")
+	tk.MustQuery("show index from t1").Check(testkit.Rows("t1 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t2").Check(testkit.Rows("t2 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t3").Check(testkit.Rows("t3 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t4").Check(testkit.Rows("t4 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t5").Check(testkit.Rows("t5 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t6").Check(testkit.Rows("t6 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t7").Check(testkit.Rows("t7 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t8").Check(testkit.Rows("t8 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
+	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7, t8")
+	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("create table t2(id varchar(10) primary key, v int)")
+	tk.MustExec("create table t3(id int primary key clustered, v int)")
+	tk.MustExec("create table t4(id varchar(10) primary key clustered, v int)")
+	tk.MustExec("create table t5(id int primary key nonclustered, v int)")
+	tk.MustExec("create table t6(id varchar(10) primary key nonclustered, v int)")
+	tk.MustExec("create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */)")
+	tk.MustExec("create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */)")
+	tk.MustQuery("show index from t1").Check(testkit.Rows("t1 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t2").Check(testkit.Rows("t2 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t3").Check(testkit.Rows("t3 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t4").Check(testkit.Rows("t4 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t5").Check(testkit.Rows("t5 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t6").Check(testkit.Rows("t6 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t7").Check(testkit.Rows("t7 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t8").Check(testkit.Rows("t8 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7, t8")
+	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("create table t2(id varchar(10) primary key, v int)")
+	tk.MustExec("create table t3(id int primary key clustered, v int)")
+	tk.MustExec("create table t4(id varchar(10) primary key clustered, v int)")
+	tk.MustExec("create table t5(id int primary key nonclustered, v int)")
+	tk.MustExec("create table t6(id varchar(10) primary key nonclustered, v int)")
+	tk.MustExec("create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */)")
+	tk.MustExec("create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */)")
+	tk.MustQuery("show index from t1").Check(testkit.Rows("t1 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t2").Check(testkit.Rows("t2 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t3").Check(testkit.Rows("t3 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t4").Check(testkit.Rows("t4 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t5").Check(testkit.Rows("t5 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t6").Check(testkit.Rows("t6 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
+	tk.MustQuery("show index from t7").Check(testkit.Rows("t7 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
+	tk.MustQuery("show index from t8").Check(testkit.Rows("t8 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
 }
 
 // Test for union scan in prefixed clustered index table.
