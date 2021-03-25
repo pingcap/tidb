@@ -984,7 +984,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 			return err
 		}
 	}
-	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
+	variable.CheckDeprecationSetSystemVar(s.sessionVars, name, sVal)
 	stmt, err := s.ParseWithParams(context.TODO(), "REPLACE %n.%n VALUES (%?, %?)", mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	if err != nil {
 		return err

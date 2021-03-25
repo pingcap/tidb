@@ -239,7 +239,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if err != nil {
 		return err
 	}
-	CheckDeprecationSetSystemVar(vars, name)
+	CheckDeprecationSetSystemVar(vars, name, sVal)
 	return vars.SetSystemVar(name, sVal)
 }
 
@@ -254,7 +254,7 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	if err != nil {
 		return err
 	}
-	CheckDeprecationSetSystemVar(vars, name)
+	CheckDeprecationSetSystemVar(vars, name, sVal)
 	return vars.SetStmtVar(name, sVal)
 }
 
@@ -285,7 +285,7 @@ const (
 )
 
 // CheckDeprecationSetSystemVar checks if the system variable is deprecated.
-func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
+func CheckDeprecationSetSystemVar(s *SessionVars, name string, val string) {
 	switch name {
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
 		TiDBHashJoinConcurrency, TiDBHashAggPartialConcurrency, TiDBHashAggFinalConcurrency,
@@ -295,6 +295,10 @@ func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
 		TIDBMemQuotaSort, TIDBMemQuotaTopn,
 		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin:
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
+	case TiDBEnableClusteredIndex:
+		if strings.EqualFold(val, IntOnly) {
+			s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(val, fmt.Sprintf("'%s' or '%s'", On, Off)))
+		}
 	}
 }
 
