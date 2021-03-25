@@ -155,3 +155,97 @@ func testTruncatePartition(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.D
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
+
+func testAddPartition(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+	ids, err := d.genGlobalIDs(1)
+	c.Assert(err, IsNil)
+	partitionInfo := &model.PartitionInfo{
+		Type:   model.PartitionTypeRange,
+		Expr:   tblInfo.Columns[0].Name.L,
+		Enable: true,
+		Definitions: []model.PartitionDefinition{
+			{
+				ID:       ids[0],
+				Name:     model.NewCIStr("p2"),
+				LessThan: []string{"300"},
+			},
+		},
+	}
+	addPartitionJob := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAddTablePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partitionInfo},
+	}
+	err = d.doDDLJob(ctx, addPartitionJob)
+	// Since there is no real tiFlash store (less then replica count), adding partition will error here.
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]the tiflash replica count: 1 should be less than the total tiflash server count: 0")
+}
+
+func (s *testPartitionSuite) TestAddPartitionReplicaBiggerThanTiFlashStores(c *C) {
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
+	dbInfo := testSchemaInfo(c, d, "test_partition2")
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
+	// Build a tableInfo with replica count = 1 while there is no real tiFlash store.
+	tblInfo := buildTableInfoWithReplicaInfo(c, d)
+	ctx := testNewContext(d)
+	testCreateTable(c, ctx, d, dbInfo, tblInfo)
+
+	testAddPartition(c, ctx, d, dbInfo, tblInfo)
+}
+
+func buildTableInfoWithReplicaInfo(c *C, d *ddl) *model.TableInfo {
+	tbl := &model.TableInfo{
+		Name: model.NewCIStr("t1"),
+	}
+	col := &model.ColumnInfo{
+		Name:      model.NewCIStr("c"),
+		Offset:    0,
+		State:     model.StatePublic,
+		FieldType: *types.NewFieldType(mysql.TypeLong),
+		ID:        allocateColumnID(tbl),
+	}
+	genIDs, err := d.genGlobalIDs(1)
+	c.Assert(err, IsNil)
+	tbl.ID = genIDs[0]
+	tbl.Columns = []*model.ColumnInfo{col}
+	tbl.Charset = "utf8"
+	tbl.Collate = "utf8_bin"
+	tbl.TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	partIDs, err := d.genGlobalIDs(2)
+	c.Assert(err, IsNil)
+	partInfo := &model.PartitionInfo{
+		Type:   model.PartitionTypeRange,
+		Expr:   tbl.Columns[0].Name.L,
+		Enable: true,
+		Definitions: []model.PartitionDefinition{
+			{
+				ID:       partIDs[0],
+				Name:     model.NewCIStr("p0"),
+				LessThan: []string{"100"},
+			},
+			{
+				ID:       partIDs[1],
+				Name:     model.NewCIStr("p1"),
+				LessThan: []string{"200"},
+			},
+		},
+	}
+	tbl.Partition = partInfo
+	return tbl
+}
