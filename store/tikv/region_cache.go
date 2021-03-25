@@ -479,10 +479,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		if atomic.LoadInt32(&store.needForwarding) == 0 {
 			regionStore.unsetProxyStoreIfNeeded(cachedRegion)
 		} else {
-			proxyStore, proxyAccessIdx, proxyStoreIdx, err = c.getProxyStore(cachedRegion, store, regionStore, accessIdx)
-			if err != nil {
-				return nil, err
-			}
+			proxyStore, proxyAccessIdx, proxyStoreIdx = c.getProxyStore(cachedRegion, store, regionStore, accessIdx)
 			if proxyStore != nil {
 				proxyAddr, err = c.getStoreAddr(bo, cachedRegion, proxyStore, proxyStoreIdx)
 				if err != nil {
@@ -1232,14 +1229,14 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 	}
 }
 
-func (c *RegionCache) getProxyStore(region *Region, store *Store, rs *RegionStore, workStoreIdx AccessIndex) (proxyStore *Store, proxyAccessIdx AccessIndex, proxyStoreIdx int, err error) {
+func (c *RegionCache) getProxyStore(region *Region, store *Store, rs *RegionStore, workStoreIdx AccessIndex) (proxyStore *Store, proxyAccessIdx AccessIndex, proxyStoreIdx int) {
 	if !c.enableForwarding || store.storeType != TiKV || atomic.LoadInt32(&store.needForwarding) == 0 {
 		return
 	}
 
 	if rs.proxyTiKVIdx >= 0 {
 		storeIdx, proxyStore := rs.accessStore(TiKVOnly, rs.proxyTiKVIdx)
-		return proxyStore, rs.proxyTiKVIdx, storeIdx, err
+		return proxyStore, rs.proxyTiKVIdx, storeIdx
 	}
 
 	tikvNum := rs.accessStoreNum(TiKVOnly)
@@ -1268,10 +1265,10 @@ func (c *RegionCache) getProxyStore(region *Region, store *Store, rs *RegionStor
 		}
 
 		rs.setProxyStoreIdx(region, AccessIndex(index))
-		return store, AccessIndex(index), storeIdx, nil
+		return store, AccessIndex(index), storeIdx
 	}
 
-	return nil, 0, 0, errors.New("the region leader is disconnected and no store is available ")
+	return nil, 0, 0
 }
 
 func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx int) (addr string) {
