@@ -178,7 +178,7 @@ func (s *testDBSuite7) TestAddIndexWithPK(c *C) {
 	tk.MustExec("use " + s.schemaName)
 
 	testAddIndexWithPK(tk)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	testAddIndexWithPK(tk)
 }
 
@@ -1056,7 +1056,7 @@ func (s *testDBSuite6) TestAddMultiColumnsIndexClusterIndex(c *C) {
 	tk.MustExec("create database test_add_multi_col_index_clustered;")
 	tk.MustExec("use test_add_multi_col_index_clustered;")
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("create table t (a int, b varchar(10), c int, primary key (a, b));")
 	tk.MustExec("insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);")
 	tk.MustExec("create index idx on t (a, c);")
@@ -1156,7 +1156,7 @@ func testAddIndex(c *C, store kv.Storage, lease time.Duration, tp testAddIndexTy
 	case testPartition:
 		tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	case testClusteredIndex:
-		tk.Se.GetSessionVars().EnableClusteredIndex = true
+		tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	}
 	tk.MustExec("drop table if exists test_add_index")
 	tk.MustExec(createTableSQL)

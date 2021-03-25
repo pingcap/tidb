@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
@@ -335,7 +336,7 @@ type testSuite11 struct {
 func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
@@ -387,7 +388,7 @@ func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
@@ -422,7 +423,7 @@ func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 func (s *testSuite11) TestReplaceClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 
 	tk.MustExec(`drop table if exists rt1pk`)
 	tk.MustExec(`create table rt1pk(id varchar(200) primary key, v int)`)
@@ -448,11 +449,12 @@ func (s *testSuite11) TestReplaceClusterIndex(c *C) {
 
 func (s *testSuite11) TestPessimisticUpdatePKLazyCheck(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	s.testUpdatePKLazyCheck(c, tk, true)
-	s.testUpdatePKLazyCheck(c, tk, false)
+	s.testUpdatePKLazyCheck(c, tk, variable.OnClustered)
+	s.testUpdatePKLazyCheck(c, tk, variable.OffClustered)
+	s.testUpdatePKLazyCheck(c, tk, variable.IntOnlyClustered)
 }
 
-func (s *testSuite11) testUpdatePKLazyCheck(c *C, tk *testkit.TestKit, clusteredIndex bool) {
+func (s *testSuite11) testUpdatePKLazyCheck(c *C, tk *testkit.TestKit, clusteredIndex variable.ClusteredIndexMode) {
 	tk.Se.GetSessionVars().EnableClusteredIndex = clusteredIndex
 	tk.MustExec(`drop table if exists upk`)
 	tk.MustExec(`create table upk (a int, b int, c int, primary key (a, b))`)

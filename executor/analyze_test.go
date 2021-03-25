@@ -129,7 +129,7 @@ func (s *testSuite1) TestClusterIndexAnalyze(c *C) {
 	tk.MustExec("drop database if exists test_cluster_index_analyze;")
 	tk.MustExec("create database test_cluster_index_analyze;")
 	tk.MustExec("use test_cluster_index_analyze;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	for i := 0; i < 100; i++ {
@@ -832,7 +832,7 @@ func (s *testSuite1) TestNormalAnalyzeOnCommonHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
 	tk.MustExec("insert into t1 values(1,1), (2,2), (3,3)")
 	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")

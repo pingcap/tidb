@@ -5396,7 +5396,7 @@ func (s *testIntegrationSuite) TestIssue16973(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.IntOnlyClustered
 	tk.MustExec("create table t1(id varchar(36) not null primary key, org_id varchar(36) not null, " +
 		"status tinyint default 1 not null, ns varchar(36) default '' not null);")
 	tk.MustExec("create table t2(id varchar(36) not null primary key, order_id varchar(36) not null, " +
@@ -6980,7 +6980,7 @@ func (s *testIntegrationSerialSuite) TestNewCollationCheckClusterIndexTable(c *C
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("create table t(name char(255) primary key, b int, c int, index idx(name), unique index uidx(name))")
 	tk.MustExec("insert into t values(\"aaaa\", 1, 1), (\"bbb\", 2, 2), (\"ccc\", 3, 3)")
 	tk.MustExec("admin check table t")
@@ -7088,7 +7088,7 @@ func (s *testIntegrationSerialSuite) TestNewCollationWithClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("create table t(d double primary key, a int, name varchar(255), index idx(name(2)), index midx(a, name))")
 	tk.MustExec("insert into t values(2.11, 1, \"aa\"), (-1, 0, \"abcd\"), (9.99, 0, \"aaaa\")")
 	tk.MustQuery("select d from t use index(idx) where name=\"aa\"").Check(testkit.Rows("2.11"))
@@ -7946,7 +7946,7 @@ func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollationIndexEncod
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("create table t(a int, b char(10) collate utf8mb4_bin, c char(10) collate utf8mb4_general_ci," +
 		"d varchar(10) collate utf8mb4_bin, e varchar(10) collate utf8mb4_general_ci, f char(10) collate utf8mb4_unicode_ci, g varchar(10) collate utf8mb4_unicode_ci, " +
 		"primary key(a, b, c, d, e, f, g), key a(a), unique key ua(a), key b(b), unique key ub(b), key c(c), unique key uc(c)," +
@@ -8092,7 +8092,7 @@ func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("CREATE TABLE `t` (" +
 		"`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
 		"`b` char(20) COLLATE utf8mb4_general_ci NOT NULL," +
@@ -8523,7 +8523,7 @@ func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.OnClustered
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE `t` (" +
 		"  `a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
