@@ -570,17 +570,11 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 		r.err = ErrUnsupportedType.GenWithStack("NOT LIKE is not supported.")
 		return fullRange
 	case ast.IsNull:
-<<<<<<< HEAD
 		startPoint := point{value: types.MinNotNullDatum(), start: true}
 		endPoint := point{value: types.MaxValueDatum()}
 		return []point{startPoint, endPoint}
-=======
-		startPoint := &point{value: types.MinNotNullDatum(), start: true}
-		endPoint := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint, endPoint}
 	case ast.LogicAnd:
 		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
->>>>>>> 47749a156... partition: fix hash partition with not between condition get wrong result (#22914)
 	}
 	return nil
 }
