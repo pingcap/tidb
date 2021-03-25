@@ -73,6 +73,9 @@ type HashJoinExec struct {
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	joiners []joiner
 
+	// iterators is used to store the matched buildSideRows as an iterator in probe phase.
+	iterators []chunk.Iterator4Slice
+
 	probeChkResourceCh chan *probeChkResource
 	probeResultChs     []chan *chunk.Chunk
 	joinChkResourceCh  []chan *chunk.Chunk
@@ -485,11 +488,11 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		return true, joinResult
 	}
 
-	iter := chunk.NewIterator4Slice(buildSideRows)
+	e.iterators[workerID].Reset(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
 	rowIdx := 0
-	for iter.Begin(); iter.Current() != iter.End(); {
-		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
+	for e.iterators[workerID].Begin(); e.iterators[workerID].Current() != e.iterators[workerID].End(); {
+		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(&e.iterators[workerID], probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -521,10 +524,10 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	iter := chunk.NewIterator4Slice(buildSideRows)
+	e.iterators[workerID].Reset(buildSideRows)
 	hasMatch, hasNull := false, false
-	for iter.Begin(); iter.Current() != iter.End(); {
-		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter, joinResult.chk)
+	for e.iterators[workerID].Begin(); e.iterators[workerID].Current() != e.iterators[workerID].End(); {
+		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, &e.iterators[workerID], joinResult.chk)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
