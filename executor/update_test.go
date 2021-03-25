@@ -454,7 +454,7 @@ func (s *testSuite11) TestPessimisticUpdatePKLazyCheck(c *C) {
 	s.testUpdatePKLazyCheck(c, tk, variable.IntOnlyClustered)
 }
 
-func (s *testSuite11) testUpdatePKLazyCheck(c *C, tk *testkit.TestKit, clusteredIndex variable.ClusteredIndexMode) {
+func (s *testSuite11) testUpdatePKLazyCheck(c *C, tk *testkit.TestKit, clusteredIndex variable.ClusteredIndexDefMode) {
 	tk.Se.GetSessionVars().EnableClusteredIndex = clusteredIndex
 	tk.MustExec(`drop table if exists upk`)
 	tk.MustExec(`create table upk (a int, b int, c int, primary key (a, b))`)

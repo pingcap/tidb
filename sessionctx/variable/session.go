@@ -762,7 +762,7 @@ type SessionVars struct {
 	SelectLimit uint64
 
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
-	EnableClusteredIndex ClusteredIndexMode
+	EnableClusteredIndex ClusteredIndexDefMode
 
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool

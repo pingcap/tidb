@@ -339,15 +339,20 @@ func TiDBOptMultiStmt(opt string) int {
 	return WarnInt
 }
 
-type ClusteredIndexMode int
+// ClusteredIndexDefMode controls the default clustered property for primary key.
+type ClusteredIndexDefMode int
 
 const (
-	IntOnlyClustered ClusteredIndexMode = 0
-	OnClustered      ClusteredIndexMode = 1
-	OffClustered     ClusteredIndexMode = 2
+	// IntOnlyClustered indicates only single int primary key will default be clustered.
+	IntOnlyClustered ClusteredIndexDefMode = 0
+	// OnClustered indicates primary key will default be clustered.
+	OnClustered ClusteredIndexDefMode = 1
+	// OffClustered indicates primary key will default be non-clustered.
+	OffClustered ClusteredIndexDefMode = 2
 )
 
-func TiDBOptEnableClustered(opt string) ClusteredIndexMode {
+// TiDBOptEnableClustered converts enable clustered options to ClusteredIndexDefMode.
+func TiDBOptEnableClustered(opt string) ClusteredIndexDefMode {
 	switch {
 	case strings.EqualFold(opt, IntOnly):
 		return IntOnlyClustered

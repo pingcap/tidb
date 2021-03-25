@@ -1444,7 +1444,7 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	for _, enable := range []variable.ClusteredIndexMode{variable.OnClustered, variable.OffClustered, variable.IntOnlyClustered} {
+	for _, enable := range []variable.ClusteredIndexDefMode{variable.OnClustered, variable.OffClustered, variable.IntOnlyClustered} {
 		tk.Se.GetSessionVars().EnableClusteredIndex = enable
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
