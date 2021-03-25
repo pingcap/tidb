@@ -70,9 +70,6 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 }
 
 func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregation) {
-	if len(agg.GetGroupByCols()) != 0 {
-		return
-	}
 	for _, af := range agg.AggFuncs {
 		if af.HasDistinct {
 			cols := make([]*expression.Column, 0, len(af.Args))
