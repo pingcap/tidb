@@ -612,7 +612,7 @@ const (
 	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
-	DefTiDBAllowMPPExecution           = false
+	DefTiDBAllowMPPExecution           = true
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -714,6 +714,7 @@ var FeatureSwitchVariables = []string{
 	TiDBPartitionPruneMode,
 	TiDBIntPrimaryKeyDefaultAsClustered,
 	TiDBEnableExtendedStats,
+	TiDBEnableIndexMergeJoin,
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.

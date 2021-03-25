@@ -1919,6 +1919,19 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}
+
+	// Recalculate repeats
+	// TODO: optimize it later since it's a simple but not the fastest implementation whose complexity is O(nBkt * nHist * log(nBkt))
+	for _, bucket := range globalBuckets {
+		var repeat float64
+		for _, hist := range hists {
+			repeat += hist.equalRowCount(*bucket.upper, isIndex) // only hists of indexes have bucket.NDV
+		}
+		if int64(repeat) > bucket.Repeat {
+			bucket.Repeat = int64(repeat)
+		}
+	}
+
 	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize)
 	for _, bucket := range globalBuckets {
 		if !isIndex {

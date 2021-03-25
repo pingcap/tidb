@@ -135,14 +135,6 @@ func closeAll(objs ...Closeable) error {
 	return nil
 }
 
-// handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
-func handleIsExtra(col *expression.Column) bool {
-	if col != nil && col.ID == model.ExtraHandleID {
-		return true
-	}
-	return false
-}
-
 // rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
 // by substitute correlated column with the constant.
 func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
@@ -362,6 +354,7 @@ const (
 	getHandleFromTable
 )
 
+// nolint:structcheck
 type checkIndexValue struct {
 	idxColTps  []*types.FieldType
 	idxTblCols []*table.Column
