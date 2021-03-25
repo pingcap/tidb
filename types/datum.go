@@ -247,7 +247,7 @@ func (d *Datum) GetBinaryLiteral() BinaryLiteral {
 			return d.b[i:]
 		}
 	}
-	return d.b[bitLen:]
+	return d.b
 }
 
 // GetMysqlBit gets MysqlBit value
