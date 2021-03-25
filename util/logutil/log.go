@@ -110,7 +110,7 @@ func InitZapLogger(cfg *LogConfig) error {
 	}
 	log.ReplaceGlobals(gl, props)
 
-	// Init dedicated slow query logger.
+	// init dedicated logger for slow query log
 	SlowQueryLogger, err = newSlowQueryLogger(cfg)
 	if err != nil {
 		return errors.Trace(err)
