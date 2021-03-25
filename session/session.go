@@ -68,6 +68,7 @@ import (
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1390,6 +1391,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.sessionVars.StartTime = time.Now()
+	s.sessionVars.CoprCacheHitNum.Store(0)
+	s.sessionVars.CoprRespTimes.Store(0)
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -1436,6 +1439,40 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				zap.String("session", s.String()))
 		}
 		return nil, err
+	}
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
+		coprRespTimes := s.sessionVars.CoprRespTimes.Load()
+		coprCacheHits := s.sessionVars.CoprCacheHitNum.Load()
+		if coprRespTimes > 0 {
+			ratio := float64(coprCacheHits) / float64(coprRespTimes)
+			switch {
+			case ratio >= 0.01:
+				telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
+				fallthrough
+			case ratio >= 0.1:
+				telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
+				fallthrough
+			case ratio >= 0.2:
+				telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
+				fallthrough
+			case ratio >= 0.4:
+				telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
+				fallthrough
+			case ratio >= 0.8:
+				telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
+				fallthrough
+			case ratio >= 1:
+				telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
+			}
+		}
 	}
 	return recordSet, nil
 }
@@ -2236,7 +2273,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	dom.TelemetryLoop(se4)
+	dom.TelemetryReportLoop(se4)
+	dom.TelemetryRotateSubWindowLoop(se4)
 
 	se5, err := createSession(store)
 	if err != nil {

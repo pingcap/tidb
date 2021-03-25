@@ -283,6 +283,10 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, r.stats)
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
+	r.ctx.GetSessionVars().CoprRespTimes.Add(1)
+	if copStats.CoprCacheHit {
+		r.ctx.GetSessionVars().CoprCacheHitNum.Add(1)
+	}
 
 	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
