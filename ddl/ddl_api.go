@@ -1524,12 +1524,12 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption, isSingleIntPK bool) bool {
 	if opt == nil || opt.PrimaryKeyTp == model.PrimaryKeyTypeDefault {
 		switch ctx.GetSessionVars().EnableClusteredIndex {
-		case variable.OffClustered:
-			return false
 		case variable.OnClustered:
 			return true
 		case variable.IntOnlyClustered:
 			return !config.GetGlobalConfig().AlterPrimaryKey && isSingleIntPK
+		default:
+			return false
 		}
 	}
 	return opt.PrimaryKeyTp == model.PrimaryKeyTypeClustered
