@@ -390,6 +390,26 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(safepoint, Equals, uint64(0))
 }
 
+func (s *testGCWorkerSuite) TestStatusVars(c *C) {
+	// Status variables should now exist for:
+	// tidb_gc_safe_point, tidb_gc_last_run_time
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+
+	safePoint, err := s.gcWorker.loadValueFromSysTable(gcSafePointKey)
+	c.Assert(err, IsNil)
+	lastRunTime, err := s.gcWorker.loadValueFromSysTable(gcLastRunTimeKey)
+	c.Assert(err, IsNil)
+
+	statusVars, _ := s.gcWorker.Stats(se.GetSessionVars())
+	val, ok := statusVars[tidbGCSafePoint]
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, safePoint)
+	val, ok = statusVars[tidbGCLastRunTime]
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, lastRunTime)
+}
+
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	ctx := context.Background()
 	bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
@@ -467,30 +487,28 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
-	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, Equals, true)
 	// Now the row must be set to the default value.
 	str, err := s.gcWorker.loadValueFromSysTable(gcModeKey)
 	c.Assert(err, IsNil)
 	c.Assert(str, Equals, gcModeDistributed)
 
+	// Central mode is deprecated in v5.0.
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
-	c.Assert(useDistributedGC, Equals, false)
+	c.Assert(useDistributedGC, Equals, true)
 
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, Equals, true)
 
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, Equals, true)
 }
 
@@ -967,11 +985,10 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	gcSafePointCacheInterval = 0
 
 	// Test distributed mode
-	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, IsTrue)
 	safePoint := s.mustAllocTs(c)
-	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
+	err := s.gcWorker.runGCJob(context.Background(), safePoint, 1)
 	c.Assert(err, IsNil)
 
 	pdSafePoint := s.mustGetSafePointFromPd(c)
@@ -984,12 +1001,11 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	err = s.gcWorker.runGCJob(context.Background(), safePoint-1, 1)
 	c.Assert(err, NotNil)
 
-	// Test central mode
+	// Central mode is deprecated in v5.0, fallback to distributed mode if it's set.
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
-	c.Assert(useDistributedGC, IsFalse)
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
+	c.Assert(useDistributedGC, IsTrue)
 
 	p := s.createGCProbe(c, "k1")
 	safePoint = s.mustAllocTs(c)

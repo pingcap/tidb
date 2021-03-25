@@ -607,14 +607,13 @@ func (s *testStatsSuite) TestStatsVer2(c *C) {
 	testKit.MustExec("analyze table tprefix with 2 topn, 3 buckets")
 
 	// test with clustered index
-	testKit.MustExec("set @@tidb_enable_clustered_index = 1")
 	testKit.MustExec("drop table if exists ct1")
-	testKit.MustExec("create table ct1 (a int, pk varchar(10), primary key(pk))")
+	testKit.MustExec("create table ct1 (a int, pk varchar(10), primary key(pk) clustered)")
 	testKit.MustExec("insert into ct1 values (1, '1'), (2, '2'), (3, '3'), (4, '4'), (5, '5'), (6, '6'), (7, '7'), (8, '8')")
 	testKit.MustExec("analyze table ct1 with 2 topn, 3 buckets")
 
 	testKit.MustExec("drop table if exists ct2")
-	testKit.MustExec("create table ct2 (a int, b int, c int, primary key(a, b))")
+	testKit.MustExec("create table ct2 (a int, b int, c int, primary key(a, b) clustered)")
 	testKit.MustExec("insert into ct2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
 	testKit.MustExec("analyze table ct2 with 2 topn, 3 buckets")
 

@@ -116,10 +116,10 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
-	router.Handle("/settings", settingsHandler{}).Name("Settings")
+	tikvHandlerTool := s.newTikvHandlerTool()
+	router.Handle("/settings", settingsHandler{tikvHandlerTool}).Name("Settings")
 	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
 
-	tikvHandlerTool := s.newTikvHandlerTool()
 	router.Handle("/schema", schemaHandler{tikvHandlerTool}).Name("Schema")
 	router.Handle("/schema/{db}", schemaHandler{tikvHandlerTool})
 	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -123,15 +124,31 @@ type mppIterator struct {
 
 	respChan chan *mppResponse
 
-	rpcCancel *tikv.RPCCanceller
+	cancelFunc context.CancelFunc
 
 	wg sync.WaitGroup
 
 	closed uint32
+
+	vars *kv.Variables
+
+	mu sync.Mutex
 }
 
 func (m *mppIterator) run(ctx context.Context) {
 	for _, task := range m.tasks {
+		if atomic.LoadUint32(&m.closed) == 1 {
+			break
+		}
+		m.mu.Lock()
+		switch task.State {
+		case kv.MppTaskReady:
+			task.State = kv.MppTaskRunning
+			m.mu.Unlock()
+		default:
+			m.mu.Unlock()
+			break
+		}
 		m.wg.Add(1)
 		bo := tikv.NewBackoffer(ctx, copNextMaxBackoff)
 		go m.handleDispatchReq(ctx, bo, task)
@@ -142,6 +159,7 @@ func (m *mppIterator) run(ctx context.Context) {
 
 func (m *mppIterator) sendError(err error) {
 	m.sendToRespCh(&mppResponse{err: err})
+	m.cancelMppTasks()
 }
 
 func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
@@ -223,12 +241,51 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		m.sendError(errors.New(realResp.Error.Msg))
 		return
 	}
-
+	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
+		if val.(bool) && !req.IsRoot {
+			time.Sleep(1 * time.Second)
+			m.sendError(tikv.ErrTiFlashServerTimeout)
+			return
+		}
+	})
 	if !req.IsRoot {
 		return
 	}
 
 	m.establishMPPConns(bo, req, taskMeta)
+}
+
+// NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution on TiFlash will finally stop after some minutes.
+// This function is exclusively called, and only the first call succeeds sending tasks and setting all tasks as cancelled, while others will not work.
+func (m *mppIterator) cancelMppTasks() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	killReq := &mpp.CancelTaskRequest{
+		Meta: &mpp.TaskMeta{StartTs: m.startTs},
+	}
+
+	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
+	wrappedReq.StoreTp = kv.TiFlash
+
+	usedStoreAddrs := make(map[string]bool)
+	for _, task := range m.tasks {
+		// get the store address of running tasks
+		if task.State == kv.MppTaskRunning && !usedStoreAddrs[task.Meta.GetAddress()] {
+			usedStoreAddrs[task.Meta.GetAddress()] = true
+		} else if task.State == kv.MppTaskCancelled {
+			return
+		}
+		task.State = kv.MppTaskCancelled
+	}
+
+	// send cancel cmd to all stores where tasks run
+	for addr := range usedStoreAddrs {
+		_, err := m.store.GetTiKVClient().SendRequest(context.Background(), addr, wrappedReq, tikv.ReadTimeoutUltraLong)
+		logutil.BgLogger().Debug("cancel task ", zap.Uint64("query id ", m.startTs), zap.String(" on addr ", addr))
+		if err != nil {
+			logutil.BgLogger().Error("cancel task error: ", zap.Error(err), zap.Uint64(" for query id ", m.startTs), zap.String(" on addr ", addr))
+		}
+	}
 }
 
 func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) {
@@ -248,7 +305,9 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
 
 	if err != nil {
-		m.sendError(err)
+		logutil.BgLogger().Error("establish mpp connection meet error", zap.String("error", err.Error()))
+		// we return timeout to trigger tikv's fallback
+		m.sendError(tikv.ErrTiFlashServerTimeout)
 		return
 	}
 
@@ -260,13 +319,13 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 		return
 	}
 
-	// TODO: cancel the whole process when some error happens
 	for {
 		err := m.handleMPPStreamResponse(bo, resp, req)
 		if err != nil {
 			m.sendError(err)
 			return
 		}
+
 		resp, err = stream.Recv()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
@@ -280,9 +339,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 				}
 			}
-			m.sendToRespCh(&mppResponse{
-				err: tikv.ErrTiFlashServerTimeout,
-			})
+			m.sendError(tikv.ErrTiFlashServerTimeout)
 			return
 		}
 	}
@@ -293,7 +350,7 @@ func (m *mppIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&m.closed, 0, 1) {
 		close(m.finishCh)
 	}
-	m.rpcCancel.CancelAll()
+	m.cancelFunc()
 	m.wg.Wait()
 	return nil
 }
@@ -336,7 +393,11 @@ func (m *mppIterator) nextImpl(ctx context.Context) (resp *mppResponse, ok bool,
 		case resp, ok = <-m.respChan:
 			return
 		case <-ticker.C:
-			//TODO: kill query
+			if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
+				err = tikv.ErrQueryInterrupted
+				exit = true
+				return
+			}
 		case <-m.finishCh:
 			exit = true
 			return
@@ -370,19 +431,18 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
-// DispatchMPPTasks dispatches all the mpp task and waits for the reponses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
+// DispatchMPPTasks dispatches all the mpp task and waits for the responses.
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, vars *kv.Variables, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
+	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
-		store:     c.store,
-		tasks:     dispatchReqs,
-		finishCh:  make(chan struct{}),
-		rpcCancel: tikv.NewRPCanceller(),
-		respChan:  make(chan *mppResponse, 4096),
-		startTs:   dispatchReqs[0].StartTs,
+		store:      c.store,
+		tasks:      dispatchReqs,
+		finishCh:   make(chan struct{}),
+		cancelFunc: cancelFunc,
+		respChan:   make(chan *mppResponse, 4096),
+		startTs:    dispatchReqs[0].StartTs,
+		vars:       vars,
 	}
-	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, iter.rpcCancel)
-
-	// TODO: Process the case of query cancellation.
-	go iter.run(ctx)
+	go iter.run(ctxChild)
 	return iter
 }

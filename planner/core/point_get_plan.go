@@ -1100,7 +1100,8 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 			}
 		}
 		// The converted result must be same as original datum.
-		cmp, err := d.CompareDatum(stmtCtx, &dVal)
+		// Compare them based on the dVal's type.
+		cmp, err := dVal.CompareDatum(stmtCtx, &d)
 		if err != nil {
 			return nil, false
 		} else if cmp != 0 {
@@ -1365,23 +1366,6 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 	schema.Append(handleCol)
 	return &IntHandleCols{col: handleCol}
-}
-
-func findHandleCol(tbl *model.TableInfo, schema *expression.Schema) *expression.Column {
-	// fields len is 0 for update and delete.
-	var handleCol *expression.Column
-	if tbl.PKIsHandle {
-		for i, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) && tbl.PKIsHandle {
-				handleCol = schema.Columns[i]
-			}
-		}
-	}
-	if !tbl.IsCommonHandle && handleCol == nil {
-		handleCol = colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
-		schema.Append(handleCol)
-	}
-	return handleCol
 }
 
 func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int) {

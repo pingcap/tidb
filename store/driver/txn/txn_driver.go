@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"go.uber.org/zap"
 )
 
@@ -59,6 +58,11 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 func (txn *tikvTxn) Commit(ctx context.Context) error {
 	err := txn.KVTxn.Commit(ctx)
 	return txn.extractKeyErr(err)
+}
+
+// GetSnapshot returns the Snapshot binding to this transaction.
+func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
+	return txn.KVTxn.GetSnapshot()
 }
 
 func (txn *tikvTxn) extractKeyErr(err error) error {
@@ -170,16 +174,7 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		return genKeyExistsError(name, key.String(), errors.New("missing value"))
 	}
 
-	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
-	for _, idxCol := range idxInfo.Columns {
-		col := tblInfo.Columns[idxCol.Offset]
-		colInfo = append(colInfo, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
-	}
-
+	colInfo := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
 	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleNotNeeded, colInfo)
 	if err != nil {
 		return genKeyExistsError(name, key.String(), err)
