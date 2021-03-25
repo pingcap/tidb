@@ -13,13 +13,21 @@
 
 package executor
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/pingcap/parser/mysql"
+)
 
 func setFromString(value string) []string {
 	if len(value) == 0 {
 		return nil
 	}
 	return strings.Split(value, ",")
+}
+
+func setToString(set []string) string {
+	return strings.Join(set, ",")
 }
 
 // addToSet add a value to the set, e.g:
@@ -43,4 +51,13 @@ func deleteFromSet(set []string, value string) []string {
 		}
 	}
 	return set
+}
+
+func hasPriv(privs []mysql.PrivilegeType, p mysql.PrivilegeType) bool {
+	for _, tp := range privs {
+		if tp == p {
+			return true
+		}
+	}
+	return false
 }
