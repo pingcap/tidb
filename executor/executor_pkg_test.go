@@ -536,6 +536,7 @@ type hmap struct {
 }
 
 // mapextra holds fields that are not present on all maps.
+// nolint:structcheck
 type mapextra struct {
 	// If both key and elem do not contain pointers and are inline, then we mark bucket
 	// type as containing no pointers. This avoids scanning such maps.
@@ -558,6 +559,7 @@ const (
 )
 
 // A bucket for a Go map.
+// nolint:structcheck
 type bmap struct {
 	// tophash generally contains the top byte of the hash value
 	// for each key in this bucket. If tophash[0] < minTopHash,

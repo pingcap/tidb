@@ -249,7 +249,7 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 					lower:  1,
 					upper:  7,
 					count:  7,
-					repeat: 2,
+					repeat: 3,
 					ndv:    4,
 				},
 				{

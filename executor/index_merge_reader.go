@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -99,11 +98,8 @@ type IndexMergeReaderExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 
-	partialPlans    [][]plannercore.PhysicalPlan
-	corColInTblSide bool
-	tblPlans        []plannercore.PhysicalPlan
-	idxCols         [][]*expression.Column
-	colLens         [][]int
+	partialPlans [][]plannercore.PhysicalPlan
+	tblPlans     []plannercore.PhysicalPlan
 
 	handleCols plannercore.HandleCols
 	stats      *IndexMergeRuntimeStat
