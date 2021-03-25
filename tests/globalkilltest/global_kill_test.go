@@ -29,7 +29,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	 "github.com/pingcap/log"
+	"github.com/pingcap/log"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
@@ -343,7 +343,7 @@ func (s *TestGlobalKillSuite) TestWithoutPD(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	defer func(){
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -371,7 +371,7 @@ func (s *TestGlobalKillSuite) TestOneTiDB(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	defer func(){
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()

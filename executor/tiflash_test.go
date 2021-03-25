@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 type tiflashTestSuite struct {
@@ -296,6 +297,8 @@ func (s *tiflashTestSuite) TestMppEnum(c *C) {
 }
 
 func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
 	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
