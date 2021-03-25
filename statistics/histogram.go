@@ -1800,7 +1800,7 @@ func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
 func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
-	var totCount, totNull, bucketNumber, totColSize, totNDV int64
+	var totCount, totNull, bucketNumber, totColSize int64
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
@@ -1809,7 +1809,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
-		totNDV += hist.NDV
 		bucketNumber += int64(hist.Len())
 		if hist.Len() > 0 {
 			totCount += hist.Buckets[hist.Len()-1].Count
@@ -1899,18 +1898,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	var sum, prevSum int64
 	r, prevR := len(buckets), 0
 	bucketCount := int64(1)
-	gBucketCountThreshold := (totCount / expBucketNumber) * 95 / 100 // expectedBucketSize * 0.95
-	gBucketNDVThreshold := int64(10)                                 // since bucketNDV is usd as denominator(est=tot/NDV), small NDVs may bring high risk, so limit it here
+	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
 	var bucketNDV int64
-	canMergeBucket := func(expBucketNumber, totCount, bucketCount, sum, bucketSum, bucketNDV int64) bool {
-		return sum >= totCount*bucketCount/expBucketNumber &&
-			bucketSum >= gBucketCountThreshold && // limit the minimum size of global buckets
-			(bucketNDV >= gBucketNDVThreshold || bucketNDV == 1)
-	}
 	for i := len(buckets) - 1; i >= 0; i-- {
 		sum += buckets[i].Count
 		bucketNDV += buckets[i].NDV
-		if canMergeBucket(expBucketNumber, totCount, bucketCount, sum, sum-prevSum, bucketNDV) {
+		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
 			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
 				res, err := buckets[i-1].upper.CompareDatum(sc, buckets[i].upper)
 				if err != nil {
@@ -1921,9 +1914,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				}
 				sum += buckets[i-1].Count
 				bucketNDV += buckets[i-1].NDV
-			}
-			if !canMergeBucket(expBucketNumber, totCount, bucketCount, sum, sum-prevSum, bucketNDV) {
-				continue
 			}
 			merged, err := mergePartitionBuckets(sc, buckets[i:r])
 			if err != nil {
@@ -1946,7 +1936,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			bucketNDV += b.NDV
 		}
 
-		if len(globalBuckets) > 0 && bucketSum < gBucketCountThreshold && !(bucketNDV > gBucketNDVThreshold || bucketNDV == 1) { // merge them into the previous global bucket
+		if len(globalBuckets) > 0 && bucketSum < gBucketCountThreshold { // merge them into the previous global bucket
 			r = prevR
 			globalBuckets = globalBuckets[:len(globalBuckets)-1]
 		}
