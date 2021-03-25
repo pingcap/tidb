@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"bytes"
@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/util"
 )
 
@@ -80,7 +81,7 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 
 	// Split into two regions.
 	splitKey := "s"
-	bo := NewBackofferWithVars(context.Background(), 5000, nil)
+	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(splitKey))
 	c.Assert(err, IsNil)
 	newRegionID := s.cluster.AllocID()
@@ -118,7 +119,7 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err := txn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(txn.committer.isAsyncCommit(), IsTrue)
+	c.Assert(txn.GetCommitter().IsAsyncCommit(), IsTrue)
 	s.mustPointGet(c, []byte("a"), []byte("v1"))
 	s.mustPointGet(c, []byte("b"), []byte("v2"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
@@ -141,7 +142,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 
 	// Split into several regions.
 	for _, splitKey := range []string{"h", "o", "u"} {
-		bo := NewBackofferWithVars(context.Background(), 5000, nil)
+		bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 		loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(splitKey))
 		c.Assert(err, IsNil)
 		newRegionID := s.cluster.AllocID()
@@ -151,7 +152,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 	}
 
 	// Ensure the region has been split
-	bo := NewBackofferWithVars(context.Background(), 5000, nil)
+	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte("i"))
 	c.Assert(err, IsNil)
 	c.Assert([]byte(loc.StartKey), BytesEquals, []byte("h"))
@@ -177,12 +178,13 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 		err = txn.Commit(ctx)
 		c.Assert(err, IsNil)
 
-		primary := txn.committer.primary()
-		bo := NewBackofferWithVars(context.Background(), 5000, nil)
-		txnStatus, err := s.store.lockResolver.getTxnStatus(bo, txn.StartTS(), primary, 0, 0, false, false, nil)
+		primary := txn.GetCommitter().GetPrimaryKey()
+		bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
+		lockResolver := tikv.LockResolverProbe{LockResolver: s.store.GetLockResolver()}
+		txnStatus, err := lockResolver.GetTxnStatus(bo, txn.StartTS(), primary, 0, 0, false, false, nil)
 		c.Assert(err, IsNil)
 		c.Assert(txnStatus.IsCommitted(), IsFalse)
-		c.Assert(txnStatus.action, Equals, kvrpcpb.Action_NoAction)
+		c.Assert(txnStatus.Action(), Equals, kvrpcpb.Action_NoAction)
 		// Currently when the transaction has no secondary, the `secondaries` field of the txnStatus
 		// will be set nil. So here initialize the `expectedSecondaries` to nil too.
 		var expectedSecondaries [][]byte
@@ -195,7 +197,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 			return bytes.Compare(expectedSecondaries[i], expectedSecondaries[j]) < 0
 		})
 
-		gotSecondaries := txnStatus.primaryLock.GetSecondaries()
+		gotSecondaries := lockResolver.GetSecondariesFromTxnStatus(txnStatus)
 		sort.Slice(gotSecondaries, func(i, j int) bool {
 			return bytes.Compare(gotSecondaries[i], gotSecondaries[j]) < 0
 		})
@@ -203,8 +205,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 		c.Assert(gotSecondaries, DeepEquals, expectedSecondaries)
 
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
-		txn.committer.cleanup(context.Background())
-		txn.committer.cleanWg.Wait()
+		txn.GetCommitter().Cleanup(context.Background())
 	}
 
 	test([]string{"a"}, []string{"a1"})
@@ -229,5 +230,5 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitContextCancelCausingUndetermin
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = txn.Commit(ctx)
 	c.Assert(err, NotNil)
-	c.Assert(txn.committer.mu.undeterminedErr, NotNil)
+	c.Assert(txn.GetCommitter().GetUndeterminedErr(), NotNil)
 }

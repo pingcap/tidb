@@ -57,7 +57,7 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView(), MockNoPKTable()})
 	s.ctx = MockContext()
 	s.ctx.GetSessionVars().EnableWindowFunction = true
 	s.Parser = parser.New()
@@ -278,6 +278,21 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 		c.Assert(leftConds, Equals, output[i].Left, comment)
 		c.Assert(rightConds, Equals, output[i].Right, comment)
 	}
+}
+
+func (s *testPlanSuite) TestExtraPKNotNullFlag(c *C) {
+	defer testleak.AfterTest(c)()
+	sql := "select count(*) from t3"
+	ctx := context.Background()
+	comment := Commentf("for %s", sql)
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil, comment)
+	p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+	c.Assert(err, IsNil, comment)
+	ds := p.(*LogicalProjection).children[0].(*LogicalAggregation).children[0].(*DataSource)
+	c.Assert(ds.Columns[2].Name.L, Equals, "_tidb_rowid")
+	c.Assert(ds.Columns[2].Flag, Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
+	c.Assert(ds.schema.Columns[2].RetType.Flag, Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
 }
 
 func buildLogicPlan4GroupBy(s *testPlanSuite, c *C, sql string) (Plan, error) {

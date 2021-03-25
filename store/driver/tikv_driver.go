@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -121,12 +122,15 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		CAPath:   d.security.ClusterSSLCA,
 		CertPath: d.security.ClusterSSLCert,
 		KeyPath:  d.security.ClusterSSLKey,
-	}, pd.WithGRPCDialOptions(
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
-			Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
-		}),
-	), pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second))
+	},
+		pd.WithGRPCDialOptions(
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
+				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
+			}),
+		),
+		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
+		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
 	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {
@@ -301,10 +305,23 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 
 // BeginWithOption begins a transaction with given option
 func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithOption(option)
+	txnScope := option.TxnScope
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
+	}
+	var txn *tikv.KVTxn
+	var err error
+	if option.StartTS != nil {
+		txn, err = s.BeginWithStartTS(txnScope, *option.StartTS)
+	} else if option.PrevSec != nil {
+		txn, err = s.BeginWithExactStaleness(txnScope, *option.PrevSec)
+	} else {
+		txn, err = s.BeginWithTxnScope(txnScope)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	return txn_driver.NewTiKVTxn(txn), err
 }
 

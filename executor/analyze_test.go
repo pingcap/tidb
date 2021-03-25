@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
@@ -120,7 +120,7 @@ func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	ctx := tk.Se.(sessionctx.Context)
-	ctx.GetSessionVars().SetReplicaRead(kv.ReplicaReadFollower)
+	ctx.GetSessionVars().SetReplicaRead(tikvstore.ReplicaReadFollower)
 	tk.MustExec("analyze table t")
 }
 
@@ -731,7 +731,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	c.Assert(row[5], Equals, "30")
 }
 
-func (s *testSuite9) TestFailedAnalyzeRequest(c *C) {
+func (s *testSuite10) TestFailedAnalyzeRequest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
