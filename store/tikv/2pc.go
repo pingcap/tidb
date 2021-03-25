@@ -785,7 +785,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		resp, err := store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
