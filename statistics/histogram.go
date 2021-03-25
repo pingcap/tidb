@@ -1927,13 +1927,10 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			bucketNDV = 0
 		}
 	}
-
 	if r > 0 {
 		bucketSum := int64(0)
-		bucketNDV := int64(0)
 		for _, b := range buckets[:r] {
 			bucketSum += b.Count
-			bucketNDV += b.NDV
 		}
 
 		if len(globalBuckets) > 0 && bucketSum < gBucketCountThreshold { // merge them into the previous global bucket
@@ -1947,7 +1944,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		}
 		globalBuckets = append(globalBuckets, merged)
 	}
-
 	// Because we merge backwards, we need to flip the slices.
 	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
 		globalBuckets[i], globalBuckets[j] = globalBuckets[j], globalBuckets[i]
