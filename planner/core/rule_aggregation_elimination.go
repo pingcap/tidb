@@ -94,6 +94,12 @@ func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggrega
 						break
 					}
 				}
+				for _, key := range agg.children[0].Schema().UniqueKeys {
+					if schemaByDistinct.ColumnsIndices(key) != nil {
+						distinctByUniqueKey = true
+						break
+					}
+				}
 				if distinctByUniqueKey {
 					af.HasDistinct = false
 				}
