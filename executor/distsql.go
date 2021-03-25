@@ -640,7 +640,14 @@ start:
 		}
 		if resultTask == nil {
 			if e.needIndexPaging {
-				goto paginate
+				if e.lastRowKeys == nil {
+					return nil
+				}
+				if err := e.paginate(ctx); err != nil {
+					return err
+				}
+				// Guaranteed to reach chk.RequiredRows.
+				goto start
 			}
 			return nil
 		}
@@ -653,11 +660,9 @@ start:
 			}
 		}
 	}
-paginate:
-	if e.lastRowKeys == nil {
-		return nil
-	}
+}
 
+func (e *IndexLookUpExecutor) paginate(ctx context.Context) (err error) {
 	e.isImplicitClose = true
 	defer func() { e.isImplicitClose = false }()
 	if err := e.Close(); err != nil {
@@ -672,8 +677,7 @@ paginate:
 		return err
 	}
 	e.lastRowKeys = nil
-	// Guaranteed to reach chk.RequiredRows.
-	goto start
+	return nil
 }
 
 func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
