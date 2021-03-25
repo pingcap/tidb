@@ -358,12 +358,12 @@ const (
 // TiDBOptEnableClustered converts enable clustered options to ClusteredIndexDefMode.
 func TiDBOptEnableClustered(opt string) ClusteredIndexDefMode {
 	switch {
-	case strings.EqualFold(opt, IntOnly):
-		return IntOnlyClustered
 	case strings.EqualFold(opt, "ON") || opt == "1":
 		return OnClustered
-	default:
+	case strings.EqualFold(opt, "OFF") || opt == "0":
 		return OffClustered
+	default:
+		return IntOnlyClustered
 	}
 }
 
