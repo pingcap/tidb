@@ -511,7 +511,9 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
-	_, _, err := h.execRestrictedSQL(context.Background(), sql)
+	h.mu.Lock()
+	_, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+	h.mu.Unlock()
 	return errors.Trace(err)
 }
 
