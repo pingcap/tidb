@@ -412,20 +412,20 @@ func (s *tiflashTestSuite) TestMppApply(c *C) {
 	tb := testGetTableByName(c, tk.Se, "test", "x1")
 	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
-	tk.MustExec("insert into x1 values(1, 1),(2, 2);")
+	tk.MustExec("insert into x1 values(1, 1),(2, 10),(0,11);")
 
 	tk.MustExec("create table x2(a int primary key, b int);")
 	tk.MustExec("alter table x2 set tiflash replica 1")
 	tb = testGetTableByName(c, tk.Se, "test", "x2")
 	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
-	tk.MustExec("insert into x2 values(1,2);")
+	tk.MustExec("insert into x2 values(1,2),(0,1),(2,-3);")
 	tk.MustExec("analyze table x1, x2;")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	// table full scan with correlated filter
-	tk.MustQuery(" select /*+ agg_to_cop(), hash_agg()*/ a from x1 where a > any (select a from x2 where x1.a = x2.a);").Check(testkit.Rows())
-	// range scan with correlated access conditions
-	tk.MustQuery("select /*+ agg_to_cop(), hash_agg()*/ * from x1 where b > any (select x2.a from x2 where x1.a = x2.a);").Check(testkit.Rows())
+	tk.MustQuery("select /*+ agg_to_cop(), hash_agg()*/ count(*) from x1 where a >= any (select a from x2 where x1.a = x2.a) order by 1;").Check(testkit.Rows("3"))
+	// table range scan with correlated access conditions
+	tk.MustQuery("select /*+ agg_to_cop(), hash_agg()*/ count(*) from x1 where b > any (select x2.a from x2 where x1.a = x2.a);").Check(testkit.Rows("2"))
 }
