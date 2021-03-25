@@ -1685,7 +1685,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		// |-ratio-|
 		// ndv = ratio * left.ndv + max((1-ratio) * left.ndv, right.ndv)
 		ratio := calcFraction4Datums(left.lower, left.upper, right.lower)
-		res.NDV = int64(math.Ceil(ratio*float64(left.NDV) + math.Max((1-ratio)*float64(left.NDV), float64(right.NDV))))
+		res.NDV = int64(ratio*float64(left.NDV) + math.Max((1-ratio)*float64(left.NDV), float64(right.NDV)))
 		res.lower = left.lower.Clone()
 		return &res, nil
 	}
@@ -1722,9 +1722,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	//		+ (1-upperRatio) * right.ndv
 	if lowerCompare >= 0 {
 		lowerRatio := calcFraction4Datums(left.lower, left.upper, right.lower)
-		res.NDV = int64(math.Ceil(lowerRatio*float64(left.NDV) +
+		res.NDV = int64(lowerRatio*float64(left.NDV) +
 			math.Max((1-lowerRatio)*float64(left.NDV), upperRatio*float64(right.NDV)) +
-			(1-upperRatio)*float64(right.NDV)))
+			(1-upperRatio)*float64(right.NDV))
 		res.lower = left.lower.Clone()
 		return &res, nil
 	}
@@ -1736,9 +1736,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	//		+ max(left.ndv + (upperRatio - lowerRatio) * right.ndv)
 	//		+ (1-upperRatio) * right.ndv
 	lowerRatio := calcFraction4Datums(right.lower, right.upper, left.lower)
-	res.NDV = int64(math.Ceil(lowerRatio*float64(right.NDV) +
+	res.NDV = int64(lowerRatio*float64(right.NDV) +
 		math.Max(float64(left.NDV), (upperRatio-lowerRatio)*float64(right.NDV)) +
-		(1-upperRatio)*float64(right.NDV)))
+		(1-upperRatio)*float64(right.NDV))
 	return &res, nil
 }
 
@@ -1898,7 +1898,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	var sum, prevSum int64
 	r, prevR := len(buckets), 0
 	bucketCount := int64(1)
-	gBucketThreshold := (totCount / expBucketNumber) * 99 / 100 // expectedBucketSize * 0.95
+	gBucketThreshold := (totCount / expBucketNumber) * 95 / 100 // expectedBucketSize * 0.95
 	for i := len(buckets) - 1; i >= 0; i-- {
 		sum += buckets[i].Count
 		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketThreshold {
@@ -1951,7 +1951,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 	globalBuckets[0].lower = minValue.Clone()
 	for i := 1; i < len(globalBuckets); i++ {
-		if globalBuckets[i].NDV == 1 {
+		if globalBuckets[i].NDV == 1 { // there is only 1 value so lower = upper
 			globalBuckets[i].lower = globalBuckets[i].upper.Clone()
 		} else {
 			globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
