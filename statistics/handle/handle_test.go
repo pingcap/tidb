@@ -989,12 +989,12 @@ partition by range (a) (
 			"test t p1 a 0 0 6 1 11 16 0",
 			"test t p1 a 0 1 10 2 17 19 0"))
 	tk.MustQuery("show stats_buckets where is_index=1").Check(
-		testkit.Rows("test t global a 1 0 7 2 1 6 6",
-			"test t global a 1 1 17 2 6 19 9",
-			"test t p0 a 1 0 4 1 1 4 4",
-			"test t p0 a 1 1 7 2 5 6 2",
-			"test t p1 a 1 0 8 1 11 18 8",
-			"test t p1 a 1 1 10 2 19 19 1"))
+		testkit.Rows("test t global a 1 0 7 2 1 6 0",
+			"test t global a 1 1 17 2 6 19 0",
+			"test t p0 a 1 0 4 1 1 4 0",
+			"test t p0 a 1 1 7 2 5 6 0",
+			"test t p1 a 1 0 8 1 11 18 0",
+			"test t p1 a 1 1 10 2 19 19 0"))
 }
 
 func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
@@ -1350,8 +1350,8 @@ func (s *testStatsSuite) TestGlobalStatsData3(c *C) {
 		"test tintint p1 a 1 (13, 2) 3"))
 
 	tk.MustQuery("show stats_buckets where table_name='tintint' and is_index=1").Check(testkit.Rows(
-		"test tintint global a 1 0 6 0 (1, 1) (3, 1) 5",   // (2, 3) is popped into it
-		"test tintint global a 1 1 11 0 (3, 1) (13, 2) 4", // (13, 1) is popped into it
+		"test tintint global a 1 0 6 2 (1, 1) (3, 1) 0",   // (2, 3) is popped into it
+		"test tintint global a 1 1 11 2 (3, 1) (13, 2) 0", // (13, 1) is popped into it
 		"test tintint p0 a 1 0 4 1 (1, 1) (2, 2) 4",
 		"test tintint p0 a 1 1 4 0 (2, 3) (3, 1) 0",
 		"test tintint p1 a 1 0 3 0 (11, 1) (13, 1) 3",

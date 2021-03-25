@@ -372,7 +372,7 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 		},
 	}
 
-	for i, t := range tests {
+	for _, t := range tests {
 		var expTotColSize int64
 		hists := make([]*Histogram, 0, len(t.partitionHists))
 		for i := range t.partitionHists {
