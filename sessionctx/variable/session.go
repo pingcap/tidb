@@ -818,12 +818,6 @@ type SessionVars struct {
 	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
-
-	// CoprCacheHitNum is to record coprocessor cache hit times for one statement.
-	CoprCacheHitNum atomic2.Uint64
-
-	// CoprRespTimes is to record coprocessor response times for one statement.
-	CoprRespTimes atomic2.Uint64
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
