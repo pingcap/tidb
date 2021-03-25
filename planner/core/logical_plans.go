@@ -267,10 +267,6 @@ type LogicalProjection struct {
 
 	Exprs []expression.Expression
 
-	// calculateGenCols indicates the projection is for calculating generated columns.
-	// In *UPDATE*, we should know this to tell different projections.
-	calculateGenCols bool
-
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
 	// Currently it is "true" only when the current sql query is a "DO" statement.

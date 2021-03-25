@@ -2626,6 +2626,15 @@ func (s *testIntegrationSuite) TestIssue22199(c *C) {
 	tk.MustGetErrMsg("select t1.*, (select t2.* from t1) from t1", "[planner:1051]Unknown table 't2'")
 }
 
+func (s *testIntegrationSuite) TestIssue22892(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int) partition by hash (a) partitions 5;")
+	tk.MustExec("insert into t1 values (0);")
+	tk.MustQuery("select * from t1 where a not between 1 and 2;").Check(testkit.Rows("0"))
+}
+
 func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

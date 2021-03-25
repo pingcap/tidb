@@ -5,8 +5,8 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
-// GetTiFlashTelemetry execute telemetry for a plan.
-func GetTiFlashTelemetry(plan Plan) (tiFlashPushDown, tiFlashExchangePushDown bool) {
+// IsTiFlashContained returns whether the plan contains TiFlash related executors.
+func IsTiFlashContained(plan Plan) (tiFlashPushDown, tiFlashExchangePushDown bool) {
 	if plan == nil {
 		return
 	}

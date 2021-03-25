@@ -2162,7 +2162,8 @@ func (s *testSerialStatsSuite) TestMergeTopN(c *C) {
 				val, err := strconv.Atoi(string(remainTopNMeta.Encoded))
 				c.Assert(err, IsNil)
 				c.Assert(remainTopNMeta.Count, Equals, res[val])
-				ok = minTopNCnt > remainTopNMeta.Count
+				// The count of value in remainTopN may equal to the min count of value in TopN.
+				ok = minTopNCnt >= remainTopNMeta.Count
 				c.Assert(ok, Equals, true)
 			}
 		}
