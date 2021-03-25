@@ -30,11 +30,9 @@ import (
 
 const (
 	// zapLogPatern is used to match the zap log format, such as the following log:
-	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] ["str key"=val] ["int key"=123]
-	zapLogPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ (\+|-)\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] (\[.*=.*\]).*\n`
-	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] ["str key"=val] ["int key"=123]
+	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] [conn=conn1] ["str key"=val] ["int key"=123]
 	zapLogWithConnIDPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ (\+|-)\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] \[conn=.*\] (\[.*=.*\]).*\n`
-	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] ["str key"=val] ["int key"=123]
+	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] [ctxKey=ctxKey1] ["str key"=val] ["int key"=123]
 	zapLogWithKeyValPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ (\+|-)\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] \[ctxKey=.*\] (\[.*=.*\]).*\n`
 )
 
@@ -50,48 +48,12 @@ type testLogSuite struct {
 	buf *bytes.Buffer
 }
 
-func (s *testLogSuite) SetUpSuite(c *C) {
+func (s *testLogSuite) SetUpSuite(_ *C) {
 	s.buf = &bytes.Buffer{}
 }
 
-func (s *testLogSuite) SetUpTest(c *C) {
+func (s *testLogSuite) SetUpTest(_ *C) {
 	s.buf = &bytes.Buffer{}
-}
-
-func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
-	if runtime.GOOS == "windows" {
-		// Skip this test on windows for two reasons:
-		// 1. The pattern match fails somehow. It seems windows treat \n as slash and character n.
-		// 2. Remove file doesn't work as long as the log instance hold the file.
-		c.Skip("skip on windows")
-	}
-
-	fileName := "slow_query"
-	conf := NewLogConfig("info", DefaultLogFormat, fileName, EmptyFileLogConfig, false)
-	err := InitZapLogger(conf)
-	c.Assert(err, IsNil)
-	defer os.Remove(fileName)
-
-	SlowQueryLogger.Debug("debug message", zap.String("str key", "val"))
-	SlowQueryLogger.Info("info message", zap.String("str key", "val"))
-	SlowQueryLogger.Warn("warn", zap.Int("int key", 123))
-	SlowQueryLogger.Error("error message", zap.Bool("bool key", true))
-
-	f, err := os.Open(fileName)
-	c.Assert(err, IsNil)
-	defer f.Close()
-
-	r := bufio.NewReader(f)
-	for {
-		var str string
-		str, err = r.ReadString('\n')
-		if err != nil {
-			break
-		}
-		c.Assert(str, Matches, zapLogPattern)
-	}
-	c.Assert(err, Equals, io.EOF)
-
 }
 
 func (s *testLogSuite) TestZapLoggerWithKeys(c *C) {
