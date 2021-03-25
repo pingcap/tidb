@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
@@ -42,9 +41,8 @@ const sampleMethodRegionConcurrency = 5
 type TableSampleExecutor struct {
 	baseExecutor
 
-	table     table.Table
-	startTS   uint64
-	tablePlan plannercore.PhysicalPlan
+	table   table.Table
+	startTS uint64
 
 	sampler rowSampler
 }
