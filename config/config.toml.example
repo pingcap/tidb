@@ -86,9 +86,10 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
-# alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
-# If it is true, we can add the primary key by "alter table". However, if a table already exists before the switch is turned true and the data type of its primary key column is an integer,
-# the primary key cannot be dropped.
+# alter-primary-key is used to control alter primary key feature for the table created without special clustered/nonclustered when @@global.tidb_enable_clustered_index = 'int_only'.
+# alter-primary-key is used to control whether a primary key created without a clustered attribute under @@global.tidb_enable_clustered_index = 'int_only' can be altered.
+# Default is false, indicate single int primary will be treated as clustered and can NOT be altered, another types primary key can be altered.
+# If it is true, we can alter primary key for all types in new created table after turn it as true.
 alter-primary-key = false
 
 # server-version is used to change the version string of TiDB in the following scenarios:
