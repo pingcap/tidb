@@ -1843,7 +1843,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	var assignFlag []int
-	assignFlag, b.err = getAssignFlag(b.ctx, v, base.children[0].Schema().Len())
+	assignFlag, b.err = getAssignFlag(b.ctx, v, selExec.Schema().Len())
 	if b.err != nil {
 		return nil
 	}
