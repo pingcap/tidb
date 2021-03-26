@@ -1351,7 +1351,9 @@ func (s *SessionVars) ClearStmtVars() {
 	s.stmtVars = make(map[string]string)
 }
 
-// SetSystemVar sets the value of a system variable.
+// SetSystemVar sets the value of a system variable for session scope.
+// Validation has already been performed, and the values have been normalized.
+// i.e. oN / on / 1 => ON
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
 	case TxnIsolationOneShot:
@@ -1750,8 +1752,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 	case TiDBTrackAggregateMemoryUsage:
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
-	case TiDBMultiStatementMode:
-		s.MultiStatementMode = TiDBOptMultiStmt(val)
 	case TiDBEnableExchangePartition:
 		s.TiDBEnableExchangePartition = TiDBOptOn(val)
 	case TiDBAllowFallbackToTiKV:
@@ -1764,6 +1764,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBIntPrimaryKeyDefaultAsClustered:
 		s.IntPrimaryKeyDefaultAsClustered = TiDBOptOn(val)
+	default:
+		sv := GetSysVar(name)
+		if err := sv.SetSessionFromHook(s, val); err != nil {
+			return err
+		}
 	}
 	s.systems[name] = val
 	return nil
