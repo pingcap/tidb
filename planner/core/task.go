@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -1767,6 +1768,9 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols}
 		newMpp := mpp.enforceExchangerImpl(prop)
+		if newMpp.invalid() {
+			return newMpp
+		}
 		attachPlan2Task(finalAgg, newMpp)
 		if proj != nil {
 			attachPlan2Task(proj, newMpp)
@@ -1968,6 +1972,13 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 }
 
 func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask {
+	if collate.NewCollationEnabled() && prop.PartitionTp == property.HashType {
+		for _, col := range prop.PartitionCols {
+			if types.IsString(col.RetType.Tp) {
+				return &mppTask{cst: math.MaxFloat64}
+			}
+		}
+	}
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType(prop.PartitionTp),
