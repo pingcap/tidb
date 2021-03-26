@@ -131,6 +131,11 @@ func (s *testPointGetSuite) TestPointGetOverflow(c *C) {
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=-128").Check(testkit.Rows("-128"))
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=128").Check(testkit.Rows())
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=127").Check(testkit.Rows("127"))
+
+	tk.MustExec("CREATE TABLE `PK_S_MULTI_31_1` (`COL1` tinyint(11) NOT NULL, `COL2` tinyint(11) NOT NULL, `COL3` tinyint(11) DEFAULT NULL, PRIMARY KEY (`COL1`,`COL2`) CLUSTERED)")
+	tk.MustQuery("select * from PK_S_MULTI_31_1 where col2 = -129 and col1 = 1").Check(testkit.Rows())
+	tk.MustExec("insert into PK_S_MULTI_31_1 select 1, 1, 1")
+	tk.MustQuery("select * from PK_S_MULTI_31_1 where (col1, col2) in ((1, -129),(1, 1))").Check(testkit.Rows("1 1 1"))
 }
 
 // Close issue #22839
