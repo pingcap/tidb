@@ -757,11 +757,7 @@ func (w *indexWorker) constructIndexKey(row chunk.Row, handleIdx []int) []types.
 		val := row.GetDatum(cols.Offset, &is.Table.Columns[cols.Offset].FieldType)
 		lookupKey = append(lookupKey, val)
 	}
-	if len(handleIdx) == 0 {
-		lookupKey = append(lookupKey, row.GetDatum(0, types.NewFieldType(mysql.TypeLonglong)))
-	} else {
-		lookupKey = append(lookupKey, row.GetDatum(handleIdx[0], types.NewFieldType(mysql.TypeLonglong)))
-	}
+	lookupKey = append(lookupKey, row.GetDatum(handleIdx[0], types.NewFieldType(mysql.TypeLonglong)))
 	return lookupKey
 }
 
