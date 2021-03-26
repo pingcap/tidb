@@ -129,12 +129,12 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			// For available state, the new added partition should wait it's replica to
 			// be finished. Otherwise the query to this partition will be blocked.
-			needWait, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, d)
+			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, d)
 			if err != nil {
 				ver, err = convertAddTablePartitionJob2RollbackJob(t, job, err, tblInfo)
 				return ver, err
 			}
-			if needWait {
+			if needRetry {
 				// The new added partition hasn't been replicated.
 				// Do nothing to the job this time, wait next worker round.
 				time.Sleep(tiflashCheckTiDBHTTPAPIHalfInterval)
