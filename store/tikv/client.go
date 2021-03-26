@@ -56,7 +56,7 @@ var MaxRecvMsgSize = math.MaxInt64
 // Timeout durations.
 var (
 	dialTimeout               = 5 * time.Second
-	readTimeoutShort          = 20 * time.Second   // For requests that read/write several key-values.
+	ReadTimeoutShort          = 20 * time.Second   // For requests that read/write several key-values.
 	ReadTimeoutMedium         = 60 * time.Second   // For requests that may need scan region.
 	ReadTimeoutLong           = 150 * time.Second  // For requests that may need scan region multiple times.
 	ReadTimeoutUltraLong      = 3600 * time.Second // For requests that may scan many regions for tiflash.

@@ -113,23 +113,23 @@ func (s *testStatsSuite) TestGCExtendedStats(c *C) {
 	h := s.do.StatsHandle()
 	ddlLease := time.Duration(0)
 	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Check(testkit.Rows(
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s1 2 [1,2] 1.000000 2",
 		"s2 2 [2,3] 1.000000 1",
 	))
 	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Check(testkit.Rows(
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 1",
 	))
 
 	testKit.MustExec("drop table t")
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Check(testkit.Rows(
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 1",
 	))
 	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Check(testkit.Rows(
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 2",
 	))
 	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Check(testkit.Rows())
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows())
 }

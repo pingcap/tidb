@@ -530,9 +530,6 @@ const (
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
 
-	// TiDBIntPrimaryKeyDefaultAsClustered indicates whether create int primary key as clustered as 4.0 behavior.
-	TiDBIntPrimaryKeyDefaultAsClustered = "tidb_int_primary_key_default_as_clustered"
-
 	// TiDBEnableDynamicPrivileges enables MySQL 8.0 compatible dynamic privileges (experimental).
 	TiDBEnableDynamicPrivileges = "tidb_enable_dynamic_privileges"
 )
@@ -660,7 +657,7 @@ const (
 	DefTiDBFoundInBinding              = false
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
-	DefTiDBEnableClusteredIndex        = false
+	DefTiDBEnableClusteredIndex        = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                   = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
@@ -711,11 +708,9 @@ var FeatureSwitchVariables = []string{
 	TiDBEnableAsyncCommit,
 	TiDBEnable1PC,
 	TiDBGuaranteeLinearizability,
-	TiDBEnableClusteredIndex,
 	TiDBTrackAggregateMemoryUsage,
 	TiDBAnalyzeVersion,
 	TiDBPartitionPruneMode,
-	TiDBIntPrimaryKeyDefaultAsClustered,
 	TiDBEnableExtendedStats,
 	TiDBEnableIndexMergeJoin,
 }

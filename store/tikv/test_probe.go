@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 )
 
 // StoreProbe wraps KVSTore and exposes internal states for testing purpose.
@@ -50,7 +50,7 @@ func (txn TxnProbe) GetCommitTS() uint64 {
 }
 
 // GetUnionStore returns transaction's embedded unionstore.
-func (txn TxnProbe) GetUnionStore() kv.UnionStore {
+func (txn TxnProbe) GetUnionStore() *unionstore.KVUnionStore {
 	return txn.us
 }
 
@@ -136,6 +136,11 @@ func (c CommitterProbe) GetCommitTS() uint64 {
 	return c.commitTS
 }
 
+// GetMinCommitTS returns the minimal commit ts can be used.
+func (c CommitterProbe) GetMinCommitTS() uint64 {
+	return c.minCommitTS
+}
+
 // SetMinCommitTS sets the minimal commit ts can be used.
 func (c CommitterProbe) SetMinCommitTS(ts uint64) {
 	c.minCommitTS = ts
@@ -144,6 +149,11 @@ func (c CommitterProbe) SetMinCommitTS(ts uint64) {
 // SetSessionID sets the session id of the committer.
 func (c CommitterProbe) SetSessionID(id uint64) {
 	c.sessionID = id
+}
+
+// GetForUpdateTS returns the pessimistic ForUpdate ts.
+func (c CommitterProbe) GetForUpdateTS() uint64 {
+	return c.forUpdateTS
 }
 
 // SetForUpdateTS sets pessimistic ForUpdate ts.
@@ -165,6 +175,11 @@ func (c CommitterProbe) GetLockTTL() uint64 {
 func (c CommitterProbe) SetTxnSize(sz int) {
 	c.txnSize = sz
 	c.lockTTL = txnLockTTL(c.txn.startTime, sz)
+}
+
+// SetUseAsyncCommit enables async commit feature.
+func (c CommitterProbe) SetUseAsyncCommit() {
+	c.useAsyncCommit = 1
 }
 
 // Execute runs the commit process.

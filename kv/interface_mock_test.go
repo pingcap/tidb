@@ -168,7 +168,7 @@ func (*mockTxn) IsPessimistic() bool {
 
 func (s *mockStorage) GetSnapshot(ver Version) Snapshot {
 	return &mockSnapshot{
-		store: newMemDB(),
+		store: newMockMap(),
 	}
 }
 
@@ -223,7 +223,7 @@ func newMockStorage() Storage {
 }
 
 type mockSnapshot struct {
-	store MemBuffer
+	store Retriever
 }
 
 func (s *mockSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
