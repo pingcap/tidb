@@ -778,7 +778,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		chk = chunk.NewChunkWithCapacity(w.idxColTps, w.maxChunkSize)
 	} else {
 		tp := w.idxLookup.getRetTpsByHandle()
-		chk = chunk.NewChunkWithCapacity(tp , w.idxLookup.maxChunkSize)
+		chk = chunk.NewChunkWithCapacity(tp, w.idxLookup.maxChunkSize)
 	}
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
