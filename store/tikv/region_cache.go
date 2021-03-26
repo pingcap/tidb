@@ -529,7 +529,8 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 
 // GetTiFlashRPCContext returns RPCContext for a region must access flash store. If it returns nil, the region
 // must be out of date and already dropped from cache or not flash store found.
-func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
+// `loadBalance` is an option. For MPP and batch cop, it is pointless and might cause try the failed store repeatly.
+func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBalance bool) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -543,7 +544,12 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 	regionStore := cachedRegion.getStore()
 
 	// sIdx is for load balance of TiFlash store.
-	sIdx := int(atomic.AddInt32(&regionStore.workTiFlashIdx, 1))
+	var sIdx int
+	if loadBalance {
+		sIdx = int(atomic.AddInt32(&regionStore.workTiFlashIdx, 1))
+	} else {
+		sIdx = int(atomic.LoadInt32(&regionStore.workTiFlashIdx))
+	}
 	for i := 0; i < regionStore.accessStoreNum(TiFlashOnly); i++ {
 		accessIdx := AccessIndex((sIdx + i) % regionStore.accessStoreNum(TiFlashOnly))
 		storeIdx, store := regionStore.accessStore(TiFlashOnly, accessIdx)
