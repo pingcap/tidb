@@ -285,7 +285,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, &kvrpcpb.ResolveLockRequest{TxnInfos: listTxnInfos})
 	startTime = time.Now()
-	resp, err := lr.store.SendReq(bo, req, loc, readTimeoutShort)
+	resp, err := lr.store.SendReq(bo, req, loc, ReadTimeoutShort)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -593,7 +593,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		if err != nil {
 			return status, errors.Trace(err)
 		}
-		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := lr.store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 		if err != nil {
 			return status, errors.Trace(err)
 		}
@@ -729,7 +729,7 @@ func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys []
 	}
 	req := tikvrpc.NewRequest(tikvrpc.CmdCheckSecondaryLocks, checkReq)
 	metrics.LockResolverCountWithQueryCheckSecondaryLocks.Inc()
-	resp, err := lr.store.SendReq(bo, req, curRegionID, readTimeoutShort)
+	resp, err := lr.store.SendReq(bo, req, curRegionID, ReadTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -859,7 +859,7 @@ func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region Region
 	lreq.Keys = keys
 	req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
 
-	resp, err := lr.store.SendReq(bo, req, region, readTimeoutShort)
+	resp, err := lr.store.SendReq(bo, req, region, ReadTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -928,7 +928,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 			lreq.Keys = [][]byte{l.Key}
 		}
 		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
-		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := lr.store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -979,7 +979,7 @@ func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegi
 			Keys:         [][]byte{l.Key},
 		}
 		req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticRollback, pessimisticRollbackReq)
-		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := lr.store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
 		}
