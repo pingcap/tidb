@@ -22,14 +22,6 @@
         "SQL": "explain format = 'brief' select * from t where b > 'a' order by convert(b, unsigned) limit 2",
         "Plan": [
           "Projection 2.00 root  test.t.a, test.t.b",
-<<<<<<< HEAD
-          "└─TopN 2.00 root  Column#3, offset:0, count:2",
-          "  └─Projection 2.00 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
-          "    └─TableReader 2.00 root  data:TopN",
-          "      └─TopN 2.00 batchCop[tiflash]  cast(test.t.b), offset:0, count:2",
-          "        └─Selection 3333.33 batchCop[tiflash]  gt(test.t.b, \"a\")",
-          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
-=======
           "└─TopN 2.00 root  Column#4, offset:0, count:2",
           "  └─Projection 2.00 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#4",
           "    └─TableReader 2.00 root  data:Projection",
@@ -38,7 +30,6 @@
           "          └─Projection 3333.33 batchCop[tiflash]  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
           "            └─Selection 3333.33 batchCop[tiflash]  gt(test.t.b, \"a\")",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
->>>>>>> a90903711... planner/core: inject project for tiflash agg (#23480)
         ]
       },
       {
@@ -1219,13 +1210,8 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:HashAgg",
-<<<<<<< HEAD
           "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#4)->Column#7",
           "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-=======
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#9",
->>>>>>> a90903711... planner/core: inject project for tiflash agg (#23480)
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -1243,31 +1229,19 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:HashAgg",
-<<<<<<< HEAD
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#4)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-=======
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#9)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#9",
->>>>>>> a90903711... planner/core: inject project for tiflash agg (#23480)
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#8)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(Column#4, decimal(41,0) BINARY)->Column#8",
+          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-<<<<<<< HEAD
           "StreamAgg 1.00 root  funcs:count(Column#4)->Column#5",
           "└─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
           "  └─TableReader 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
-=======
-          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
-          "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#9",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
->>>>>>> a90903711... planner/core: inject project for tiflash agg (#23480)
         ]
       },
       {
@@ -1283,17 +1257,10 @@
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
           "StreamAgg 1.00 root  funcs:sum(Column#7)->Column#5",
-<<<<<<< HEAD
           "└─Projection 10000.00 root  cast(Column#4, decimal(41,0) BINARY)->Column#7",
           "  └─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
           "    └─TableReader 10000.00 root  data:TableFullScan",
           "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
-=======
-          "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#9)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#9",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
->>>>>>> a90903711... planner/core: inject project for tiflash agg (#23480)
         ]
       },
       {
@@ -1388,13 +1355,8 @@
           "HashAgg 1.00 root  funcs:count(Column#8)->Column#5",
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#4)->Column#8",
           "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-=======
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#9",
->>>>>>> a90903711... planner/core: inject project for tiflash agg (#23480)
           "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -1414,31 +1376,19 @@
           "HashAgg 1.00 root  funcs:sum(Column#8)->Column#5",
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#4)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-=======
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#9)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#9",
->>>>>>> a90903711... planner/core: inject project for tiflash agg (#23480)
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─Projection 10000.00 batchCop[tiflash]  cast(Column#4, decimal(41,0) BINARY)->Column#9",
+          "        └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
+          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-<<<<<<< HEAD
           "StreamAgg 1.00 root  funcs:count(Column#4)->Column#5",
           "└─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
           "  └─TableReader 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
-=======
-          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
-          "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#9",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
->>>>>>> a90903711... planner/core: inject project for tiflash agg (#23480)
         ]
       },
       {
@@ -1454,17 +1404,10 @@
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
           "StreamAgg 1.00 root  funcs:sum(Column#7)->Column#5",
-<<<<<<< HEAD
           "└─Projection 10000.00 root  cast(Column#4, decimal(41,0) BINARY)->Column#7",
           "  └─Projection 10000.00 root  plus(test.t.id, 1)->Column#4",
           "    └─TableReader 10000.00 root  data:TableFullScan",
           "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
-=======
-          "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#9)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#9",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
->>>>>>> a90903711... planner/core: inject project for tiflash agg (#23480)
         ]
       },
       {
@@ -1580,13 +1523,8 @@
           "HashAgg 1.00 root  funcs:count(Column#8)->Column#5",
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#4)->Column#8",
           "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-=======
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#9",
->>>>>>> a90903711... planner/core: inject project for tiflash agg (#23480)
           "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -1606,14 +1544,10 @@
           "HashAgg 1.00 root  funcs:sum(Column#8)->Column#5",
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#4)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
-=======
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#9)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#9",
->>>>>>> a90903711... planner/core: inject project for tiflash agg (#23480)
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─Projection 10000.00 batchCop[tiflash]  cast(Column#4, decimal(41,0) BINARY)->Column#9",
+          "        └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#4",
+          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
