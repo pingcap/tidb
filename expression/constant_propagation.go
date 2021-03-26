@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/disjointset"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -29,6 +28,7 @@ import (
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
 var MaxPropagateColsCnt = 100
 
+// nolint:structcheck
 type basePropConstSolver struct {
 	colMapper map[int64]int       // colMapper maps column to its index
 	eqList    []*Constant         // if eqList[i] != nil, it means col_i = eqList[i]
@@ -88,7 +88,7 @@ func validEqualCondHelper(ctx sessionctx.Context, eq *ScalarFunction, colIsLeft 
 	if ContainMutableConst(ctx, []Expression{con}) {
 		return nil, nil
 	}
-	if !collate.CompatibleCollate(col.GetType().Collate, con.GetType().Collate) {
+	if col.GetType().Collate != con.GetType().Collate {
 		return nil, nil
 	}
 	return col, con

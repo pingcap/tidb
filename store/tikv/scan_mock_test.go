@@ -17,7 +17,6 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
 )
 
 type testScanMockSuite struct {
@@ -27,7 +26,7 @@ type testScanMockSuite struct {
 var _ = Suite(&testScanMockSuite{})
 
 func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
-	store := NewTestStore(c).(*tikvStore)
+	store := NewTestStore(c)
 	defer store.Close()
 
 	txn, err := store.Begin()
@@ -41,7 +40,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()}, 0)
+	snapshot := newTiKVSnapshot(store, txn.StartTS(), 0)
 	scanner, err := newScanner(snapshot, []byte("a"), nil, 10, false)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
@@ -60,7 +59,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 }
 
 func (s *testScanMockSuite) TestReverseScan(c *C) {
-	store := NewTestStore(c).(*tikvStore)
+	store := NewTestStore(c)
 	defer store.Close()
 
 	txn, err := store.Begin()
@@ -74,7 +73,7 @@ func (s *testScanMockSuite) TestReverseScan(c *C) {
 
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()}, 0)
+	snapshot := newTiKVSnapshot(store, txn.StartTS(), 0)
 	scanner, err := newScanner(snapshot, nil, []byte("z"), 10, true)
 	c.Assert(err, IsNil)
 	for ch := byte('y'); ch >= byte('a'); ch-- {

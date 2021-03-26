@@ -544,7 +544,10 @@ func BenchmarkEncodeValue(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for _, d := range row {
 			encodedCol = encodedCol[:0]
-			EncodeValue(nil, encodedCol, d)
+			_, err := EncodeValue(nil, encodedCol, d)
+			if err != nil {
+				b.Fatal(err)
+			}
 		}
 	}
 }

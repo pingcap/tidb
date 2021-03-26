@@ -46,7 +46,10 @@ func (s *testPartitionSuite) TestDropAndTruncatePartition(c *C) {
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 	dbInfo := testSchemaInfo(c, d, "test_partition")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	// generate 5 partition in tableInfo.

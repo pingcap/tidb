@@ -120,7 +120,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 
 	// Test session variable states.
 	vars := tk.Se.(sessionctx.Context).GetSessionVars()
-	tk.Se.CommitTxn(context.TODO())
+	err = tk.Se.CommitTxn(context.TODO())
+	c.Assert(err, IsNil)
 	tk.MustExec("set @@autocommit = 1")
 	c.Assert(vars.InTxn(), IsFalse)
 	c.Assert(vars.IsAutocommit(), IsTrue)
@@ -408,11 +409,17 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 
-	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_change_column_type = 1")
-	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_change_column_type = off")
-	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	// test tidb_enable_change_column_type in session scope.
+	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_enable_change_column_type = 1")
+	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.tidb_enable_change_column_type = off")
+	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
 
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
@@ -510,6 +517,22 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
 	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
 	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
+
+	tk.MustExec("SET SESSION tidb_allow_fallback_to_tikv = 'tiflash'")
+	tk.MustQuery("select @@session.tidb_allow_fallback_to_tikv").Check(testkit.Rows("tiflash"))
+	tk.MustExec("SET SESSION tidb_allow_fallback_to_tikv = ''")
+	tk.MustQuery("select @@session.tidb_allow_fallback_to_tikv").Check(testkit.Rows(""))
+	tk.MustExec("SET GLOBAL tidb_allow_fallback_to_tikv = 'tiflash'")
+	tk.MustQuery("select @@global.tidb_allow_fallback_to_tikv").Check(testkit.Rows("tiflash"))
+	tk.MustExec("SET GLOBAL tidb_allow_fallback_to_tikv = ''")
+	tk.MustQuery("select @@global.tidb_allow_fallback_to_tikv").Check(testkit.Rows(""))
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv = 'tiflash, tiflash, tiflash'")
+	tk.MustQuery("select @@tidb_allow_fallback_to_tikv").Check(testkit.Rows("tiflash"))
+
+	tk.MustGetErrMsg("SET SESSION tidb_allow_fallback_to_tikv = 'tikv,tiflash'", "[variable:1231]Variable 'tidb_allow_fallback_to_tikv' can't be set to the value of 'tikv,tiflash'")
+	tk.MustGetErrMsg("SET GLOBAL tidb_allow_fallback_to_tikv = 'tikv,tiflash'", "[variable:1231]Variable 'tidb_allow_fallback_to_tikv' can't be set to the value of 'tikv,tiflash'")
+	tk.MustGetErrMsg("set @@tidb_allow_fallback_to_tikv = 'tidb, tiflash, tiflash'", "[variable:1231]Variable 'tidb_allow_fallback_to_tikv' can't be set to the value of 'tidb, tiflash, tiflash'")
+	tk.MustGetErrMsg("set @@tidb_allow_fallback_to_tikv = 'unknown, tiflash, tiflash'", "[variable:1231]Variable 'tidb_allow_fallback_to_tikv' can't be set to the value of 'unknown, tiflash, tiflash'")
 
 	// Test issue #22145
 	tk.MustExec(`set global sync_relay_log = "'"`)

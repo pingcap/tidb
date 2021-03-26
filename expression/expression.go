@@ -458,8 +458,20 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 				sVal := buf.GetString(i)
 				if tp.Hybrid() {
 					switch tp.Tp {
-					case mysql.TypeEnum, mysql.TypeSet:
+					case mysql.TypeSet, mysql.TypeEnum:
 						fVal = float64(len(sVal))
+						if fVal == 0 {
+							// The elements listed in the column specification are assigned index numbers, beginning
+							// with 1. The index value of the empty string error value (distinguish from a "normal"
+							// empty string) is 0. Thus we need to check whether it's an empty string error value when
+							// `fVal==0`.
+							for idx, elem := range tp.Elems {
+								if elem == sVal {
+									fVal = float64(idx + 1)
+									break
+								}
+							}
+						}
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
 						iVal, err := bl.ToInt(sc)
@@ -770,11 +782,18 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
+	if ContainMutableConst(ctx, []Expression{expr}) {
+		ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
+	}
+	return evaluateExprWithNull(ctx, schema, expr)
+}
+
+func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i] = EvaluateExprWithNull(ctx, schema, arg)
+			args[i] = evaluateExprWithNull(ctx, schema, arg)
 		}
 		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
 	case *Column:
@@ -1051,6 +1070,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.TimestampDiff,
 		ast.DateAdd,
 		ast.FromUnixTime,
+		ast.Extract,
 
 		// encryption functions.
 		ast.MD5,
@@ -1154,6 +1174,13 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 
 	// Check whether this function can be pushed.
 	if !canFuncBePushed(scalarFunc, storeType) {
+		if pc.sc.InExplainStmt {
+			storageName := storeType.Name()
+			if storeType == kv.UnSpecified {
+				storageName = "storage layer"
+			}
+			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ") can not be pushed to " + storageName))
+		}
 		return false
 	}
 
@@ -1177,6 +1204,9 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
 	if storeType == kv.TiFlash && expr.GetType().Tp == mysql.TypeDuration {
+		if pc.sc.InExplainStmt {
+			pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Duration type"))
+		}
 		return false
 	}
 	switch x := expr.(type) {
@@ -1214,7 +1244,7 @@ func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client k
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
-		ast.FromUnixTime:
+		ast.FromUnixTime, ast.Extract:
 		return false
 	default:
 		return true
@@ -1262,6 +1292,13 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal,
 			tipb.ScalarFuncSig_RoundDec:
+			return true
+		default:
+			return false
+		}
+	case ast.Extract:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_ExtractDatetime:
 			return true
 		default:
 			return false

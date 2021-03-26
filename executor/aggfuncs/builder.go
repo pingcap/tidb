@@ -92,7 +92,7 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 	case ast.WindowFuncNtile:
 		return buildNtile(windowFuncDesc, ordinal)
 	case ast.WindowFuncPercentRank:
-		return buildPercenRank(ordinal, orderByCols)
+		return buildPercentRank(ordinal, orderByCols)
 	case ast.WindowFuncLead:
 		return buildLead(ctx, windowFuncDesc, ordinal)
 	case ast.WindowFuncLag:
@@ -685,7 +685,7 @@ func buildNtile(aggFuncDes *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return &ntile{baseAggFunc: base, n: n}
 }
 
-func buildPercenRank(ordinal int, orderByCols []*expression.Column) AggFunc {
+func buildPercentRank(ordinal int, orderByCols []*expression.Column) AggFunc {
 	base := baseAggFunc{
 		ordinal: ordinal,
 	}
