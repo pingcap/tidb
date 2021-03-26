@@ -206,7 +206,7 @@ func (s *testPartitionSuite) TestAddPartitionReplicaBiggerThanTiFlashStores(c *C
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:-1][ddl] the tiflash replica count: 1 should be less than the total tiflash server count: 0")
 
-	// test add partition waiting tiflash replica can exit when it's retry count is beyond the limitation.
+	// Test `add partition` waiting TiFlash replica can exit when its retry count is beyond the limitation.
 	originErrCountLimit := variable.GetDDLErrorCountLimit()
 	variable.SetDDLErrorCountLimit(3)
 	defer func() {
