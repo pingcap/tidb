@@ -970,9 +970,10 @@ const (
 type basePhysicalAgg struct {
 	physicalSchemaProducer
 
-	AggFuncs     []*aggregation.AggFuncDesc
-	GroupByItems []expression.Expression
-	MppRunMode   AggMppRunMode
+	AggFuncs         []*aggregation.AggFuncDesc
+	GroupByItems     []expression.Expression
+	MppRunMode       AggMppRunMode
+	MppPartitionCols []*expression.Column
 }
 
 func (p *basePhysicalAgg) isFinalAgg() bool {
