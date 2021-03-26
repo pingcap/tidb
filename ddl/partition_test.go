@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-var _ = Suite(&testPartitionSuite{})
+var _ = SerialSuites(&testPartitionSuite{})
 
 type testPartitionSuite struct {
 	store kv.Storage
