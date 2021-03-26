@@ -202,9 +202,15 @@ func (s *RegionRequestSender) getRPCContext(
 			seed = *req.ReplicaReadSeed
 		}
 		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed, opts...)
+<<<<<<< HEAD
 	case kv.TiFlash:
 		return s.regionCache.GetTiFlashRPCContext(bo, regionID)
 	case kv.TiDB:
+=======
+	case tidbkv.TiFlash:
+		return s.regionCache.GetTiFlashRPCContext(bo, regionID, true)
+	case tidbkv.TiDB:
+>>>>>>> 8492619a8... store, plan: make mpp workable when some node is not available shortly. (#23589)
 		return &RPCContext{Addr: s.storeAddr}, nil
 	default:
 		return nil, errors.Errorf("unsupported storage type: %v", sType)

@@ -461,7 +461,11 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+<<<<<<< HEAD
 		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "", ops...)
+=======
+		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, ReadTimeoutShort, tidbkv.TiKV, "", ops...)
+>>>>>>> 8492619a8... store, plan: make mpp workable when some node is not available shortly. (#23589)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
