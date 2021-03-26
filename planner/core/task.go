@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -1163,7 +1164,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 	topN := PhysicalTopN{
 		ByItems: newByItems,
 		Count:   newCount,
-	}.Init(p.ctx, stats, p.blockOffset)
+	}.Init(p.ctx, stats, p.blockOffset, p.GetChildReqProps(0))
 	topN.SetChildren(childPlan)
 	return topN
 }
@@ -1433,14 +1434,15 @@ func BuildFinalModeAggregation(
 				partialCursor++
 			}
 			if aggFunc.Name == ast.AggFuncAvg {
-				cntAgg := *aggFunc
+				cntAgg := aggFunc.Clone()
 				cntAgg.Name = ast.AggFuncCount
 				cntAgg.RetTp = partial.Schema.Columns[partialCursor-2].GetType()
 				cntAgg.RetTp.Flag = aggFunc.RetTp.Flag
-				sumAgg := *aggFunc
+				// we must call deep clone in this case, to avoid sharing the arguments.
+				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
 				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
-				partial.AggFuncs = append(partial.AggFuncs, &cntAgg, &sumAgg)
+				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
 				approxCountDistinctAgg := *aggFunc
 				approxCountDistinctAgg.Name = ast.AggFuncApproxCountDistinct
@@ -1755,17 +1757,23 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			return invalidTask
 		}
 		attachPlan2Task(partialAgg, mpp)
-		items := finalAgg.(*PhysicalHashAgg).GroupByItems
-		partitionCols := make([]*expression.Column, 0, len(items))
-		for _, expr := range items {
-			col, ok := expr.(*expression.Column)
-			if !ok {
-				return invalidTask
+		partitionCols := p.MppPartitionCols
+		if len(partitionCols) == 0 {
+			items := finalAgg.(*PhysicalHashAgg).GroupByItems
+			partitionCols = make([]*expression.Column, 0, len(items))
+			for _, expr := range items {
+				col, ok := expr.(*expression.Column)
+				if !ok {
+					return invalidTask
+				}
+				partitionCols = append(partitionCols, col)
 			}
-			partitionCols = append(partitionCols, col)
 		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols}
 		newMpp := mpp.enforceExchangerImpl(prop)
+		if newMpp.invalid() {
+			return newMpp
+		}
 		attachPlan2Task(finalAgg, newMpp)
 		if proj != nil {
 			attachPlan2Task(proj, newMpp)
@@ -1967,6 +1975,13 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 }
 
 func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask {
+	if collate.NewCollationEnabled() && prop.PartitionTp == property.HashType {
+		for _, col := range prop.PartitionCols {
+			if types.IsString(col.RetType.Tp) {
+				return &mppTask{cst: math.MaxFloat64}
+			}
+		}
+	}
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType(prop.PartitionTp),
