@@ -198,28 +198,28 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 			}
 			break
 		}
-}
-
-splitedRanges, _ := distsql.SplitRangesBySign(ts.Ranges, false, false, ts.Table.IsCommonHandle)
-if ts.Table.GetPartitionInfo() != nil {
-	tmp, _ := e.is.TableByID(ts.Table.ID)
-	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
-	var ret []*kv.MPPTask
-	for _, p := range partitions {
-		pid := p.GetPhysicalID()
-		meta := p.Meta()
-		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
+
+	splitedRanges, _ := distsql.SplitRangesBySign(ts.Ranges, false, false, ts.Table.IsCommonHandle)
+	if ts.Table.GetPartitionInfo() != nil {
+		tmp, _ := e.is.TableByID(ts.Table.ID)
+		tbl := tmp.(table.PartitionedTable)
+		partitions, err := partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		tasks, err := e.constructMPPTasksForSinglePartitionTable(ctx, kvRanges, pid)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		var ret []*kv.MPPTask
+		for _, p := range partitions {
+			pid := p.GetPhysicalID()
+			meta := p.Meta()
+			kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tasks, err := e.constructMPPTasksForSinglePartitionTable(ctx, kvRanges, pid)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			ret = append(ret, tasks...)
 		}
 		return ret, nil
