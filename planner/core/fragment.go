@@ -156,17 +156,13 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *PhysicalTableScan) ([]*kv.MPPTask, error) {
 	if ts != nil {
 		// update ranges according to correlated columns in access conditions like in the Open() of TableReaderExecutor
-		hasCorCol := false
 		for _, cond := range ts.AccessCondition {
 			if len(expression.ExtractCorColumns(cond)) > 0 {
-				hasCorCol = true
+				err := ts.ResolveCorrelatedColumns()
+				if err != nil {
+					return nil, err
+				}
 				break
-			}
-		}
-		if hasCorCol {
-			err := ts.ResolveCorrelatedColumns()
-			if err != nil {
-				return nil, err
 			}
 		}
 
