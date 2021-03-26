@@ -8926,3 +8926,11 @@ func (s *testIntegrationSuite) TestClusteredIndexCorCol(c *C) {
 	tk.MustExec("insert into t2 select * from t1 ;")
 	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str = t1.c_str and t2.c_int = 10 order by t2.c_str limit 1) x from t1;").Check(testkit.Rows("<nil>", "goofy mestorf"))
 }
+
+func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {
+	// For issue #23541
+	// JIRA needs to be able to set this to be happy.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set global innodb_default_row_format = dynamic")
+	tk.MustExec("set global innodb_default_row_format = 'dynamic'")
+}
