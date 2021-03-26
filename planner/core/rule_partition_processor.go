@@ -487,27 +487,23 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 			if len(r.HighVal) != len(exprCols) || r.IsFullRange() {
 				return l.fullRange, nil
 			}
-			if r.LowVal[0].Kind() == types.KindMinNotNull {
-				r.LowVal[0] = types.GetMinValue(exprCols[0].GetType())
+			_, fn, monotonous, err := getFnColAndmonotonous(pruneExpr)
+			if err != nil {
+				return l.fullRange, nil
 			}
-			if r.HighVal[0].Kind() == types.KindMaxValue {
-				r.HighVal[0] = types.GetMaxValue(exprCols[0].GetType())
+
+			low, ok := extractDataForPrune(l.ctx, pruneExpr, exprCols[0], fn, monotonous)
+			if !ok {
+				return l.fullRange, err
 			}
-			lvalue, isLNull, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
+			high, ok := extractDataForPrune(l.ctx, pruneExpr, exprCols[1], fn, monotonous)
+			if !ok {
+				return l.fullRange, err
+			}
+			partitionIdxes, err := l.listPrune.LocateRange(l.ctx, r, low.c, high.c)
 			if err != nil {
 				return nil, err
 			}
-			rvalue, isRNull, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
-			if err != nil {
-				return nil, err
-			}
-			if !r.LowExclude {
-				lvalue++
-			}
-			if !r.HighExclude {
-				rvalue--
-			}
-			partitionIdxes := l.listPrune.LocateRange(lvalue, isLNull, rvalue, isRNull)
 			for _, partitionIdx := range partitionIdxes {
 				used[partitionIdx] = struct{}{}
 			}
@@ -804,9 +800,14 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		return nil, nil, monotonous, err
 	}
 	partExpr := tmp[0]
+	return getFnColAndmonotonous(partExpr)
+}
+
+func getFnColAndmonotonous(expr expression.Expression) (*expression.Column, *expression.ScalarFunction, monotoneMode, error) {
+	monotonous := monotoneModeInvalid
 	var col *expression.Column
 	var fn *expression.ScalarFunction
-	switch raw := partExpr.(type) {
+	switch raw := expr.(type) {
 	case *expression.ScalarFunction:
 		args := raw.GetArgs()
 		// Special handle for floor(unix_timestamp(ts)) as partition expression.
@@ -898,7 +899,7 @@ func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expres
 		}
 	}
 
-	dataForPrune, ok := p.extractDataForPrune(sctx, expr)
+	dataForPrune, ok := extractDataForPrune(sctx, expr, p.col, p.partFn, p.monotonous)
 	if !ok {
 		return 0, 0, false
 	}
@@ -998,7 +999,7 @@ type dataForPrune struct {
 
 // extractDataForPrune extracts data from the expression for pruning.
 // The expression should have this form:  'f(x) op const', otherwise it can't be pruned.
-func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expression.Expression) (dataForPrune, bool) {
+func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, pruneCol *expression.Column, partFn *expression.ScalarFunction, monotonous monotoneMode) (dataForPrune, bool) {
 	var ret dataForPrune
 	op, ok := expr.(*expression.ScalarFunction)
 	if !ok {
@@ -1009,7 +1010,7 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 		ret.op = op.FuncName.L
 	case ast.IsNull:
 		// isnull(col)
-		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == p.col.ID {
+		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == pruneCol.ID {
 			ret.op = ast.IsNull
 			return ret, true
 		}
@@ -1020,11 +1021,11 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 
 	var col *expression.Column
 	var con *expression.Constant
-	if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == p.col.ID {
+	if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == pruneCol.ID {
 		if arg1, ok := op.GetArgs()[1].(*expression.Constant); ok {
 			col, con = arg0, arg1
 		}
-	} else if arg0, ok := op.GetArgs()[1].(*expression.Column); ok && arg0.ID == p.col.ID {
+	} else if arg0, ok := op.GetArgs()[1].(*expression.Column); ok && arg0.ID == pruneCol.ID {
 		if arg1, ok := op.GetArgs()[0].(*expression.Constant); ok {
 			ret.op = opposite(ret.op)
 			col, con = arg0, arg1
@@ -1036,21 +1037,21 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 
 	// Current expression is 'col op const'
 	var constExpr expression.Expression
-	if p.partFn != nil {
+	if partFn != nil {
 		// If the partition function is not monotone, only EQ condition can be pruning.
-		if p.monotonous == monotoneModeInvalid && ret.op != ast.EQ {
+		if monotonous == monotoneModeInvalid && ret.op != ast.EQ {
 			return ret, false
 		}
 
 		// If the partition expression is fn(col), change constExpr to fn(constExpr).
-		constExpr = replaceColumnWithConst(p.partFn, con)
+		constExpr = replaceColumnWithConst(partFn, con)
 
 		// When the partFn is not strict monotonous, we need to relax the condition < to <=, > to >=.
 		// For example, the following case doesn't hold:
 		// col < '2020-02-11 17:34:11' => to_days(col) < to_days(2020-02-11 17:34:11)
 		// The correct transform should be:
 		// col < '2020-02-11 17:34:11' => to_days(col) <= to_days(2020-02-11 17:34:11)
-		if p.monotonous == monotoneModeNonStrict {
+		if monotonous == monotoneModeNonStrict {
 			ret.op = relaxOP(ret.op)
 		}
 	} else {

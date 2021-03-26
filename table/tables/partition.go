@@ -41,6 +41,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/ranger"
+
 	"go.uber.org/zap"
 )
 
@@ -748,19 +750,19 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 }
 
 // LocateRange locates partition range by the column range
-func (lp *ForListPruning) LocateRange(lowVal int64, isLowNull bool, highVal int64, isHighNull bool) []int {
+func (lp *ForListPruning) LocateRange(ctx sessionctx.Context, r *ranger.Range, lowVal int64, highVal int64) ([]int, error) {
+	if !r.LowExclude {
+		lowVal++
+	}
+	if !r.HighExclude {
+		highVal--
+	}
 	partitionIdxes := make([]int, 0, lp.sorted.Len())
-	if isLowNull {
-		partitionIdxes = append(partitionIdxes, lp.nullPartitionIdx)
-	}
-	if isHighNull {
-		partitionIdxes = append(partitionIdxes, lp.nullPartitionIdx)
-	}
 	lp.sorted.AscendRange(newBtreeSearchItem(lowVal), newBtreeSearchItem(highVal), func(item btree.Item) bool {
 		partitionIdxes = append(partitionIdxes, item.(*btreeItem).partitionIdx)
 		return true
 	})
-	return partitionIdxes
+	return partitionIdxes, nil
 }
 
 // buildListPartitionValueMap builds list columns partition value map for the specified column.
