@@ -257,7 +257,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, string(bVal))
+	c.Assert(val, Equals, config.HideConfig(string(bVal)))
 
 	err = SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("1"))
 	c.Assert(err, IsNil)

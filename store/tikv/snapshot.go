@@ -550,55 +550,55 @@ func (s *KVSnapshot) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 
 // SetOption sets an option with a value, when val is nil, uses the default
 // value of this option. Only ReplicaRead is supported for snapshot
-func (s *KVSnapshot) SetOption(opt tidbkv.Option, val interface{}) {
+func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case tidbkv.IsolationLevel:
+	case kv.IsolationLevel:
 		s.isolationLevel = val.(kv.IsoLevel)
-	case tidbkv.Priority:
+	case kv.Priority:
 		s.priority = PriorityToPB(val.(int))
-	case tidbkv.NotFillCache:
+	case kv.NotFillCache:
 		s.notFillCache = val.(bool)
-	case tidbkv.SyncLog:
+	case kv.SyncLog:
 		s.syncLog = val.(bool)
-	case tidbkv.KeyOnly:
+	case kv.KeyOnly:
 		s.keyOnly = val.(bool)
-	case tidbkv.SnapshotTS:
+	case kv.SnapshotTS:
 		s.setSnapshotTS(val.(uint64))
-	case tidbkv.ReplicaRead:
+	case kv.ReplicaRead:
 		s.mu.Lock()
 		s.mu.replicaRead = val.(kv.ReplicaReadType)
 		s.mu.Unlock()
-	case tidbkv.TaskID:
+	case kv.TaskID:
 		s.mu.Lock()
 		s.mu.taskID = val.(uint64)
 		s.mu.Unlock()
-	case tidbkv.CollectRuntimeStats:
+	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
 		s.mu.Unlock()
-	case tidbkv.SampleStep:
+	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
-	case tidbkv.IsStalenessReadOnly:
+	case kv.IsStalenessReadOnly:
 		s.mu.Lock()
 		s.mu.isStaleness = val.(bool)
 		s.mu.Unlock()
-	case tidbkv.MatchStoreLabels:
+	case kv.MatchStoreLabels:
 		s.mu.Lock()
 		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
 		s.mu.Unlock()
-	case tidbkv.TxnScope:
+	case kv.TxnScope:
 		s.txnScope = val.(string)
 	}
 }
 
 // DelOption deletes an option.
-func (s *KVSnapshot) DelOption(opt tidbkv.Option) {
+func (s *KVSnapshot) DelOption(opt int) {
 	switch opt {
-	case tidbkv.ReplicaRead:
+	case kv.ReplicaRead:
 		s.mu.Lock()
 		s.mu.replicaRead = kv.ReplicaReadLeader
 		s.mu.Unlock()
-	case tidbkv.CollectRuntimeStats:
+	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = nil
 		s.mu.Unlock()
