@@ -26,6 +26,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -394,7 +395,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	}
 	if !e.isImplicitClose {
 		e.originRange = e.ranges
-		e.pageSize = int64(e.ctx.GetSessionVars().IndexLookupSize)
+		e.pageSize = mathutil.MinInt64(int64(e.ctx.GetSessionVars().IndexLookupSize), int64(1024))
 	}
 	if e.needIndexPaging {
 		if !e.hasAddLimit {
@@ -406,6 +407,9 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			}
 		} else {
 			e.pageSize = e.pageSize * 2
+			if e.pageSize > int64(e.ctx.GetSessionVars().IndexLookupSize) {
+				e.pageSize = int64(e.ctx.GetSessionVars().IndexLookupSize)
+			}
 			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
 			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.pageSize)))
 			e.PushedLimit.Count = uint64(e.pageSize)
@@ -748,7 +752,9 @@ func (w *indexWorker) constructIndexKey(row chunk.Row, handleIdx int) []types.Da
 		val := row.GetDatum(cols.Offset, &is.Table.Columns[cols.Offset].FieldType)
 		lookupKey = append(lookupKey, val)
 	}
-	lookupKey = append(lookupKey, row.GetDatum(handleIdx, types.NewFieldType(mysql.TypeLonglong)))
+	if !w.idxLookup.idxPlans[0].(*plannercore.PhysicalIndexScan).Index.Unique {
+		lookupKey = append(lookupKey, row.GetDatum(handleIdx, types.NewFieldType(mysql.TypeLonglong)))
+	}
 	return lookupKey
 }
 
