@@ -24,14 +24,13 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
-	if !ctx.GetSessionVars().AllowMPPExecution || collate.NewCollationEnabled() {
+	if !ctx.GetSessionVars().AllowMPPExecution {
 		return false
 	}
 	_, ok := tr.GetTablePlan().(*plannercore.PhysicalExchangeSender)
