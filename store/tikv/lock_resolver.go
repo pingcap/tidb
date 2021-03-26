@@ -625,7 +625,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		status.action = cmdResp.Action
 		status.primaryLock = cmdResp.LockInfo
 
-		if status.primaryLock != nil && status.primaryLock.UseAsyncCommit {
+		if status.primaryLock != nil && status.primaryLock.UseAsyncCommit && !forceSyncCommit {
 			if !lr.store.GetOracle().IsExpired(txnID, cmdResp.LockTtl, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) {
 				status.ttl = cmdResp.LockTtl
 			}
