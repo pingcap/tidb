@@ -259,7 +259,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		return
+		r.selectResp.ExecutionSummaries = r.selectResp.ExecutionSummaries[:len(r.copPlanIDs)]
 	}
 	if r.stats == nil {
 		id := r.rootPlanID
