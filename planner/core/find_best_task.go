@@ -1493,7 +1493,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			p:      ts,
 			cst:    cost,
 			partTp: property.AnyType,
-			ts:     ts,
 		}
 		ts.PartitionInfo = PartitionInfo{
 			PruningConds:   ds.allConds,

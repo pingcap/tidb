@@ -59,7 +59,7 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MP
 		StartTs: e.startTS,
 		ID:      -1,
 	}
-	rootTasks, err := e.generateMPPTasksForFragment(s.Fragment)
+	rootTasks, err := e.generateMPPTasksForFragment(s)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -67,9 +67,39 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MP
 	return rootTasks, nil
 }
 
-func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
+func (f *Fragment) init(p PhysicalPlan) error {
+	switch x := p.(type) {
+	case *PhysicalTableScan:
+		if f.TableScan != nil {
+			return errors.New("one task contains at most one table scan")
+		}
+		f.TableScan = x
+	case *PhysicalExchangeReceiver:
+		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
+	default:
+		for _, ch := range p.Children() {
+			if err := f.init(ch); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
+func newFragment(s *PhysicalExchangeSender) (*Fragment, error) {
+	f := &Fragment{ExchangeSender: s}
+	s.Fragment = f
+	err := f.init(s)
+	return f, errors.Trace(err)
+}
+
+func (e *mppTaskGenerator) generateMPPTasksForFragment(s *PhysicalExchangeSender) (tasks []*kv.MPPTask, err error) {
+	f, err := newFragment(s)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	for _, r := range f.ExchangeReceivers {
-		r.Tasks, err = e.generateMPPTasksForFragment(r.ChildPf)
+		r.Tasks, err = e.generateMPPTasksForFragment(r.GetExchangeSender())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -86,7 +116,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		return nil, errors.New("cannot find mpp task")
 	}
 	for _, r := range f.ExchangeReceivers {
-		s := r.ChildPf.ExchangeSender
+		s := r.GetExchangeSender()
 		s.TargetTasks = tasks
 	}
 	f.ExchangeSender.Tasks = tasks
@@ -125,6 +155,17 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 // single physical table means a table without partitions or a single partition in a partition table.
 func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *PhysicalTableScan) ([]*kv.MPPTask, error) {
 	if ts != nil {
+		// update ranges according to correlated columns in access conditions like in the Open() of TableReaderExecutor
+		for _, cond := range ts.AccessCondition {
+			if len(expression.ExtractCorColumns(cond)) > 0 {
+				_, err := ts.ResolveCorrelatedColumns()
+				if err != nil {
+					return nil, err
+				}
+				break
+			}
+		}
+
 		splitedRanges, _ := distsql.SplitRangesBySign(ts.Ranges, false, false, ts.Table.IsCommonHandle)
 		if ts.Table.GetPartitionInfo() != nil {
 			tmp, _ := e.is.TableByID(ts.Table.ID)
