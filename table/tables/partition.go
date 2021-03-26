@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
@@ -818,17 +819,19 @@ func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v 
 
 // LocateRanges locates partition ranges by the column range
 func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ranger.Range) ([]ListPartitionLocation, error) {
+	lowVal := r.LowVal[0]
 	if r.LowVal[0].Kind() == types.KindMinNotNull {
-		r.LowVal[0] = types.GetMinValue(lp.ExprCol.GetType())
+		lowVal = types.GetMinValue(lp.ExprCol.GetType())
 	}
+	highVal := r.HighVal[0]
 	if r.HighVal[0].Kind() == types.KindMaxValue {
-		r.HighVal[0] = types.GetMaxValue(lp.ExprCol.GetType())
+		highVal = types.GetMaxValue(lp.ExprCol.GetType())
 	}
-	lowKey, err := lp.genKey(sc, r.LowVal[0])
+	lowKey, err := lp.genKey(sc, lowVal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	highKey, err := lp.genKey(sc, r.HighVal[0])
+	highKey, err := lp.genKey(sc, highVal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -841,7 +844,7 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 	}
 
 	locations := make([]ListPartitionLocation, 0, lp.sorted.Len())
-	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(lowKey)), newBtreeListColumnSearchItem(string(highKey)), func(item btree.Item) bool {
+	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(hack.String(lowKey))), newBtreeListColumnSearchItem(string(hack.String(highKey))), func(item btree.Item) bool {
 		locations = append(locations, item.(*btreeListColumnItem).location)
 		return true
 	})
