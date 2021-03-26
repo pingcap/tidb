@@ -2610,6 +2610,9 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
+	if v.ExtraHandleColForPartialReader != nil {
+		e.extraHandleIdx = v.ExtraHandleColForPartialReader.Index
+	}
 	return e, nil
 }
 
