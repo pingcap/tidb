@@ -473,9 +473,10 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
 	var tps []*types.FieldType
 	if e.needIndexPaging {
-		for _, col := range e.idxCols {
-			if col.ID != -1 {
-				tps = append(tps, col.RetType)
+		is := e.idxPlans[0].(*plannercore.PhysicalIndexScan)
+		for _, col := range is.Index.Columns {
+			if is.Table.Columns[col.Offset].ID != -1 {
+				tps = append(tps, &is.Table.Columns[col.Offset].FieldType)
 			}
 		}
 	}
@@ -748,8 +749,8 @@ type indexWorker struct {
 func (w *indexWorker) constructIndexKey(row chunk.Row, handleIdx int) []types.Datum {
 	lookupKey := make([]types.Datum, 0, row.Len())
 	is := w.idxLookup.idxPlans[0].(*plannercore.PhysicalIndexScan)
-	for _, cols := range is.Index.Columns {
-		val := row.GetDatum(cols.Offset, &is.Table.Columns[cols.Offset].FieldType)
+	for i, cols := range is.Index.Columns {
+		val := row.GetDatum(i, &is.Table.Columns[cols.Offset].FieldType)
 		lookupKey = append(lookupKey, val)
 	}
 	if !w.idxLookup.idxPlans[0].(*plannercore.PhysicalIndexScan).Index.Unique {

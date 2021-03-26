@@ -2467,8 +2467,9 @@ func buildIndexReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 		return nil, false, err
 	}
 	if needAllIndexColumns {
-		for i, col := range plans[0].(*plannercore.PhysicalIndexScan).IdxCols {
-			if col.ID != -1 {
+		is := plans[0].(*plannercore.PhysicalIndexScan)
+		for i, col := range is.Index.Columns {
+			if is.Table.Columns[col.Offset].ID != -1 {
 				indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
 			}
 		}
