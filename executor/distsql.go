@@ -364,6 +364,13 @@ type IndexLookUpExecutor struct {
 	PushedLimit *plannercore.PushedDownLimit
 
 	stats *IndexLookUpRunTimeStats
+
+	needIndexPaging bool
+	hasAddLimit     bool
+	pageSize        int64
+	isImplicitClose bool
+	originRange     []*ranger.Range
+	lastIndexKey    []types.Datum
 }
 
 type checkIndexValue struct {
@@ -385,11 +392,37 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
+	if !e.isImplicitClose {
+		e.originRange = e.ranges
+		e.pageSize = int64(e.ctx.GetSessionVars().IndexLookupSize)
+	}
+	if e.needIndexPaging {
+		if !e.hasAddLimit {
+			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.pageSize)))
+			e.hasAddLimit = true
+			e.PushedLimit = &plannercore.PushedDownLimit{
+				Offset: 0,
+				Count:  uint64(e.pageSize),
+			}
+		} else {
+			e.pageSize = e.pageSize * 2
+			e.dagPB.Executors = e.dagPB.Executors[:len(e.dagPB.Executors)-1]
+			e.dagPB.Executors = append(e.dagPB.Executors, e.constructLimitPB(uint64(e.pageSize)))
+			e.PushedLimit.Count = uint64(e.pageSize)
+		}
+	}
 	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
 	return err
+}
+
+func (e *IndexLookUpExecutor) constructLimitPB(count uint64) *tipb.Executor {
+	limitExec := &tipb.Limit{
+		Limit: count,
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
 func (e *IndexLookUpExecutor) open(ctx context.Context) error {
@@ -433,6 +466,22 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
+func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
+	var tps []*types.FieldType
+	if e.needIndexPaging {
+		for _, col := range e.idxCols {
+			if col.ID != -1 {
+				tps = append(tps, col.RetType)
+			}
+		}
+	}
+	tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+	if e.checkIndexValue != nil {
+		tps = e.idxColTps
+	}
+	return tps
+}
+
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
 	if e.runtimeStats != nil {
@@ -454,10 +503,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	if err != nil {
 		return err
 	}
-	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
-	if e.checkIndexValue != nil {
-		tps = e.idxColTps
-	}
+	tps := e.getRetTpsByHandle()
 	idxID := e.getIndexPlanRootID()
 	// Since the first read only need handle information. So its returned col is only 1.
 	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
@@ -554,6 +600,9 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
+	if !e.isImplicitClose {
+		e.ranges = e.originRange
+	}
 	if !e.workerStarted || e.finished == nil {
 		return nil
 	}
@@ -573,19 +622,30 @@ func (e *IndexLookUpExecutor) Close() error {
 }
 
 // Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	req.Reset()
+start:
 	if !e.workerStarted {
 		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
 			return err
 		}
 	}
-	req.Reset()
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
 			return err
 		}
 		if resultTask == nil {
+			if e.needIndexPaging {
+				if e.lastIndexKey == nil {
+					return nil
+				}
+				if err := e.paginate(ctx); err != nil {
+					return err
+				}
+				// Guaranteed to reach chk.RequiredRows.
+				goto start
+			}
 			return nil
 		}
 		for resultTask.cursor < len(resultTask.rows) {
@@ -596,6 +656,24 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			}
 		}
 	}
+}
+
+func (e *IndexLookUpExecutor) paginate(ctx context.Context) (err error) {
+	e.isImplicitClose = true
+	defer func() { e.isImplicitClose = false }()
+	if err := e.Close(); err != nil {
+		return err
+	}
+	// rebuild ranges
+	e.ranges, err = ranger.GetNextRangeByLastKey(e.ctx.GetSessionVars().StmtCtx, e.ranges, e.lastIndexKey, e.desc)
+	if err != nil {
+		return err
+	}
+	if err = e.Open(ctx); err != nil {
+		return err
+	}
+	e.lastIndexKey = nil
+	return nil
 }
 
 func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
@@ -663,6 +741,17 @@ type indexWorker struct {
 	PushedLimit *plannercore.PushedDownLimit
 }
 
+func (w *indexWorker) constructIndexKey(row chunk.Row, handleIdx int) []types.Datum {
+	lookupKey := make([]types.Datum, 0, row.Len())
+	is := w.idxLookup.idxPlans[0].(*plannercore.PhysicalIndexScan)
+	for _, cols := range is.Index.Columns {
+		val := row.GetDatum(cols.Offset, &is.Table.Columns[cols.Offset].FieldType)
+		lookupKey = append(lookupKey, val)
+	}
+	lookupKey = append(lookupKey, row.GetDatum(handleIdx, types.NewFieldType(mysql.TypeLonglong)))
+	return lookupKey
+}
+
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
@@ -688,7 +777,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	if w.checkIndexValue != nil {
 		chk = chunk.NewChunkWithCapacity(w.idxColTps, w.maxChunkSize)
 	} else {
-		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
+		tp := w.idxLookup.getRetTpsByHandle()
+		chk = chunk.NewChunkWithCapacity(tp , w.idxLookup.maxChunkSize)
 	}
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
@@ -768,12 +858,19 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 				}
 				if (count + scannedKeys) > (w.PushedLimit.Offset + w.PushedLimit.Count) {
 					// Skip the handles after Offset+Count.
+					if w.idxLookup.needIndexPaging && i != 0 {
+						w.idxLookup.lastIndexKey = w.constructIndexKey(chk.GetRow(i-1), handleOffset)
+					}
 					return handles, nil, scannedKeys, nil
 				}
 			}
 			h := chk.GetRow(i).GetInt64(handleOffset)
 			handles = append(handles, h)
 		}
+		if w.idxLookup.needIndexPaging && chk.NumRows() != 0 {
+			w.idxLookup.lastIndexKey = w.constructIndexKey(chk.GetRow(chk.NumRows()-1), handleOffset)
+		}
+
 		if w.checkIndexValue != nil {
 			if retChk == nil {
 				retChk = chunk.NewChunkWithCapacity(w.idxColTps, w.batchSize)

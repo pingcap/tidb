@@ -2461,18 +2461,27 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tableStreaming, tbl, err
 }
 
-func buildIndexReq(b *executorBuilder, schemaLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+func buildIndexReq(b *executorBuilder, schemaLen int, plans []plannercore.PhysicalPlan, needAllIndexColumns bool) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	indexReq, indexStreaming, err := b.constructDAGReq(plans, kv.TiKV)
 	if err != nil {
 		return nil, false, err
 	}
-	indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
+	if needAllIndexColumns {
+		for i, col := range plans[0].(*plannercore.PhysicalIndexScan).IdxCols {
+			if col.ID != -1 {
+				indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+			}
+		}
+	}
+	indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen))
 	return indexReq, indexStreaming, err
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), v.IndexPlans)
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	needIndexPaging := v.TryIndexPaging && is.KeepOrder
+	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), v.IndexPlans, needIndexPaging)
 	if err != nil {
 		return nil, err
 	}
@@ -2480,7 +2489,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		return nil, err
@@ -2506,6 +2514,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 		PushedLimit:       v.PushedLimit,
+		needIndexPaging:   needIndexPaging,
 	}
 
 	if containsLimit(indexReq.Executors) {
@@ -2565,7 +2574,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), v.PartialPlans[i])
+			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), v.PartialPlans[i], false)
 			keepOrders = append(keepOrders, is.KeepOrder)
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
