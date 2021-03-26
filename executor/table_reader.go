@@ -138,7 +138,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 	if e.corColInAccess {
 		ts := e.plans[0].(*plannercore.PhysicalTableScan)
-		err := ts.ResolveCorrelatedColumns()
+		e.ranges, err = ts.ResolveCorrelatedColumns()
 		if err != nil {
 			return err
 		}

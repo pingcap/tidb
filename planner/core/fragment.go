@@ -158,7 +158,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		// update ranges according to correlated columns in access conditions like in the Open() of TableReaderExecutor
 		for _, cond := range ts.AccessCondition {
 			if len(expression.ExtractCorColumns(cond)) > 0 {
-				err := ts.ResolveCorrelatedColumns()
+				_, err := ts.ResolveCorrelatedColumns()
 				if err != nil {
 					return nil, err
 				}

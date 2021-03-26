@@ -521,7 +521,7 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 }
 
 // ResolveCorrelatedColumns resolves the correlated columns in range access
-func (ts *PhysicalTableScan) ResolveCorrelatedColumns() error {
+func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) {
 	access := ts.AccessCondition
 	if ts.Table.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(ts.Table)
@@ -529,13 +529,13 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() error {
 		for _, cond := range access {
 			newCond, err := expression.SubstituteCorCol2Constant(cond)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			access = append(access, newCond)
 		}
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ts.SCtx(), access, idxCols, idxColLens)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		ts.Ranges = res.Ranges
 	} else {
@@ -543,10 +543,10 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() error {
 		pkTP := ts.Table.GetPkColInfo().FieldType
 		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx().GetSessionVars().StmtCtx, &pkTP)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return ts.Ranges, nil
 }
 
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
