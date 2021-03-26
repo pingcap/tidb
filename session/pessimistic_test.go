@@ -45,6 +45,12 @@ func (s *testPessimisticSuite) newAsyncCommitTestKitWithInit(c *C) *testkit.Test
 	return tk
 }
 
+func (s *testPessimisticSuite) new1PCTestKitWithInit(c *C) *testkit.TestKit {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().Enable1PC = true
+	return tk
+}
+
 type testPessimisticSuite struct {
 	testSessionSuiteBase
 }
@@ -2120,9 +2126,9 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	tk := s.newAsyncCommitTestKitWithInit(c)
-	tk2 := s.newAsyncCommitTestKitWithInit(c)
-	tk3 := s.newAsyncCommitTestKitWithInit(c)
+	tk := s.new1PCTestKitWithInit(c)
+	tk2 := s.new1PCTestKitWithInit(c)
+	tk3 := s.new1PCTestKitWithInit(c)
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
@@ -2158,7 +2164,7 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 		time.Sleep(200 * time.Millisecond)
 		tk2.MustExec("alter table tk add index k2(c2)")
 	}()
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1000)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1200)"), IsNil)
 	tk.MustExec("commit")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
 	tk3.MustExec("admin check table tk")
