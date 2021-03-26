@@ -728,8 +728,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	}
 }
 
-// buildHashTableForList builds hash table from `list`.
-func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chunk) error {
+func (e *HashJoinExec) initializeForBuildingHashTable(){
 	buildKeyColIdx := make([]int, len(e.buildKeys))
 	for i := range e.buildKeys {
 		buildKeyColIdx[i] = e.buildKeys[i].Index
@@ -738,8 +737,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		allTypes:  e.buildTypes,
 		keyColIdx: buildKeyColIdx,
 	}
-	var err error
-	var selected []bool
+
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
@@ -755,6 +753,13 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		})
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
+}
+
+// buildHashTableForList builds hash table from `list`.
+func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chunk) error {
+	e.initializeForBuildingHashTable()
+	var err error
+	var selected []bool
 	for chk := range buildSideResultCh {
 		if e.finished.Load().(bool) {
 			return nil
