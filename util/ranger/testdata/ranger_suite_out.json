@@ -5,11 +5,11 @@
       {
         "SQL": "explain format = 'brief' select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t",
         "Result": [
-          "Projection 2.00 root  Column#17",
-          "└─Apply 2.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#16)",
+          "Projection 2.00 root  Column#27",
+          "└─Apply 2.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#26)",
           "  ├─TableReader(Build) 2.00 root  data:TableFullScan",
           "  │ └─TableFullScan 2.00 cop[tikv] table:t keep order:false",
-          "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#16",
+          "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#26",
           "    └─HashJoin 2.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "      ├─TableReader(Build) 2.00 root  data:TableFullScan",
           "      │ └─TableFullScan 2.00 cop[tikv] table:t1 keep order:false",
@@ -551,6 +551,113 @@
           "    └─TableFullScan_16 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Result": null
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexRangeForDecimal",
+    "Cases": [
+      {
+        "SQL": "select * from t1 use index(a) where a in (-1,0);",
+        "Plan": [
+          "IndexReader 10.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 10.00 cop[tikv] table:t1, index:a(a) range:[0,0], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select * from t1 use index(a) where a = -1;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t1 use index(a) where a > -1;",
+        "Plan": [
+          "IndexReader 3333.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3333.33 cop[tikv] table:t1, index:a(a) range:[0,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select * from t1 use index(a) where a < -1;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t1 use index(a) where a <= -1;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t1 use index(a) where a >= -1;",
+        "Plan": [
+          "IndexReader 3333.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3333.33 cop[tikv] table:t1, index:a(a) range:[0,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select * from t2 use index(idx) where a = 1 and b in (-1,0);",
+        "Plan": [
+          "IndexReader 0.10 root  index:IndexRangeScan",
+          "└─IndexRangeScan 0.10 cop[tikv] table:t2, index:idx(a, b) range:[1 0,1 0], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0"
+        ]
+      },
+      {
+        "SQL": "select * from t2 use index(idx) where a = 1 and b = -1;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t2 use index(idx) where a = 1 and b > -1;",
+        "Plan": [
+          "IndexReader 33.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 33.33 cop[tikv] table:t2, index:idx(a, b) range:[1 0,1 +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0"
+        ]
+      },
+      {
+        "SQL": "select * from t2 use index(idx) where a = 1 and b < -1;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t2 use index(idx) where a = 1 and b <= -1;",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t2 use index(idx) where a = 1 and b >= -1;",
+        "Plan": [
+          "IndexReader 33.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 33.33 cop[tikv] table:t2, index:idx(a, b) range:[1 0,1 +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0"
+        ]
       }
     ]
   }

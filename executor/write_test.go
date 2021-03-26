@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -3893,7 +3894,7 @@ func (s *testSerialSuite) TestIssue20840(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t1 (i varchar(20) unique key) collate=utf8mb4_general_ci")
 	tk.MustExec("insert into t1 values ('a')")
 	tk.MustExec("replace into t1 values ('A')")
