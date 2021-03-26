@@ -728,7 +728,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	}
 }
 
-func (e *HashJoinExec) initializeForBuildingHashTable(){
+func (e *HashJoinExec) initializeForBuildingHashTable() {
 	buildKeyColIdx := make([]int, len(e.buildKeys))
 	for i := range e.buildKeys {
 		buildKeyColIdx[i] = e.buildKeys[i].Index
