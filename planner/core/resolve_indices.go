@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/disjointset"
