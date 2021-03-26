@@ -179,20 +179,22 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		m.wg.Done()
 	}()
 	var regionInfos []*coprocessor.RegionInfo
-	originalTask := req.Meta.(*batchCopTask)
-	for _, task := range originalTask.copTasks {
-		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-			RegionId: task.task.region.GetID(),
-			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: task.task.region.GetConfVer(),
-				Version: task.task.region.GetVer(),
-			},
-			Ranges: task.task.ranges.ToPBRanges(),
-		})
+	originalTask, ok := req.Meta.(*batchCopTask)
+	if ok {
+		for _, task := range originalTask.copTasks {
+			regionInfos = append(regionInfos, &coprocessor.RegionInfo{
+				RegionId: task.task.region.GetID(),
+				RegionEpoch: &metapb.RegionEpoch{
+					ConfVer: task.task.region.GetConfVer(),
+					Version: task.task.region.GetVer(),
+				},
+				Ranges: task.task.ranges.ToPBRanges(),
+			})
+		}
 	}
 
 	// meta for current task.
-	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, TaskId: req.ID, Address: originalTask.storeAddr}
+	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, TaskId: req.ID, Address: req.Meta.GetAddress()}
 
 	mppReq := &mpp.DispatchTaskRequest{
 		Meta:        taskMeta,
@@ -212,7 +214,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	// If copTasks is not empty, we should send request according to region distribution.
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
-	if len(originalTask.copTasks) != 0 {
+	if originalTask != nil {
 		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient())
 		rpcResp, _, _, err = sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, tikv.ReadTimeoutMedium)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
@@ -225,7 +227,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 			return
 		}
 	} else {
-		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, originalTask.storeAddr, wrappedReq, tikv.ReadTimeoutMedium)
+		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutMedium)
 	}
 
 	if err != nil {

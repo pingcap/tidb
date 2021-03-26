@@ -67,6 +67,35 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MP
 	return rootTasks, nil
 }
 
+type mppAddr struct {
+	addr string
+}
+
+func (m *mppAddr) GetAddress() string {
+	return m.addr
+}
+
+func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask) []*kv.MPPTask {
+	addressMap := make(map[string]struct{})
+	newTasks := make([]*kv.MPPTask, 0, len(tasks))
+	for _, task := range tasks {
+		addr := task.Meta.GetAddress()
+		_, ok := addressMap[addr]
+		if !ok {
+			*e.allocTaskID++
+			mppTask := &kv.MPPTask{
+				Meta:    &mppAddr{addr: addr},
+				ID:      *e.allocTaskID,
+				StartTs: e.startTS,
+				TableID: -1,
+			}
+			newTasks = append(newTasks, mppTask)
+			addressMap[addr] = struct{}{}
+		}
+	}
+	return newTasks
+}
+
 func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
 	for _, r := range f.ExchangeReceivers {
 		r.Tasks, err = e.generateMPPTasksForFragment(r.ChildPf)
@@ -77,7 +106,11 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	if f.TableScan != nil {
 		tasks, err = e.constructMPPTasksImpl(context.Background(), f.TableScan)
 	} else {
-		tasks, err = e.constructMPPTasksImpl(context.Background(), nil)
+		childrenTasks := make([]*kv.MPPTask, 0)
+		for _, r := range f.ExchangeReceivers {
+			childrenTasks = append(childrenTasks, r.Tasks...)
+		}
+		tasks = e.constructMPPTasksByChildrenTasks(childrenTasks)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -124,39 +157,36 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 
 // single physical table means a table without partitions or a single partition in a partition table.
 func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *PhysicalTableScan) ([]*kv.MPPTask, error) {
-	if ts != nil {
-		splitedRanges, _ := distsql.SplitRangesBySign(ts.Ranges, false, false, ts.Table.IsCommonHandle)
-		if ts.Table.GetPartitionInfo() != nil {
-			tmp, _ := e.is.TableByID(ts.Table.ID)
-			tbl := tmp.(table.PartitionedTable)
-			partitions, err := partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			var ret []*kv.MPPTask
-			for _, p := range partitions {
-				pid := p.GetPhysicalID()
-				meta := p.Meta()
-				kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				tasks, err := e.constructMPPTasksForSinglePartitionTable(ctx, kvRanges, pid)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				ret = append(ret, tasks...)
-			}
-			return ret, nil
-		}
-
-		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{ts.Table.ID}, ts.Table.IsCommonHandle, splitedRanges, nil)
+	splitedRanges, _ := distsql.SplitRangesBySign(ts.Ranges, false, false, ts.Table.IsCommonHandle)
+	if ts.Table.GetPartitionInfo() != nil {
+		tmp, _ := e.is.TableByID(ts.Table.ID)
+		tbl := tmp.(table.PartitionedTable)
+		partitions, err := partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return e.constructMPPTasksForSinglePartitionTable(ctx, kvRanges, ts.Table.ID)
+		var ret []*kv.MPPTask
+		for _, p := range partitions {
+			pid := p.GetPhysicalID()
+			meta := p.Meta()
+			kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tasks, err := e.constructMPPTasksForSinglePartitionTable(ctx, kvRanges, pid)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			ret = append(ret, tasks...)
+		}
+		return ret, nil
 	}
-	return e.constructMPPTasksForSinglePartitionTable(ctx, nil, -1)
+
+	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{ts.Table.ID}, ts.Table.IsCommonHandle, splitedRanges, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return e.constructMPPTasksForSinglePartitionTable(ctx, kvRanges, ts.Table.ID)
 }
 
 func (e *mppTaskGenerator) constructMPPTasksForSinglePartitionTable(ctx context.Context, kvRanges []kv.KeyRange, tableID int64) ([]*kv.MPPTask, error) {
