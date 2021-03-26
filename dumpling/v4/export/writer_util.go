@@ -134,10 +134,10 @@ func WriteMeta(tctx *tcontext.Context, meta MetaIR, w storage.ExternalFileWriter
 }
 
 // WriteInsert writes TableDataIR to a storage.ExternalFileWriter in sql type
-func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) error {
+func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
-		return nil
+		return 0, fileRowIter.Error()
 	}
 
 	bf := pool.Get().(*bytes.Buffer)
@@ -173,7 +173,6 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 		counter               uint64
 		lastCounter           uint64
 		escapeBackslash       = cfg.EscapeBackslash
-		err                   error
 	)
 
 	selectedField := meta.SelectedField()
@@ -198,7 +197,7 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 			if selectedField != "" {
 				if err = fileRowIter.Decode(row); err != nil {
 					pCtx.L().Error("fail to scan from sql.Row", zap.Error(err))
-					return errors.Trace(err)
+					return counter, errors.Trace(err)
 				}
 				row.WriteToBuffer(bf, escapeBackslash)
 			} else {
@@ -207,7 +206,7 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 			counter++
 			wp.AddFileSize(uint64(bf.Len()-lastBfSize) + 2) // 2 is for ",\n" and ";\n"
 			failpoint.Inject("ChaosBrokenMySQLConn", func(_ failpoint.Value) {
-				failpoint.Return(errors.New("connection is closed"))
+				failpoint.Return(0, errors.New("connection is closed"))
 			})
 
 			fileRowIter.Next()
@@ -220,9 +219,9 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 			if bf.Len() >= lengthLimit {
 				select {
 				case <-pCtx.Done():
-					return pCtx.Err()
+					return counter, pCtx.Err()
 				case err = <-wp.errCh:
-					return err
+					return counter, err
 				case wp.input <- bf:
 					bf = pool.Get().(*bytes.Buffer)
 					if bfCap := bf.Cap(); bfCap < lengthLimit {
@@ -250,20 +249,24 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 	}
 	close(wp.input)
 	<-wp.closed
-	summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
-	summary.CollectSuccessUnit("total rows", 1, counter)
 	AddCounter(finishedRowsCounter, cfg.Labels, float64(counter-lastCounter))
+	defer func() {
+		if err == nil {
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
+			summary.CollectSuccessUnit("total rows", 1, counter)
+		}
+	}()
 	if err = fileRowIter.Error(); err != nil {
-		return errors.Trace(err)
+		return counter, errors.Trace(err)
 	}
-	return wp.Error()
+	return counter, wp.Error()
 }
 
 // WriteInsertInCsv writes TableDataIR to a storage.ExternalFileWriter in csv type
-func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) error {
+func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
-		return nil
+		return 0, fileRowIter.Error()
 	}
 
 	bf := pool.Get().(*bytes.Buffer)
@@ -297,7 +300,6 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 		lastCounter     uint64
 		escapeBackslash = cfg.EscapeBackslash
 		selectedFields  = meta.SelectedField()
-		err             error
 	)
 
 	if !cfg.NoHeader && len(meta.ColumnNames()) != 0 && selectedFields != "" {
@@ -318,7 +320,7 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 		if selectedFields != "" {
 			if err = fileRowIter.Decode(row); err != nil {
 				pCtx.L().Error("fail to scan from sql.Row", zap.Error(err))
-				return errors.Trace(err)
+				return counter, errors.Trace(err)
 			}
 			row.WriteToBufferInCsv(bf, escapeBackslash, opt)
 		}
@@ -329,9 +331,9 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 		if bf.Len() >= lengthLimit {
 			select {
 			case <-pCtx.Done():
-				return pCtx.Err()
+				return counter, pCtx.Err()
 			case err = <-wp.errCh:
-				return err
+				return counter, err
 			case wp.input <- bf:
 				bf = pool.Get().(*bytes.Buffer)
 				if bfCap := bf.Cap(); bfCap < lengthLimit {
@@ -357,13 +359,17 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 	}
 	close(wp.input)
 	<-wp.closed
-	summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
-	summary.CollectSuccessUnit("total rows", 1, counter)
+	defer func() {
+		if err == nil {
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
+			summary.CollectSuccessUnit("total rows", 1, counter)
+		}
+	}()
 	AddCounter(finishedRowsCounter, cfg.Labels, float64(counter-lastCounter))
 	if err = fileRowIter.Error(); err != nil {
-		return errors.Trace(err)
+		return counter, errors.Trace(err)
 	}
-	return wp.Error()
+	return counter, wp.Error()
 }
 
 func write(tctx *tcontext.Context, writer storage.ExternalFileWriter, str string) error {
@@ -588,13 +594,13 @@ func (f FileFormat) Extension() string {
 }
 
 // WriteInsert writes TableDataIR to a storage.ExternalFileWriter in sql/csv type
-func (f FileFormat) WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) error {
+func (f FileFormat) WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) (uint64, error) {
 	switch f {
 	case FileFormatSQLText:
 		return WriteInsert(pCtx, cfg, meta, tblIR, w)
 	case FileFormatCSV:
 		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w)
 	default:
-		return errors.Errorf("unknown file format")
+		return 0, errors.Errorf("unknown file format")
 	}
 }

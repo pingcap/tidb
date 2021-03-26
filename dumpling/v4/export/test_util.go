@@ -8,6 +8,8 @@ import (
 	"database/sql/driver"
 	"fmt"
 
+	tcontext "github.com/pingcap/dumpling/v4/context"
+
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
@@ -82,7 +84,7 @@ func (m *mockTableIR) ShowCreateView() string {
 	return ""
 }
 
-func (m *mockTableIR) Start(_ context.Context, conn *sql.Conn) error {
+func (m *mockTableIR) Start(_ *tcontext.Context, conn *sql.Conn) error {
 	return nil
 }
 

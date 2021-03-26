@@ -4,17 +4,18 @@ package export
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"strings"
 
 	"github.com/pingcap/errors"
+
+	tcontext "github.com/pingcap/dumpling/v4/context"
 )
 
 // TableDataIR is table data intermediate representation.
 // A table may be split into multiple TableDataIRs.
 type TableDataIR interface {
-	Start(context.Context, *sql.Conn) error
+	Start(*tcontext.Context, *sql.Conn) error
 	Rows() SQLRowIter
 	Close() error
 	RawRows() *sql.Rows
