@@ -24,6 +24,7 @@ import (
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -194,7 +195,7 @@ func (s *testSuite5) TestClusteredIndexAdminRecoverIndex(c *C) {
 	tk.MustExec("drop database if exists test_cluster_index_admin_recover;")
 	tk.MustExec("create database test_cluster_index_admin_recover;")
 	tk.MustExec("use test_cluster_index_admin_recover;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	dbName := model.NewCIStr("test_cluster_index_admin_recover")
 	tblName := model.NewCIStr("t")
 
@@ -310,7 +311,7 @@ func (s *testSuite5) TestAdminRecoverIndex1(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table admin_test (c1 varchar(255), c2 int, c3 int default 1, primary key(c1), unique key(c2))")
 	tk.MustExec("insert admin_test (c1, c2) values ('1', 1), ('2', 2), ('3', 3), ('10', 10), ('20', 20)")
 
@@ -515,7 +516,7 @@ func (s *testSuite5) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int, primary key (c1, c2))")
 	tk.MustExec("insert admin_test (c1, c2) values (1, 2), (3, 4), (-5, 5)")
 
@@ -627,7 +628,7 @@ func (s *testSuite5) TestClusteredAdminCleanupIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table admin_test (c1 varchar(255), c2 int, c3 char(10) default 'c3', primary key (c1, c3), unique key(c2), key (c3))")
 	tk.MustExec("insert admin_test (c1, c2) values ('c1_1', 2), ('c1_2', 4), ('c1_3', NULL)")
 	tk.MustExec("insert admin_test (c1, c3) values ('c1_4', 'c3_4'), ('c1_5', 'c3_5'), ('c1_6', default)")
