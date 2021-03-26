@@ -342,7 +342,7 @@ func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	})
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+	resp, err := s.store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	keyErr := (resp.Resp.(*kvrpcpb.GetResponse)).GetError()
@@ -596,7 +596,7 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 		MinCommitTs:  committer.startTS + 100, // Set minCommitTS
 	}
 	req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, prewrite)
-	_, err = s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+	_, err = s.store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 	c.Assert(err, IsNil)
 
 	// Make commitTS less than minCommitTS.
@@ -911,7 +911,7 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	c.Assert(err, IsNil)
 	batch := batchMutations{region: loc.Region, mutations: committer.mutations.Slice(0, 1)}
 	req := committer.buildPrewriteRequest(batch, 1)
-	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+	resp, err := s.store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	keyErrs := (resp.Resp.(*kvrpcpb.PrewriteResponse)).Errors
