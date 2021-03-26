@@ -3,12 +3,14 @@
 package export
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
+
+	tcontext "github.com/pingcap/dumpling/v4/context"
 )
 
 // rowIter implements the SQLRowIter interface.
@@ -38,7 +40,7 @@ func (iter *rowIter) Decode(row RowReceiver) error {
 }
 
 func (iter *rowIter) Error() error {
-	return iter.rows.Err()
+	return errors.Trace(iter.rows.Err())
 }
 
 func (iter *rowIter) Next() {
@@ -91,21 +93,22 @@ func newTableData(query string, colLength int, needColTypes bool) *tableData {
 	}
 }
 
-func (td *tableData) Start(ctx context.Context, conn *sql.Conn) error {
-	rows, err := conn.QueryContext(ctx, td.query)
+func (td *tableData) Start(tctx *tcontext.Context, conn *sql.Conn) error {
+	tctx.L().Debug("try to start tableData", zap.String("query", td.query))
+	rows, err := conn.QueryContext(tctx, td.query)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Annotatef(err, "sql: %s", td.query)
 	}
 	if err = rows.Err(); err != nil {
-		return errors.Trace(err)
+		return errors.Annotatef(err, "sql: %s", td.query)
 	}
 	td.SQLRowIter = nil
 	td.rows = rows
-	ns, err := rows.Columns()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	if td.needColTypes {
+		ns, err := rows.Columns()
+		if err != nil {
+			return errors.Trace(err)
+		}
 		td.colLen = len(ns)
 		td.colTypes = make([]string, 0, td.colLen)
 		colTps, err := rows.ColumnTypes()

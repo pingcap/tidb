@@ -247,15 +247,24 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore)
 		writer.rebuildConnFn = rebuildConnFn
 		writer.setFinishTableCallBack(func(task Task) {
-			if td, ok := task.(*TaskTableData); ok {
+			if _, ok := task.(*TaskTableData); ok {
 				IncCounter(finishedTablesCounter, conf.Labels)
-				tctx.L().Debug("finished dumping table data",
-					zap.String("database", td.Meta.DatabaseName()),
-					zap.String("table", td.Meta.TableName()))
+				// FIXME: actually finishing the last chunk doesn't means this table is 'finished'.
+				//  We can call this table is 'finished' if all its chunks are finished.
+				//  Comment this log now to avoid ambiguity.
+				// tctx.L().Debug("finished dumping table data",
+				//	zap.String("database", td.Meta.DatabaseName()),
+				//	zap.String("table", td.Meta.TableName()))
 			}
 		})
 		writer.setFinishTaskCallBack(func(task Task) {
 			IncGauge(taskChannelCapacity, conf.Labels)
+			if td, ok := task.(*TaskTableData); ok {
+				tctx.L().Debug("finish dumping table data task",
+					zap.String("database", td.Meta.DatabaseName()),
+					zap.String("table", td.Meta.TableName()),
+					zap.Int("chunkIdx", td.ChunkIndex))
+			}
 		})
 		wg.Go(func() error {
 			return writer.run(taskChan)
@@ -381,7 +390,7 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 	cutoff := new(big.Int).Set(min)
 	totalChunks := estimatedChunks
 	if estimatedStep == 1 {
-		totalChunks = new(big.Int).Sub(max, min).Uint64()
+		totalChunks = new(big.Int).Sub(max, min).Uint64() + 1
 	}
 
 	selectField, selectLen, err := buildSelectField(conn, db, tbl, conf.CompleteInsert)
@@ -395,7 +404,10 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 	}
 
 	chunkIndex := 0
-	nullValueCondition := fmt.Sprintf("`%s` IS NULL OR ", escapeString(field))
+	nullValueCondition := ""
+	if conf.Where == "" {
+		nullValueCondition = fmt.Sprintf("`%s` IS NULL OR ", escapeString(field))
+	}
 	for max.Cmp(cutoff) >= 0 {
 		nextCutOff := new(big.Int).Add(cutoff, bigEstimatedStep)
 		where := fmt.Sprintf("%s(`%s` >= %d AND `%s` < %d)", nullValueCondition, escapeString(field), cutoff, escapeString(field), nextCutOff)

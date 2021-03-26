@@ -27,7 +27,7 @@ test: failpoint-enable
 	$(GOTEST) $(RACEFLAG) -coverprofile=coverage.txt -covermode=atomic -tags leak ./... || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
-integration_test: failpoint-enable bin/dumpling
+integration_test: bins failpoint-enable bin/dumpling
 	@make failpoint-disable
 	./tests/run.sh
 
@@ -115,4 +115,10 @@ tidy:
 	cd tools && GO111MODULE=on go mod tidy
 	git diff --exit-code go.mod go.sum tools/go.mod tools/go.sum
 
-.PHONY: build test integration_test tools failpoint-enable failpoint-disable check static lint tidy
+bins:
+	@which bin/tidb-server
+	@which bin/minio
+	@which bin/tidb-lightning
+	@which bin/sync_diff_inspector
+
+.PHONY: build test integration_test tools failpoint-enable failpoint-disable check static lint tidy bins
