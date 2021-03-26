@@ -728,6 +728,7 @@ type PhysicalHashJoin struct {
 	// on which store the join executes.
 	storeTp          kv.StoreType
 	globalChildIndex int
+	mppShuffleJoin   bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -851,8 +852,12 @@ type PhysicalMergeJoin struct {
 type PhysicalExchangeReceiver struct {
 	basePhysicalPlan
 
-	Tasks   []*kv.MPPTask
-	ChildPf *Fragment
+	Tasks []*kv.MPPTask
+}
+
+// GetExchangeSender return the connected sender of this receiver. We assume that its child must be a receiver.
+func (p *PhysicalExchangeReceiver) GetExchangeSender() *PhysicalExchangeSender {
+	return p.children[0].(*PhysicalExchangeSender)
 }
 
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
