@@ -114,26 +114,26 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			if len(r.stats.copRespTime) > 0 {
 				ratio := float64(r.stats.CoprCacheHitNum) / float64(len(r.stats.copRespTime))
 				switch {
-				case ratio >= 0:
-					telemetry.CurrentCoprCacheHitRatioGTE0Count.Inc()
-					fallthrough
-				case ratio >= 0.01:
-					telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
-					fallthrough
-				case ratio >= 0.1:
-					telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
-					fallthrough
-				case ratio >= 0.2:
-					telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
-					fallthrough
-				case ratio >= 0.4:
-					telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
+				case ratio >= 1:
+					telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
 					fallthrough
 				case ratio >= 0.8:
 					telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
 					fallthrough
-				case ratio >= 1:
-					telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
+				case ratio >= 0.4:
+					telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
+					fallthrough
+				case ratio >= 0.2:
+					telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
+					fallthrough
+				case ratio >= 0.1:
+					telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
+					fallthrough
+				case ratio >= 0.01:
+					telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
+					fallthrough
+				case ratio >= 0:
+					telemetry.CurrentCoprCacheHitRatioGTE0Count.Inc()
 				}
 			}
 		}
