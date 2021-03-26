@@ -108,7 +108,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			return kv.ErrWriteConflict
 		})
 		startTime := time.Now()
-		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
+		resp, err := c.store.SendReq(bo, req, batch.region, ReadTimeoutShort)
 		if action.LockCtx.Stats != nil {
 			atomic.AddInt64(&action.LockCtx.Stats.LockRPCTime, int64(time.Since(startTime)))
 			atomic.AddInt64(&action.LockCtx.Stats.LockRPCCount, 1)
@@ -210,7 +210,7 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 		ForUpdateTs:  c.forUpdateTS,
 		Keys:         batch.mutations.GetKeys(),
 	})
-	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
+	resp, err := c.store.SendReq(bo, req, batch.region, ReadTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
