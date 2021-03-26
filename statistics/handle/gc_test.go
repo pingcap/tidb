@@ -117,12 +117,8 @@ func (s *testStatsSuite) TestGCExtendedStats(c *C) {
 	h.SetLastUpdateVersion(math.MaxUint64)
 	ddlLease := time.Duration(0)
 	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
-<<<<<<< HEAD
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Check(testkit.Rows(
-=======
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s1 2 [1,2] 1.000000 2",
->>>>>>> b11c71d23... MPP: fix 2-phase agg chose wrong partition column during planning (#23557)
 		"s2 2 [2,3] 1.000000 1",
 	))
 	testKit.MustExec("drop table t")

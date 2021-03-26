@@ -208,8 +208,6 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustQuery("select t1.c4 from t t1 join t t2 on t1.c4 = t2.c3 order by t1.c4").Check(testkit.Rows("1.0000", "1.0000", "1.0001"))
 }
 
-<<<<<<< HEAD
-=======
 func (s *tiflashTestSuite) TestInjectExtraProj(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -230,7 +228,6 @@ func (s *tiflashTestSuite) TestInjectExtraProj(c *C) {
 	tk.MustQuery("select avg(a), a from t group by a").Check(testkit.Rows("9223372036854775807.0000 9223372036854775807"))
 }
 
->>>>>>> b11c71d23... MPP: fix 2-phase agg chose wrong partition column during planning (#23557)
 func (s *tiflashTestSuite) TestPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
