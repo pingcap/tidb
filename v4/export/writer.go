@@ -198,9 +198,10 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		return err
 	}
 
+	somethingIsWritten := false
 	for {
 		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType)
-		err = format.WriteInsert(tctx, conf, meta, ir, fileWriter)
+		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter)
 		tearDown(tctx)
 		if err != nil {
 			return err
@@ -210,6 +211,13 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 			break
 		}
 
+		tctx.L().Debug("finish dumping table(chunk)",
+			zap.String("database", meta.DatabaseName()),
+			zap.String("table", meta.TableName()),
+			zap.Int("chunkIdx", curChkIdx),
+			zap.Uint64("total rows", n))
+		somethingIsWritten = true
+
 		if conf.FileSize == UnspecifiedSize {
 			break
 		}
@@ -217,6 +225,12 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		if err != nil {
 			return err
 		}
+	}
+	if !somethingIsWritten {
+		tctx.L().Warn("no data written in table chunk",
+			zap.String("database", meta.DatabaseName()),
+			zap.String("table", meta.TableName()),
+			zap.Int("chunkIdx", curChkIdx))
 	}
 	return nil
 }
