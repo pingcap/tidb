@@ -14,6 +14,8 @@
 package core
 
 import (
+	"fmt"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/disjointset"
 )
@@ -73,7 +75,7 @@ func refine4NeighbourProj(p, childProj *PhysicalProjection) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalHashJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.basePhysicalJoin.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -115,7 +117,7 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.basePhysicalJoin.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -158,7 +160,7 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.basePhysicalJoin.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -633,37 +635,41 @@ func (p *baseSchemaProducer) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *basePhysicalPlan) ResolveIndices() (err error) {
-	for i, child := range p.children {
+func (p *basePhysicalJoin) ResolveIndices() (err error) {
+	for _, child := range p.children {
 		err = child.ResolveIndices()
 		if err != nil {
 			return err
 		}
-		if p.self != nil {
-			switch p.self.(type) {
-			case *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexHashJoin, *PhysicalIndexJoin, *PhysicalIndexMergeJoin:
-				join, _ := p.self.(*PhysicalHashJoin)
-				switch join.JoinType {
-				case RightOuterJoin:
-					if i == 1 {
-						p.AlignNullFlag(child.Schema())
-					}
-				case LeftOuterJoin:
-					if i == 0 {
-						p.AlignNullFlag(child.Schema())
-					}
-				default:
-					p.AlignNullFlag(child.Schema())
-				}
-			default:
-				p.AlignNullFlag(child.Schema())
-			}
+	}
+	switch p.JoinType {
+	case RightOuterJoin:
+		p.AlignNullFlag(p.children[1].Schema())
+		p.EnsureNullFlag(p.schema, 0, len(p.children[0].Schema().Columns))
+	case LeftOuterJoin:
+		p.AlignNullFlag(p.children[0].Schema())
+		p.EnsureNullFlag(p.schema, len(p.children[0].Schema().Columns), len(p.schema.Columns))
+	default:
+		p.AlignNullFlag(p.children[0].Schema())
+		p.AlignNullFlag(p.children[1].Schema())
+	}
+	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *basePhysicalPlan) ResolveIndices() (err error) {
+	for _, child := range p.children {
+		err = child.ResolveIndices()
+		if err != nil {
+			return err
 		}
+		p.AlignNullFlag(child.Schema())
 	}
 	return
 }
 
 // AlignNullFlag aligns the parent's column not null flag to its child not null flag when these columns uniqueID are identical.
+// because before outer joins are optimized into inner joins, original inner columns in outer joins are set nullable, we should recover the original flag.
 func (p *basePhysicalPlan) AlignNullFlag(schema *expression.Schema) {
 	for _, pcol := range p.self.Schema().Columns {
 		for _, scol := range schema.Columns {
@@ -672,6 +678,16 @@ func (p *basePhysicalPlan) AlignNullFlag(schema *expression.Schema) {
 					pcol.RetType.Flag = scol.RetType.Flag
 				}
 			}
+		}
+	}
+}
+
+// EnsureNullFlag ensures every schema column is nullable.
+func (p *basePhysicalPlan) EnsureNullFlag(schema *expression.Schema, begin, end int) {
+	for ; begin < end; begin++ {
+		if schema.Columns[begin].RetType.Flag&mysql.NotNullFlag == 1 {
+			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("column %s in %s should be not null but reset here", schema.Columns[begin].String(), p.ExplainID()))
+			resetNotNullFlag(schema, begin, begin+1)
 		}
 	}
 }
