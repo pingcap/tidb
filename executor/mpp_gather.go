@@ -138,6 +138,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
+	e.mppReqs = nil
 	if e.respIter != nil {
 		return e.respIter.Close()
 	}
