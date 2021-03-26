@@ -202,7 +202,7 @@ func (s *testPartitionSuite) TestAddPartitionReplicaBiggerThanTiFlashStores(c *C
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 
 	err := testAddPartition(c, ctx, d, dbInfo, tblInfo)
-	// Since there is no real tiFlash store (less then replica count), adding partition will error here.
+	// Since there is no real TiFlash store (less than replica count), adding a partition will error here.
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:-1][ddl] the tiflash replica count: 1 should be less than the total tiflash server count: 0")
 
