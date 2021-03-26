@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -176,9 +177,9 @@ func (r *Region) init(c *RegionCache) error {
 			return err
 		}
 		switch store.storeType {
-		case TiKV:
+		case tikvrpc.TiKV:
 			rs.accessIndex[TiKVOnly] = append(rs.accessIndex[TiKVOnly], len(rs.stores))
-		case TiFlash:
+		case tikvrpc.TiFlash:
 			rs.accessIndex[TiFlashOnly] = append(rs.accessIndex[TiFlashOnly], len(rs.stores))
 		}
 		rs.stores = append(rs.stores, store)
@@ -657,7 +658,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 
 		if err != nil {
 			storeIdx, s := rs.accessStore(ctx.AccessMode, ctx.AccessIdx)
-			leaderReq := ctx.Store.storeType == TiKV && rs.workTiKVIdx == ctx.AccessIdx
+			leaderReq := ctx.Store.storeType == tikvrpc.TiKV && rs.workTiKVIdx == ctx.AccessIdx
 
 			//  Mark the store as failure if it's not a redirection request because we
 			//  can't know the status of the proxy store by it.
@@ -1230,7 +1231,7 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 }
 
 func (c *RegionCache) getProxyStore(region *Region, store *Store, rs *RegionStore, workStoreIdx AccessIndex) (proxyStore *Store, proxyAccessIdx AccessIndex, proxyStoreIdx int) {
-	if !c.enableForwarding || store.storeType != TiKV || atomic.LoadInt32(&store.needForwarding) == 0 {
+	if !c.enableForwarding || store.storeType != tikvrpc.TiKV || atomic.LoadInt32(&store.needForwarding) == 0 {
 		return
 	}
 
@@ -1350,7 +1351,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 			return err
 		}
 		var initLeader uint64
-		if ctx.Store.storeType == TiFlash {
+		if ctx.Store.storeType == tikvrpc.TiFlash {
 			initLeader = region.findElectableStoreID()
 		} else {
 			initLeader = ctx.Store.storeID
@@ -1381,7 +1382,7 @@ func (c *RegionCache) GetTiFlashStoreAddrs() []string {
 	defer c.storeMu.RUnlock()
 	var addrs []string
 	for _, s := range c.storeMu.stores {
-		if s.storeType == TiFlash {
+		if s.storeType == tikvrpc.TiFlash {
 			addrs = append(addrs, s.addr)
 		}
 	}
@@ -1653,7 +1654,7 @@ type Store struct {
 	labels       []*metapb.StoreLabel // stored store labels
 	resolveMutex sync.Mutex           // protect pd from concurrent init requests
 	epoch        uint32               // store fail epoch, see RegionStore.storeEpochs
-	storeType    StoreType            // type of the store
+	storeType    tikvrpc.EndpointType // type of the store
 	tokenCount   atomic2.Int64        // used store token count
 
 	// whether the store is disconnected due to some reason, therefore requests to the store needs to be
@@ -1849,7 +1850,7 @@ const (
 
 func (s *Store) startHealthCheckLoopIfNeeded(c *RegionCache) {
 	// This mechanism doesn't support non-TiKV stores currently.
-	if s.storeType != TiKV {
+	if s.storeType != tikvrpc.TiKV {
 		logutil.BgLogger().Info("[health check] skip running health check loop for non-tikv store",
 			zap.Uint64("storeID", s.storeID), zap.String("addr", s.addr))
 		return
