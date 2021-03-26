@@ -229,7 +229,7 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 	if err != nil {
 		return needWait, errors.Trace(err)
 	}
-	// Check whether stores has `count` tiflash engines.
+	// Check whether stores have `count` tiflash engines.
 	tiFlashStoreCount := uint64(0)
 	for _, store := range stores {
 		if storeHasEngineTiFlashLabel(store) {
