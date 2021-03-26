@@ -224,6 +224,12 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 }
 
 func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
+	failpoint.Inject("mockWaitTiFlashReplica", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(true, nil)
+		}
+	})
+
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
 	stores, err := pdCli.GetAllStores(ctx)

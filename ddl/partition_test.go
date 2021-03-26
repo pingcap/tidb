@@ -17,10 +17,12 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -156,7 +158,7 @@ func testTruncatePartition(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.D
 	return job
 }
 
-func testAddPartition(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+func testAddPartition(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) error {
 	ids, err := d.genGlobalIDs(1)
 	c.Assert(err, IsNil)
 	partitionInfo := &model.PartitionInfo{
@@ -178,10 +180,7 @@ func testAddPartition(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partitionInfo},
 	}
-	err = d.doDDLJob(ctx, addPartitionJob)
-	// Since there is no real tiFlash store (less then replica count), adding partition will error here.
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]the tiflash replica count: 1 should be less than the total tiflash server count: 0")
+	return d.doDDLJob(ctx, addPartitionJob)
 }
 
 func (s *testPartitionSuite) TestAddPartitionReplicaBiggerThanTiFlashStores(c *C) {
@@ -202,7 +201,24 @@ func (s *testPartitionSuite) TestAddPartitionReplicaBiggerThanTiFlashStores(c *C
 	ctx := testNewContext(d)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 
-	testAddPartition(c, ctx, d, dbInfo, tblInfo)
+	err := testAddPartition(c, ctx, d, dbInfo, tblInfo)
+	// Since there is no real tiFlash store (less then replica count), adding partition will error here.
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1][ddl] the tiflash replica count: 1 should be less than the total tiflash server count: 0")
+
+	// test add partition waiting tiflash replica can exit when it's retry count is beyond the limitation.
+	originErrCountLimit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(3)
+	defer func() {
+		variable.SetDDLErrorCountLimit(originErrCountLimit)
+	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplica", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplica"), IsNil)
+	}()
+	err = testAddPartition(c, ctx, d, dbInfo, tblInfo)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: [ddl] add partition wait for tiflash replica to complete")
 }
 
 func buildTableInfoWithReplicaInfo(c *C, d *ddl) *model.TableInfo {
