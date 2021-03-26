@@ -236,12 +236,16 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 			value.SetString(value.GetString(), col.RetType.Collate)
 		}
 		if col.GetType().Tp == mysql.TypeYear {
+			// If the original value is adjusted, we need to change the condition.
+			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
+			// col < 2155 is wrong. It should be col <= 2155.
 			preValue, err1 := value.ToInt64(r.sc)
 			if err1 != nil {
 				return err1
 			}
 			*value, err = value.ConvertToMysqlYear(r.sc, col.RetType)
 			if errors.ErrorEqual(err, types.ErrInvalidYear) {
+				// Keep err for EQ and NE.
 				switch *op {
 				case ast.GT:
 					if value.GetInt64() > preValue {
@@ -298,8 +302,10 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 	err = refineValueAndOp(col, &value, &op)
 	if err != nil {
 		if op == ast.NE {
+			// col != an impossible value (not valid year)
 			return getNotNullFullRange()
 		}
+		// col = an impossible value (not valid year)
 		return nil
 	}
 
@@ -501,6 +507,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeYear {
 			dt, err = dt.ConvertToMysqlYear(r.sc, expr.GetArgs()[0].GetType())
 			if err != nil {
+				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
 				continue
 			}
 		}
