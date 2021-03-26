@@ -111,7 +111,8 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if r.stats != nil {
 			coprCacheHistogramHit.Observe(float64(r.stats.CoprCacheHitNum))
 			coprCacheHistogramMiss.Observe(float64(len(r.stats.copRespTime) - int(r.stats.CoprCacheHitNum)))
-			if len(r.stats.copRespTime) > 0 {
+			// Ignore internal sql.
+			if !r.ctx.GetSessionVars().InRestrictedSQL && len(r.stats.copRespTime) > 0 {
 				ratio := float64(r.stats.CoprCacheHitNum) / float64(len(r.stats.copRespTime))
 				switch {
 				case ratio >= 1:
