@@ -1264,10 +1264,10 @@ func (s *testSuiteWithData) TestIndexScanWithYearCol(c *C) {
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
@@ -2350,7 +2350,7 @@ func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
 	tk.MustExec("create database test_cluster_index_is_point_get;")
 	tk.MustExec("use test_cluster_index_is_point_get;")
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key (c, a));")
 	ctx := tk.Se.(sessionctx.Context)
@@ -3647,7 +3647,7 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 func (s *testSuite) TestSignedCommonHandle(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(k1 int, k2 int, primary key(k1, k2))")
 	tk.MustExec("insert into t(k1, k2) value(-100, 1), (-50, 1), (0, 0), (1, 1), (3, 3)")
@@ -3815,7 +3815,7 @@ func (s *testSuite) TestCheckTableClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists admin_test;")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c1, c2), index (c1), unique key(c2));")
 	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
@@ -4259,7 +4259,7 @@ func (s *testSuite3) TestRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec(`create table t(a varchar(10), b varchar(10), c varchar(1), index idx(a, b, c));`)
 	tk.MustExec(`insert into t values('a', 'b', 'c');`)
 	tk.MustExec(`insert into t values('a', 'b', 'c');`)
@@ -4828,7 +4828,7 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	tk.MustExec("drop database if exists test_cluster_index_index_split_table_integration;")
 	tk.MustExec("create database test_cluster_index_index_split_table_integration;")
 	tk.MustExec("use test_cluster_index_index_split_table_integration;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t (a varchar(255), b double, c int, primary key (a, b));")
 
@@ -4883,7 +4883,7 @@ func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
 	tk.MustExec("drop database if exists cluster_index_regions;")
 	tk.MustExec("create database cluster_index_regions;")
 	tk.MustExec("use cluster_index_regions;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2);")
 	tk.MustQuery("split table t between (1, 0) and (2, 3) regions 2;").Check(testkit.Rows("1 1"))
@@ -4906,7 +4906,7 @@ func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
 func (s *testSuiteWithData) TestClusterIndexOuterJoinElimination(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a int, b int, c int, primary key(a,b))")
 	rows := tk.MustQuery(`explain format = 'brief' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b`).Rows()
 	rowStrs := s.testData.ConvertRowsToStrings(rows)
@@ -6635,7 +6635,7 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
 	tk.MustExec("analyze table t;")
 	result := tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_38")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_39")
 	var (
 		ind  int
 		flag bool
@@ -6655,7 +6655,7 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9);")
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_38")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_39")
 	flag = false
 	value = (result.Rows()[1][5]).(string)
 	for ind = 0; ind < len(value)-5; ind++ {

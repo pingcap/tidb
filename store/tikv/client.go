@@ -182,14 +182,16 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 
 		if allowBatch {
 			batchClient := &batchCommandsClient{
-				target:        a.target,
-				conn:          conn,
-				batched:       sync.Map{},
-				idAlloc:       0,
-				closed:        0,
-				tikvClientCfg: cfg.TiKVClient,
-				tikvLoad:      &a.tikvTransportLayerLoad,
-				dialTimeout:   a.dialTimeout,
+				target:           a.target,
+				conn:             conn,
+				forwardedClients: make(map[string]*batchCommandsStream),
+				batched:          sync.Map{},
+				epoch:            0,
+				closed:           0,
+				tikvClientCfg:    cfg.TiKVClient,
+				tikvLoad:         &a.tikvTransportLayerLoad,
+				dialTimeout:      a.dialTimeout,
+				tryLock:          tryLock{sync.NewCond(new(sync.Mutex)), false},
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 		}
@@ -358,7 +360,6 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		c.recycleMu.Unlock()
 	}
 
-	// enableBatch means TiDB can send BatchCommands to the connection. It doesn't mean TiDB must do it.
 	// TiDB will not send batch commands to TiFlash, to resolve the conflict with Batch Cop Request.
 	enableBatch := req.StoreTp != kv.TiDB && req.StoreTp != kv.TiFlash
 	c.recycleMu.RLock()
@@ -368,16 +369,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.Trace(err)
 	}
 
-	// TiDB uses [gRPC-metadata](https://github.com/grpc/grpc-go/blob/master/Documentation/grpc-metadata.md) to
-	// indicate a request needs forwarding. gRPC doesn't support setting a metadata for each request in a stream,
-	// so we don't use BatchCommands for forwarding for now.
-	canBatch := enableBatch && req.ForwardedHost == ""
 	// TiDB RPC server supports batch RPC, but batch connection will send heart beat, It's not necessary since
 	// request to TiDB is not high frequency.
-	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && canBatch {
+	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
-			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
+			return sendBatchRequest(ctx, addr, req.ForwardedHost, connArray.batchConn, batchReq, timeout)
 		}
 	}
 
