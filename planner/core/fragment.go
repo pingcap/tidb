@@ -75,6 +75,8 @@ func (m *mppAddr) GetAddress() string {
 	return m.addr
 }
 
+// for the task without table scan, we construct tasks according to the children's tasks.
+// That's for avoiding assigning to the failed node repeatly. We assumes that the chilren node must be workable.
 func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask) []*kv.MPPTask {
 	addressMap := make(map[string]struct{})
 	newTasks := make([]*kv.MPPTask, 0, len(tasks))
