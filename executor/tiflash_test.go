@@ -146,7 +146,7 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustExec("insert into t values(2,0)")
 	tk.MustExec("insert into t values(3,0)")
 
-	tk.MustExec("create table t1(a int not null primary key, b int not null)")
+	tk.MustExec("create table t1(a int primary key, b int not null)")
 	tk.MustExec("alter table t1 set tiflash replica 1")
 	tb = testGetTableByName(c, tk.Se, "test", "t1")
 	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
@@ -162,7 +162,7 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 		tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("3"))
 	}
 	// test multi-way join
-	tk.MustExec("create table t2(a int not null primary key, b int not null)")
+	tk.MustExec("create table t2(a int primary key, b int not null)")
 	tk.MustExec("alter table t2 set tiflash replica 1")
 	tb = testGetTableByName(c, tk.Se, "test", "t2")
 	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
@@ -231,7 +231,6 @@ func (s *tiflashTestSuite) TestInjectExtraProj(c *C) {
 
 	tk.MustQuery("select avg(a) from t").Check(testkit.Rows("9223372036854775807.0000"))
 	tk.MustQuery("select avg(a), a from t group by a").Check(testkit.Rows("9223372036854775807.0000 9223372036854775807"))
-
 }
 
 func (s *tiflashTestSuite) TestPartitionTable(c *C) {
