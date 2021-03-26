@@ -13,6 +13,7 @@ var (
 	finishedSizeCounter            *prometheus.CounterVec
 	finishedRowsCounter            *prometheus.CounterVec
 	finishedTablesCounter          *prometheus.CounterVec
+	estimateTotalRowsCounter       *prometheus.CounterVec
 	writeTimeHistogram             *prometheus.HistogramVec
 	receiveWriteChunkTimeHistogram *prometheus.HistogramVec
 	errorCount                     *prometheus.CounterVec
@@ -33,6 +34,13 @@ func InitMetricsVector(labels prometheus.Labels) {
 			Name:      "finished_size",
 			Help:      "counter for dumpling finished file size",
 		}, labelNames)
+	estimateTotalRowsCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "dumpling",
+			Subsystem: "dump",
+			Name:      "estimate_total_rows",
+			Help:      "estimate total rows for dumpling tables",
+		}, []string{})
 	finishedRowsCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "dumpling",
@@ -86,6 +94,7 @@ func RegisterMetrics(registry *prometheus.Registry) {
 	}
 	registry.MustRegister(finishedSizeCounter)
 	registry.MustRegister(finishedRowsCounter)
+	registry.MustRegister(estimateTotalRowsCounter)
 	registry.MustRegister(finishedTablesCounter)
 	registry.MustRegister(writeTimeHistogram)
 	registry.MustRegister(receiveWriteChunkTimeHistogram)
@@ -100,6 +109,7 @@ func RemoveLabelValuesWithTaskInMetrics(labels prometheus.Labels) {
 	}
 	finishedSizeCounter.Delete(labels)
 	finishedRowsCounter.Delete(labels)
+	estimateTotalRowsCounter.Delete(labels)
 	finishedTablesCounter.Delete(labels)
 	writeTimeHistogram.Delete(labels)
 	receiveWriteChunkTimeHistogram.Delete(labels)

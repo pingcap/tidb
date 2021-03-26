@@ -693,7 +693,12 @@ func pickupPossibleField(dbName, tableName string, db *sql.Conn, conf *Config) (
 }
 
 func estimateCount(tctx *tcontext.Context, dbName, tableName string, db *sql.Conn, field string, conf *Config) uint64 {
-	query := fmt.Sprintf("EXPLAIN SELECT `%s` FROM `%s`.`%s`", escapeString(field), escapeString(dbName), escapeString(tableName))
+	var query string
+	if strings.TrimSpace(field) == "*" || strings.TrimSpace(field) == "" {
+		query = fmt.Sprintf("EXPLAIN SELECT * FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
+	} else {
+		query = fmt.Sprintf("EXPLAIN SELECT `%s` FROM `%s`.`%s`", escapeString(field), escapeString(dbName), escapeString(tableName))
+	}
 
 	if conf.Where != "" {
 		query += " WHERE "
