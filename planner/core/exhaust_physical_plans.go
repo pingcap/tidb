@@ -2308,7 +2308,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		}
 		// TODO: permute various partition columns from group-by columns
 		// 1-phase agg
-		// If there are no available parititon cols, but still have group by items, that means group by items are all expressions or constants.
+		// If there are no available partition cols, but still have group by items, that means group by items are all expressions or constants.
 		// To avoid mess, we don't do any one-phase aggregation in this case.
 		if len(partitionCols) != 0 {
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
@@ -2323,6 +2323,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
+		agg.MppPartitionCols = partitionCols
 		hashAggs = append(hashAggs, agg)
 
 		// agg runs on TiDB with a partial agg on TiFlash if possible

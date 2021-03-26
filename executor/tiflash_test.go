@@ -146,7 +146,7 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustExec("insert into t values(2,0)")
 	tk.MustExec("insert into t values(3,0)")
 
-	tk.MustExec("create table t1(a int not null primary key, b int not null)")
+	tk.MustExec("create table t1(a int primary key, b int not null)")
 	tk.MustExec("alter table t1 set tiflash replica 1")
 	tb = testGetTableByName(c, tk.Se, "test", "t1")
 	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
@@ -162,7 +162,7 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 		tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("3"))
 	}
 	// test multi-way join
-	tk.MustExec("create table t2(a int not null primary key, b int not null)")
+	tk.MustExec("create table t2(a int primary key, b int not null)")
 	tk.MustExec("alter table t2 set tiflash replica 1")
 	tb = testGetTableByName(c, tk.Se, "test", "t2")
 	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
@@ -190,6 +190,9 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustQuery("select count(*) k, t2.b * t2.a from t2 group by t2.b * t2.a").Check(testkit.Rows("3 0"))
 	tk.MustQuery("select count(*) k, t2.a/2 m from t2 group by t2.a / 2 order by m").Check(testkit.Rows("1 0.5000", "1 1.0000", "1 1.5000"))
 	tk.MustQuery("select count(*) k, t2.a div 2 from t2 group by t2.a div 2 order by k").Check(testkit.Rows("1 0", "2 1"))
+
+	tk.MustQuery("select count(*) from ( select * from t2 group by a, b) A group by A.b").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from t1 where t1.a+100 > ( select count(*) from t2 where t1.a=t2.a and t1.b=t2.b) group by t1.b").Check(testkit.Rows("4"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 decimal(8, 5) not null, c2 decimal(9, 5), c3 decimal(9, 4) , c4 decimal(8, 4) not null)")
@@ -223,7 +226,6 @@ func (s *tiflashTestSuite) TestInjectExtraProj(c *C) {
 
 	tk.MustQuery("select avg(a) from t").Check(testkit.Rows("9223372036854775807.0000"))
 	tk.MustQuery("select avg(a), a from t group by a").Check(testkit.Rows("9223372036854775807.0000 9223372036854775807"))
-
 }
 
 func (s *tiflashTestSuite) TestPartitionTable(c *C) {
