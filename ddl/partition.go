@@ -237,7 +237,7 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 		}
 	}
 	if replicaCount > tiFlashStoreCount {
-		return false, errors.Errorf("the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiFlashStoreCount)
+		return false, errors.Errorf("[ddl] the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiFlashStoreCount)
 	}
 	for _, pd := range addingDefinitions {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pd.ID)
