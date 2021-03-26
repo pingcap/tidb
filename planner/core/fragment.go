@@ -24,10 +24,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -166,29 +164,9 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 			}
 		}
 		if hasCorCol {
-			access := ts.AccessCondition
-			if ts.Table.IsCommonHandle {
-				pkIdx := tables.FindPrimaryIndex(ts.Table)
-				idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
-				for _, cond := range access {
-					newCond, err := expression.SubstituteCorCol2Constant(cond)
-					if err != nil {
-						return nil, err
-					}
-					access = append(access, newCond)
-				}
-				res, err := ranger.DetachCondAndBuildRangeForIndex(e.ctx, access, idxCols, idxColLens)
-				if err != nil {
-					return nil, err
-				}
-				ts.Ranges = res.Ranges
-			} else {
-				var err error
-				pkTP := ts.Table.GetPkColInfo().FieldType
-				ts.Ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
-				if err != nil {
-					return nil, err
-				}
+			err := ts.ResolveCorrelatedColumns()
+			if err != nil {
+				return nil, err
 			}
 		}
 
