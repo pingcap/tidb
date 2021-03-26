@@ -529,9 +529,6 @@ const (
 	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
-
-	// TiDBIntPrimaryKeyDefaultAsClustered indicates whether create int primary key as clustered as 4.0 behavior.
-	TiDBIntPrimaryKeyDefaultAsClustered = "tidb_int_primary_key_default_as_clustered"
 )
 
 // TiDB vars that have only global scope
@@ -657,7 +654,7 @@ const (
 	DefTiDBFoundInBinding              = false
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
-	DefTiDBEnableClusteredIndex        = false
+	DefTiDBEnableClusteredIndex        = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                   = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
@@ -708,11 +705,9 @@ var FeatureSwitchVariables = []string{
 	TiDBEnableAsyncCommit,
 	TiDBEnable1PC,
 	TiDBGuaranteeLinearizability,
-	TiDBEnableClusteredIndex,
 	TiDBTrackAggregateMemoryUsage,
 	TiDBAnalyzeVersion,
 	TiDBPartitionPruneMode,
-	TiDBIntPrimaryKeyDefaultAsClustered,
 	TiDBEnableExtendedStats,
 	TiDBEnableIndexMergeJoin,
 }
