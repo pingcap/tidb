@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
@@ -49,7 +50,7 @@ type SchemaAmender interface {
 // KVTxn contains methods to interact with a TiKV transaction.
 type KVTxn struct {
 	snapshot  *KVSnapshot
-	us        tidbkv.UnionStore
+	us        *unionstore.KVUnionStore
 	store     *KVStore // for connection to region.
 	startTS   uint64
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
@@ -84,7 +85,7 @@ func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, repl
 	snapshot := newTiKVSnapshot(store, startTS, replicaReadSeed)
 	newTiKVTxn := &KVTxn{
 		snapshot:  snapshot,
-		us:        tidbkv.NewUnionStore(snapshot),
+		us:        unionstore.NewUnionStore(snapshot),
 		store:     store,
 		startTS:   startTS,
 		startTime: time.Now(),
@@ -496,16 +497,16 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 		}
 	}
 	for _, key := range keys {
-		valExists := tidbkv.SetKeyLockedValueExists
+		valExists := kv.SetKeyLockedValueExists
 		// PointGet and BatchPointGet will return value in pessimistic lock response, the value may not exist.
 		// For other lock modes, the locked key values always exist.
 		if lockCtx.ReturnValues {
 			val, _ := lockCtx.Values[string(key)]
 			if len(val.Value) == 0 {
-				valExists = tidbkv.SetKeyLockedValueNotExists
+				valExists = kv.SetKeyLockedValueNotExists
 			}
 		}
-		memBuf.UpdateFlags(key, tidbkv.SetKeyLocked, tidbkv.DelNeedCheckExists, valExists)
+		memBuf.UpdateFlags(key, kv.SetKeyLocked, kv.DelNeedCheckExists, valExists)
 	}
 	txn.lockedCnt += len(keys)
 	return nil
@@ -603,12 +604,12 @@ func (txn *KVTxn) Reset() {
 }
 
 // GetUnionStore returns the UnionStore binding to this transaction.
-func (txn *KVTxn) GetUnionStore() tidbkv.UnionStore {
+func (txn *KVTxn) GetUnionStore() *unionstore.KVUnionStore {
 	return txn.us
 }
 
 // GetMemBuffer return the MemBuffer binding to this transaction.
-func (txn *KVTxn) GetMemBuffer() tidbkv.MemBuffer {
+func (txn *KVTxn) GetMemBuffer() *unionstore.MemDB {
 	return txn.us.GetMemBuffer()
 }
 

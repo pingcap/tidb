@@ -462,8 +462,10 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		} else {
 			// For the index stats, we get the final NDV by accumulating the NDV of each bucket in the index histogram.
 			globalStatsNDV := int64(0)
-			for _, bucket := range globalStats.Hg[i].Buckets {
-				globalStatsNDV += bucket.NDV
+			for j := range globalStats.Hg[i].Buckets {
+				globalStatsNDV += globalStats.Hg[i].Buckets[j].NDV
+				// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
+				globalStats.Hg[i].Buckets[j].NDV = 0
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 
