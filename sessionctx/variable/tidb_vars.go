@@ -708,11 +708,6 @@ var FeatureSwitchVariables = []string{
 	TiDBTrackAggregateMemoryUsage,
 	TiDBAnalyzeVersion,
 	TiDBPartitionPruneMode,
-<<<<<<< HEAD
-	TiDBIntPrimaryKeyDefaultAsClustered,
-=======
-	TiDBEnableExtendedStats,
->>>>>>> aee5819a2... *: change @@tidb_enable_clustered_index to ON/OFF/INT_ONLY (#23529)
 	TiDBEnableIndexMergeJoin,
 	TiDBEnableExtendedStats,
 }

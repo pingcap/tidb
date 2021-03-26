@@ -243,11 +243,7 @@ spilled-file-encryption-method = "plaintext"
 
 	// Test that the value will be overwritten by the config file.
 	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
-<<<<<<< HEAD
-=======
 	c.Assert(conf.AlterPrimaryKey, Equals, true)
-	c.Assert(conf.Performance.TCPNoDelay, Equals, false)
->>>>>>> aee5819a2... *: change @@tidb_enable_clustered_index to ON/OFF/INT_ONLY (#23529)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.AsyncCommit.KeysLimit, Equals, uint(123))

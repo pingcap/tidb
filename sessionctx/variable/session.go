@@ -1758,16 +1758,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
 			}
 		}
-<<<<<<< HEAD
-	case TiDBIntPrimaryKeyDefaultAsClustered:
-		s.IntPrimaryKeyDefaultAsClustered = TiDBOptOn(val)
-=======
-	default:
-		sv := GetSysVar(name)
-		if err := sv.SetSessionFromHook(s, val); err != nil {
-			return err
-		}
->>>>>>> aee5819a2... *: change @@tidb_enable_clustered_index to ON/OFF/INT_ONLY (#23529)
 	}
 	s.systems[name] = val
 	return nil
