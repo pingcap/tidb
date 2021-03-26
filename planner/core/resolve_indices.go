@@ -669,7 +669,7 @@ func (p *basePhysicalPlan) ResolveIndices() (err error) {
 }
 
 // AlignNullFlag aligns the parent's column not null flag to its child not null flag when these columns uniqueID are identical.
-// because before outer joins are optimized into inner joins, original inner columns in outer joins are set nullable, we should recover the original flag.
+// because before outer joins are optimized into inner joins, original inner columns in outer joins are set nullable, we should recover the original flag if the optimization succeeds.
 func (p *basePhysicalPlan) AlignNullFlag(schema *expression.Schema) {
 	for _, pcol := range p.self.Schema().Columns {
 		for _, scol := range schema.Columns {
