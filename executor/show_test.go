@@ -1131,6 +1131,17 @@ func (s *testSuite5) TestInvisibleCoprCacheConfig(c *C) {
 	c.Assert(strings.Contains(configValue, coprCacheVal), Equals, true)
 }
 
+func (s *testSuite5) TestInvisibleGlobalKillConfig(c *C) {
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKitWithSession(c, s.store, se1)
+	rows := tk.MustQuery("show variables like '%config%'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	configValue := rows[0][1].(string)
+	globalKillVal := "global-kill"
+	c.Assert(strings.Contains(configValue, globalKillVal), Equals, false)
+}
+
 func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c *C) {
 	parsertypes.TiDBStrictIntegerDisplayWidth = true
 	defer func() {

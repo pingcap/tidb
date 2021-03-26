@@ -1615,10 +1615,6 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, 
 	return e
 }
 
-func defaultMergeJoinTestCase() *mergeJoinTestCase {
-	return &mergeJoinTestCase{*defaultIndexJoinTestCase(), nil}
-}
-
 func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
@@ -2020,41 +2016,32 @@ func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
 func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 	b.ReportAllocs()
 	type testCase struct {
-		rowNum    int
-		expectedB int
+		rowNum int
 	}
 	cases := []testCase{
 		{
-			rowNum:    0,
-			expectedB: 0,
+			rowNum: 0,
 		},
 		{
-			rowNum:    100,
-			expectedB: 4,
+			rowNum: 100,
 		},
 		{
-			rowNum:    10000,
-			expectedB: 11,
+			rowNum: 10000,
 		},
 		{
-			rowNum:    1000000,
-			expectedB: 18,
+			rowNum: 1000000,
 		},
 		{
-			rowNum:    851968, // 6.5 * (1 << 17)
-			expectedB: 17,
+			rowNum: 851968, // 6.5 * (1 << 17)
 		},
 		{
-			rowNum:    851969, // 6.5 * (1 << 17) + 1
-			expectedB: 18,
+			rowNum: 851969, // 6.5 * (1 << 17) + 1
 		},
 		{
-			rowNum:    425984, // 6.5 * (1 << 16)
-			expectedB: 16,
+			rowNum: 425984, // 6.5 * (1 << 16)
 		},
 		{
-			rowNum:    425985, // 6.5 * (1 << 16) + 1
-			expectedB: 17,
+			rowNum: 425985, // 6.5 * (1 << 16) + 1
 		},
 	}
 
