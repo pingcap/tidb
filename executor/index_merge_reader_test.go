@@ -14,8 +14,10 @@
 package executor_test
 
 import (
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
+	"strings"
 )
 
 func (s *testSuite1) TestSingleTableRead(c *C) {
@@ -102,5 +104,14 @@ func (s *testSuite1) TestIssue23569(c *C) {
 	);`)
 	tk.MustExec("insert tt value(1, 1577807000, 'jack'), (2, 1577809000, 'mike'), (3, 1585670500, 'right'), (4, 1601481500, 'hello');")
 	tk.MustExec("set @@tidb_enable_index_merge=true;")
+	rows := tk.MustQuery("explain select count(*) from tt partition(p202003) where _tidb_rowid is null or (_tidb_rowid>=1 and _tidb_rowid<100);").Rows()
+	containsIndexMerge := false
+	for _, r := range rows {
+		if strings.Contains(fmt.Sprintf("%s", r[0]), "IndexMerge") {
+			containsIndexMerge = true
+			break
+		}
+	}
+	c.Assert(containsIndexMerge, IsTrue)
 	tk.MustQuery("select count(*) from tt partition(p202003) where _tidb_rowid is null or (_tidb_rowid>=1 and _tidb_rowid<100);").Check(testkit.Rows("1"))
 }
