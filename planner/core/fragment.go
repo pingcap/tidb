@@ -155,6 +155,17 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 // single physical table means a table without partitions or a single partition in a partition table.
 func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *PhysicalTableScan) ([]*kv.MPPTask, error) {
 	if ts != nil {
+		// update ranges according to correlated columns in access conditions like in the Open() of TableReaderExecutor
+		for _, cond := range ts.AccessCondition {
+			if len(expression.ExtractCorColumns(cond)) > 0 {
+				_, err := ts.ResolveCorrelatedColumns()
+				if err != nil {
+					return nil, err
+				}
+				break
+			}
+		}
+
 		splitedRanges, _ := distsql.SplitRangesBySign(ts.Ranges, false, false, ts.Table.IsCommonHandle)
 		if ts.Table.GetPartitionInfo() != nil {
 			tmp, _ := e.is.TableByID(ts.Table.ID)
