@@ -983,7 +983,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 			return err
 		}
 	}
-	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
+	variable.CheckDeprecationSetSystemVar(s.sessionVars, name, sVal)
 	stmt, err := s.ParseWithParams(context.TODO(), "REPLACE %n.%n VALUES (%?, %?)", mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	if err != nil {
 		return err
@@ -2042,7 +2042,6 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
-		s.GetSessionVars().IntPrimaryKeyDefaultAsClustered = true
 	}
 	return s, err
 }

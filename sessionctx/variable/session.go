@@ -762,7 +762,7 @@ type SessionVars struct {
 	SelectLimit uint64
 
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
-	EnableClusteredIndex bool
+	EnableClusteredIndex ClusteredIndexDefMode
 
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
@@ -818,10 +818,6 @@ type SessionVars struct {
 	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
-
-	// IntPrimaryKeyDefaultAsClustered indicates whether create integer primary table as clustered
-	// If it's true, the behavior is the same as the TiDB 4.0 and the below versions.
-	IntPrimaryKeyDefaultAsClustered bool
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -1702,7 +1698,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBAllowAutoRandExplicitInsert:
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
-		s.EnableClusteredIndex = TiDBOptOn(val)
+		s.EnableClusteredIndex = TiDBOptEnableClustered(val)
 	case TiDBPartitionPruneMode:
 		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
 	case TiDBEnableParallelApply:
@@ -1762,8 +1758,16 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
 			}
 		}
+<<<<<<< HEAD
 	case TiDBIntPrimaryKeyDefaultAsClustered:
 		s.IntPrimaryKeyDefaultAsClustered = TiDBOptOn(val)
+=======
+	default:
+		sv := GetSysVar(name)
+		if err := sv.SetSessionFromHook(s, val); err != nil {
+			return err
+		}
+>>>>>>> aee5819a2... *: change @@tidb_enable_clustered_index to ON/OFF/INT_ONLY (#23529)
 	}
 	s.systems[name] = val
 	return nil
