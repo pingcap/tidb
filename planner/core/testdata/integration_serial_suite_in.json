@@ -78,10 +78,19 @@
     ]
   },
   {
-    "name": "TestMPPNotSupportedInNewCollation",
+    "name": "TestMPPWithHashExchangeUnderNewCollation",
     "cases": [
       "explain format = 'brief' select * from table_1 a, table_1 b where a.id = b.id",
-      "explain format = 'brief' select /*+ agg_to_cop() */ count(*), id from table_1 group by id"
+      "explain format = 'brief' select /*+ agg_to_cop() */ count(*), id from table_1 group by id",
+      "explain format = 'brief' select * from table_1 a, table_1 b where a.value = b.value",
+      "explain format = 'brief' select /*+ agg_to_cop() */ count(*), value from table_1 group by value"
+    ]
+  },
+  {
+    "name": "TestMPPWithBroadcastExchangeUnderNewCollation",
+    "cases": [
+      "explain format = 'brief' select /*+ broadcast_join(a,b) */ * from table_1 a, table_1 b where a.id = b.id",
+      "explain format = 'brief' select /*+ broadcast_join(a,b) */ * from table_1 a, table_1 b where a.value = b.value"
     ]
   },
   {
