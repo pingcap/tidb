@@ -1757,14 +1757,17 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			return invalidTask
 		}
 		attachPlan2Task(partialAgg, mpp)
-		items := finalAgg.(*PhysicalHashAgg).GroupByItems
-		partitionCols := make([]*expression.Column, 0, len(items))
-		for _, expr := range items {
-			col, ok := expr.(*expression.Column)
-			if !ok {
-				return invalidTask
+		partitionCols := p.MppPartitionCols
+		if len(partitionCols) == 0 {
+			items := finalAgg.(*PhysicalHashAgg).GroupByItems
+			partitionCols = make([]*expression.Column, 0, len(items))
+			for _, expr := range items {
+				col, ok := expr.(*expression.Column)
+				if !ok {
+					return invalidTask
+				}
+				partitionCols = append(partitionCols, col)
 			}
-			partitionCols = append(partitionCols, col)
 		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols}
 		newMpp := mpp.enforceExchangerImpl(prop)
