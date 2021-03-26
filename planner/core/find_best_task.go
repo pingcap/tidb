@@ -531,7 +531,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		if len(path.Ranges) == 0 {
 			return []*candidatePath{{path: path}}
 		}
-		if path.StoreType != kv.TiFlash && (prop.TaskTp == property.CopTiFlashLocalReadTaskType || prop.TaskTp == property.CopTiFlashGlobalReadTaskType) {
+		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
 			continue
 		}
 		var currentCandidate *candidatePath
@@ -1493,7 +1493,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			p:      ts,
 			cst:    cost,
 			partTp: property.AnyType,
-			ts:     ts,
 		}
 		ts.PartitionInfo = PartitionInfo{
 			PruningConds:   ds.allConds,

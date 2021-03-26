@@ -477,10 +477,11 @@ const (
 	version66 = 66
 	// version67 restore all SQL bindings.
 	version67 = 67
-
-	// please make sure this is the largest version
-	currentBootstrapVersion = version67
 )
+
+// currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
+// please make sure this is the largest version
+var currentBootstrapVersion int64 = version67
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -640,7 +641,7 @@ func upgrade(s Session) {
 		}
 		logutil.BgLogger().Fatal("[Upgrade] upgrade failed",
 			zap.Int64("from", ver),
-			zap.Int("to", currentBootstrapVersion),
+			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
 	}
 }
@@ -1443,7 +1444,7 @@ func upgradeToVer64(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y' where Super_priv='Y'")
 }
 
 func upgradeToVer65(s Session, ver int64) {
