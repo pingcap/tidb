@@ -910,6 +910,26 @@
     ]
   },
   {
+    "Name": "TestMPPAvgRewrite",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select /*+ avg_to_cop() */ id, avg(value+1),avg(value) from table_1 group by id",
+        "Plan": [
+          "Projection 2.00 root  test.table_1.id, Column#4, Column#5",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 2.00 batchCop[tiflash]  div(Column#4, cast(case(eq(Column#13, 0), 1, Column#13), decimal(20,0) BINARY))->Column#4, div(Column#5, cast(case(eq(Column#14, 0), 1, Column#14), decimal(20,0) BINARY))->Column#5, test.table_1.id",
+          "      └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_1.id, funcs:sum(Column#15)->Column#13, funcs:sum(Column#16)->Column#4, funcs:sum(Column#17)->Column#14, funcs:sum(Column#18)->Column#5, funcs:firstrow(test.table_1.id)->test.table_1.id",
+          "        └─ExchangeReceiver 2.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.table_1.id",
+          "            └─HashAgg 2.00 batchCop[tiflash]  group by:Column#29, funcs:count(Column#25)->Column#15, funcs:sum(Column#26)->Column#16, funcs:count(Column#27)->Column#17, funcs:sum(Column#28)->Column#18",
+          "              └─Projection 2.00 batchCop[tiflash]  plus(test.table_1.value, 1)->Column#25, plus(test.table_1.value, 1)->Column#26, test.table_1.value, test.table_1.value, test.table_1.id",
+          "                └─TableFullScan 2.00 batchCop[tiflash] table:table_1 keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestReadFromStorageHint",
     "Cases": [
       {

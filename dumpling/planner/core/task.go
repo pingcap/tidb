@@ -1480,9 +1480,9 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	for i, aggFunc := range p.AggFuncs {
 		if aggFunc.Name == ast.AggFuncAvg {
 			// inset a count(column)
-			avgCount := *aggFunc
+			avgCount := aggFunc.Clone()
 			avgCount.Name = ast.AggFuncCount
-			newAggFuncs = append(newAggFuncs, &avgCount)
+			newAggFuncs = append(newAggFuncs, avgCount)
 			avgCount.RetTp = ft
 			avgCountCol := &expression.Column{
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
@@ -1490,9 +1490,9 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			}
 			newSchema.Append(avgCountCol)
 			// insert a sum(column)
-			avgSum := *aggFunc
+			avgSum := aggFunc.Clone()
 			avgSum.Name = ast.AggFuncSum
-			newAggFuncs = append(newAggFuncs, &avgSum)
+			newAggFuncs = append(newAggFuncs, avgSum)
 			newSchema.Append(p.schema.Columns[i])
 			avgSumCol := p.schema.Columns[i]
 			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
