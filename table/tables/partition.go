@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -40,7 +41,13 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/ranger"
+
 	"go.uber.org/zap"
+)
+
+const (
+	btreeDegree = 32
 )
 
 // Both partition and partitionedTable implement the table.Table interface.
@@ -209,11 +216,36 @@ type ForListPruning struct {
 	PruneExprCols []*expression.Column
 	// valueMap is column value -> partition idx, uses to locate list partition.
 	valueMap map[int64]int
+	// partition is organized as sorted key to partition mapping, it is used to locate list partition in range.
+	sorted *btree.BTree
 	// nullPartitionIdx is the partition idx for null value.
 	nullPartitionIdx int
 
 	// For list columns partition pruning
 	ColPrunes []*ForListColumnPruning
+}
+
+// btreeItem is BTree's Item that uses []byte to compare.
+type btreeItem struct {
+	key          int64
+	partitionIdx int
+}
+
+func newBtreeItem(key int64, partitionIdx int) *btreeItem {
+	return &btreeItem{
+		key:          key,
+		partitionIdx: partitionIdx,
+	}
+}
+
+func newBtreeSearchItem(key int64) *btreeItem {
+	return &btreeItem{
+		key: key,
+	}
+}
+
+func (item *btreeItem) Less(other btree.Item) bool {
+	return item.key < other.(*btreeItem).key
 }
 
 // ForListColumnPruning is used for list columns partition pruning.
@@ -603,7 +635,7 @@ func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model
 		}
 		c.Index = idx
 	}
-	err = lp.buildListPartitionValueMap(ctx, tblInfo, schema, names, p)
+	err = lp.buildListPartitionValueMapAndSorted(ctx, tblInfo, schema, names, p)
 	if err != nil {
 		return err
 	}
@@ -640,13 +672,15 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo
 	return nil
 }
 
-// buildListPartitionValueMap builds list partition value map.
+// buildListPartitionValueMapAndSorted builds list partition value map and sorted.
 // The map is column value -> partition index.
+// The sorted is a btree whose node is column value and partition index.
 // colIdx is the column index in the list columns.
-func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, tblInfo *model.TableInfo,
+func (lp *ForListPruning) buildListPartitionValueMapAndSorted(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
 	pi := tblInfo.GetPartitionInfo()
 	lp.valueMap = map[int64]int{}
+	lp.sorted = btree.New(btreeDegree)
 	lp.nullPartitionIdx = -1
 	for partitionIdx, def := range pi.Definitions {
 		for _, vs := range def.InValues {
@@ -663,6 +697,7 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, tbl
 				continue
 			}
 			lp.valueMap[v] = partitionIdx
+			lp.sorted.ReplaceOrInsert(newBtreeItem(v, partitionIdx))
 		}
 	}
 	return nil
@@ -712,6 +747,22 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
 	}
 	return location[0].PartIdx, nil
+}
+
+// LocateRange locates partition range by the column range
+func (lp *ForListPruning) LocateRange(ctx sessionctx.Context, r *ranger.Range, lowVal int64, highVal int64) ([]int, error) {
+	if !r.LowExclude {
+		lowVal++
+	}
+	if !r.HighExclude {
+		highVal--
+	}
+	partitionIdxes := make([]int, 0, lp.sorted.Len())
+	lp.sorted.AscendRange(newBtreeSearchItem(lowVal), newBtreeSearchItem(highVal), func(item btree.Item) bool {
+		partitionIdxes = append(partitionIdxes, item.(*btreeItem).partitionIdx)
+		return true
+	})
+	return partitionIdxes, nil
 }
 
 // buildListPartitionValueMap builds list columns partition value map for the specified column.
