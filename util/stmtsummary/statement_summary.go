@@ -72,6 +72,16 @@ type stmtSummaryByDigestMap struct {
 
 	// sysVars encapsulates system variables needed to control statement summary.
 	sysVars *systemVars
+
+	evictedInfo        stmtSummaryEvictedInfo
+	evictedInfoHistory []stmtSummaryEvictedInfo
+	evictedInfoCount   int
+}
+type stmtSummaryEvictedInfo struct {
+	isInit       bool
+	beginTime    int64
+	endTime      int64
+	evictedCount int
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -234,9 +244,11 @@ type StmtExecInfo struct {
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	sysVars := newSysVars()
 	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
+	maxStmtEvictedCount := uint(sysVars.getVariable(typeMaxEvictedInfoCount))
 	return &stmtSummaryByDigestMap{
-		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
-		sysVars:    sysVars,
+		summaryMap:         kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
+		sysVars:            sysVars,
+		evictedInfoHistory: make([]stmtSummaryEvictedInfo, 0, maxStmtEvictedCount),
 	}
 }
 
@@ -269,7 +281,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		if sei.IsInternal && !ssMap.EnabledInternal() {
 			return nil, 0
 		}
-
+		oldBeginTime := ssMap.beginTimeForCurInterval
 		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
 			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
 			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
@@ -283,10 +295,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
 			if ssMap.summaryMap.Size() == ssMap.maxStmtCount() {
-				_, oldestValue, err := ssMap.summaryMap.GetOldest()
-				if err {
-					StmtEvictedMap.AddEvictedRecord(now, oldestValue)
-				}
+				ssMap.AddEvictedInfo(oldBeginTime)
 			}
 			ssMap.summaryMap.Put(key, summary)
 		} else {
@@ -299,6 +308,37 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// Lock a single entry, not the whole cache.
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
+	}
+}
+
+func (ssMap *stmtSummaryByDigestMap) AddEvictedInfo(oldBeginTime int64) {
+	intervalSeconds := ssMap.refreshInterval()
+	if !ssMap.evictedInfo.isInit {
+		ssMap.evictedInfo.init(ssMap.beginTimeForCurInterval, ssMap.beginTimeForCurInterval+intervalSeconds)
+	}
+	if oldBeginTime != ssMap.beginTimeForCurInterval {
+		ssMap.evictedInfo.beginTime = oldBeginTime
+		ssMap.evictedInfo.endTime = ssMap.beginTimeForCurInterval
+		if len(ssMap.evictedInfoHistory) < ssMap.evictedInfoCount {
+			ssMap.evictedInfoHistory = append(ssMap.evictedInfoHistory, ssMap.evictedInfo)
+		} else {
+			index := ssMap.evictedInfoCount % len(ssMap.evictedInfoHistory)
+			ssMap.evictedInfoHistory[index] = ssMap.evictedInfo
+		}
+		ssMap.evictedInfo.evictedCount = 0
+		ssMap.evictedInfoCount++
+	} else {
+		_, oldestValue, err := ssMap.summaryMap.GetOldest()
+		values := oldestValue.(*stmtSummaryByDigest).history
+		if err && values != nil {
+			Count := 0
+			for i := values.Front(); i != nil; i = i.Next() {
+				if i.Value.(*stmtSummaryByDigestElement).endTime >= ssMap.beginTimeForCurInterval {
+					Count++
+				}
+			}
+			ssMap.evictedInfo.evictedCount += Count
+		}
 	}
 }
 
@@ -357,6 +397,33 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isS
 		rows = append(rows, records...)
 	}
 	return rows
+}
+
+func (ssMap *stmtSummaryByDigestMap) ToEvictedInfo() [][]types.Datum {
+	rows := make([][]types.Datum, 0, ssMap.evictedInfoCount)
+
+	if ssMap.evictedInfo.evictedCount != 0 {
+		rows = append(rows, types.MakeDatums(
+			types.NewTime(types.FromGoTime(time.Unix(ssMap.evictedInfo.beginTime, 0)), mysql.TypeTimestamp, 0),
+			types.NewTime(types.FromGoTime(time.Unix(ssMap.evictedInfo.endTime, 0)), mysql.TypeTimestamp, 0),
+			ssMap.evictedInfo.evictedCount,
+		))
+	}
+	for _, v := range ssMap.evictedInfoHistory {
+		row := types.MakeDatums(
+			types.NewTime(types.FromGoTime(time.Unix(v.beginTime, 0)), mysql.TypeTimestamp, 0),
+			types.NewTime(types.FromGoTime(time.Unix(v.endTime, 0)), mysql.TypeTimestamp, 0),
+			v.evictedCount,
+		)
+		rows = append(rows, row)
+	}
+
+	return rows
+}
+
+func (ssei *stmtSummaryEvictedInfo) init(begintime, endtime int64) {
+	ssei.beginTime = begintime
+	ssei.endTime = endtime
 }
 
 // BindableStmt is a wrapper struct for a statement that is extracted from statements_summary and can be

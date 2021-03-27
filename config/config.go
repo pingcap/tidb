@@ -514,6 +514,8 @@ type StmtSummary struct {
 	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
 	// The maximum history size of statement summary.
 	HistorySize int `toml:"history-size" json:"history-size"`
+	// The maximum number of statements kept in memory.
+	MaxEvictedCount uint `toml:"max-evicted-count" json:"max-evicted-count"`
 }
 
 // IsolationRead is the config for isolation read.
@@ -643,6 +645,7 @@ var defaultConf = Config{
 		MaxSQLLength:        4096,
 		RefreshInterval:     1800,
 		HistorySize:         24,
+		MaxEvictedCount:     96,
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},

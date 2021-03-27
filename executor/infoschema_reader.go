@@ -1829,10 +1829,8 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 	case infoschema.TableStatementsSummaryHistory,
 		infoschema.ClusterTableStatementsSummaryHistory:
 		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
-	}
-	switch tableName {
 	case infoschema.TableStatementsSummaryEvicted:
-		e.rows = stmtsummary.StmtEvictedMap.ToCurrentDatum()
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedInfo()
 	}
 	switch tableName {
 	case infoschema.ClusterTableStatementsSummary,
