@@ -188,7 +188,7 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 // fetchSchemaConcurrency controls the goroutines to load schemas, but more goroutines
 // increase the memory usage when calling json.Unmarshal(), which would cause OOM,
 // so we decrease the concurrency.
-const fetchSchemaConcurrency = 1
+const fetchSchemaConcurrency = 8
 
 func (do *Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
 	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
