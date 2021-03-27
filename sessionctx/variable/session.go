@@ -42,8 +42,8 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -712,7 +712,7 @@ type SessionVars struct {
 	enableIndexMerge bool
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
-	replicaRead kv.ReplicaReadType
+	replicaRead tikvstore.ReplicaReadType
 
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
@@ -762,7 +762,7 @@ type SessionVars struct {
 	SelectLimit uint64
 
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
-	EnableClusteredIndex bool
+	EnableClusteredIndex ClusteredIndexDefMode
 
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
@@ -940,7 +940,7 @@ func NewSessionVars() *SessionVars {
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:            kv.PriorityLow,
+		DDLReorgPriority:            tikvstore.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		preferRangeScan:             DefOptPreferRangeScan,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
@@ -965,7 +965,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		enableIndexMerge:            false,
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
-		replicaRead:                 kv.ReplicaReadLeader,
+		replicaRead:                 tikvstore.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
@@ -1114,15 +1114,15 @@ func (s *SessionVars) SetEnableIndexMerge(val bool) {
 }
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
-func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
+func (s *SessionVars) GetReplicaRead() tikvstore.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
-		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
+		return tikvstore.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
 	return s.replicaRead
 }
 
 // SetReplicaRead set SessionVars.replicaRead.
-func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
+func (s *SessionVars) SetReplicaRead(val tikvstore.ReplicaReadType) {
 	s.replicaRead = val
 }
 
@@ -1286,13 +1286,13 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	val = strings.ToLower(val)
 	switch val {
 	case "priority_low":
-		s.DDLReorgPriority = kv.PriorityLow
+		s.DDLReorgPriority = tikvstore.PriorityLow
 	case "priority_normal":
-		s.DDLReorgPriority = kv.PriorityNormal
+		s.DDLReorgPriority = tikvstore.PriorityNormal
 	case "priority_high":
-		s.DDLReorgPriority = kv.PriorityHigh
+		s.DDLReorgPriority = tikvstore.PriorityHigh
 	default:
-		s.DDLReorgPriority = kv.PriorityLow
+		s.DDLReorgPriority = tikvstore.PriorityLow
 	}
 }
 
@@ -1347,7 +1347,9 @@ func (s *SessionVars) ClearStmtVars() {
 	s.stmtVars = make(map[string]string)
 }
 
-// SetSystemVar sets the value of a system variable.
+// SetSystemVar sets the value of a system variable for session scope.
+// Validation has already been performed, and the values have been normalized.
+// i.e. oN / on / 1 => ON
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
 	case TxnIsolationOneShot:
@@ -1585,11 +1587,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableNoopFuncs = TiDBOptOn(val)
 	case TiDBReplicaRead:
 		if strings.EqualFold(val, "follower") {
-			s.SetReplicaRead(kv.ReplicaReadFollower)
+			s.SetReplicaRead(tikvstore.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader-and-follower") {
-			s.SetReplicaRead(kv.ReplicaReadMixed)
+			s.SetReplicaRead(tikvstore.ReplicaReadMixed)
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
-			s.SetReplicaRead(kv.ReplicaReadLeader)
+			s.SetReplicaRead(tikvstore.ReplicaReadLeader)
 		}
 	case TiDBAllowRemoveAutoInc:
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
@@ -1615,7 +1617,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			}
 		}
 	case TiDBStoreLimit:
-		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
+		tikvstore.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
 	case TiDBMetricSchemaStep:
 		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
 	case TiDBMetricSchemaRangeDuration:
@@ -1698,7 +1700,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBAllowAutoRandExplicitInsert:
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
-		s.EnableClusteredIndex = TiDBOptOn(val)
+		s.EnableClusteredIndex = TiDBOptEnableClustered(val)
 	case TiDBPartitionPruneMode:
 		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
 	case TiDBEnableParallelApply:
@@ -1746,8 +1748,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 	case TiDBTrackAggregateMemoryUsage:
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
-	case TiDBMultiStatementMode:
-		s.MultiStatementMode = TiDBOptMultiStmt(val)
 	case TiDBEnableExchangePartition:
 		s.TiDBEnableExchangePartition = TiDBOptOn(val)
 	case TiDBAllowFallbackToTiKV:
@@ -1757,6 +1757,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			case kv.TiFlash.Name():
 				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
 			}
+		}
+	default:
+		sv := GetSysVar(name)
+		if err := sv.SetSessionFromHook(s, val); err != nil {
+			return err
 		}
 	}
 	s.systems[name] = val

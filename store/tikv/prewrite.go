@@ -158,7 +158,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
 		sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
-		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutShort)
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
 		// transaction has been successfully committed.
