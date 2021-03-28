@@ -164,7 +164,8 @@ func (d *Dumper) Dump() (dumpErr error) {
 	taskChan := make(chan Task, defaultDumpThreads)
 	AddGauge(taskChannelCapacity, conf.Labels, defaultDumpThreads)
 	wg, writingCtx := errgroup.WithContext(tctx)
-	writers, tearDownWriters, err := d.startWriters(tctx.WithContext(writingCtx), wg, taskChan, rebuildConn)
+	writerCtx := tctx.WithContext(writingCtx)
+	writers, tearDownWriters, err := d.startWriters(writerCtx, wg, taskChan, rebuildConn)
 	if err != nil {
 		return err
 	}
@@ -217,11 +218,11 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 
 	if conf.SQL == "" {
-		if err = d.dumpDatabases(metaConn, taskChan); err != nil {
+		if err = d.dumpDatabases(writerCtx, metaConn, taskChan); err != nil && !errors.ErrorEqual(err, context.Canceled) {
 			return err
 		}
 	} else {
-		d.dumpSQL(taskChan)
+		d.dumpSQL(writerCtx, taskChan)
 	}
 	close(taskChan)
 	if err := wg.Wait(); err != nil {
@@ -279,7 +280,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 	return writers, tearDown, nil
 }
 
-func (d *Dumper) dumpDatabases(metaConn *sql.Conn, taskChan chan<- Task) error {
+func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskChan chan<- Task) error {
 	conf := d.conf
 	allTables := conf.Tables
 	for dbName, tables := range allTables {
@@ -288,7 +289,10 @@ func (d *Dumper) dumpDatabases(metaConn *sql.Conn, taskChan chan<- Task) error {
 			return err
 		}
 		task := NewTaskDatabaseMeta(dbName, createDatabaseSQL)
-		d.sendTaskToChan(task, taskChan)
+		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
+		if ctxDone {
+			return tctx.Err()
+		}
 
 		for _, table := range tables {
 			d.L().Debug("start dumping table...", zap.String("database", dbName),
@@ -300,11 +304,17 @@ func (d *Dumper) dumpDatabases(metaConn *sql.Conn, taskChan chan<- Task) error {
 
 			if table.Type == TableTypeView {
 				task := NewTaskViewMeta(dbName, table.Name, meta.ShowCreateTable(), meta.ShowCreateView())
-				d.sendTaskToChan(task, taskChan)
+				ctxDone = d.sendTaskToChan(tctx, task, taskChan)
+				if ctxDone {
+					return tctx.Err()
+				}
 			} else {
 				task := NewTaskTableMeta(dbName, table.Name, meta.ShowCreateTable())
-				d.sendTaskToChan(task, taskChan)
-				err = d.dumpTableData(metaConn, meta, taskChan)
+				ctxDone = d.sendTaskToChan(tctx, task, taskChan)
+				if ctxDone {
+					return tctx.Err()
+				}
+				err = d.dumpTableData(tctx, metaConn, meta, taskChan)
 				if err != nil {
 					return err
 				}
@@ -315,18 +325,18 @@ func (d *Dumper) dumpDatabases(metaConn *sql.Conn, taskChan chan<- Task) error {
 	return nil
 }
 
-func (d *Dumper) dumpTableData(conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
+func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
 	conf := d.conf
 	if conf.NoData {
 		return nil
 	}
 	if conf.Rows == UnspecifiedSize {
-		return d.sequentialDumpTable(conn, meta, taskChan)
+		return d.sequentialDumpTable(tctx, conn, meta, taskChan)
 	}
-	return d.concurrentDumpTable(conn, meta, taskChan)
+	return d.concurrentDumpTable(tctx, conn, meta, taskChan)
 }
 
-func (d *Dumper) sequentialDumpTable(conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
+func (d *Dumper) sequentialDumpTable(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
 	conf := d.conf
 	db, tbl := meta.DatabaseName(), meta.TableName()
 	tableIR, err := SelectAllFromTable(conf, conn, db, tbl)
@@ -334,12 +344,15 @@ func (d *Dumper) sequentialDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 		return err
 	}
 	task := NewTaskTableData(meta, tableIR, 0, 1)
-	d.sendTaskToChan(task, taskChan)
+	ctxDone := d.sendTaskToChan(tctx, task, taskChan)
+	if ctxDone {
+		return tctx.Err()
+	}
 
 	return nil
 }
 
-func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
+func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
 	conf := d.conf
 	db, tbl := meta.DatabaseName(), meta.TableName()
 	if conf.ServerInfo.ServerType == ServerTypeTiDB &&
@@ -347,7 +360,7 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 		conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 {
 		d.L().Debug("dumping TiDB tables with TABLESAMPLE",
 			zap.String("database", db), zap.String("table", tbl))
-		return d.concurrentDumpTiDBTables(conn, meta, taskChan)
+		return d.concurrentDumpTiDBTables(tctx, conn, meta, taskChan)
 	}
 	field, err := pickupPossibleField(db, tbl, conn, conf)
 	if err != nil {
@@ -357,7 +370,7 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 		// skip split chunk logic if not found proper field
 		d.L().Warn("fallback to sequential dump due to no proper field",
 			zap.String("database", db), zap.String("table", tbl))
-		return d.sequentialDumpTable(conn, meta, taskChan)
+		return d.sequentialDumpTable(tctx, conn, meta, taskChan)
 	}
 
 	min, max, err := d.selectMinAndMaxIntValue(conn, db, tbl, field)
@@ -380,7 +393,7 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 			zap.Uint64("conf.rows", conf.Rows),
 			zap.String("database", db),
 			zap.String("table", tbl))
-		return d.sequentialDumpTable(conn, meta, taskChan)
+		return d.sequentialDumpTable(tctx, conn, meta, taskChan)
 	}
 
 	// every chunk would have eventual adjustments
@@ -416,9 +429,9 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 			nullValueCondition = ""
 		}
 		task := NewTaskTableData(meta, newTableData(query, selectLen, false), chunkIndex, int(totalChunks))
-		ctxDone := d.sendTaskToChan(task, taskChan)
+		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 		if ctxDone {
-			break
+			return tctx.Err()
 		}
 		cutoff = nextCutOff
 		chunkIndex++
@@ -426,8 +439,8 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 	return nil
 }
 
-func (d *Dumper) sendTaskToChan(task Task, taskChan chan<- Task) (ctxDone bool) {
-	tctx, conf := d.tctx, d.conf
+func (d *Dumper) sendTaskToChan(tctx *tcontext.Context, task Task, taskChan chan<- Task) (ctxDone bool) {
+	conf := d.conf
 	select {
 	case <-tctx.Done():
 		return true
@@ -474,7 +487,7 @@ func (d *Dumper) selectMinAndMaxIntValue(conn *sql.Conn, db, tbl, field string) 
 	return min, max, nil
 }
 
-func (d *Dumper) concurrentDumpTiDBTables(conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
+func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
 	conf := d.conf
 	db, tbl := meta.DatabaseName(), meta.TableName()
 
@@ -495,9 +508,9 @@ func (d *Dumper) concurrentDumpTiDBTables(conn *sql.Conn, meta TableMeta, taskCh
 	for i, w := range where {
 		query := buildSelectQuery(db, tbl, selectField, buildWhereCondition(conf, w), orderByClause)
 		task := NewTaskTableData(meta, newTableData(query, selectLen, false), i, len(where))
-		ctxDone := d.sendTaskToChan(task, taskChan)
+		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 		if ctxDone {
-			break
+			return tctx.Err()
 		}
 	}
 	return nil
@@ -624,12 +637,12 @@ func dumpTableMeta(conf *Config, conn *sql.Conn, db string, table *TableInfo) (T
 	return meta, nil
 }
 
-func (d *Dumper) dumpSQL(taskChan chan<- Task) {
+func (d *Dumper) dumpSQL(tctx *tcontext.Context, taskChan chan<- Task) {
 	conf := d.conf
 	meta := &tableMeta{}
 	data := newTableData(conf.SQL, 0, true)
 	task := NewTaskTableData(meta, data, 0, 1)
-	d.sendTaskToChan(task, taskChan)
+	d.sendTaskToChan(tctx, task, taskChan)
 }
 
 func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
