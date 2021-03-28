@@ -432,7 +432,7 @@ func (l LockResolverProbe) CheckAllSecondaries(bo *Backoffer, lock *Lock, status
 	return err
 }
 
-// IsErrNotFound checks if an error is caused by txnNotFoundErr.
+// IsErrorNotFound checks if an error is caused by txnNotFoundErr.
 func (l LockResolverProbe) IsErrorNotFound(err error) bool {
 	_, ok := errors.Cause(err).(txnNotFoundErr)
 	return ok
