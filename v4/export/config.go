@@ -560,7 +560,7 @@ const (
 
 var (
 	gcSafePointVersion = semver.New("4.0.0")
-	tableSampleVersion = semver.New("5.0.0")
+	tableSampleVersion = semver.New("5.0.0-nightly")
 )
 
 // ServerInfo is the combination of ServerType and ServerInfo
