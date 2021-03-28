@@ -550,6 +550,22 @@ func (ssMap *stmtSummaryByDigestMap) maxStmtCount() int {
 }
 
 // SetHistorySize sets the history size for all summaries.
+func (ssMap *stmtSummaryByDigestMap) SetMaxEvictedCount(value string, inSession bool) error {
+	if err := ssMap.sysVars.setVariable(typeMaxEvictedInfoCount, value, inSession); err != nil {
+		return err
+	}
+	capacity := ssMap.sysVars.getVariable(typeMaxEvictedInfoCount)
+	ssMap.Lock()
+	ssMap.evictedInfoHistory = make([]stmtSummaryEvictedInfo, 0, capacity)
+	defer ssMap.Unlock()
+	return nil
+}
+
+func (ssMap *stmtSummaryByDigestMap) maxEvictedCount() int {
+	return int(ssMap.sysVars.getVariable(typeMaxEvictedInfoCount))
+}
+
+// SetHistorySize sets the history size for all summaries.
 func (ssMap *stmtSummaryByDigestMap) SetMaxSQLLength(value string, inSession bool) error {
 	return ssMap.sysVars.setVariable(typeMaxSQLLength, value, inSession)
 }

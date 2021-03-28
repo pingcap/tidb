@@ -444,6 +444,9 @@ const (
 	// TiDBStmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
 	TiDBStmtSummaryMaxStmtCount = "tidb_stmt_summary_max_stmt_count"
 
+	// TiDBStmtSummaryMaxEvictedCount indicates the max number of evicted kept in memory.
+	TiDBStmtSummaryMaxEvictedCount = "tidb_stmt_summary_max_evicted_count"
+
 	// TiDBStmtSummaryMaxSQLLength indicates the max length of displayed normalized sql and sample sql.
 	TiDBStmtSummaryMaxSQLLength = "tidb_stmt_summary_max_sql_length"
 

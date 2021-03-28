@@ -645,7 +645,7 @@ var defaultConf = Config{
 		MaxSQLLength:        4096,
 		RefreshInterval:     1800,
 		HistorySize:         24,
-		MaxEvictedCount:     96,
+		MaxEvictedCount:     48,
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
@@ -869,6 +869,9 @@ func (c *Config) Valid() error {
 
 	if c.StmtSummary.MaxStmtCount <= 0 {
 		return fmt.Errorf("max-stmt-count in [stmt-summary] should be greater than 0")
+	}
+	if c.StmtSummary.MaxEvictedCount <= 0 {
+		return fmt.Errorf("max-evicted-count in [stmt-summary] should be greater than 0")
 	}
 	if c.StmtSummary.HistorySize < 0 {
 		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")

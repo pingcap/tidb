@@ -465,6 +465,14 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("a"))
 	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_stmt_count'")
 
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxEvictedCount, types.NewStringDatum("10"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxEvictedCount)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxEvictedCount, types.NewStringDatum("a"))
+	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_evicted_count'")
+
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, types.NewStringDatum("10"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength)
@@ -650,6 +658,11 @@ func (s *testVarsutilSuite) TestValidateStmtSummary(c *C) {
 		{TiDBStmtSummaryMaxStmtCount, "", true, ScopeGlobal},
 		{TiDBStmtSummaryMaxStmtCount, "0", true, ScopeGlobal},
 		{TiDBStmtSummaryMaxStmtCount, "99999999", true, ScopeGlobal},
+		{TiDBStmtSummaryMaxEvictedCount, "a", true, ScopeSession},
+		{TiDBStmtSummaryMaxEvictedCount, "", false, ScopeSession},
+		{TiDBStmtSummaryMaxEvictedCount, "", true, ScopeGlobal},
+		{TiDBStmtSummaryMaxEvictedCount, "0", true, ScopeGlobal},
+		{TiDBStmtSummaryMaxEvictedCount, "99999999", true, ScopeGlobal},
 		{TiDBStmtSummaryMaxSQLLength, "a", true, ScopeSession},
 		{TiDBStmtSummaryMaxSQLLength, "", false, ScopeSession},
 		{TiDBStmtSummaryMaxSQLLength, "", true, ScopeGlobal},
