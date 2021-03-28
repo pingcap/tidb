@@ -131,6 +131,54 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 	return nil
 }
 
+//The function is same as function checkIndexColumn, but the parameter is model.IndexColumn but not ast.IndexPartSpecification.
+func checkIndexInModifiableColumn(col *model.ColumnInfo, ic *model.IndexColumn) error {
+	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
+		if col.GeneratedExprString != "" {
+			return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
+		}
+		return errors.Trace(errWrongKeyColumn.GenWithStackByArgs(ic.Name))
+	}
+
+	// JSON column cannot index.
+	if col.FieldType.Tp == mysql.TypeJSON {
+		return errors.Trace(errJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
+	}
+
+	// Length must be specified and non-zero for BLOB and TEXT column indexes.
+	if types.IsTypeBlob(col.FieldType.Tp) {
+		if ic.Length == types.UnspecifiedLength {
+			return errors.Trace(errBlobKeyWithoutLength.GenWithStackByArgs(col.Name.O))
+		}
+		if ic.Length == types.ErrorLength {
+			return errors.Trace(errKeyPart0.GenWithStackByArgs(col.Name.O))
+		}
+	}
+
+	// Length can only be specified for specifiable types.
+	if ic.Length != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
+		return errors.Trace(errIncorrectPrefixKey)
+	}
+
+	// Key length must be shorter or equal to the column length.
+	if ic.Length != types.UnspecifiedLength &&
+		types.IsTypeChar(col.FieldType.Tp) {
+		if col.Flen < ic.Length {
+			return errors.Trace(errIncorrectPrefixKey)
+		}
+		// Length must be non-zero for char.
+		if ic.Length == types.ErrorLength {
+			return errors.Trace(errKeyPart0.GenWithStackByArgs(col.Name.O))
+		}
+	}
+
+	// Specified length must be shorter than the max length for prefix.
+	if ic.Length > config.GetGlobalConfig().MaxIndexLength {
+		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+	}
+	return nil
+}
+
 func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) error {
 	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
 		if col.GeneratedExprString != "" {
