@@ -784,7 +784,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		resp, err := store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -951,6 +951,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			c.mu.RUnlock()
 			if !committed && !undetermined {
 				c.cleanup(ctx)
+				metrics.TwoPCTxnCounterError.Inc()
+			} else {
+				metrics.TwoPCTxnCounterOk.Inc()
 			}
 			c.txn.commitTS = c.commitTS
 			if binlogSkipped {

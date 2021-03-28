@@ -150,7 +150,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		if err != nil {
 			return "", false, err
 		}
-		return string(j), true, nil
+		return config.HideConfig(string(j)), true, nil
 	case TiDBForcePriority:
 		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
 	case TiDBDDLSlowOprThreshold:
@@ -239,7 +239,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if err != nil {
 		return err
 	}
-	CheckDeprecationSetSystemVar(vars, name)
+	CheckDeprecationSetSystemVar(vars, name, sVal)
 	return vars.SetSystemVar(name, sVal)
 }
 
@@ -254,7 +254,7 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	if err != nil {
 		return err
 	}
-	CheckDeprecationSetSystemVar(vars, name)
+	CheckDeprecationSetSystemVar(vars, name, sVal)
 	return vars.SetStmtVar(name, sVal)
 }
 
@@ -285,7 +285,7 @@ const (
 )
 
 // CheckDeprecationSetSystemVar checks if the system variable is deprecated.
-func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
+func CheckDeprecationSetSystemVar(s *SessionVars, name string, val string) {
 	switch name {
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
 		TiDBHashJoinConcurrency, TiDBHashAggPartialConcurrency, TiDBHashAggFinalConcurrency,
@@ -295,6 +295,10 @@ func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
 		TIDBMemQuotaSort, TIDBMemQuotaTopn,
 		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin:
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
+	case TiDBEnableClusteredIndex:
+		if strings.EqualFold(val, IntOnly) {
+			s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(val, fmt.Sprintf("'%s' or '%s'", On, Off)))
+		}
 	}
 }
 
@@ -337,6 +341,30 @@ func TiDBOptMultiStmt(opt string) int {
 		return OnInt
 	}
 	return WarnInt
+}
+
+// ClusteredIndexDefMode controls the default clustered property for primary key.
+type ClusteredIndexDefMode int
+
+const (
+	// ClusteredIndexDefModeIntOnly indicates only single int primary key will default be clustered.
+	ClusteredIndexDefModeIntOnly ClusteredIndexDefMode = 0
+	// ClusteredIndexDefModeOn indicates primary key will default be clustered.
+	ClusteredIndexDefModeOn ClusteredIndexDefMode = 1
+	// ClusteredIndexDefModeOff indicates primary key will default be non-clustered.
+	ClusteredIndexDefModeOff ClusteredIndexDefMode = 2
+)
+
+// TiDBOptEnableClustered converts enable clustered options to ClusteredIndexDefMode.
+func TiDBOptEnableClustered(opt string) ClusteredIndexDefMode {
+	switch {
+	case strings.EqualFold(opt, "ON") || opt == "1":
+		return ClusteredIndexDefModeOn
+	case strings.EqualFold(opt, "OFF") || opt == "0":
+		return ClusteredIndexDefModeOff
+	default:
+		return ClusteredIndexDefModeIntOnly
+	}
 }
 
 func tidbOptPositiveInt32(opt string, defaultVal int) int {

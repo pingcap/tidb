@@ -77,6 +77,8 @@ func getExecutorListFromRootExec(rootExec *tipb.Executor) ([]*tipb.Executor, err
 			currentExec = currentExec.Limit.Child
 		case tipb.ExecType_TypeExchangeSender:
 			currentExec = currentExec.ExchangeSender.Child
+		case tipb.ExecType_TypeSelection:
+			currentExec = currentExec.Selection.Child
 		default:
 			return nil, errors.New("unsupported executor type " + currentExec.Tp.String())
 		}
