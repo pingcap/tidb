@@ -121,7 +121,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
 		for _, task := range tasks {
-			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region)
+			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
