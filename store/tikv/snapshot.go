@@ -458,7 +458,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k tidbkv.Key) ([]by
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, tidbkv.TiKV, "", ops...)
+		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, ReadTimeoutShort, tidbkv.TiKV, "", ops...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
