@@ -4487,10 +4487,6 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	s.mustExec(tk, c, "alter table t2 drop partition if exists p1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to p1"))
-
-	// DROP INDEXES
-	s.mustExec(tk, c, "alter table t1 drop index if exists idxes_a,drop index if exists idxes_b")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
 }
 
 func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testDBSuite5, c *C) {
@@ -6676,28 +6672,6 @@ LOOP:
 		idx := tables.NewIndex(t.Meta().ID, t.Meta(), idx.Meta())
 		checkDelRangeDone(c, ctx, idx)
 	}
-
-	tk.MustExec("drop table test_drop_indexes")
-}
-
-func testDropDuplicateIndexes(c *C, store kv.Storage) {
-	tk := testkit.NewTestKitWithInit(c, store)
-	tk.MustExec("use test_db")
-	tk.MustExec("drop table if exists test_drop_duplicate_indexes;")
-	tk.MustExec("create table test_drop_duplicate_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));")
-
-	if _, err := tk.Exec("alter table test_drop_duplicate_indexes drop index i1, drop index i1;"); true {
-		c.Assert(err.Error(), Equals, "[ddl:1091]index i1 doesn't exist")
-	}
-
-	tk.MustExec("alter table test_drop_duplicate_indexes drop index i1, drop index if exists i1;")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|index i1 doesn't exist"))
-
-	if _, err := tk.Exec("alter table test_drop_duplicate_indexes drop index if exists i2, drop index i2;"); true {
-		c.Assert(err.Error(), Equals, "[ddl:1091]index i2 doesn't exist")
-	}
-
-	tk.MustExec("drop table if exists test_drop_duplicate_indexes")
 }
 
 func testCancelDropIndexes(c *C, store kv.Storage, d ddl.DDL) {
@@ -6801,6 +6775,41 @@ func testCancelDropIndexes(c *C, store kv.Storage, d ddl.DDL) {
 	tk.MustExec(dropIdxesSQL)
 }
 
+func testDropIndexesIfExists(c *C, store kv.Storage) {
+	tk := testkit.NewTestKitWithInit(c, store)
+	tk.MustExec("use test_db;")
+	tk.MustExec("drop table if exists test_drop_indexes_if_exists;")
+	tk.MustExec("create table test_drop_indexes_if_exists (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));")
+
+	// Drop different indexes.
+	tk.MustGetErrMsg(
+		"alter table test_drop_indexes_if_exists drop index i1, drop index i3;",
+		"[ddl:1091]index i3 doesn't exist",
+	)
+	if _, err := tk.Exec("alter table test_drop_indexes_if_exists drop index i1, drop index if exists i3;"); true {
+		c.Assert(err, IsNil)
+	}
+	tk.MustQuery("show warnings").Check(
+		testutil.RowsWithSep("|", "Note|1091|index i3 doesn't exist"),
+	)
+
+	// Verify the impact of deletion order when dropping duplicate indexes.
+	tk.MustGetErrMsg(
+		"alter table test_drop_indexes_if_exists drop index i2, drop index i2;",
+		"[ddl:1091]index i2 doesn't exist",
+	)
+	tk.MustGetErrMsg(
+		"alter table test_drop_indexes_if_exists drop index if exists i2, drop index i2;",
+		"[ddl:1091]index i2 doesn't exist",
+	)
+	if _, err := tk.Exec("alter table test_drop_indexes_if_exists drop index i2, drop index if exists i2;"); true {
+		c.Assert(err, IsNil)
+	}
+	tk.MustQuery("show warnings").Check(
+		testutil.RowsWithSep("|", "Note|1091|index i2 doesn't exist"),
+	)
+}
+
 func (s *testDBSuite5) TestDropIndexes(c *C) {
 	// drop multiple indexes
 	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));"
@@ -6813,8 +6822,6 @@ func (s *testDBSuite5) TestDropIndexes(c *C) {
 	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i2;"
 	idxNames = []string{"primary", "i2"}
 	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
-
-	testDropDuplicateIndexes(c, s.store)
-
 	testCancelDropIndexes(c, s.store, s.dom.DDL())
+	testDropIndexesIfExists(c, s.store)
 }
