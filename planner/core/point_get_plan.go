@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -1100,7 +1101,8 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 			}
 		}
 		// The converted result must be same as original datum.
-		cmp, err := d.CompareDatum(stmtCtx, &dVal)
+		// Compare them based on the dVal's type.
+		cmp, err := dVal.CompareDatum(stmtCtx, &d)
 		if err != nil {
 			return nil, false
 		} else if cmp != 0 {
@@ -1230,17 +1232,21 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		OrderedList: orderedList,
 		TblColPosInfos: TblColPosInfoSlice{
 			TblColPosInfo{
-				TblID:          tbl.ID,
-				Start:          0,
-				End:            pointPlan.Schema().Len(),
-				HandleCols:     handleCols,
-				IsCommonHandle: tbl.IsCommonHandle,
+				TblID:      tbl.ID,
+				Start:      0,
+				End:        pointPlan.Schema().Len(),
+				HandleCols: handleCols,
 			},
 		},
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
 		VirtualAssignmentsOffset:  len(orderedList),
 	}.Init(ctx)
 	updatePlan.names = pointPlan.OutputNames()
+	is := infoschema.GetInfoSchema(ctx)
+	t, _ := is.TableByID(tbl.ID)
+	updatePlan.tblID2Table = map[int64]table.Table{
+		tbl.ID: t,
+	}
 	return updatePlan
 }
 
@@ -1317,11 +1323,10 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		SelectPlan: pointPlan,
 		TblColPosInfos: TblColPosInfoSlice{
 			TblColPosInfo{
-				TblID:          tbl.ID,
-				Start:          0,
-				End:            pointPlan.Schema().Len(),
-				HandleCols:     handleCols,
-				IsCommonHandle: tbl.IsCommonHandle,
+				TblID:      tbl.ID,
+				Start:      0,
+				End:        pointPlan.Schema().Len(),
+				HandleCols: handleCols,
 			},
 		},
 	}.Init(ctx)
@@ -1365,23 +1370,6 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 	schema.Append(handleCol)
 	return &IntHandleCols{col: handleCol}
-}
-
-func findHandleCol(tbl *model.TableInfo, schema *expression.Schema) *expression.Column {
-	// fields len is 0 for update and delete.
-	var handleCol *expression.Column
-	if tbl.PKIsHandle {
-		for i, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) && tbl.PKIsHandle {
-				handleCol = schema.Columns[i]
-			}
-		}
-	}
-	if !tbl.IsCommonHandle && handleCol == nil {
-		handleCol = colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
-		schema.Append(handleCol)
-	}
-	return handleCol
 }
 
 func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int) {

@@ -14,7 +14,6 @@
 package cophandler
 
 import (
-	"context"
 	"io"
 	"math"
 	"sync"
@@ -109,11 +108,10 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 type exchSenderExec struct {
 	baseMPPExec
 
-	exchangeSender *tipb.ExchangeSender
-	tunnels        []*ExchangerTunnel
-	outputOffsets  []uint32
-	exchangeTp     tipb.ExchangeType
-	hashKeyOffset  int
+	tunnels       []*ExchangerTunnel
+	outputOffsets []uint32
+	exchangeTp    tipb.ExchangeType
+	hashKeyOffset int
 }
 
 func (e *exchSenderExec) open() error {
@@ -258,7 +256,7 @@ func (e *exchRecvExec) next() (*chunk.Chunk, error) {
 func (e *exchRecvExec) EstablishConnAndReceiveData(h *MPPTaskHandler, meta *mpp.TaskMeta) ([]*mpp.MPPDataPacket, error) {
 	req := &mpp.EstablishMPPConnectionRequest{ReceiverMeta: h.Meta, SenderMeta: meta}
 	rpcReq := tikvrpc.NewRequest(tikvrpc.CmdMPPConn, req, kvrpcpb.Context{})
-	rpcResp, err := h.RPCClient.SendRequest(context.Background(), meta.Address, rpcReq, 3600*time.Second)
+	rpcResp, err := h.RPCClient.SendRequest(e.mppCtx.Ctx, meta.Address, rpcReq, 3600*time.Second)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -53,6 +53,9 @@ import (
 // Make it serial because config is modified in test cases.
 var _ = SerialSuites(&testSerialSuite{})
 
+// TODO(tangenta): Move all the parallel tests out of this file.
+var _ = Suite(&testIntegrationSuite9{&testIntegrationSuite{}})
+
 type testSerialSuite struct {
 	CommonHandleSuite
 	store   kv.Storage
@@ -64,8 +67,7 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 	session.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
 	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for add/drop primary key.
-		conf.AlterPrimaryKey = false
+		// Update config here.
 	})
 
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
@@ -110,81 +112,72 @@ func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 	tk.MustExec("drop table t, t1")
 }
 
-func (s *testSerialSuite) TestPrimaryKey(c *C) {
+func (s *testIntegrationSuite9) TestPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.MustExec("drop database if exists test_primary_key;")
+	tk.MustExec("create database test_primary_key;")
+	tk.MustExec("use test_primary_key;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
-	tk.MustExec("create table primary_key_test (a int, b varchar(10))")
-	tk.MustExec("create table primary_key_test_1 (a int, b varchar(10), primary key(a))")
-	_, err := tk.Exec("alter table primary_key_test add primary key(a)")
-	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
-	_, err = tk.Exec("alter table primary_key_test drop primary key")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
-	// for "drop index `primary` on ..." syntax
-	_, err = tk.Exec("drop index `primary` on primary_key_test")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
-	_, err = tk.Exec("drop index `primary` on primary_key_test_1")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	// Test add/drop primary key on a plain table.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b varchar(10));")
+	tk.MustGetErrCode("alter table t add primary key(a) clustered;", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table t add primary key(a) nonclustered;")
+	tk.MustExec("alter table t drop primary key;")
+	tk.MustExec("alter table t add primary key(a) nonclustered;")
+	tk.MustExec("drop index `primary` on t;")
+	tk.MustExec("alter table t add primary key(a);") // implicit nonclustered
+	tk.MustExec("drop index `primary` on t;")
+	tk.MustGetErrCode("drop index `primary` on t;", errno.ErrCantDropFieldOrKey)
 
-	// Change the value of AlterPrimaryKey.
-	tk.MustExec("create table primary_key_test1 (a int, b varchar(10), primary key(a))")
-	tk.MustExec("create table primary_key_test2 (a int, b varchar(10), primary key(b))")
-	tk.MustExec("create table primary_key_test3 (a int, b varchar(10))")
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = true
-	})
+	// Test add/drop primary key on a PKIsHandle table.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b varchar(10), primary key(a) clustered);")
+	tk.MustGetErrCode("alter table t drop primary key;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add primary key(a) clustered;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add primary key(a) nonclustered;", mysql.ErrMultiplePriKey)
+	tk.MustGetErrCode("alter table t add primary key(a);", errno.ErrMultiplePriKey) // implicit nonclustered
+	tk.MustGetErrCode("alter table t add primary key(b) clustered;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add primary key(b) nonclustered;", errno.ErrMultiplePriKey)
+	tk.MustGetErrCode("alter table t add primary key(b);", errno.ErrMultiplePriKey) // implicit nonclustered
 
-	_, err = tk.Exec("alter table primary_key_test2 add primary key(a)")
-	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
-	// We can't add a primary key when the table's pk_is_handle is true.
-	_, err = tk.Exec("alter table primary_key_test1 add primary key(a)")
-	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
-	_, err = tk.Exec("alter table primary_key_test1 add primary key(b)")
-	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	// Test add/drop primary key on a nonclustered primary key table.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b varchar(10), primary key(a) nonclustered);")
+	tk.MustGetErrCode("alter table t add primary key(a) clustered;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add primary key(a) nonclustered;", errno.ErrMultiplePriKey)
+	tk.MustGetErrCode("alter table t add primary key(a);", errno.ErrMultiplePriKey) // implicit nonclustered
+	tk.MustGetErrCode("alter table t add primary key(b) clustered;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add primary key(b) nonclustered;", errno.ErrMultiplePriKey)
+	tk.MustGetErrCode("alter table t add primary key(b);", errno.ErrMultiplePriKey) // implicit nonclustered
+	tk.MustExec("alter table t drop primary key;")
 
-	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
-	tk.MustExec("alter table primary_key_test2 drop primary key")
-	_, err = tk.Exec("alter table primary_key_test3 drop primary key")
-	c.Assert(err.Error(), Equals, "[ddl:1091]Can't DROP 'PRIMARY'; check that column/key exists")
+	// Test add/drop primary key on a CommonHandle key table.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b varchar(10), primary key(b) clustered);")
+	tk.MustGetErrCode("alter table t drop primary key;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add primary key(a) clustered;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add primary key(a) nonclustered;", errno.ErrMultiplePriKey)
+	tk.MustGetErrCode("alter table t add primary key(a);", errno.ErrMultiplePriKey) // implicit nonclustered
+	tk.MustGetErrCode("alter table t add primary key(b) clustered;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add primary key(b) nonclustered;", errno.ErrMultiplePriKey)
+	tk.MustGetErrCode("alter table t add primary key(b);", errno.ErrMultiplePriKey) // implicit nonclustered
 
-	// for "drop index `primary` on ..." syntax
-	tk.MustExec("create table primary_key_test4 (a int, b varchar(10), primary key(a))")
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = false
-	})
-	_, err = tk.Exec("drop index `primary` on primary_key_test4")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
-	// for the index name is `primary`
-	tk.MustExec("create table tt(`primary` int);")
-	tk.MustExec("alter table tt add index (`primary`);")
-	_, err = tk.Exec("drop index `primary` on tt")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	// Test add/drop primary key when the column&index name is `primary`.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (`primary` int);")
+	tk.MustExec("alter table t add index (`primary`);")
+	tk.MustGetErrCode("drop index `primary` on t;", errno.ErrCantDropFieldOrKey)
 
 	// The primary key cannot be invisible, for the case pk_is_handle.
-	tk.MustExec("drop table if exists t1, t2;")
-	_, err = tk.Exec("create table t1(c1 int not null, primary key(c1) invisible);")
-	c.Assert(ddl.ErrPKIndexCantBeInvisible.Equal(err), IsTrue)
-	tk.MustExec("create table t2 (a int, b int not null, primary key(a), unique(b) invisible);")
-
-	// Test drop clustered primary key.
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = false
-	})
 	tk.MustExec("drop table if exists t;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
-	tk.MustExec("create table t(a int, b varchar(64), primary key(b));")
-	tk.MustExec("insert into t values(1,'a'), (2, 'b');")
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = true
-	})
-	errMsg := "[ddl:8200]Unsupported drop primary key when the table is using clustered index"
-	tk.MustGetErrMsg("alter table t drop primary key;", errMsg)
+	tk.MustGetErrCode("create table t(c1 int not null, primary key(c1) invisible);", errno.ErrPKIndexCantBeInvisible)
+	tk.MustExec("create table t (a int, b int not null, primary key(a), unique(b) invisible);")
+	tk.MustExec("drop table t;")
 }
 
-func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
+func (s *testIntegrationSuite9) TestDropAutoIncrementIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -192,7 +185,7 @@ func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
 	tk.MustExec("alter table t1 drop index a")
 }
 
-func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
+func (s *testIntegrationSuite9) TestMultiRegionGetTableEndHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
@@ -235,7 +228,7 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	c.Assert(maxHandle, Equals, kv.IntHandle(10000))
 }
 
-func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
+func (s *testIntegrationSuite9) TestGetTableEndHandle(c *C) {
 	// TestGetTableEndHandle test ddl.GetTableMaxHandle method, which will return the max row id of the table.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
@@ -327,12 +320,12 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	c.Assert(emptyTable, IsFalse)
 }
 
-func (s *testSerialSuite) TestMultiRegionGetTableEndCommonHandle(c *C) {
+func (s *testIntegrationSuite9) TestMultiRegionGetTableEndCommonHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
 	tk.MustExec("use test_get_endhandle")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t(a varchar(20), b int, c float, d bigint, primary key (a, b, c))")
 	var builder strings.Builder
@@ -371,12 +364,12 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndCommonHandle(c *C) {
 	c.Assert(maxHandle, HandleEquals, MustNewCommonHandle(c, "a", 1, 1))
 }
 
-func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
+func (s *testIntegrationSuite9) TestGetTableEndCommonHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
 	tk.MustExec("use test_get_endhandle")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t(a varchar(15), b bigint, c int, primary key (a, b))")
 	tk.MustExec("create table t1(a varchar(15), b bigint, c int, primary key (a(2), b))")
@@ -987,9 +980,6 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		tk.MustExec("drop table t")
 	}
 
-	ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	// Only bigint column can set auto_random
 	assertBigIntOnly("create table t (a char primary key auto_random(3), b int)", "char")
 	assertBigIntOnly("create table t (a varchar(255) primary key auto_random(3), b int)", "varchar")
@@ -1006,16 +996,10 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b bigint, primary key (a, b))", "a")
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, c char, primary key (a, c))", "a")
 
-	// PKIsNotHandle: table is created when alter-primary-key = true.
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = true
-	})
-	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
-	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
-	assertPKIsNotHandle("create table t (a int, b bigint auto_random(3) primary key)", "b")
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = false
-	})
+	// PKIsNotHandle: nonclustered integer primary key.
+	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key nonclustered, b int)", "a")
+	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key nonclustered, b int)", "a")
+	assertPKIsNotHandle("create table t (a int, b bigint auto_random(3) primary key nonclustered)", "b")
 
 	// Can not set auto_random along with auto_increment.
 	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
@@ -1158,13 +1142,10 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 }
 
-func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
+func (s *testIntegrationSuite9) TestAutoRandomExchangePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")
-
-	ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk.MustExec("use auto_random_db")
 
@@ -1173,7 +1154,7 @@ func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
 
 	tk.MustExec("drop table if exists e1, e2, e3, e4;")
 
-	tk.MustExec("create table e1 (a bigint primary key auto_random(3)) partition by hash(a) partitions 1;")
+	tk.MustExec("create table e1 (a bigint primary key clustered auto_random(3)) partition by hash(a) partitions 1;")
 
 	tk.MustExec("create table e2 (a bigint primary key);")
 	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e2;", errno.ErrTablesDifferentMetadata)
@@ -1195,19 +1176,16 @@ func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
 	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("4"))
 }
 
-func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
+func (s *testIntegrationSuite9) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")
 	tk.MustExec("use auto_random_db")
 	tk.MustExec("drop table if exists t")
 
-	ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	recreateTable := func() {
 		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (a bigint auto_random(6) primary key)")
+		tk.MustExec("create table t (a bigint auto_random(6) primary key clustered)")
 	}
 	truncateTable := func() {
 		_, _ = tk.Exec("delete from t")
@@ -1262,15 +1240,13 @@ func (s *testSerialSuite) TestAutoRandomWithPreSplitRegion(c *C) {
 	tk.MustExec("use auto_random_db;")
 	tk.MustExec("drop table if exists t;")
 
-	ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
 	origin := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, origin)
 	tk.MustExec("set @@global.tidb_scatter_region=1;")
 
 	// Test pre-split table region for auto_random table.
-	tk.MustExec("create table t (a bigint auto_random(2) primary key, b int) pre_split_regions=2;")
+	tk.MustExec("create table t (a bigint auto_random(2) primary key clustered, b int) pre_split_regions=2;")
 	re := tk.MustQuery("show table t regions;")
 	rows := re.Rows()
 	c.Assert(len(rows), Equals, 4)
@@ -1352,7 +1328,7 @@ func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
 	// mustGetUnsupportedCollation("alter table t convert to collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
 }
 
-func (s *testSerialSuite) TestInvisibleIndex(c *C) {
+func (s *testIntegrationSuite9) TestInvisibleIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -1391,17 +1367,12 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t values (11, 12)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8", "9 10", "11 12"))
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = true
-	})
-
 	// Limitation: Primary key cannot be invisible index
-	tk.MustGetErrCode("create table t1 (a int, primary key (a) invisible)", errno.ErrPKIndexCantBeInvisible)
-	tk.MustGetErrCode("create table t1 (a int, b int, primary key (a, b) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("create table t1 (a int, primary key (a) nonclustered invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("create table t1 (a int, b int, primary key (a, b) nonclustered invisible)", errno.ErrPKIndexCantBeInvisible)
 	tk.MustExec("create table t1 (a int, b int)")
-	tk.MustGetErrCode("alter table t1 add primary key(a) invisible", errno.ErrPKIndexCantBeInvisible)
-	tk.MustGetErrCode("alter table t1 add primary key(a, b) invisible", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("alter table t1 add primary key(a) nonclustered invisible", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("alter table t1 add primary key(a, b) nonclustered invisible", errno.ErrPKIndexCantBeInvisible)
 
 	// Implicit primary key cannot be invisible index
 	// Create a implicit primary key
@@ -1423,7 +1394,7 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustGetErrCode("alter table t5 drop index a", errno.ErrPKIndexCantBeInvisible)
 	tk.MustGetErrCode("alter table t5 modify column a int null", errno.ErrPKIndexCantBeInvisible)
 	// If these is a explicit primary key, no key will become implicit primary key
-	tk.MustExec("create table t6 (a int not null, b int, unique (a) invisible, primary key(b))")
+	tk.MustExec("create table t6 (a int not null, b int, unique (a) invisible, primary key(b) nonclustered)")
 	showIndexes = "select index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't6'"
 	tk.MustQuery(showIndexes).Check(testkit.Rows("a NO", "PRIMARY YES"))
 	tk.MustExec("insert into t6 values (1, 2)")
@@ -1433,9 +1404,9 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	c.Check(len(res.Rows()), Equals, 1)
 }
 
-func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
+func (s *testIntegrationSuite9) TestCreateClusteredIndex(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
 	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
 	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b))")
@@ -1456,11 +1427,8 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = true
-	})
-	tk.MustExec("CREATE TABLE t5 (a varchar(255) primary key, b int)")
-	tk.MustExec("CREATE TABLE t6 (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("CREATE TABLE t5 (a varchar(255) primary key nonclustered, b int)")
+	tk.MustExec("CREATE TABLE t6 (a int, b int, c int, primary key (a, b) nonclustered)")
 	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
 	c.Assert(err, IsNil)
@@ -1468,9 +1436,6 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t6"))
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = false
-	})
 
 	tk.MustExec("CREATE TABLE t21 like t2")
 	tk.MustExec("CREATE TABLE t31 like t3")
@@ -1482,7 +1447,7 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("CREATE TABLE t7 (a varchar(255) primary key, b int)")
 	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t7"))

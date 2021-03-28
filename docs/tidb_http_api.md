@@ -477,3 +477,18 @@ timezone.*
     * op=nowait: return after binlog status is recoverd, do not wait until the skipped-binlog transactions are committed.
     * op=reset: reset `SkippedCommitterCounter` to 0 to avoid the problem that `SkippedCommitterCounter` is not cleared due to some unusual cases.
     * op=status: Get the current status of binlog recovery.
+
+1. Enable/disable async commit feature
+
+    ```shell
+    curl -X POST -d "tidb_enable_async_commit=1" http://{TiDBIP}:10080/settings
+    curl -X POST -d "tidb_enable_async_commit=0" http://{TiDBIP}:10080/settings
+    ```
+
+1. Enable/disable one-phase commit feature
+
+    ```shell
+    curl -X POST -d "tidb_enable_1pc=1" http://{TiDBIP}:10080/settings
+    curl -X POST -d "tidb_enable_1pc=0" http://{TiDBIP}:10080/settings
+    ```
+

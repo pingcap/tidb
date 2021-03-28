@@ -52,7 +52,9 @@ check-static: tools/bin/golangci-lint
 	tools/bin/golangci-lint run -v --disable-all --deadline=3m \
 	  --enable=misspell \
 	  --enable=ineffassign \
+	  --enable=typecheck \
 	  --enable=varcheck \
+	  --enable=structcheck \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
@@ -91,7 +92,7 @@ func (s *testPointGetSuite) TestPointGet(c *C) {
 	c.Assert(err, IsNil)
 	fields := result.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "ident")
-	result.Close()
+	c.Assert(result.Close(), IsNil)
 
 	tk.MustExec("CREATE TABLE tab3(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
 	tk.MustExec("CREATE UNIQUE INDEX idx_tab3_0 ON tab3 (col4);")
@@ -131,6 +132,30 @@ func (s *testPointGetSuite) TestPointGetOverflow(c *C) {
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=-128").Check(testkit.Rows("-128"))
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=128").Check(testkit.Rows())
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=127").Check(testkit.Rows("127"))
+
+	tk.MustExec("CREATE TABLE `PK_S_MULTI_31_1` (`COL1` tinyint(11) NOT NULL, `COL2` tinyint(11) NOT NULL, `COL3` tinyint(11) DEFAULT NULL, PRIMARY KEY (`COL1`,`COL2`) CLUSTERED)")
+	tk.MustQuery("select * from PK_S_MULTI_31_1 where col2 = -129 and col1 = 1").Check(testkit.Rows())
+	tk.MustExec("insert into PK_S_MULTI_31_1 select 1, 1, 1")
+	tk.MustQuery("select * from PK_S_MULTI_31_1 where (col1, col2) in ((1, -129),(1, 1))").Check(testkit.Rows("1 1 1"))
+}
+
+// Close issue #22839
+func (s *testPointGetSuite) TestPointGetDataTooLong(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists PK_1389;")
+	tk.MustExec("CREATE TABLE `PK_1389` ( " +
+		"  `COL1` bit(1) NOT NULL," +
+		"  `COL2` varchar(20) DEFAULT NULL," +
+		"  `COL3` datetime DEFAULT NULL," +
+		"  `COL4` bigint(20) DEFAULT NULL," +
+		"  `COL5` float DEFAULT NULL," +
+		"  PRIMARY KEY (`COL1`)" +
+		");")
+	tk.MustExec("insert into PK_1389 values(0, \"皟钹糁泅埞礰喾皑杏灚暋蛨歜檈瓗跾咸滐梀揉\", \"7701-12-27 23:58:43\", 4806951672419474695, -1.55652e38);")
+	tk.MustQuery("select count(1) from PK_1389 where col1 = 0x30;").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(1) from PK_1389 where col1 in ( 0x30);").Check(testkit.Rows("0"))
+	tk.MustExec("drop table if exists PK_1389;")
 }
 
 func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
@@ -525,7 +550,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t (a varchar(64) primary key, b int)")
 	tk.MustExec("insert t values ('a', 1), ('b', 2), ('c', 3)")
 	tk.MustExec("begin pessimistic")
@@ -548,7 +573,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists pgt")
 	tk.MustExec("create table pgt (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk))")
 	tk.MustExec("insert pgt values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33)")
@@ -571,7 +596,7 @@ func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
 func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec(`create table t1 (a int, b decimal(10,0), c int, primary key(a,b))`)
 	tk.MustExec(`create table t2 (a varchar(20), b int, primary key(a), unique key(b))`)
@@ -771,7 +796,7 @@ func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 
 		errCh <- tk1.ExecToErr("use test")
 		errCh <- tk2.ExecToErr("use test")
-		tk1.Se.GetSessionVars().EnableClusteredIndex = false
+		tk1.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 		errCh <- tk1.ExecToErr(fmt.Sprintf("drop table if exists %s", tableName))
 		errCh <- tk1.ExecToErr(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))

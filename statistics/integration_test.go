@@ -165,6 +165,13 @@ func (s *testIntegrationSuite) TestFastAnalyzeOnVer2(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestHideAnalyzeVerOnShow(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	// TODO: remove this test when the version2 is GA.
+	c.Assert(len(tk.MustQuery("show variables like '%analyze_version%'").Rows()), Equals, 0)
+}
+
 func (s *testIntegrationSuite) TestIncAnalyzeOnVer2(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -230,7 +237,7 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@tidb_analyze_version = 2;")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
 	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
 		partition p0 values less than (10),
 		partition p1 values less than (20),

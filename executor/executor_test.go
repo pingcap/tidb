@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -650,6 +651,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields := rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "NULL")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select "\N";`
 	r = tk.MustQuery(sql)
@@ -659,6 +661,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
+	c.Assert(rs.Close(), IsNil)
 
 	tk.MustExec("use test;")
 	tk.MustExec("create table test (`\\N` int);")
@@ -672,6 +675,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select \N from test;`
 	r = tk.MustQuery(sql)
@@ -682,6 +686,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select (\N) from test;`
 	r = tk.MustQuery(sql)
@@ -691,6 +696,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select `\\N` from test;"
 	r = tk.MustQuery(sql)
@@ -700,6 +706,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select (`\\N`) from test;"
 	r = tk.MustQuery(sql)
@@ -709,6 +716,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select '\N' from test;`
 	r = tk.MustQuery(sql)
@@ -718,6 +726,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select ('\N') from test;`
 	r = tk.MustQuery(sql)
@@ -727,6 +736,7 @@ func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
+	c.Assert(rs.Close(), IsNil)
 }
 
 // TestSelectNull Issue #4053.
@@ -741,6 +751,7 @@ func (s *testSuiteP1) TestSelectNull(c *C) {
 	fields := rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select (null);`
 	r = tk.MustQuery(sql)
@@ -750,6 +761,7 @@ func (s *testSuiteP1) TestSelectNull(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select null+NULL;`
 	r = tk.MustQuery(sql)
@@ -760,6 +772,7 @@ func (s *testSuiteP1) TestSelectNull(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `null+NULL`)
+	c.Assert(rs.Close(), IsNil)
 }
 
 // TestSelectStringLiteral Issue #3686.
@@ -774,6 +787,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields := rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `abc`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select (('abc'));`
 	r = tk.MustQuery(sql)
@@ -783,6 +797,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `abc`)
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select 'abc'+'def';`
 	r = tk.MustQuery(sql)
@@ -792,6 +807,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `'abc'+'def'`)
+	c.Assert(rs.Close(), IsNil)
 
 	// Below checks whether leading invalid chars are trimmed.
 	sql = "select '\n';"
@@ -802,6 +818,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select '\t   col';" // Lowercased letter is a valid char.
 	rs, err = tk.Exec(sql)
@@ -809,6 +826,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "col")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select '\t   Col';" // Uppercased letter is a valid char.
 	rs, err = tk.Exec(sql)
@@ -816,6 +834,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "Col")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select '\n\t   中文 col';" // Chinese char is a valid char.
 	rs, err = tk.Exec(sql)
@@ -823,6 +842,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "中文 col")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select ' \r\n  .col';" // Punctuation is a valid char.
 	rs, err = tk.Exec(sql)
@@ -830,6 +850,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, ".col")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = "select '   😆col';" // Emoji is a valid char.
 	rs, err = tk.Exec(sql)
@@ -837,6 +858,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "😆col")
+	c.Assert(rs.Close(), IsNil)
 
 	// Below checks whether trailing invalid chars are preserved.
 	sql = `select 'abc   ';`
@@ -845,6 +867,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "abc   ")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select '  abc   123   ';`
 	rs, err = tk.Exec(sql)
@@ -852,6 +875,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "abc   123   ")
+	c.Assert(rs.Close(), IsNil)
 
 	// Issue #4239.
 	sql = `select 'a' ' ' 'string';`
@@ -862,6 +886,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "a")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select 'a' " " "string";`
 	r = tk.MustQuery(sql)
@@ -871,6 +896,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "a")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select 'string' 'string';`
 	r = tk.MustQuery(sql)
@@ -880,6 +906,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "string")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select "ss" "a";`
 	r = tk.MustQuery(sql)
@@ -889,6 +916,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select "ss" "a" "b";`
 	r = tk.MustQuery(sql)
@@ -898,6 +926,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select "ss" "a" ' ' "b";`
 	r = tk.MustQuery(sql)
@@ -907,6 +936,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
+	c.Assert(rs.Close(), IsNil)
 
 	sql = `select "ss" "a" ' ' "b" ' ' "d";`
 	r = tk.MustQuery(sql)
@@ -916,6 +946,7 @@ func (s *testSuiteP1) TestSelectStringLiteral(c *C) {
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuiteP1) TestSelectLimit(c *C) {
@@ -1111,7 +1142,7 @@ func (s *testSuiteP1) TestIssue2612(c *C) {
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetDuration(0, 0).String(), Equals, "-46:09:02")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -1234,10 +1265,10 @@ func (s *testSuiteWithData) TestIndexScanWithYearCol(c *C) {
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
@@ -2320,7 +2351,7 @@ func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
 	tk.MustExec("create database test_cluster_index_is_point_get;")
 	tk.MustExec("use test_cluster_index_is_point_get;")
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key (c, a));")
 	ctx := tk.Se.(sessionctx.Context)
@@ -2536,14 +2567,14 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Check(fields[0].ColumnAsName.L, Equals, "1 + c")
 	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
 	c.Check(fields[1].ColumnAsName.L, Equals, "count(*)")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select (c) > all (select c from t) from t")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
 	c.Check(fields[0].ColumnAsName.L, Equals, "(c) > all (select c from t)")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	tk.MustExec("begin")
 	tk.MustExec("insert t values(1,1)")
 	rs, err = tk.Exec("select c d, d c from t")
@@ -2554,7 +2585,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Check(fields[0].ColumnAsName.L, Equals, "d")
 	c.Check(fields[1].Column.Name.L, Equals, "d")
 	c.Check(fields[1].ColumnAsName.L, Equals, "c")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	// Test case for query a column of a table.
 	// In this case, all attributes have values.
 	rs, err = tk.Exec("select c as a from t as t2")
@@ -2565,7 +2596,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "t")
 	c.Check(fields[0].TableAsName.L, Equals, "t2")
 	c.Check(fields[0].DBName.L, Equals, "test")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	// Test case for query a expression which only using constant inputs.
 	// In this case, the table, org_table and database attributes will all be empty.
 	rs, err = tk.Exec("select hour(1) as a from t as t2")
@@ -2576,7 +2607,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "")
 	c.Check(fields[0].TableAsName.L, Equals, "")
 	c.Check(fields[0].DBName.L, Equals, "")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	// Test case for query a column wrapped with parentheses and unary plus.
 	// In this case, the column name should be its original name.
 	rs, err = tk.Exec("select (c), (+c), +(c), +(+(c)), ++c from t")
@@ -2586,7 +2617,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 		c.Check(fields[i].Column.Name.L, Equals, "c")
 		c.Check(fields[i].ColumnAsName.L, Equals, "c")
 	}
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 
 	// Test issue https://github.com/pingcap/tidb/issues/9639 .
 	// Both window function and expression appear in final result field.
@@ -2599,7 +2630,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Assert(fields[1].Column.Name.L, Equals, "num")
 	c.Assert(fields[1].ColumnAsName.L, Equals, "num")
 	tk.MustExec("set @@tidb_enable_window_function = 0")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 
 	rs, err = tk.Exec("select if(1,c,c) from t;")
 	c.Check(err, IsNil)
@@ -2607,6 +2638,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Assert(fields[0].Column.Name.L, Equals, "if(1,c,c)")
 	// It's a compatibility issue. Should be empty instead.
 	c.Assert(fields[0].ColumnAsName.L, Equals, "if(1,c,c)")
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuiteP2) TestSelectVar(c *C) {
@@ -3616,7 +3648,7 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 func (s *testSuite) TestSignedCommonHandle(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(k1 int, k2 int, primary key(k1, k2))")
 	tk.MustExec("insert into t(k1, k2) value(-100, 1), (-50, 1), (0, 0), (1, 1), (3, 3)")
@@ -3784,7 +3816,7 @@ func (s *testSuite) TestCheckTableClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists admin_test;")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c1, c2), index (c1), unique key(c2));")
 	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
@@ -4025,7 +4057,7 @@ func (s *testSuite3) TestUnsignedDecimalOverflow(c *C) {
 			c.Assert(err, IsNil)
 		}
 		if res != nil {
-			res.Close()
+			c.Assert(res.Close(), IsNil)
 		}
 	}
 
@@ -4096,6 +4128,173 @@ func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 1", "2 -1"))
 	tk.MustQuery("select id, v from t5 union select id, v from t7 union select id, v from t6 order by id").
 		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
+}
+
+func (s *testSuiteP1) TestUpdateClustered(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	type resultChecker struct {
+		check  string
+		assert []string
+	}
+
+	for _, clustered := range []string{"", "clustered"} {
+		tests := []struct {
+			initSchema  []string
+			initData    []string
+			dml         string
+			resultCheck []resultChecker
+		}{
+			{ // left join + update both + match & unmatched + pk
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 int, k2 int, v int)",
+					fmt.Sprintf("create table b (a int not null, k1 int, k2 int, v int, primary key(k1, k2) %s)", clustered),
+				},
+				[]string{
+					"insert into a values (1, 1, 1), (2, 2, 2)", // unmatched + matched
+					"insert into b values (2, 2, 2, 2)",
+				},
+				"update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.v = 20, b.v = 100, a.k1 = a.k1 + 1, b.k1 = b.k1 + 1, a.k2 = a.k2 + 2, b.k2 = b.k2 + 2",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"2 3 4 100"},
+					},
+					{
+						"select * from a",
+						[]string{"2 3 20", "3 4 20"},
+					},
+				},
+			},
+			{ // left join + update both + match & unmatched + pk
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 int, k2 int, v int)",
+					fmt.Sprintf("create table b (a int not null, k1 int, k2 int, v int, primary key(k1, k2) %s)", clustered),
+				},
+				[]string{
+					"insert into a values (1, 1, 1), (2, 2, 2)", // unmatched + matched
+					"insert into b values (2, 2, 2, 2)",
+				},
+				"update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2,  a.v = 20, b.v = 100",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"2 3 4 100"},
+					},
+					{
+						"select * from a",
+						[]string{"2 3 20", "3 4 20"},
+					},
+				},
+			},
+			{ // left join + update both + match & unmatched + prefix pk
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 varchar(100), k2 varchar(100), v varchar(100))",
+					fmt.Sprintf("create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) %s, key kk1(k1(1), v(1)))", clustered),
+				},
+				[]string{
+					"insert into a values ('11', '11', '11'), ('22', '22', '22')", // unmatched + matched
+					"insert into b values ('22', '22', '22', '22')",
+				},
+				"update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"22 23 24 100"},
+					},
+					{
+						"select * from a",
+						[]string{"12 13 20", "23 24 20"},
+					},
+				},
+			},
+			{ // right join + update both + match & unmatched + prefix pk
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 varchar(100), k2 varchar(100), v varchar(100))",
+					fmt.Sprintf("create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) %s, key kk1(k1(1), v(1)))", clustered),
+				},
+				[]string{
+					"insert into a values ('11', '11', '11'), ('22', '22', '22')", // unmatched + matched
+					"insert into b values ('22', '22', '22', '22')",
+				},
+				"update b right join a on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"22 23 24 100"},
+					},
+					{
+						"select * from a",
+						[]string{"12 13 20", "23 24 20"},
+					},
+				},
+			},
+			{ // inner join + update both + match & unmatched + prefix pk
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 varchar(100), k2 varchar(100), v varchar(100))",
+					fmt.Sprintf("create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) %s, key kk1(k1(1), v(1)))", clustered),
+				},
+				[]string{
+					"insert into a values ('11', '11', '11'), ('22', '22', '22')", // unmatched + matched
+					"insert into b values ('22', '22', '22', '22')",
+				},
+				"update b join a on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"22 23 24 100"},
+					},
+					{
+						"select * from a",
+						[]string{"11 11 11", "23 24 20"},
+					},
+				},
+			},
+			{
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 varchar(100), k2 varchar(100), v varchar(100))",
+					fmt.Sprintf("create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) %s, key kk1(k1(1), v(1)))", clustered),
+				},
+				[]string{
+					"insert into a values ('11', '11', '11'), ('22', '22', '22')", // unmatched + matched
+					"insert into b values ('22', '22', '22', '22')",
+				},
+				"update a set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, a.v = 20 where exists (select 1 from b where a.k1 = b.k1 and a.k2 = b.k2)",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"22 22 22 22"},
+					},
+					{
+						"select * from a",
+						[]string{"11 11 11", "23 24 20"},
+					},
+				},
+			},
+		}
+
+		for _, test := range tests {
+			for _, s := range test.initSchema {
+				tk.MustExec(s)
+			}
+			for _, s := range test.initData {
+				tk.MustExec(s)
+			}
+			tk.MustExec(test.dml)
+			for _, checker := range test.resultCheck {
+				tk.MustQuery(checker.check).Check(testkit.Rows(checker.assert...))
+			}
+			tk.MustExec("admin check table a")
+			tk.MustExec("admin check table b")
+		}
+	}
 }
 
 func (s *testSuite6) TestUpdateJoin(c *C) {
@@ -4187,8 +4386,7 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	err = rs.Next(context.TODO(), rs.NewChunk())
 	c.Assert(err.Error(), Equals, "[executor:1242]Subquery returns more than 1 row")
 
-	err = rs.Close()
-	c.Assert(err, IsNil)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuiteP2) TestCurrentTimestampValueSelection(c *C) {
@@ -4229,7 +4427,7 @@ func (s *testSuite3) TestRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec(`create table t(a varchar(10), b varchar(10), c varchar(1), index idx(a, b, c));`)
 	tk.MustExec(`insert into t values('a', 'b', 'c');`)
 	tk.MustExec(`insert into t values('a', 'b', 'c');`)
@@ -4410,9 +4608,11 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustExec("create definer='root'@'localhost' view view1 as select * from view_t")
 	tk.MustExec("create definer='root'@'localhost' view view2(c,d) as select * from view_t")
 	tk.MustExec("create definer='root'@'localhost' view view3(c,d) as select a,b from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view4 as select * from (select * from (select * from view_t) tb1) tb;")
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(c int,d int)")
 	err := tk.ExecToErr("select * from view1")
@@ -4427,14 +4627,16 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
 	tk.MustExec("alter table view_t drop column a")
 	tk.MustExec("alter table view_t add column a int after b")
 	tk.MustExec("update view_t set a=1;")
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
 	tk.MustExec("drop table view_t;")
-	tk.MustExec("drop view view1,view2,view3;")
+	tk.MustExec("drop view view1,view2,view3,view4;")
 
 	tk.MustExec("set @@tidb_enable_window_function = 1")
 	defer func() {
@@ -4702,9 +4904,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	// Test for split index region.
 	// Check min value is more than max value.
 	tk.MustExec(`split table t index idx1 between (0) and (1000000000) regions 10`)
-	_, err = tk.Exec(`split table t index idx1 between (2,'a') and (1,'c') regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split index `idx1` region lower value (2,a) should less than the upper value (1,c)")
+	tk.MustGetErrCode(`split table t index idx1 between (2,'a') and (1,'c') regions 10`, errno.ErrInvalidSplitRegionRanges)
 
 	// Check min value is invalid.
 	_, err = tk.Exec(`split table t index idx1 between () and (1) regions 10`)
@@ -4734,9 +4934,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	// Test for split table region.
 	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
 	// Check the lower value is more than the upper value.
-	_, err = tk.Exec(`split table t between (2) and (1) regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split table `t` region lower value 2 should less than the upper value 1")
+	tk.MustGetErrCode(`split table t between (2) and (1) regions 10`, errno.ErrInvalidSplitRegionRanges)
 
 	// Check the lower value is invalid.
 	_, err = tk.Exec(`split table t between () and (1) regions 10`)
@@ -4764,9 +4962,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column '_tidb_rowid'")
 
 	// Test split table region step is too small.
-	_, err = tk.Exec(`split table t between (0) and (100) regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split table `t` region step value should more than 1000, step 10 is invalid")
+	tk.MustGetErrCode(`split table t between (0) and (100) regions 10`, errno.ErrInvalidSplitRegionRanges)
 
 	// Test split region by syntax.
 	tk.MustExec(`split table t by (0),(1000),(1000000)`)
@@ -4789,12 +4985,25 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
 }
 
+func (s *testSplitTable) TestSplitRegionEdgeCase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint(20) auto_increment primary key);")
+	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 16;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int(20) auto_increment primary key);")
+	tk.MustGetErrCode("split table t between (-9223372036854775808) and (9223372036854775807) regions 16;", errno.ErrDataOutOfRange)
+}
+
 func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_cluster_index_index_split_table_integration;")
 	tk.MustExec("create database test_cluster_index_index_split_table_integration;")
 	tk.MustExec("use test_cluster_index_index_split_table_integration;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t (a varchar(255), b double, c int, primary key (a, b));")
 
@@ -4809,9 +5018,9 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and (100.0, 'aaa') regions 10;", errMsg)
 
 	// lower bound >= upper bound.
-	errMsg = "Split table `t` region lower value (aaa,0) should less than the upper value (aaa,0)"
+	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (aaa,0) should less than the upper value (aaa,0)"
 	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
-	errMsg = "Split table `t` region lower value (bbb,0) should less than the upper value (aaa,0)"
+	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (bbb,0) should less than the upper value (aaa,0)"
 	tk.MustGetErrMsg("split table t between ('bbb', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
 
 	// Exceed limit 1000.
@@ -4849,7 +5058,7 @@ func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
 	tk.MustExec("drop database if exists cluster_index_regions;")
 	tk.MustExec("create database cluster_index_regions;")
 	tk.MustExec("use cluster_index_regions;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2);")
 	tk.MustQuery("split table t between (1, 0) and (2, 3) regions 2;").Check(testkit.Rows("1 1"))
@@ -4872,7 +5081,7 @@ func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
 func (s *testSuiteWithData) TestClusterIndexOuterJoinElimination(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a int, b int, c int, primary key(a,b))")
 	rows := tk.MustQuery(`explain format = 'brief' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b`).Rows()
 	rowStrs := s.testData.ConvertRowsToStrings(rows)
@@ -6601,7 +6810,7 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
 	tk.MustExec("analyze table t;")
 	result := tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_38")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_39")
 	var (
 		ind  int
 		flag bool
@@ -6621,7 +6830,7 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9);")
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_38")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_39")
 	flag = false
 	value = (result.Rows()[1][5]).(string)
 	for ind = 0; ind < len(value)-5; ind++ {
@@ -7011,7 +7220,7 @@ func (s *testCoprCache) TestIntegrationCopCache(c *C) {
 
 	// Test for cop cache disabled.
 	cfg := config.NewConfig()
-	cfg.TiKVClient.CoprCache.Enable = false
+	cfg.TiKVClient.CoprCache.CapacityMB = 0
 	config.StoreGlobalConfig(cfg)
 	rows = tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
 	c.Assert(rows[0][2], Equals, "9")
@@ -7363,40 +7572,6 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 		action = action.GetFallback()
 	}
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
-}
-
-func (s *testSerialSuite) TestIssue21441(c *C) {
-	err := failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
-		c.Assert(err, IsNil)
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec(`insert into t values(1),(2),(3)`)
-	tk.Se.GetSessionVars().InitChunkSize = 1
-	tk.Se.GetSessionVars().MaxChunkSize = 1
-	sql := `
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t`
-	tk.MustQuery(sql).Sort().Check(testkit.Rows(
-		"1", "1", "1", "1", "1", "1", "1", "1",
-		"2", "2", "2", "2", "2", "2", "2", "2",
-		"3", "3", "3", "3", "3", "3", "3", "3",
-	))
-
-	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
-	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
 }
 
 func (s *testSuite) Test17780(c *C) {
