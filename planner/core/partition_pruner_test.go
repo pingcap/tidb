@@ -505,7 +505,7 @@ func (s *testPartitionPruneSuit) TestIssue23608(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 10")
 	tk.MustExec("insert into t1 values (1), (2), (12), (3), (11), (13)")
-	tk.MustQuery("select * from t1 where a not between 2 and 2").Sort().Check(testkit.Rows("1", "11", "12",  "13", "3"))
+	tk.MustQuery("select * from t1 where a not between 2 and 2").Sort().Check(testkit.Rows("1", "11", "12", "13", "3"))
 	tk.MustQuery("select * from t1 where not (a < -20 or a > 20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
 	tk.MustQuery("select * from t1 where not (a > 0 and a < 10)").Sort().Check(testkit.Rows("11", "12", "13"))
 	tk.MustQuery("select * from t1 where not (a < -20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
