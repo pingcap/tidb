@@ -254,11 +254,11 @@ func (s *RegionRequestSender) SendReqCtx(
 			}
 		case "requestTiDBStoreError":
 			if sType == tidbkv.TiDB {
-				failpoint.Return(nil, nil, ErrTiKVServerTimeout)
+				failpoint.Return(nil, nil, kv.ErrTiKVServerTimeout)
 			}
 		case "requestTiFlashError":
 			if sType == tidbkv.TiFlash {
-				failpoint.Return(nil, nil, ErrTiFlashServerTimeout)
+				failpoint.Return(nil, nil, kv.ErrTiFlashServerTimeout)
 			}
 		}
 	})
@@ -303,7 +303,7 @@ func (s *RegionRequestSender) SendReqCtx(
 
 		// recheck whether the session/query is killed during the Next()
 		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
-			return nil, nil, ErrQueryInterrupted
+			return nil, nil, kv.ErrQueryInterrupted
 		}
 		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
 			if val.(bool) {
@@ -531,7 +531,7 @@ func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 		return nil
 	}
 	metrics.TiKVStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
-	return ErrTokenLimit.GenWithStackByArgs(st.storeID)
+	return kv.ErrTokenLimit.GenWithStackByArgs(st.storeID)
 
 }
 
@@ -557,7 +557,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	if errors.Cause(err) == context.Canceled {
 		return errors.Trace(err)
 	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
-		return ErrTiDBShuttingDown
+		return kv.ErrTiDBShuttingDown
 	}
 	if status.Code(errors.Cause(err)) == codes.Canceled {
 		select {

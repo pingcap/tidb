@@ -880,13 +880,13 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	lockCtx = &tidbkv.LockCtx{ForUpdateTS: txn2.StartTS(), LockWaitTime: tidbkv.LockNoWait, WaitStartTime: time.Now()}
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
 	// cannot acquire lock immediately thus error
-	c.Assert(err.Error(), Equals, tikv.ErrLockAcquireFailAndNoWaitSet.Error())
+	c.Assert(err.Error(), Equals, kv.ErrLockAcquireFailAndNoWaitSet.Error())
 
 	// test for wait limited time (200ms)
 	lockCtx = &tidbkv.LockCtx{ForUpdateTS: txn2.StartTS(), LockWaitTime: 200, WaitStartTime: time.Now()}
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
 	// cannot acquire lock in time thus error
-	c.Assert(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	c.Assert(err.Error(), Equals, kv.ErrLockWaitTimeout.Error())
 }
 
 func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
@@ -1023,7 +1023,7 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
 	c.Assert(err, IsNil)
 	waitErr := <-doneCh
-	c.Assert(tikv.ErrLockWaitTimeout.Equal(waitErr), IsTrue)
+	c.Assert(kv.ErrLockWaitTimeout.Equal(waitErr), IsTrue)
 }
 
 func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
