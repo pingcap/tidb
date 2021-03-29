@@ -667,8 +667,6 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []*point 
 		startPoint := &point{start: true}
 		endPoint := &point{}
 		return []*point{startPoint, endPoint}
-	case ast.UnaryNot:
-		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction))
 	}
 
 	return nil
