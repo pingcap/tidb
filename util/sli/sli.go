@@ -58,6 +58,7 @@ func (t *TxnWriteThroughputSLI) FinishExecuteStmt(cost time.Duration, affectRow 
 	}
 }
 
+// AddReadKeys adds the read keys.
 func (t *TxnWriteThroughputSLI) AddReadKeys(readKeys int64) {
 	t.readKeys += int(readKeys)
 }
@@ -91,9 +92,14 @@ func (t *TxnWriteThroughputSLI) IsInvalid() bool {
 	return t.invalid || t.readKeys > t.writeKeys || t.writeSize == 0 || t.writeTime == 0
 }
 
+const (
+	smallTxnAffectRow = 20
+	smallTxnWriteSize = 1 * 1024 * 1024 // 1MB
+)
+
 // IsSmallTxn exports for testing.
 func (t *TxnWriteThroughputSLI) IsSmallTxn() bool {
-	return t.affectRow <= 20 && t.writeSize <= 1*1024*1024
+	return t.affectRow <= smallTxnAffectRow && t.writeSize <= smallTxnWriteSize
 }
 
 // Reset exports for testing.
