@@ -11,21 +11,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"context"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 )
 
 type testSplitSuite struct {
 	OneByOneSuite
 	cluster cluster.Cluster
-	store   *KVStore
-	bo      *Backoffer
+	store   tikv.StoreProbe
+	bo      *tikv.Backoffer
 }
 
 var _ = Suite(&testSplitSuite{})
@@ -35,7 +36,7 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 
 	// TODO: make this possible
@@ -46,11 +47,11 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	// 	}),
 	// )
 	// c.Assert(err, IsNil)
-	s.store = store
-	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
+	s.store = tikv.StoreProbe{KVStore: store}
+	s.bo = tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
-func (s *testSplitSuite) begin(c *C) *KVTxn {
+func (s *testSplitSuite) begin(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	return txn
@@ -62,33 +63,28 @@ func (s *testSplitSuite) split(c *C, regionID uint64, key []byte) {
 }
 
 func (s *testSplitSuite) TestSplitBatchGet(c *C) {
-	loc, err := s.store.regionCache.LocateKey(s.bo, []byte("a"))
+	loc, err := s.store.GetRegionCache().LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 
 	txn := s.begin(c)
-	snapshot := newTiKVSnapshot(s.store, txn.StartTS(), 0)
 
 	keys := [][]byte{{'a'}, {'b'}, {'c'}}
-	_, region, err := s.store.regionCache.GroupKeysByRegion(s.bo, keys, nil)
+	_, region, err := s.store.GetRegionCache().GroupKeysByRegion(s.bo, keys, nil)
 	c.Assert(err, IsNil)
-	batch := batchKeys{
-		region: region,
-		keys:   keys,
-	}
 
-	s.split(c, loc.Region.id, []byte("b"))
-	s.store.regionCache.InvalidateCachedRegion(loc.Region)
+	s.split(c, loc.Region.GetID(), []byte("b"))
+	s.store.GetRegionCache().InvalidateCachedRegion(loc.Region)
 
 	// mocktikv will panic if it meets a not-in-region key.
-	err = snapshot.batchGetSingleRegion(s.bo, batch, func([]byte, []byte) {})
+	err = txn.BatchGetSingleRegion(s.bo, region, keys, func([]byte, []byte) {})
 	c.Assert(err, IsNil)
 }
 
 func (s *testSplitSuite) TestStaleEpoch(c *C) {
-	mockPDClient := &mockPDClient{client: s.store.regionCache.pdClient}
-	s.store.regionCache.pdClient = mockPDClient
+	mockPDClient := &mockPDClient{client: s.store.GetRegionCache().PDClient()}
+	s.store.SetRegionCachePDClient(mockPDClient)
 
-	loc, err := s.store.regionCache.LocateKey(s.bo, []byte("a"))
+	loc, err := s.store.GetRegionCache().LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 
 	txn := s.begin(c)
@@ -101,7 +97,7 @@ func (s *testSplitSuite) TestStaleEpoch(c *C) {
 
 	// Initiate a split and disable the PD client. If it still works, the
 	// new region is updated from kvrpc.
-	s.split(c, loc.Region.id, []byte("b"))
+	s.split(c, loc.Region.GetID(), []byte("b"))
 	mockPDClient.disable()
 
 	txn = s.begin(c)
