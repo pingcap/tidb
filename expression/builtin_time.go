@@ -7111,5 +7111,5 @@ func handleInvalidZeroTime(ctx sessionctx.Context, t types.Time) (bool, error) {
 	if isOriginalIntOrDecimalZero && !isOriginalStringZero {
 		return false, nil
 	}
-	return true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+	return false, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 }
