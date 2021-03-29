@@ -8928,8 +8928,6 @@ func (s *testIntegrationSerialSuite) TestCollationForBinaryLiteral(c *C) {
 	tk.MustQuery("select * from t where col1 not in (0x1B,0x20) order by col1").Check(testkit.Rows("\x1e \xec 6966939640596047133"))
 	tk.MustExec("drop table t")
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite) TestIssue23623(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -8948,4 +8946,3 @@ func (s *testIntegrationSuite) TestApproximatePercentile(c *C) {
 	tk.MustExec("insert into t values(b'1111')")
 	tk.MustQuery("select approx_percentile(a, 10) from t").Check(testkit.Rows("<nil>"))
 }
->>>>>>> 3ed4a23b9... executor: refineArgs() bug fix when compare int with very small decimal (#23694)
