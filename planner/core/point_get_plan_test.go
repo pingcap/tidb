@@ -627,5 +627,7 @@ func (s *testPointGetSuite) TestIssue23511(c *C) {
 		Check(testkit.Rows("Point_Get 1.00 root table:t1, index:PRIMARY(COL1) "))
 	tk.MustQuery("select * from t1 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
 	tk.MustQuery("select * from t2 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t1 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
 	tk.MustExec("drop table t1, t2;")
 }
