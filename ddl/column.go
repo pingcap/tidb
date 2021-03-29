@@ -825,7 +825,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	}
 
 	if !needChangeColumnData(oldCol, jobParam.newCol) {
-		return w.doModifyColumn(t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
+		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
 	}
 
 	if jobParam.changingCol == nil {
@@ -1384,11 +1384,18 @@ func updateChangingInfo(changingCol *model.ColumnInfo, changingIdxs []*model.Ind
 
 // doModifyColumn updates the column information and reorders all columns. It does not support modifying column data.
 func (w *worker) doModifyColumn(
-	t *meta.Meta, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	d *ddlCtx, t *meta.Meta, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) (ver int64, _ error) {
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)
+
+		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
+		// We need to check after the flag is set
+		if d.lease > 0 && !noPreventNullFlag {
+			delayForAsyncCommit()
+		}
+
 		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 		err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, newCol.Name, oldCol.Tp != newCol.Tp)
 		if err != nil {
