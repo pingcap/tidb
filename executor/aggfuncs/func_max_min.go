@@ -24,90 +24,90 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-// newDeque inits a new deque
-func newDeque(isMax bool, cmpFunc func(i, j interface{}) int) *deque {
-	return &deque{[]pair{}, isMax, cmpFunc}
+// NewDeque inits a new Deque
+func NewDeque(isMax bool, cmpFunc func(i, j interface{}) int) *Deque {
+	return &Deque{[]Pair{}, isMax, cmpFunc}
 }
 
-// deque is an array based double end queue
-type deque struct {
-	Items   []pair
+// Deque is an array based double end queue
+type Deque struct {
+	Items   []Pair
 	IsMax   bool
 	cmpFunc func(i, j interface{}) int
 }
 
-// PushFront pushes idx and item(wrapped in pair) to the front of deque
-func (d *deque) PushFront(idx uint64, item interface{}) {
-	d.Items = append([]pair{{item, idx}}, d.Items...)
+// PushFront pushes Idx and Item(wrapped in Pair) to the front of Deque
+func (d *Deque) PushFront(idx uint64, item interface{}) {
+	d.Items = append([]Pair{{item, idx}}, d.Items...)
 }
 
-// PushBack pushes idx and item(wrapped in pair) to the end of deque
-func (d *deque) PushBack(idx uint64, item interface{}) {
-	d.Items = append(d.Items, pair{item, idx})
+// PushBack pushes Idx and Item(wrapped in Pair) to the end of Deque
+func (d *Deque) PushBack(idx uint64, item interface{}) {
+	d.Items = append(d.Items, Pair{item, idx})
 }
 
-// PopFront pops an item from the front of deque
-func (d *deque) PopFront() (interface{}, error) {
+// PopFront pops an Item from the front of Deque
+func (d *Deque) PopFront() (interface{}, error) {
 	if len(d.Items) <= 0 {
-		return nil, errors.New("Pop front when deque is empty")
+		return nil, errors.New("Pop front when Deque is empty")
 	}
 	res := d.Items[0]
 	d.Items = d.Items[1:]
 	return res, nil
 }
 
-// PopBack pops an item from the end of deque
-func (d *deque) PopBack() (interface{}, error) {
+// PopBack pops an Item from the end of Deque
+func (d *Deque) PopBack() (interface{}, error) {
 	i := len(d.Items) - 1
 	if i < 0 {
-		return nil, errors.New("Pop back when deque is empty")
+		return nil, errors.New("Pop back when Deque is empty")
 	}
 	res := d.Items[i]
 	d.Items = d.Items[:i]
 	return res, nil
 }
 
-// Back returns the element at the end of deque
-func (d *deque) Back() (pair, error) {
+// Back returns the element at the end of Deque
+func (d *Deque) Back() (Pair, error) {
 	i := len(d.Items) - 1
 	if i < 0 {
-		return pair{}, errors.New("Cannot get back when deque is empty")
+		return Pair{}, errors.New("Cannot get back when Deque is empty")
 	}
 	return d.Items[i], nil
 }
 
-// Front returns the element at the front of deque
-func (d *deque) Front() (pair, error) {
+// Front returns the element at the front of Deque
+func (d *Deque) Front() (Pair, error) {
 	if len(d.Items) <= 0 {
-		return pair{}, errors.New("Cannot get back when deque is empty")
+		return Pair{}, errors.New("Cannot get front when Deque is empty")
 	}
 	return d.Items[0], nil
 }
 
-// IsEmpty returns if deque is empty
-func (d *deque) IsEmpty() bool {
+// IsEmpty returns if Deque is empty
+func (d *Deque) IsEmpty() bool {
 	return len(d.Items) == 0
 }
 
-// pair pairs items and their indices in deque
-type pair struct {
-	item interface{}
-	idx  uint64
+// Pair pairs items and their indices in Deque
+type Pair struct {
+	Item interface{}
+	Idx  uint64
 }
 
-// Reset deque
-func (d *deque) Reset() {
+// Reset Deque
+func (d *Deque) Reset() {
 	d.Items = d.Items[:0]
 }
 
 // Dequeue pops out element from the front, if element's index is out of boundary, i.e. the leftmost element index
-func (d *deque) Dequeue(boundary uint64) error {
+func (d *Deque) Dequeue(boundary uint64) error {
 	for !d.IsEmpty() {
 		frontEle, err := d.Front()
 		if err != nil {
 			return err
 		}
-		if frontEle.idx <= boundary {
+		if frontEle.Idx <= boundary {
 			_, err := d.PopFront()
 			if err != nil {
 				return err
@@ -119,17 +119,17 @@ func (d *deque) Dequeue(boundary uint64) error {
 	return nil
 }
 
-// Enqueue put item at the back of queue, while popping any element that is lesser element in queue
-func (d *deque) Enqueue(idx uint64, item interface{}) error {
+// Enqueue put Item at the back of queue, while popping any element that is lesser element in queue
+func (d *Deque) Enqueue(idx uint64, item interface{}) error {
 	for !d.IsEmpty() {
 		pair, err := d.Back()
 		if err != nil {
 			return err
 		}
 
-		bigger := d.cmpFunc(item, pair.item) >= 0
-		// 1. if deque aims for finding max and item is bigger than element at back
-		// 2. if deque aims for finding min and item is smaller than element at back
+		bigger := d.cmpFunc(item, pair.Item) >= 0
+		// 1. if Deque aims for finding max and Item is bigger than element at back
+		// 2. if Deque aims for finding min and Item is smaller than element at back
 		if bigger && d.IsMax || !bigger && !d.IsMax {
 			_, err := d.PopBack()
 			if err != nil {
@@ -167,7 +167,7 @@ const (
 	// DefPartialResult4MaxMinSetSize is the size of partialResult4MaxMinSet
 	DefPartialResult4MaxMinSetSize = int64(unsafe.Sizeof(partialResult4MaxMinSet{}))
 	// DefMaxMinDequeSize is the size of maxMinHeap
-	DefMaxMinDequeSize = int64(unsafe.Sizeof(deque{}))
+	DefMaxMinDequeSize = int64(unsafe.Sizeof(Deque{}))
 )
 
 type partialResult4MaxMinInt struct {
@@ -176,49 +176,50 @@ type partialResult4MaxMinInt struct {
 	// 1. whether the partial result is the initialization value which should not be compared during evaluation;
 	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
 	isNull bool
-	deque  *deque
+	// deque is used for recording max/mins inside current window with sliding algorithm
+	deque *Deque
 }
 
 type partialResult4MaxMinUint struct {
 	val    uint64
 	isNull bool
-	deque  *deque
+	deque  *Deque
 }
 
 type partialResult4MaxMinDecimal struct {
 	val    types.MyDecimal
 	isNull bool
-	deque  *deque
+	deque  *Deque
 }
 
 type partialResult4MaxMinFloat32 struct {
 	val    float32
 	isNull bool
-	deque  *deque
+	deque  *Deque
 }
 
 type partialResult4MaxMinFloat64 struct {
 	val    float64
 	isNull bool
-	deque  *deque
+	deque  *Deque
 }
 
 type partialResult4MaxMinTime struct {
 	val    types.Time
 	isNull bool
-	deque  *deque
+	deque  *Deque
 }
 
 type partialResult4MaxMinDuration struct {
 	val    types.Duration
 	isNull bool
-	deque  *deque
+	deque  *Deque
 }
 
 type partialResult4MaxMinString struct {
 	val    string
 	isNull bool
-	deque  *deque
+	deque  *Deque
 }
 
 type partialResult4MaxMinJSON struct {
@@ -316,7 +317,7 @@ func (e *maxMin4IntSliding) ResetPartialResult(pr PartialResult) {
 
 func (e *maxMin4IntSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Int.AllocPartialResult()
-	(*partialResult4MaxMinInt)(p).deque = newDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinInt)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
@@ -332,7 +333,7 @@ func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		if isNull {
 			continue
 		}
-		// deque needs the absolute position of each element, here i only denotes the relative position in rowsInGroup.
+		// Deque needs the absolute position of each element, here i only denotes the relative position in rowsInGroup.
 		// To get the absolute position, we need to add offset of e.start, which represents the absolute index of start
 		// of window.
 		err = p.deque.Enqueue(uint64(i)+e.start, input)
@@ -341,7 +342,7 @@ func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		}
 	}
 	if val, err := p.deque.Front(); err == nil {
-		p.val = val.item.(int64)
+		p.val = val.Item.(int64)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -372,7 +373,7 @@ func (e *maxMin4IntSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, las
 		}
 	}
 	if val, isEmpty := p.deque.Front(); isEmpty == nil {
-		p.val = val.item.(int64)
+		p.val = val.Item.(int64)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -451,7 +452,7 @@ type maxMin4UintSliding struct {
 
 func (e *maxMin4UintSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Uint.AllocPartialResult()
-	(*partialResult4MaxMinUint)(p).deque = newDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinUint)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
 		return types.CompareUint64(i.(uint64), j.(uint64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
@@ -478,7 +479,7 @@ func (e *maxMin4UintSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		}
 	}
 	if val, err := p.deque.Front(); err == nil {
-		p.val = val.item.(uint64)
+		p.val = val.Item.(uint64)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -508,7 +509,7 @@ func (e *maxMin4UintSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, la
 		}
 	}
 	if val, err := p.deque.Front(); err == nil {
-		p.val = val.item.(uint64)
+		p.val = val.Item.(uint64)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -588,7 +589,7 @@ type maxMin4Float32Sliding struct {
 
 func (e *maxMin4Float32Sliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Float32.AllocPartialResult()
-	(*partialResult4MaxMinFloat32)(p).deque = newDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinFloat32)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
 		return types.CompareFloat64(float64(i.(float32)), float64(j.(float32)))
 	})
 	return p, memDelta + DefMaxMinDequeSize
@@ -615,7 +616,7 @@ func (e *maxMin4Float32Sliding) UpdatePartialResult(sctx sessionctx.Context, row
 		}
 	}
 	if val, err := p.deque.Front(); err == nil {
-		p.val = val.item.(float32)
+		p.val = val.Item.(float32)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -645,7 +646,7 @@ func (e *maxMin4Float32Sliding) Slide(sctx sessionctx.Context, rows []chunk.Row,
 		}
 	}
 	if val, isEmpty := p.deque.Front(); isEmpty == nil {
-		p.val = val.item.(float32)
+		p.val = val.Item.(float32)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -723,7 +724,7 @@ type maxMin4Float64Sliding struct {
 
 func (e *maxMin4Float64Sliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Float64.AllocPartialResult()
-	(*partialResult4MaxMinFloat64)(p).deque = newDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinFloat64)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
 		return types.CompareFloat64(i.(float64), j.(float64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
@@ -750,7 +751,7 @@ func (e *maxMin4Float64Sliding) UpdatePartialResult(sctx sessionctx.Context, row
 		}
 	}
 	if val, err := p.deque.Front(); err == nil {
-		p.val = val.item.(float64)
+		p.val = val.Item.(float64)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -780,7 +781,7 @@ func (e *maxMin4Float64Sliding) Slide(sctx sessionctx.Context, rows []chunk.Row,
 		}
 	}
 	if val, isEmpty := p.deque.Front(); isEmpty == nil {
-		p.val = val.item.(float64)
+		p.val = val.Item.(float64)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -873,7 +874,7 @@ func (w *windowInfo) SetWindowStart(start uint64) {
 
 func (e *maxMin4DecimalSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Decimal.AllocPartialResult()
-	(*partialResult4MaxMinDecimal)(p).deque = newDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinDecimal)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
 		src := i.(types.MyDecimal)
 		dst := j.(types.MyDecimal)
 		return src.Compare(&dst)
@@ -902,7 +903,7 @@ func (e *maxMin4DecimalSliding) UpdatePartialResult(sctx sessionctx.Context, row
 		}
 	}
 	if val, err := p.deque.Front(); err == nil {
-		p.val = val.item.(types.MyDecimal)
+		p.val = val.Item.(types.MyDecimal)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -932,7 +933,7 @@ func (e *maxMin4DecimalSliding) Slide(sctx sessionctx.Context, rows []chunk.Row,
 		}
 	}
 	if val, isEmpty := p.deque.Front(); isEmpty == nil {
-		p.val = val.item.(types.MyDecimal)
+		p.val = val.Item.(types.MyDecimal)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -1023,7 +1024,7 @@ type maxMin4StringSliding struct {
 func (e *maxMin4StringSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4String.AllocPartialResult()
 	tp := e.args[0].GetType()
-	(*partialResult4MaxMinString)(p).deque = newDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinString)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
 		return types.CompareString(i.(string), j.(string), tp.Collate)
 	})
 	return p, memDelta + DefMaxMinDequeSize
@@ -1050,7 +1051,7 @@ func (e *maxMin4StringSliding) UpdatePartialResult(sctx sessionctx.Context, rows
 		}
 	}
 	if val, err := p.deque.Front(); err == nil {
-		p.val = val.item.(string)
+		p.val = val.Item.(string)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -1080,7 +1081,7 @@ func (e *maxMin4StringSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, 
 		}
 	}
 	if val, isEmpty := p.deque.Front(); isEmpty == nil {
-		p.val = val.item.(string)
+		p.val = val.Item.(string)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -1159,7 +1160,7 @@ type maxMin4TimeSliding struct {
 
 func (e *maxMin4TimeSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Time.AllocPartialResult()
-	(*partialResult4MaxMinTime)(p).deque = newDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinTime)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
 		src := i.(types.Time)
 		dst := j.(types.Time)
 		return src.Compare(dst)
@@ -1188,7 +1189,7 @@ func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		}
 	}
 	if val, isEmpty := p.deque.Front(); isEmpty == nil {
-		p.val = val.item.(types.Time)
+		p.val = val.Item.(types.Time)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -1218,7 +1219,7 @@ func (e *maxMin4TimeSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, la
 		}
 	}
 	if val, isEmpty := p.deque.Front(); isEmpty == nil {
-		p.val = val.item.(types.Time)
+		p.val = val.Item.(types.Time)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -1297,7 +1298,7 @@ type maxMin4DurationSliding struct {
 
 func (e *maxMin4DurationSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Duration.AllocPartialResult()
-	(*partialResult4MaxMinDuration)(p).deque = newDeque(e.isMax, func(i, j interface{}) int {
+	(*partialResult4MaxMinDuration)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
 		src := i.(types.Duration)
 		dst := j.(types.Duration)
 		return src.Compare(dst)
@@ -1326,7 +1327,7 @@ func (e *maxMin4DurationSliding) UpdatePartialResult(sctx sessionctx.Context, ro
 		}
 	}
 	if val, isEmpty := p.deque.Front(); isEmpty == nil {
-		p.val = val.item.(types.Duration)
+		p.val = val.Item.(types.Duration)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -1356,7 +1357,7 @@ func (e *maxMin4DurationSliding) Slide(sctx sessionctx.Context, rows []chunk.Row
 		}
 	}
 	if val, isEmpty := p.deque.Front(); isEmpty == nil {
-		p.val = val.item.(types.Duration)
+		p.val = val.Item.(types.Duration)
 		p.isNull = false
 	} else {
 		p.isNull = true

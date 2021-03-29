@@ -313,3 +313,94 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 		}
 	}
 }
+
+type dequeTestCase struct {
+	value int
+	//deque Deque
+	deque aggfuncs.Deque
+}
+
+func (s *testSuite) TestDequeReset(c *C) {
+	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	})
+	deque.PushFront(0, 12)
+	deque.Reset()
+	c.Assert(len(deque.Items), Equals, 0)
+	c.Assert(deque.IsMax, Equals, true)
+}
+
+func (s *testSuite) TestDequePushPop(c *C) {
+	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	})
+	times := 15
+	// adds element to front of deque and check front/back
+	for i := 0; i < times; i++ {
+		if i != 0 {
+			back, err := deque.Back()
+			c.Assert(err, IsNil)
+			c.Assert(back.Item, Equals, 0)
+			c.Assert(back.Idx, Equals, uint64(0))
+		}
+		deque.PushFront(uint64(i), i)
+		front, err := deque.Front()
+		c.Assert(err, IsNil)
+		c.Assert(front.Item, Equals, i)
+		c.Assert(front.Idx, Equals, uint64(i))
+	}
+
+	// pops element from front of deque
+	for i := 0; i < times; i++ {
+		back, err := deque.Back()
+		c.Assert(err, IsNil)
+		c.Assert(back.Item, Equals, 0)
+		c.Assert(back.Idx, Equals, uint64(0))
+		front, err := deque.PopFront()
+		c.Assert(err, IsNil)
+		pair := front.(aggfuncs.Pair)
+		c.Assert(pair.Item, Equals, times-i-1)
+		c.Assert(pair.Idx, Equals, uint64(times-i-1))
+	}
+
+	// deque empty, throw err if Back()/Front() called
+	_, err := deque.Back()
+	c.Assert(err.Error(), Equals, "Cannot get back when Deque is empty")
+	_, err = deque.Front()
+	c.Assert(err.Error(), Equals, "Cannot get front when Deque is empty")
+	c.Assert(deque.IsEmpty(), Equals, true)
+
+	// pushes element from back of deque
+	for i := 0; i < times; i++ {
+		if i != 0 {
+			front, err := deque.Front()
+			c.Assert(err, IsNil)
+			c.Assert(front.Item, Equals, 0)
+			c.Assert(front.Idx, Equals, uint64(0))
+		}
+		deque.PushBack(uint64(i), i)
+		back, err := deque.Back()
+		c.Assert(err, IsNil)
+		c.Assert(back.Item, Equals, i)
+		c.Assert(back.Idx, Equals, uint64(i))
+	}
+
+	// pops element from back of deque
+	for i := 0; i < times; i++ {
+		front, err := deque.Front()
+		c.Assert(err, IsNil)
+		c.Assert(front.Item, Equals, 0)
+		c.Assert(front.Idx, Equals, uint64(0))
+		back, err := deque.PopBack()
+		c.Assert(err, IsNil)
+		pair := back.(aggfuncs.Pair)
+		c.Assert(pair.Item, Equals, times-i-1)
+		c.Assert(pair.Idx, Equals, uint64(times-i-1))
+	}
+
+	_, err = deque.Back()
+	c.Assert(err.Error(), Equals, "Cannot get back when Deque is empty")
+	_, err = deque.Front()
+	c.Assert(err.Error(), Equals, "Cannot get front when Deque is empty")
+	c.Assert(deque.IsEmpty(), Equals, true)
+}
