@@ -51,7 +51,8 @@
   "editable": true,
   "gnetId": null,
   "graphTooltip": 1,
-  "id": null,
+  "id": 30,
+  "iteration": 1617019941334,
   "links": [],
   "panels": [
     {
@@ -608,7 +609,7 @@
             "h": 6,
             "w": 12,
             "x": 0,
-            "y": 25
+            "y": 19
           },
           "id": 112,
           "legend": {
@@ -708,7 +709,7 @@
             "h": 6,
             "w": 12,
             "x": 12,
-            "y": 25
+            "y": 19
           },
           "id": 218,
           "legend": {
@@ -802,7 +803,6 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:518",
               "format": "s",
               "label": null,
               "logBase": 2,
@@ -3334,7 +3334,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 3
       },
       "id": 141,
       "panels": [
@@ -5171,7 +5171,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 4
       },
       "id": 142,
       "panels": [
@@ -5685,7 +5685,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 6
+        "y": 5
       },
       "id": 143,
       "panels": [
@@ -6497,7 +6497,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 6
       },
       "id": 144,
       "panels": [
@@ -7015,7 +7015,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 8
+        "y": 7
       },
       "id": 145,
       "panels": [
@@ -7499,7 +7499,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 8
       },
       "id": 147,
       "panels": [
@@ -7518,7 +7518,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 10
+            "y": 9
           },
           "id": 20,
           "legend": {
@@ -7611,7 +7611,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 10
+            "y": 9
           },
           "id": 35,
           "legend": {
@@ -7718,7 +7718,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 10
+            "y": 9
           },
           "id": 43,
           "legend": {
@@ -7811,7 +7811,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 17
+            "y": 16
           },
           "id": 79,
           "legend": {
@@ -7908,7 +7908,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 17
+            "y": 16
           },
           "id": 77,
           "legend": {
@@ -8013,7 +8013,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 17
+            "y": 16
           },
           "id": 78,
           "legend": {
@@ -8118,7 +8118,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 24
+            "y": 23
           },
           "id": 159,
           "legend": {
@@ -8207,6 +8207,93 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "fill": 1,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 23
+          },
+          "id": 222,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "hideEmpty": true,
+            "hideZero": true,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "percentage": false,
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "pd_client_request_forwarded_status",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "{{delegate}}-{{host}}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Request forwarded status",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "none",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "none",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
         }
       ],
       "repeat": null,
@@ -8219,7 +8306,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 9
       },
       "id": 148,
       "panels": [
@@ -8623,7 +8710,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 11
+        "y": 10
       },
       "id": 149,
       "panels": [
@@ -9549,7 +9636,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 11
       },
       "id": 150,
       "panels": [
@@ -10369,7 +10456,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 13
+        "y": 12
       },
       "id": 161,
       "panels": [
@@ -10649,7 +10736,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 13
       },
       "id": 151,
       "panels": [
@@ -11022,7 +11109,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 14
       },
       "id": 152,
       "panels": [
@@ -11840,7 +11927,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 15
       },
       "id": 178,
       "panels": [
