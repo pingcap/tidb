@@ -2889,7 +2889,7 @@ func (s *session) SetPort(port string) {
 	s.sessionVars.Port = port
 }
 
-// GetTxnWriteThroughputSLI implements the Session interface.
+// GetTxnWriteThroughputSLI implements the Context interface.
 func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 	return &s.txn.writeSLI
 }
