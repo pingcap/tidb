@@ -825,7 +825,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	}
 	// Record related SLI metrics.
 	if execDetail.CommitDetail != nil && execDetail.CommitDetail.WriteSize > 0 {
-		a.Ctx.GetTxnWriteThroughputSLI().CommittedTxn(execDetail.CommitDetail.WriteSize, execDetail.CommitDetail.WriteKeys)
+		a.Ctx.GetTxnWriteThroughputSLI().AddTxnWriteSize(execDetail.CommitDetail.WriteSize, execDetail.CommitDetail.WriteKeys)
 	}
 	if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys > 0 && sessVars.StmtCtx.AffectedRows() > 0 {
 		// Only record the read keys in write statement which affect row more than 0.

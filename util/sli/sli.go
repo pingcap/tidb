@@ -63,8 +63,8 @@ func (t *TxnWriteThroughputSLI) AddReadKeys(readKeys int64) {
 	t.readKeys += int(readKeys)
 }
 
-// CommittedTxn marks the transaction is committed and record the write size and keys.
-func (t *TxnWriteThroughputSLI) CommittedTxn(size, keys int) {
+// AddTxnWriteSize adds the transaction write size and keys.
+func (t *TxnWriteThroughputSLI) AddTxnWriteSize(size, keys int) {
 	t.writeSize += size
 	t.writeKeys += keys
 }
