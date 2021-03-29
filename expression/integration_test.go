@@ -8955,3 +8955,12 @@ func (s *testIntegrationSuite) TestIssue23623(c *C) {
 	tk.MustExec("insert into t1 values(-2147483648), (-2147483648), (null);")
 	tk.MustQuery("select count(*) from t1 where c1 > (select sum(c1) from t1);").Check(testkit.Rows("2"))
 }
+
+func (s *testIntegrationSuite) TestApproximatePercentile(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bit(10))")
+	tk.MustExec("insert into t values(b'1111')")
+	tk.MustQuery("select approx_percentile(a, 10) from t").Check(testkit.Rows("<nil>"))
+}
