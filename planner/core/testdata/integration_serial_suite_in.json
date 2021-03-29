@@ -94,6 +94,12 @@
     ]
   },
   {
+    "name": "TestMPPAvgRewrite",
+    "cases": [
+      "explain format = 'brief' select /*+ avg_to_cop() */ id, avg(value+1),avg(value) from table_1 group by id"
+    ]
+  },
+  {
     "name": "TestReadFromStorageHint",
     "cases": [
       "desc format = 'brief' select avg(a) from t",
