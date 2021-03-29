@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
 // AccessMode uses to index stores for different region cache access requirements.
@@ -50,34 +51,11 @@ const (
 )
 
 // GetStoreTypeByMeta gets store type by store meta pb.
-func GetStoreTypeByMeta(store *metapb.Store) StoreType {
-	tp := TiKV
+func GetStoreTypeByMeta(store *metapb.Store) tikvrpc.EndpointType {
 	for _, label := range store.Labels {
-		if label.Key == engineLabelKey {
-			if label.Value == engineLabelTiFlash {
-				tp = TiFlash
-			}
-			break
+		if label.Key == engineLabelKey && label.Value == engineLabelTiFlash {
+			return tikvrpc.TiFlash
 		}
 	}
-	return tp
-}
-
-// StoreType represents the type of a store.
-type StoreType uint8
-
-// Store type enums.
-const (
-	TiKV StoreType = iota
-	TiFlash
-)
-
-// Name returns the name of store type.
-func (t StoreType) Name() string {
-	if t == TiFlash {
-		return "tiflash"
-	} else if t == TiKV {
-		return "tikv"
-	}
-	return "unspecified"
+	return tikvrpc.TiKV
 }

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -360,7 +359,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	// TiDB will not send batch commands to TiFlash, to resolve the conflict with Batch Cop Request.
-	enableBatch := req.StoreTp != kv.TiDB && req.StoreTp != kv.TiFlash
+	enableBatch := req.StoreTp != tikvrpc.TiDB && req.StoreTp != tikvrpc.TiFlash
 	c.recycleMu.RLock()
 	defer c.recycleMu.RUnlock()
 	connArray, err := c.getConnArray(addr, enableBatch)
