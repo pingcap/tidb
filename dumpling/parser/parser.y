@@ -10364,6 +10364,7 @@ ExplainableStmt:
 |	InsertIntoStmt
 |	ReplaceIntoStmt
 |	SetOprStmt1
+|	AlterTableStmt
 
 StatementList:
 	Statement
