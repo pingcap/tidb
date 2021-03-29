@@ -1,5 +1,5 @@
-// Copyright 2017 PingCAP, Inc.
-//
+// Copyright 2021 PingCAP, Inc.
+
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,20 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metrics
+package unionstore
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
-// Metrics for the timestamp oracle.
-var (
-	TSFutureWaitDuration = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "pdclient",
-			Name:      "ts_future_wait_seconds",
-			Help:      "Bucketed histogram of seconds cost for waiting timestamp future.",
-			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 30), // 5us ~ 2560s
-		})
-)
+// MemBufferIterator is an Iterator with KeyFlags related functions.
+type MemBufferIterator interface {
+	tidbkv.Iterator
+	HasValue() bool
+	Flags() kv.KeyFlags
+	UpdateFlags(...kv.FlagsOp)
+	Handle() MemKeyHandle
+}
