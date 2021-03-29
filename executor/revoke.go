@@ -201,6 +201,12 @@ func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *
 	if priv.Priv == mysql.ExtendedPriv {
 		return e.revokeDynamicPriv(internalSession, priv.Name, user, host)
 	}
+	if priv.Priv == mysql.AllPriv { // If ALL, also revoke dynamic privileges
+		_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "DELETE FROM mysql.global_grants WHERE user = %? AND host = %?", user, host)
+		if err != nil {
+			return err
+		}
+	}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
 	err := composeGlobalPrivUpdate(sql, priv.Priv, "N")

@@ -691,7 +691,7 @@ func (p *MySQLPrivilege) decodeGlobalGrantsTableRow(row chunk.Row, fs []*ast.Res
 	for i, f := range fs {
 		switch {
 		case f.ColumnAsName.L == "priv":
-			value.PrivilegeName = row.GetString(i)
+			value.PrivilegeName = strings.ToUpper(row.GetString(i))
 		case f.ColumnAsName.L == "with_grant_option":
 			value.GrantOption = row.GetEnum(i).String() == "Y"
 		default:
