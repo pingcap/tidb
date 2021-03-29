@@ -178,7 +178,7 @@ func (s *testPrivilegeSuite) TestIssue22946(c *C) {
 	c.Assert(err, IsNil)
 	mustExec(c, rootSe, "use db1;")
 	_, err = se.ExecuteInternal(context.Background(), "delete from test.a as A;")
-	c.Assert(terror.ErrorEqual(err, core.ErrPrivilegeCheckFail), IsTrue)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
@@ -975,7 +975,7 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	_, err = se.ExecuteInternal(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "DELETE command denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "create table performance_schema.t(a int)")
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
@@ -987,7 +987,7 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	_, err = se.ExecuteInternal(context.Background(), "update metrics_schema.tidb_query_duration set instance = 'tst'")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "delete from metrics_schema.tidb_query_duration")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "DELETE command denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "create table metric_schema.t(a int)")
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
@@ -1030,6 +1030,10 @@ func (s *testPrivilegeSuite) TestTableNotExistNoPermissions(c *C) {
 		{
 			"SHOW CREATE TABLE %s.%s",
 			"SHOW",
+		},
+		{
+			"DELETE FROM %s.%s WHERE a=0",
+			"DELETE",
 		},
 		{
 			"DELETE FROM %s.%s",
