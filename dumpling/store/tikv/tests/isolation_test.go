@@ -13,7 +13,7 @@
 
 // +build !race
 
-package tikv
+package tikv_test
 
 import (
 	"context"
@@ -24,13 +24,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 )
 
 // testIsolationSuite represents test isolation suite.
 // The test suite takes too long under the race detector.
 type testIsolationSuite struct {
 	OneByOneSuite
-	store *KVStore
+	store *tikv.KVStore
 }
 
 var _ = Suite(&testIsolationSuite{})
@@ -58,8 +59,10 @@ func (r writeRecords) Less(i, j int) bool { return r[i].startTS <= r[j].startTS 
 
 func (s *testIsolationSuite) SetWithRetry(c *C, k, v []byte) writeRecord {
 	for {
-		txn, err := s.store.Begin()
+		txnRaw, err := s.store.Begin()
 		c.Assert(err, IsNil)
+
+		txn := tikv.TxnProbe{KVTxn: txnRaw}
 
 		err = txn.Set(k, v)
 		c.Assert(err, IsNil)
@@ -68,7 +71,7 @@ func (s *testIsolationSuite) SetWithRetry(c *C, k, v []byte) writeRecord {
 		if err == nil {
 			return writeRecord{
 				startTS:  txn.StartTS(),
-				commitTS: txn.commitTS,
+				commitTS: txn.GetCommitTS(),
 			}
 		}
 	}
