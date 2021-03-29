@@ -8068,19 +8068,6 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
-<<<<<<< HEAD
-=======
-func (s *testIntegrationSuite) TestIssue23623(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(c1 int);")
-	tk.MustExec("insert into t1 values(-2147483648), (-2147483648), (null);")
-	tk.MustQuery("select count(*) from t1 where c1 > (select sum(c1) from t1);").Check(testkit.Rows("2"))
-}
-
-func (s *testIntegrationSuite) TestApproximatePercentile(c *C) {
->>>>>>> 3ed4a23b9... executor: refineArgs() bug fix when compare int with very small decimal (#23694)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustQuery("select collation(concat(1 collate `binary`));").Check(testkit.Rows("binary"))
@@ -8092,4 +8079,13 @@ func (s *testIntegrationSuite) TestApproximatePercentile(c *C) {
 	tk.MustQuery("select collation(1);").Check(testkit.Rows("binary"))
 	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
 	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
+}
+
+func (s *testIntegrationSuite) TestIssue23623(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("insert into t1 values(-2147483648), (-2147483648), (null);")
+	tk.MustQuery("select count(*) from t1 where c1 > (select sum(c1) from t1);").Check(testkit.Rows("2"))
 }
