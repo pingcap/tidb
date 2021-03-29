@@ -7835,12 +7835,12 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 
 	mustExec := func(sql string) {
 		tk.MustExec(sql)
-		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().StmtCtx.GetExecScanProcessKeys(), tk.Se.GetSessionVars().InTxn())
+		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().InTxn())
 	}
 	errExec := func(sql string) {
 		_, err := tk.Exec(sql)
 		c.Assert(err, NotNil)
-		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().StmtCtx.GetExecScanProcessKeys(), tk.Se.GetSessionVars().InTxn())
+		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().InTxn())
 	}
 
 	// Test insert in small txn

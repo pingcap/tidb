@@ -33,10 +33,8 @@ type TxnWriteThroughputSLI struct {
 
 // FinishExecuteStmt records the cost for write statement which affect rows more than 0.
 // And report metrics when the transaction is committed.
-func (t *TxnWriteThroughputSLI) FinishExecuteStmt(cost time.Duration, affectRow uint64, readKeys int64, inTxn bool) {
+func (t *TxnWriteThroughputSLI) FinishExecuteStmt(cost time.Duration, affectRow uint64, inTxn bool) {
 	if affectRow > 0 {
-		// Only record the read keys in write statement which affect row more than 0.
-		t.readKeys += int(readKeys)
 		t.writeTime += cost
 		t.affectRow += affectRow
 	}
@@ -58,6 +56,10 @@ func (t *TxnWriteThroughputSLI) FinishExecuteStmt(cost time.Duration, affectRow 
 		// Reset for next transaction.
 		t.Reset()
 	}
+}
+
+func (t *TxnWriteThroughputSLI) AddReadKeys(readKeys int64) {
+	t.readKeys += int(readKeys)
 }
 
 // CommittedTxn marks the transaction is committed and record the write size and keys.
