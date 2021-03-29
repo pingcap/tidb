@@ -385,14 +385,18 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 
 	hasTemporal := false
 	if cmpTp == types.ETString {
-		for _, arg := range args {
-			if types.IsTypeTemporal(arg.GetType().Tp) {
-				hasTemporal = true
-				break
+		if args[0].GetType().Tp == mysql.TypeDuration {
+			cmpTp = types.ETDuration
+		} else {
+			for _, arg := range args {
+				if types.IsTypeTemporal(arg.GetType().Tp) {
+					hasTemporal = true
+					break
+				}
 			}
-		}
-		if hasTemporal {
-			cmpTp = types.ETDatetime
+			if hasTemporal {
+				cmpTp = types.ETDatetime
+			}
 		}
 	}
 

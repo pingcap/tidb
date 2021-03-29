@@ -15,6 +15,8 @@ package tikv
 
 import (
 	"context"
+	"sync/atomic"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -153,6 +155,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
 	err = txn.Set([]byte("k4"), []byte("v4"))
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetOption(kv.Enable1PC, false)
 	txn.SetOption(kv.GuaranteeLinearizability, false)
 	// Prewrite an async-commit lock and do not commit it.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", `return`), IsNil)
@@ -168,4 +171,46 @@ func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
 	c.Assert(err, ErrorMatches, ".*key not exist")
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
+}
+
+func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
+	defer s.cleanup(c)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("k1"), []byte("v1"))
+	err = txn.Set([]byte("k2"), []byte("v2"))
+	c.Assert(err, IsNil)
+	txn.SetOption(kv.EnableAsyncCommit, false)
+	txn.SetOption(kv.Enable1PC, false)
+	txn.SetOption(kv.GuaranteeLinearizability, false)
+
+	// Prewrite the lock without committing it
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeCommit", `pause`), IsNil)
+	ch := make(chan struct{})
+	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(committer.primary(), DeepEquals, []byte("k1"))
+	go func() {
+		c.Assert(err, IsNil)
+		err = committer.execute(context.Background())
+		c.Assert(err, IsNil)
+		ch <- struct{}{}
+	}()
+
+	// Wait until prewrite finishes
+	time.Sleep(200 * time.Millisecond)
+	// Should get nothing with max version, and **not pushing forward minCommitTS** of the primary lock
+	snapshot := s.store.GetSnapshot(kv.MaxVersion)
+	_, err = snapshot.Get(context.Background(), []byte("k2"))
+	c.Assert(err, ErrorMatches, ".*key not exist")
+
+	initialCommitTS := atomic.LoadUint64(&committer.commitTS)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeCommit"), IsNil)
+
+	<-ch
+	// check the minCommitTS is not pushed forward
+	snapshot = s.store.GetSnapshot(kv.Version{Ver: initialCommitTS})
+	v, err := snapshot.Get(context.Background(), []byte("k2"))
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("v2"))
 }

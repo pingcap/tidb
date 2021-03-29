@@ -230,7 +230,7 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@tidb_analyze_version = 2;")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
 	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
 		partition p0 values less than (10),
 		partition p1 values less than (20),

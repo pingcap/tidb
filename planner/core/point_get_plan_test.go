@@ -478,12 +478,10 @@ func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
 }
 
 func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
-	gcfg := config.GetGlobalConfig()
-	etl := gcfg.EnableTableLock
-	gcfg.EnableTableLock = true
-	defer func() {
-		gcfg.EnableTableLock = etl
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tbllock(id int, c int);")

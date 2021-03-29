@@ -2225,7 +2225,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
-	defer config.RestoreFunc()
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
 		conf.AlterPrimaryKey = true
@@ -2640,6 +2640,7 @@ func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
 			restoreConfig := config.RestoreFunc()
 			config.UpdateGlobal(func(conf *config.Config) {
 				conf.EnableGlobalIndex = globalIndex
+				conf.AlterPrimaryKey = false
 			})
 			for _, clusteredIndex := range []bool{false, true} {
 				tk.Se.GetSessionVars().EnableClusteredIndex = clusteredIndex

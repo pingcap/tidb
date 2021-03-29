@@ -537,6 +537,41 @@ func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	})
 }
 
+func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+
+	t := time.Now().Add(-1 * time.Minute)
+	h, m := t.Hour(), t.Minute()
+	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
+	s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema())
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, index idx(a))")
+	// to pass the stats.Pseudo check in autoAnalyzeTable
+	tk.MustExec("analyze table t")
+	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(handle.AutoAnalyzeMinCnt)))
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+
+	// test if it will be limited by the time range
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
+
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='00:00 +0000'"))
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='23:59 +0000'"))
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+}
+
 func (s *testSerialStatsSuite) TestAutoAnalyzeOnChangeAnalyzeVer(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -773,8 +808,8 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	tbl = h.GetPartitionStats(tblInfo, pid)
 
-	// The error rate of this column is not larger than MaxErrorRate now.
-	c.Assert(tbl.Columns[aID].NotAccurate(), IsFalse)
+	// Feedback will not take effect under partition table.
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsTrue)
 }
 
 func appendBucket(h *statistics.Histogram, l, r int64) {
@@ -979,6 +1014,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	handle.MinLogErrorRate = 0
 
 	h := s.do.StatsHandle()
+	// Feedback will not take effect under partition table.
 	tests := []struct {
 		sql     string
 		hist    string
@@ -987,23 +1023,23 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 		{
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5",
-			hist: "column:1 ndv:2 totColSize:0\n" +
-				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0 ndv: 0\n" +
-				"num: 1 lower_bound: 2 upper_bound: 5 repeats: 0 ndv: 0",
+			hist: "column:1 ndv:2 totColSize:2\n" +
+				"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n" +
+				"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0",
 			idxCols: 0,
 		},
 		{
 			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0 ndv: 0",
+				"num: 2 lower_bound: 2 upper_bound: 2 repeats: 2 ndv: 0",
 			idxCols: 1,
 		},
 		{
 			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0 ndv: 0",
+				"num: 2 lower_bound: 2 upper_bound: 2 repeats: 2 ndv: 0",
 			idxCols: 1,
 		},
 	}
@@ -1180,10 +1216,11 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	pid := tblInfo.Partition.Definitions[0].ID
 	tbl := h.GetPartitionStats(tblInfo, pid)
 
+	// Feedback will not take effect under partition table.
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
 		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n"+
-		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0 ndv: 0\n"+
-		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0 ndv: 0")
+		"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0\n"+
+		"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0")
 }
 
 func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
@@ -2050,6 +2087,7 @@ func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testkit.WithPruneMode(testKit, variable.DynamicOnly, func() {
 		testKit.MustExec("use test")
+		testKit.MustExec("set @@tidb_analyze_version = 2;")
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec(`create table t (a int, b varchar(10), index idx_ab(a, b))
 					partition by range (a) (
@@ -2092,8 +2130,8 @@ func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
 		c.Assert(h.Update(is), IsNil)
 		globalStats = h.GetTableStats(tableInfo)
 		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-		c.Assert(globalStats.Count, Equals, int64(6))
-		c.Assert(globalStats.ModifyCount, Equals, int64(0))
+		c.Assert(globalStats.Count, Equals, int64(7))
+		c.Assert(globalStats.ModifyCount, Equals, int64(1))
 		c.Assert(partitionStats.Count, Equals, int64(3))
 		c.Assert(partitionStats.ModifyCount, Equals, int64(1))
 

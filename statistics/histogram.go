@@ -1831,7 +1831,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			d.SetBytes(meta.Encoded)
 		} else {
 			var err error
-			_, d, err = codec.DecodeOne(meta.Encoded)
+			if types.IsTypeTime(hists[0].Tp.Tp) {
+				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
+				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.Tp, sc.TimeZone)
+			} else {
+				_, d, err = codec.DecodeOne(meta.Encoded)
+			}
 			if err != nil {
 				return nil, err
 			}

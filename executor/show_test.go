@@ -1119,6 +1119,20 @@ func (s *testSuite5) TestShowClusterConfig(c *C) {
 	c.Assert(tk.QueryToErr("show config"), ErrorMatches, confErr.Error())
 }
 
+func (s *testSuite5) TestInvisibleCoprCacheConfig(c *C) {
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKitWithSession(c, s.store, se1)
+	rows := tk.MustQuery("show variables like '%config%'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	configValue := rows[0][1].(string)
+	coprCacheVal :=
+		"\t\t\"copr-cache\": {\n" +
+			"\t\t\t\"capacity-mb\": 1000\n" +
+			"\t\t},\n"
+	c.Assert(strings.Contains(configValue, coprCacheVal), Equals, true)
+}
+
 func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c *C) {
 	parsertypes.TiDBStrictIntegerDisplayWidth = true
 	defer func() {

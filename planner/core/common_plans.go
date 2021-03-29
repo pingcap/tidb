@@ -444,21 +444,27 @@ func (e *Execute) rebuildRange(p Plan) error {
 	switch x := p.(type) {
 	case *PhysicalTableReader:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
-		var pkCol *expression.Column
 		if ts.Table.IsCommonHandle {
 			pk := tables.FindPrimaryIndex(ts.Table)
 			pkCols := make([]*expression.Column, 0, len(pk.Columns))
 			pkColsLen := make([]int, 0, len(pk.Columns))
 			for _, colInfo := range pk.Columns {
-				pkCols = append(pkCols, expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]))
-				pkColsLen = append(pkColsLen, colInfo.Length)
+				if pkCol := expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]); pkCol != nil {
+					pkCols = append(pkCols, pkCol)
+					pkColsLen = append(pkColsLen, colInfo.Length)
+				}
 			}
-			res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), ts.AccessCondition, pkCols, pkColsLen)
-			if err != nil {
-				return err
+			if len(pkCols) > 0 {
+				res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), ts.AccessCondition, pkCols, pkColsLen)
+				if err != nil {
+					return err
+				}
+				ts.Ranges = res.Ranges
+			} else {
+				ts.Ranges = ranger.FullRange()
 			}
-			ts.Ranges = res.Ranges
 		} else {
+			var pkCol *expression.Column
 			if ts.Table.PKIsHandle {
 				if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 					pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
@@ -1059,7 +1065,11 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 			return errors.Errorf("the store type %v is unknown", x.StoreType)
 		}
 		storeType = x.StoreType.Name()
-		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", "", childIndent, true)
+		taskName := "cop"
+		if x.BatchCop {
+			taskName = "batchCop"
+		}
+		err = e.explainPlanInRowFormat(x.tablePlan, taskName+"["+storeType+"]", "", childIndent, true)
 	case *PhysicalIndexReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
 	case *PhysicalIndexLookUpReader:
@@ -1314,50 +1324,4 @@ func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
 		return true, nil
 	}
 	return false, nil
-}
-
-func buildSchemaAndNameFromIndex(cols []*expression.Column, dbName model.CIStr, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) (*expression.Schema, types.NameSlice) {
-	schema := expression.NewSchema(cols...)
-	idxCols := idxInfo.Columns
-	names := make([]*types.FieldName, 0, len(idxCols))
-	tblName := tblInfo.Name
-	for _, col := range idxCols {
-		names = append(names, &types.FieldName{
-			OrigTblName: tblName,
-			OrigColName: col.Name,
-			DBName:      dbName,
-			TblName:     tblName,
-			ColName:     col.Name,
-		})
-	}
-	return schema, names
-}
-
-func buildSchemaAndNameFromPKCol(pkCol *expression.Column, dbName model.CIStr, tblInfo *model.TableInfo) (*expression.Schema, types.NameSlice) {
-	schema := expression.NewSchema([]*expression.Column{pkCol}...)
-	names := make([]*types.FieldName, 0, 1)
-	tblName := tblInfo.Name
-	col := tblInfo.GetPkColInfo()
-	names = append(names, &types.FieldName{
-		OrigTblName: tblName,
-		OrigColName: col.Name,
-		DBName:      dbName,
-		TblName:     tblName,
-		ColName:     col.Name,
-	})
-	return schema, names
-}
-
-func locateHashPartition(ctx sessionctx.Context, expr expression.Expression, pi *model.PartitionInfo, r []types.Datum) (int, error) {
-	ret, isNull, err := expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-	if err != nil {
-		return 0, err
-	}
-	if isNull {
-		return 0, nil
-	}
-	if ret < 0 {
-		ret = 0 - ret
-	}
-	return int(ret % int64(pi.Num)), nil
 }

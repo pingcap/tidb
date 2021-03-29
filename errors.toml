@@ -1573,7 +1573,7 @@ TiDB does not yet support JSON objects with the key length >= 65536
 
 ["types:8131"]
 error = '''
-Build global-level stats failed due to missing partition-level stats
+Build table: %s global-level stats failed due to missing partition-level stats
 '''
 
 ["variable:1193"]

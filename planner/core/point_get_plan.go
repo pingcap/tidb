@@ -1367,23 +1367,6 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	return &IntHandleCols{col: handleCol}
 }
 
-func findHandleCol(tbl *model.TableInfo, schema *expression.Schema) *expression.Column {
-	// fields len is 0 for update and delete.
-	var handleCol *expression.Column
-	if tbl.PKIsHandle {
-		for i, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) && tbl.PKIsHandle {
-				handleCol = schema.Columns[i]
-			}
-		}
-	}
-	if !tbl.IsCommonHandle && handleCol == nil {
-		handleCol = colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
-		schema.Append(handleCol)
-	}
-	return handleCol
-}
-
 func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int) {
 	partitionColName := getHashPartitionColumnName(ctx, tbl)
 	if partitionColName == nil {

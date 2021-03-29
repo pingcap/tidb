@@ -426,6 +426,25 @@ func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
 	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("3"))
 }
 
+func (s *testPrepareSuite) TestPrepareCacheForClusteredIndex(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(k varchar(100) primary key clustered, v1 int, v2 int)")
+	tk.MustExec("insert into t1 (k, v1, v2) values('a', 1, 2), ('b', 1, 1)")
+	tk.MustExec("create table t2(k varchar(100) primary key clustered, v int)")
+	tk.MustExec("insert into t2 (k, v) values('c', 100)")
+	tk.MustExec(`prepare prepare_1 from " select v2, v from t1 left join t2 on v1 != v2 "`)
+	tk.MustQuery("execute prepare_1").Check(testkit.Rows("2 100", "1 <nil>"))
+	tk.MustQuery("execute prepare_1").Check(testkit.Rows("2 100", "1 <nil>"))
+}
+
 func (s *testPrepareSerialSuite) TestPrepareCacheForPartition(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
