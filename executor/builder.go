@@ -1536,7 +1536,10 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableStatementsSummaryHistory),
 			strings.ToLower(infoschema.ClusterTableStatementsSummary),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
-			strings.ToLower(infoschema.TablePlacementPolicy):
+			strings.ToLower(infoschema.TablePlacementPolicy),
+			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
+			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
+			strings.ToLower(infoschema.TableClientErrorsSummaryByHost):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -1839,6 +1842,15 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
+	var assignFlag []int
+	assignFlag, b.err = getAssignFlag(b.ctx, v, selExec.Schema().Len())
+	if b.err != nil {
+		return nil
+	}
+	b.err = plannercore.CheckUpdateList(assignFlag, v)
+	if b.err != nil {
+		return nil
+	}
 	updateExec := &UpdateExec{
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
@@ -1847,8 +1859,27 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		multiUpdateOnSameTable:    multiUpdateOnSameTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
+		assignFlag:                assignFlag,
 	}
 	return updateExec
+}
+
+func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int) ([]int, error) {
+	assignFlag := make([]int, schemaLen)
+	for i := range assignFlag {
+		assignFlag[i] = -1
+	}
+	for _, assign := range v.OrderedList {
+		if !ctx.GetSessionVars().AllowWriteRowID && assign.Col.ID == model.ExtraHandleID {
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
+		tblIdx, found := v.TblColPosInfos.FindTblIdx(assign.Col.Index)
+		if found {
+			colIdx := assign.Col.Index
+			assignFlag[colIdx] = tblIdx
+		}
+	}
+	return assignFlag, nil
 }
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
@@ -2642,6 +2673,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 	if v.StoreType == kv.TiFlash {
+		sctx.IsTiFlash.Store(true)
 		partsExecutor := make([]Executor, 0, len(partitions))
 		for _, part := range partitions {
 			exec, err := buildNoRangeTableReader(b, v)
@@ -3892,6 +3924,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, plan.IndexInfo, value)
 				if err != nil {
+					if kv.ErrNotExist.Equal(err) {
+						continue
+					}
 					b.err = err
 					return nil
 				}

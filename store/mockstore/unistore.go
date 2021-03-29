@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 )
 
@@ -97,8 +98,28 @@ func (s *mockStorage) Begin() (kv.Transaction, error) {
 
 // BeginWithOption begins a transaction with given option
 func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithOption(option)
-	return newTiKVTxn(txn, err)
+	txnScope := option.TxnScope
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
+	}
+	if option.StartTS != nil {
+		return newTiKVTxn(s.BeginWithStartTS(txnScope, *option.StartTS))
+	} else if option.PrevSec != nil {
+		return newTiKVTxn(s.BeginWithExactStaleness(txnScope, *option.PrevSec))
+	}
+	return newTiKVTxn(s.BeginWithTxnScope(txnScope))
+}
+
+// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
+// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+func (s *mockStorage) GetSnapshot(ver kv.Version) kv.Snapshot {
+	return s.KVStore.GetSnapshot(ver.Ver)
+}
+
+// CurrentVersion returns current max committed version with the given txnScope (local or global).
+func (s *mockStorage) CurrentVersion(txnScope string) (kv.Version, error) {
+	ver, err := s.KVStore.CurrentTimestamp(txnScope)
+	return kv.NewVersion(ver), err
 }
 
 func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
