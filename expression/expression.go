@@ -968,7 +968,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.DateFormat, ast.FromDays /*ast.ToDays,*/, ast.DayOfYear, ast.DayOfMonth, ast.Year, ast.Month,
 		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
 		// ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.DayName,
-		ast.PeriodAdd, ast.PeriodDiff /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
+		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
