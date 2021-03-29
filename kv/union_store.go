@@ -45,18 +45,5 @@ type UnionStore interface {
 	GetMemBuffer() MemBuffer
 }
 
-// AssertionType is the type of a assertion.
+// AssertionType is the type of a assertion.TODO:remove it when br is ready
 type AssertionType int
-
-// The AssertionType constants.
-const (
-	None AssertionType = iota
-	Exist
-	NotExist
-)
-
-// Options is an interface of a set of options. Each option is associated with a value.
-type Options interface {
-	// Get gets an option value.
-	Get(opt int) (v interface{}, ok bool)
-}
