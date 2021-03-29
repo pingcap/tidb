@@ -14,7 +14,7 @@
 package gcutil
 
 import (
-	"fmt"
+	"context"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -25,18 +25,20 @@ import (
 )
 
 const (
-	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name='%s'`
-	insertVariableValueSQL = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
-                              ON DUPLICATE KEY
-			                  UPDATE variable_value = '%[2]s', comment = '%[3]s'`
+	insertVariableValueSQL = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
+                              ON DUPLICATE KEY UPDATE variable_value = %?, comment = %?`
+	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
 )
 
 // CheckGCEnable is use to check whether GC is enable.
 func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
-	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_enable")
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	if err != nil {
-		return false, errors.Trace(err)
+	stmt, err1 := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), selectVariableValueSQL, "tikv_gc_enable")
+	if err1 != nil {
+		return false, errors.Trace(err1)
+	}
+	rows, _, err2 := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
+	if err1 != nil {
+		return false, errors.Trace(err2)
 	}
 	if len(rows) != 1 {
 		return false, errors.New("can not get 'tikv_gc_enable'")
@@ -46,15 +48,19 @@ func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
 
 // DisableGC will disable GC enable variable.
 func DisableGC(ctx sessionctx.Context) error {
-	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "false", "Current GC enable status")
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), insertVariableValueSQL, "tikv_gc_enable", "false", "Current GC enable status", "false", "Current GC enable status")
+	if err == nil {
+		_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
+	}
 	return errors.Trace(err)
 }
 
 // EnableGC will enable GC enable variable.
 func EnableGC(ctx sessionctx.Context) error {
-	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "true", "Current GC enable status")
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), insertVariableValueSQL, "tikv_gc_enable", "true", "Current GC enable status", "true", "Current GC enable status")
+	if err == nil {
+		_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
+	}
 	return errors.Trace(err)
 }
 
@@ -80,8 +86,12 @@ func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
 
 // GetGCSafePoint loads GC safe point time from mysql.tidb.
 func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
-	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_safe_point")
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.Background(), selectVariableValueSQL, "tikv_gc_safe_point")
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
