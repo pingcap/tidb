@@ -179,7 +179,8 @@ type TimeDetail struct {
 	// This field is very close to the CPU time in most cases. Some wait time spend in RocksDB
 	// cannot be excluded for now, like Mutex wait time, which is included in this field, so that
 	// this field is called wall time instead of CPU time.
-	WaitTime time.Duration
+	WaitTime   time.Duration
+	KVReadTime time.Duration
 }
 
 // String implements the fmt.Stringer interface.
@@ -207,6 +208,7 @@ func (td *TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
 	if timeDetail != nil {
 		td.WaitTime += time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
 		td.ProcessTime += time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+		td.KVReadTime += time.Duration(timeDetail.KvReadWallTimeMs) * time.Millisecond
 	}
 }
 
