@@ -1,5 +1,5 @@
-// Copyright 2019 PingCAP, Inc.
-//
+// Copyright 2021 PingCAP, Inc.
+
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,23 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package unionstore
 
 import (
-	"context"
-	"errors"
-
-	. "github.com/pingcap/check"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
-type testBackoffSuite struct {
-}
-
-var _ = Suite(&testBackoffSuite{})
-
-func (s *testBackoffSuite) TestBackoffWithMax(c *C) {
-	b := NewBackofferWithVars(context.TODO(), 2000, nil)
-	err := b.BackoffWithMaxSleep(BoTxnLockFast, 30, errors.New("test"))
-	c.Assert(err, IsNil)
-	c.Assert(b.totalSleep, Equals, 30)
+// MemBufferIterator is an Iterator with KeyFlags related functions.
+type MemBufferIterator interface {
+	tidbkv.Iterator
+	HasValue() bool
+	Flags() kv.KeyFlags
+	UpdateFlags(...kv.FlagsOp)
+	Handle() MemKeyHandle
 }

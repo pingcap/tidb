@@ -12,6 +12,12 @@ func IsTiFlashContained(plan Plan) (tiFlashPushDown, tiFlashExchangePushDown boo
 	}
 	var tiflashProcess func(p Plan)
 	tiflashProcess = func(p Plan) {
+		if exp, isExplain := p.(*Explain); isExplain {
+			p = exp.TargetPlan
+			if p == nil {
+				return
+			}
+		}
 		pp, isPhysical := p.(PhysicalPlan)
 		if !isPhysical {
 			return

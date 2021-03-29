@@ -11,20 +11,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package unionstore
 
-import "bytes"
+import (
+	"bytes"
+
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
+)
 
 type memdbIterator struct {
-	db           *memdb
+	db           *MemDB
 	curr         memdbNodeAddr
-	start        Key
-	end          Key
+	start        tidbkv.Key
+	end          tidbkv.Key
 	reverse      bool
 	includeFlags bool
 }
 
-func (db *memdb) Iter(k Key, upperBound Key) (Iterator, error) {
+// Iter creates an Iterator positioned on the first entry that k <= entry's key.
+// If such entry is not found, it returns an invalid Iterator with no error.
+// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
+// The Iterator must be Closed after use.
+func (db *MemDB) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
 	i := &memdbIterator{
 		db:    db,
 		start: k,
@@ -34,7 +43,11 @@ func (db *memdb) Iter(k Key, upperBound Key) (Iterator, error) {
 	return i, nil
 }
 
-func (db *memdb) IterReverse(k Key) (Iterator, error) {
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+// The returned iterator will iterate from greater key to smaller key.
+// If k is nil, the returned iterator will be positioned at the last key.
+// TODO: Add lower bound limit
+func (db *MemDB) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 	i := &memdbIterator{
 		db:      db,
 		end:     k,
@@ -44,7 +57,8 @@ func (db *memdb) IterReverse(k Key) (Iterator, error) {
 	return i, nil
 }
 
-func (db *memdb) IterWithFlags(k Key, upperBound Key) MemBufferIterator {
+// IterWithFlags returns a MemBufferIterator.
+func (db *MemDB) IterWithFlags(k tidbkv.Key, upperBound tidbkv.Key) MemBufferIterator {
 	i := &memdbIterator{
 		db:           db,
 		start:        k,
@@ -55,7 +69,8 @@ func (db *memdb) IterWithFlags(k Key, upperBound Key) MemBufferIterator {
 	return i
 }
 
-func (db *memdb) IterReverseWithFlags(k Key) MemBufferIterator {
+// IterReverseWithFlags returns a reversed MemBufferIterator.
+func (db *MemDB) IterReverseWithFlags(k tidbkv.Key) MemBufferIterator {
 	i := &memdbIterator{
 		db:           db,
 		end:          k,
@@ -94,13 +109,13 @@ func (i *memdbIterator) Valid() bool {
 	return !i.curr.isNull()
 }
 
-func (i *memdbIterator) Flags() KeyFlags {
+func (i *memdbIterator) Flags() kv.KeyFlags {
 	return i.curr.getKeyFlags()
 }
 
-func (i *memdbIterator) UpdateFlags(ops ...FlagsOp) {
+func (i *memdbIterator) UpdateFlags(ops ...kv.FlagsOp) {
 	origin := i.curr.getKeyFlags()
-	n := applyFlagsOps(origin, ops...)
+	n := kv.ApplyFlagsOps(origin, ops...)
 	i.curr.setKeyFlags(n)
 }
 
@@ -108,7 +123,7 @@ func (i *memdbIterator) HasValue() bool {
 	return !i.isFlagsOnly()
 }
 
-func (i *memdbIterator) Key() Key {
+func (i *memdbIterator) Key() tidbkv.Key {
 	return i.curr.getKey()
 }
 
@@ -165,7 +180,7 @@ func (i *memdbIterator) seekToLast() {
 	i.curr = y
 }
 
-func (i *memdbIterator) seek(key Key) {
+func (i *memdbIterator) seek(key tidbkv.Key) {
 	y := memdbNodeAddr{nil, nullAddr}
 	x := i.db.getNode(i.db.root)
 
