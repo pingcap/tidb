@@ -14,8 +14,6 @@
 package kv
 
 import (
-	"context"
-
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -61,103 +59,4 @@ const (
 type Options interface {
 	// Get gets an option value.
 	Get(opt int) (v interface{}, ok bool)
-}
-
-// unionStore is an in-memory Store which contains a buffer for write and a
-// snapshot for read.
-type unionStore struct {
-	memBuffer *memdb
-	snapshot  Snapshot
-	opts      options
-}
-
-// NewUnionStore builds a new unionStore.
-func NewUnionStore(snapshot Snapshot) UnionStore {
-	return &unionStore{
-		snapshot:  snapshot,
-		memBuffer: newMemDB(),
-		opts:      make(map[int]interface{}),
-	}
-}
-
-// GetMemBuffer return the MemBuffer binding to this unionStore.
-func (us *unionStore) GetMemBuffer() MemBuffer {
-	return us.memBuffer
-}
-
-// Get implements the Retriever interface.
-func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
-	v, err := us.memBuffer.Get(ctx, k)
-	if IsErrNotFound(err) {
-		v, err = us.snapshot.Get(ctx, k)
-	}
-	if err != nil {
-		return v, err
-	}
-	if len(v) == 0 {
-		return nil, ErrNotExist
-	}
-	return v, nil
-}
-
-// Iter implements the Retriever interface.
-func (us *unionStore) Iter(k Key, upperBound Key) (Iterator, error) {
-	bufferIt, err := us.memBuffer.Iter(k, upperBound)
-	if err != nil {
-		return nil, err
-	}
-	retrieverIt, err := us.snapshot.Iter(k, upperBound)
-	if err != nil {
-		return nil, err
-	}
-	return NewUnionIter(bufferIt, retrieverIt, false)
-}
-
-// IterReverse implements the Retriever interface.
-func (us *unionStore) IterReverse(k Key) (Iterator, error) {
-	bufferIt, err := us.memBuffer.IterReverse(k)
-	if err != nil {
-		return nil, err
-	}
-	retrieverIt, err := us.snapshot.IterReverse(k)
-	if err != nil {
-		return nil, err
-	}
-	return NewUnionIter(bufferIt, retrieverIt, true)
-}
-
-// HasPresumeKeyNotExists gets the key exist error info for the lazy check.
-func (us *unionStore) HasPresumeKeyNotExists(k Key) bool {
-	flags, err := us.memBuffer.GetFlags(k)
-	if err != nil {
-		return false
-	}
-	return flags.HasPresumeKeyNotExists()
-}
-
-// DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
-func (us *unionStore) UnmarkPresumeKeyNotExists(k Key) {
-	us.memBuffer.UpdateFlags(k, DelPresumeKeyNotExists)
-}
-
-// SetOption implements the unionStore SetOption interface.
-func (us *unionStore) SetOption(opt int, val interface{}) {
-	us.opts[opt] = val
-}
-
-// DelOption implements the unionStore DelOption interface.
-func (us *unionStore) DelOption(opt int) {
-	delete(us.opts, opt)
-}
-
-// GetOption implements the unionStore GetOption interface.
-func (us *unionStore) GetOption(opt int) interface{} {
-	return us.opts[opt]
-}
-
-type options map[int]interface{}
-
-func (opts options) Get(opt int) (interface{}, bool) {
-	v, ok := opts[opt]
-	return v, ok
 }

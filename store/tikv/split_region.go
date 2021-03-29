@@ -122,7 +122,7 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 	})
 
 	sender := NewRegionRequestSender(s.regionCache, s.client)
-	resp, err := sender.SendReq(bo, req, batch.regionID, readTimeoutShort)
+	resp, err := sender.SendReq(bo, req, batch.regionID, ReadTimeoutShort)
 
 	batchResp := singleBatchResp{resp: resp}
 	if err != nil {

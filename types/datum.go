@@ -268,6 +268,7 @@ func (d *Datum) GetMysqlBit() BinaryLiteral {
 func (d *Datum) SetBinaryLiteral(b BinaryLiteral) {
 	d.k = KindBinaryLiteral
 	d.b = b
+	d.collation = charset.CollationBin
 }
 
 // SetMysqlBit sets MysqlBit value
