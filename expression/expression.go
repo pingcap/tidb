@@ -931,7 +931,6 @@ func IsBinaryLiteral(expr Expression) bool {
 }
 
 func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
-	ret := false
 	switch sf.FuncName.L {
 	case
 		// op functions.
@@ -978,21 +977,21 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// misc functions.
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6, ast.UUID:
 
-		ret = true
+		return true
 
 	// A special case: Only push down Round by signature
 	case ast.Round:
 		switch sf.Function.PbCode() {
 		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec:
-			ret = true
+			return true
 		}
 	case ast.Rand:
 		switch sf.Function.PbCode() {
 		case tipb.ScalarFuncSig_RandWithSeedFirstGen:
-			ret = true
+			return true
 		}
 	}
-	return ret
+	return false
 }
 
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
@@ -1005,8 +1004,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Substr, ast.Substring,
 		ast.Month,
 		ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.JSONLength,
-		ast.AggFuncApproxCountDistinct:
+		ast.JSONLength:
 		return true
 	case ast.Cast:
 		switch function.Function.PbCode() {
@@ -1100,6 +1098,11 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 	if exists {
 		mask := storeTypeMask(storeType)
 		return !(value&mask == mask)
+	}
+
+	if storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct {
+		// Can not push down approx_count_distinct to other store except tiflash by now.
+		return false
 	}
 
 	return true
