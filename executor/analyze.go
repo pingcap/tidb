@@ -118,7 +118,13 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The meaning of key in map is the structure that used to store the tableID and indexID.
 	// The meaning of value in map is some additional information needed to build global-level stats.
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
-
+	finishJobWithLogFn := func(ctx context.Context, job *statistics.AnalyzeJob, meetError bool) {
+		job.Finish(meetError)
+		logutil.Logger(ctx).Info("analyze finished",
+			zap.Time("start time", job.StartTime),
+			zap.Time("end time", job.EndTime),
+			zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
+	}
 	for panicCnt < concurrency {
 		result, ok := <-resultCh
 		if !ok {
@@ -131,7 +137,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			} else {
 				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
 			}
-			result.job.Finish(true)
+			finishJobWithLogFn(ctx, result.job, true)
 			continue
 		}
 		statisticsID := result.TableID.GetStatisticsID()
@@ -151,16 +157,16 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err1 != nil {
 				err = err1
 				logutil.Logger(ctx).Error("save stats to storage failed", zap.Error(err))
-				result.job.Finish(true)
+				finishJobWithLogFn(ctx, result.job, true)
 				continue
 			}
 		}
 		if err1 := statsHandle.SaveExtendedStatsToStorage(statisticsID, result.ExtStats, false); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save extended stats to storage failed", zap.Error(err))
-			result.job.Finish(true)
+			finishJobWithLogFn(ctx, result.job, true)
 		} else {
-			result.job.Finish(false)
+			finishJobWithLogFn(ctx, result.job, false)
 		}
 	}
 	for _, task := range e.tasks {
