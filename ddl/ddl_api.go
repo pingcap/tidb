@@ -3932,7 +3932,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			return errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
 		}
 
-		if err := checkIndexInModifiableColumn(col, ic); err != nil {
+		if err := checkIndexColumn(col, ic.Length, ic.Name); err != nil {
 			return err
 		}
 	}

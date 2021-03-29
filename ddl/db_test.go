@@ -2360,7 +2360,7 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	s.mustExec(tk, c, "alter table t3 add column a bigint")
 	sql = "alter table t3 change aa a bigint"
 	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
-	//Bug fix on issue 23488
+	// https://github.com/pingcap/tidb/issues/23488
 	s.mustExec(tk, c, "drop table if exists t5")
 	s.mustExec(tk, c, "create table t5 (k varchar(10) primary key, v int)")
 	sql = "alter table t5 change column k k tinytext;"
