@@ -707,7 +707,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	reqCtx := &req.Context
 	resp := &tikvrpc.Response{}
 	// When the store type is TiDB, the request should handle over to TiDB rpc server to handle.
-	if req.StoreTp == kv.TiDB {
+	if req.StoreTp == tikvrpc.TiDB {
 		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
 	}
 
