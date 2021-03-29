@@ -2716,10 +2716,17 @@ func (s *testIntegrationSuite) TestIssue22199(c *C) {
 func (s *testIntegrationSuite) TestIssue22892(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 5;")
 	tk.MustExec("insert into t1 values (0);")
 	tk.MustQuery("select * from t1 where a not between 1 and 2;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int) partition by hash (a) partitions 5;")
+	tk.MustExec("insert into t2 values (0);")
+	tk.MustQuery("select * from t2 where a not between 1 and 2;").Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
