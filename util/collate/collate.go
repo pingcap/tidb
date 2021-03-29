@@ -211,6 +211,10 @@ func GetSupportedCollations() []*charset.Collation {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		newSupportedCollations := make([]*charset.Collation, 0, len(newCollatorMap))
 		for name := range newCollatorMap {
+			// utf8mb4_zh_pinyin_tidb_as_cs is under developing, should not be shown to user.
+			if name == "utf8mb4_zh_pinyin_tidb_as_cs" {
+				continue
+			}
 			if coll, err := charset.GetCollationByName(name); err != nil {
 				// Should never happens.
 				terror.Log(err)
@@ -276,6 +280,12 @@ func decodeRune(s string, si int) (r rune, newIndex int) {
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
+}
+
+// IsBinCollation returns if the collation is 'xx_bin'
+func IsBinCollation(collate string) bool {
+	return collate == "ascii_bin" || collate == "latin1_bin" ||
+		collate == "utf8_bin" || collate == "utf8mb4_bin"
 }
 
 func init() {

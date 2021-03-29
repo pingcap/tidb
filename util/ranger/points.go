@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -164,7 +163,6 @@ func NullRange() []*Range {
 type builder struct {
 	err error
 	sc  *stmtctx.StatementContext
-	ctx *sessionctx.Context
 }
 
 func (r *builder) build(expr expression.Expression) []*point {
@@ -640,6 +638,8 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: types.MaxValueDatum()}
 		return []*point{startPoint, endPoint}
+	case ast.LogicAnd:
+		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	}
 	return nil
 }

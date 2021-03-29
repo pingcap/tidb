@@ -1,6 +1,7 @@
 sig/execution:
   - distsql/*
   - executor/*
+  - !executor/brie*
   - util/chunk/*
   - util/disk/*
   - util/execdetails/*
@@ -22,7 +23,7 @@ sig/planner:
 component/statistics:
   - statistics/*
 
-sig/infra:
+sig/sql-infra:
   - ddl/*
   - domain/*
   - infoschema/*
@@ -36,3 +37,6 @@ sig/infra:
 
 component/config:
   - config/*
+
+sig/migrate:
+  - executor/brie*

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
@@ -157,7 +158,7 @@ func newBackfillWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		sessCtx:   sessCtx,
 		taskCh:    make(chan *reorgBackfillTask, 1),
 		resultCh:  make(chan *backfillResult, 1),
-		priority:  kv.PriorityLow,
+		priority:  tikvstore.PriorityLow,
 	}
 }
 
@@ -335,7 +336,8 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 		return nil, errors.Trace(err)
 	}
 	if len(ranges) == 0 {
-		return nil, errors.Trace(errInvalidSplitRegionRanges)
+		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
+		return nil, errors.Trace(errInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
 	return ranges, nil
 }
@@ -672,7 +674,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 
 	ver := kv.Version{Ver: version}
 	snap := store.GetSnapshot(ver)
-	snap.SetOption(kv.Priority, priority)
+	snap.SetOption(tikvstore.Priority, priority)
 
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {
@@ -690,7 +692,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rk := t.RecordKey(handle)
+		rk := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 
 		more, err := fn(handle, rk, it.Value())
 		if !more || err != nil {

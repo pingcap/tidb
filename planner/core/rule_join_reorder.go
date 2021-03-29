@@ -119,6 +119,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 	return p, nil
 }
 
+// nolint:structcheck
 type baseSingleGroupJoinOrderSolver struct {
 	ctx          sessionctx.Context
 	curJoinGroup []*jrNode

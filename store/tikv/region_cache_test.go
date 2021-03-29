@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
@@ -26,8 +27,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -519,6 +520,61 @@ func (s *testRegionCacheSuite) TestSendFailInvalidateRegionsInSameStore(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
+	s.cache.enableForwarding = true
+
+	// key range: ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := s.cluster.AllocIDs(2)
+	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+
+	var storeState uint32 = uint32(unreachable)
+	s.cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+		return livenessState(atomic.LoadUint32(&storeState))
+	}
+
+	// Check the two regions.
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+
+	// Invoke OnSendFail so that the store will be marked as needForwarding
+	ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx, NotNil)
+	s.cache.OnSendFail(s.bo, ctx, false, errors.New("test error"))
+
+	// ...then on next retry, proxy will be used
+	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx, NotNil)
+	c.Assert(ctx.ProxyStore, NotNil)
+	c.Assert(ctx.ProxyStore.storeID, Equals, s.store2)
+
+	// Proxy will be also applied to other regions whose leader is on the store
+	loc2, err := s.cache.LocateKey(s.bo, []byte("x"))
+	c.Assert(err, IsNil)
+	c.Assert(loc2.Region.id, Equals, region2)
+	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc2.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx, NotNil)
+	c.Assert(ctx.ProxyStore, NotNil)
+	c.Assert(ctx.ProxyStore.storeID, Equals, s.store2)
+
+	// Recover the store
+	atomic.StoreUint32(&storeState, uint32(reachable))
+	// The proxy should be unset after several retries
+	for retry := 0; retry < 15; retry++ {
+		ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
+		c.Assert(err, IsNil)
+		if ctx.ProxyStore == nil {
+			break
+		}
+		time.Sleep(time.Millisecond * 200)
+	}
+	c.Assert(ctx.ProxyStore, IsNil)
+}
+
 func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	// 3 nodes and no.1 is leader.
 	store3 := s.cluster.AllocID()
@@ -820,7 +876,7 @@ func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
 	c.Assert(lctx.Peer.Id, Equals, peer3)
 
 	// epoch-not-match on tiflash
-	ctxTiFlash, err := s.cache.GetTiFlashRPCContext(s.bo, loc1.Region)
+	ctxTiFlash, err := s.cache.GetTiFlashRPCContext(s.bo, loc1.Region, true)
 	c.Assert(err, IsNil)
 	c.Assert(ctxTiFlash.Peer.Id, Equals, s.peer1)
 	ctxTiFlash.Peer.Role = metapb.PeerRole_Learner
@@ -948,6 +1004,33 @@ func (s *testRegionCacheSuite) TestReplaceNewAddrAndOldOfflineImmediately(c *C) 
 	getVal, err := client.Get(testKey)
 	c.Assert(err, IsNil)
 	c.Assert(getVal, BytesEquals, testValue)
+}
+
+func (s *testRegionCacheSuite) TestReplaceStore(c *C) {
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+
+	client := &RawKVClient{
+		clusterID:   0,
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+	}
+	defer client.Close()
+	testKey := []byte("test_key")
+	testValue := []byte("test_value")
+	err := client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
+
+	s.cluster.MarkTombstone(s.store1)
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(s.store1))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.RemovePeer(s.region1, s.peer1)
+	s.cluster.ChangeLeader(s.region1, peer3)
+
+	err = client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
 }
 
 func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
@@ -1309,6 +1392,25 @@ func (s *testRegionCacheSuite) TestContainsByEnd(c *C) {
 	c.Assert(createSampleRegion([]byte{10}, []byte{20}).ContainsByEnd([]byte{30}), IsFalse)
 }
 
+func (s *testRegionCacheSuite) TestSwitchPeerWhenNoLeader(c *C) {
+	var prevCtx *RPCContext
+	for i := 0; i <= len(s.cluster.GetAllStores()); i++ {
+		loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+		c.Assert(err, IsNil)
+		ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
+		c.Assert(err, IsNil)
+		if prevCtx == nil {
+			c.Assert(i, Equals, 0)
+		} else {
+			c.Assert(ctx.AccessIdx, Not(Equals), prevCtx.AccessIdx)
+			c.Assert(ctx.Peer, Not(DeepEquals), prevCtx.Peer)
+		}
+		s.cache.InvalidateCachedRegionWithReason(loc.Region, NoLeader)
+		c.Assert(s.cache.getCachedRegionWithRLock(loc.Region).invalidReason, Equals, NoLeader)
+		prevCtx = ctx
+	}
+}
+
 func BenchmarkOnRequestFail(b *testing.B) {
 	/*
 			This benchmark simulate many concurrent requests call OnSendRequestFail method
@@ -1337,7 +1439,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 				AccessIdx:  accessIdx,
 				Peer:       peer,
 				Store:      store,
-				AccessMode: TiKvOnly,
+				AccessMode: TiKVOnly,
 			}
 			r := cache.getCachedRegionWithRLock(rpcCtx.Region)
 			if r != nil {

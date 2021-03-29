@@ -301,6 +301,9 @@ type LogicalPlan interface {
 
 	// rollBackTaskMap roll back all taskMap's logs after TimeStamp TS.
 	rollBackTaskMap(TS uint64)
+
+	// canPushToCop check if we might push this plan to a specific store.
+	canPushToCop(store kv.StoreType) bool
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -601,6 +604,9 @@ func (p *basePlan) ExplainInfo() string {
 
 func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.tp
+		}
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
 }
