@@ -8946,3 +8946,12 @@ func (s *testIntegrationSerialSuite) TestCollationForBinaryLiteral(c *C) {
 	tk.MustQuery("select * from t where col1 not in (0x1B,0x20) order by col1").Check(testkit.Rows("\x1e \xec 6966939640596047133"))
 	tk.MustExec("drop table t")
 }
+
+func (s *testIntegrationSuite) TestIssue23623(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("insert into t1 values(-2147483648), (-2147483648), (null);")
+	tk.MustQuery("select count(*) from t1 where c1 > (select sum(c1) from t1);").Check(testkit.Rows("2"))
+}
