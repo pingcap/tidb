@@ -501,6 +501,7 @@ func (s *testPartitionPruneSuit) Test22396(c *C) {
 
 func (s *testPartitionPruneSuit) TestIssue23608(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 10")
