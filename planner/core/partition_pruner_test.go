@@ -505,12 +505,12 @@ func (s *testPartitionPruneSuit) TestIssue23608(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 10")
 	tk.MustExec("insert into t1 values (1), (2), (12), (3), (11), (13)")
-	tk.MustQuery("select * from t1 where a not between 2 and 2").Check(testkit.Rows("1", "11", "12", "3", "13"))
-	tk.MustQuery("select * from t1 where not (a < -20 or a > 20)").Check(testkit.Rows("1", "11", "2", "12", "3", "13"))
-	tk.MustQuery("selecmat * from t1 where not (a > 0 and a < 10)").Check(testkit.Rows("11", "12", "13"))
-	tk.MustQuery("select * from t1 where not (a < -20)").Check(testkit.Rows("1", "11", "2", "12", "3", "13"))
-	tk.MustQuery("select * from t1 where not (a > 20)").Check(testkit.Rows("1", "11", "2", "12", "3", "13"))
-	tk.MustQuery("select * from t1 where not (a = 1)").Check(testkit.Rows("11", "2", "12", "3", "13"))
+	tk.MustQuery("select * from t1 where a not between 2 and 2").Sort().Check(testkit.Rows("1", "11", "12",  "13", "3"))
+	tk.MustQuery("select * from t1 where not (a < -20 or a > 20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t1 where not (a > 0 and a < 10)").Sort().Check(testkit.Rows("11", "12", "13"))
+	tk.MustQuery("select * from t1 where not (a < -20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t1 where not (a > 20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t1 where not (a = 1)").Sort().Check(testkit.Rows("11", "12", "13", "2", "3"))
 	tk.MustQuery("select * from t1 where not (a != 1)").Check(testkit.Rows("1"))
 
 	tk.MustExec("drop table if exists t2")
@@ -521,7 +521,7 @@ partition by range (a) (
     partition p1 values less than (10),
     partition p2 values less than (20)
 )`)
-	tk.MustQuery("explain format='brief' select * from t2 where not (a < 5)").Check(testkit.Rows(
+	tk.MustQuery("explain format = 'brief' select * from t2 where not (a < 5)").Check(testkit.Rows(
 		"PartitionUnion 6666.67 root  ",
 		"├─TableReader 3333.33 root  data:Selection",
 		"│ └─Selection 3333.33 cop[tikv]  ge(test.t2.a, 5)",
