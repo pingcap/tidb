@@ -392,14 +392,23 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 	sc := l.ctx.GetSessionVars().StmtCtx
 	helper := tables.NewListPartitionLocationHelper()
 	for _, r := range ranges {
+		if len(r.LowVal) != 1 || len(r.HighVal) != 1 {
+			return nil, true, nil
+		}
+		var locations []tables.ListPartitionLocation
 		if r.IsPointNullable(sc) {
-			if len(r.HighVal) != 1 {
-				return nil, true, nil
-			}
 			location, err := colPrune.LocatePartition(sc, r.HighVal[0])
 			if err != nil {
 				return nil, false, err
 			}
+			locations = []tables.ListPartitionLocation{location}
+		} else {
+			locations, err = colPrune.LocateRanges(sc, r)
+			if err != nil {
+				return nil, false, nil
+			}
+		}
+		for _, location := range locations {
 			if len(l.partitionNames) > 0 {
 				for _, pg := range location {
 					if l.findByName(l.partitionNames, l.pi.Definitions[pg.PartIdx].Name.L) {
@@ -409,8 +418,6 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			} else {
 				helper.Union(location)
 			}
-		} else {
-			return nil, true, nil
 		}
 	}
 	return helper.GetLocation(), false, nil
