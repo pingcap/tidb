@@ -501,7 +501,7 @@ func (s *testPartitionPruneSuit) Test22396(c *C) {
 
 func (s *testPartitionPruneSuit) TestIssue23608(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 10")
 	tk.MustExec("insert into t1 values (1), (2), (12), (3), (11), (13)")
@@ -529,4 +529,16 @@ partition by range (a) (
 		"└─TableReader 3333.33 root  data:Selection",
 		"  └─Selection 3333.33 cop[tikv]  ge(test.t2.a, 5)",
 		"    └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo"))
+
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3(a int) partition by hash (a) partitions 10")
+	tk.MustExec("insert into t3 values (1), (2), (12), (3), (11), (13)")
+	tk.MustQuery("select * from t3 where a not between 2 and 2").Sort().Check(testkit.Rows("1", "11", "12", "13", "3"))
+	tk.MustQuery("select * from t3 where not (a < -20 or a > 20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t3 where not (a > 0 and a < 10)").Sort().Check(testkit.Rows("11", "12", "13"))
+	tk.MustQuery("select * from t3 where not (a < -20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t3 where not (a > 20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t3 where not (a = 1)").Sort().Check(testkit.Rows("11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t3 where not (a != 1)").Check(testkit.Rows("1"))
 }
