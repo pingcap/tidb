@@ -120,15 +120,8 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 	if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
 		hdStatus = tablecodec.HandleIsUnsigned
 	}
-	colInfos := make([]rowcodec.ColInfo, 0, len(m.index.Columns))
-	for _, idxCol := range m.index.Columns {
-		col := m.table.Columns[idxCol.Offset]
-		colInfos = append(colInfos, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: m.table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
-	}
+	colInfos := tables.BuildRowcodecColInfoForIndexColumns(m.index, m.table)
+	colInfos = tables.TryAppendCommonHandleRowcodecColInfos(colInfos, m.table)
 	values, err := tablecodec.DecodeIndexKV(key, value, len(m.index.Columns), hdStatus, colInfos)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -279,7 +272,7 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 		offset := colIDs[id]
 		if m.table.IsCommonHandle {
 			for i, colID := range m.pkColIDs {
-				if colID == col.ID && !types.CommonHandleNeedRestoredData(&col.FieldType) {
+				if colID == col.ID && !types.NeedRestoredData(&col.FieldType) {
 					// Only try to decode handle when there is no corresponding column in the value.
 					// This is because the information in handle may be incomplete in some cases.
 					// For example, prefixed clustered index like 'primary key(col1(1))' only store the leftmost 1 char in the handle.

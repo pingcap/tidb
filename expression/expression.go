@@ -968,7 +968,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.DateFormat, ast.FromDays /*ast.ToDays,*/, ast.DayOfYear, ast.DayOfMonth, ast.Year, ast.Month,
 		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
 		// ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.DayName,
-		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
+		ast.PeriodAdd, ast.PeriodDiff /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
@@ -1039,6 +1039,13 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.Round:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundDec:
+			return true
+		default:
+			return false
+		}
+	case ast.Extract:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_ExtractDatetime:
 			return true
 		default:
 			return false

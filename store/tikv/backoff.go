@@ -92,7 +92,8 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 		}
 		logutil.BgLogger().Debug("backoff",
 			zap.Int("base", base),
-			zap.Int("sleep", sleep))
+			zap.Int("sleep", sleep),
+			zap.Int("attempts", attempts))
 
 		realSleep := sleep
 		// when set maxSleepMs >= 0 in `tikv.BackoffWithMaxSleep` will force sleep maxSleepMs milliseconds.

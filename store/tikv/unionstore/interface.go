@@ -1,5 +1,5 @@
-// Copyright 2019 PingCAP, Inc.
-//
+// Copyright 2021 PingCAP, Inc.
+
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,17 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metrics
+package unionstore
 
-import "github.com/prometheus/client_golang/prometheus"
-
-// Metrics to monitor gRPC service
-var (
-	GRPCConnTransientFailureCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "grpc",
-			Name:      "connection_transient_failure_count",
-			Help:      "Counter of gRPC connection transient failure",
-		}, []string{LblAddress, LblStore})
+import (
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
+
+// MemBufferIterator is an Iterator with KeyFlags related functions.
+type MemBufferIterator interface {
+	tidbkv.Iterator
+	HasValue() bool
+	Flags() kv.KeyFlags
+	UpdateFlags(...kv.FlagsOp)
+	Handle() MemKeyHandle
+}

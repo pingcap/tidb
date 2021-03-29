@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"go.uber.org/zap"
 )
 
@@ -61,6 +61,19 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	return txn.extractKeyErr(err)
 }
 
+// GetSnapshot returns the Snapshot binding to this transaction.
+func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
+	return txn.KVTxn.GetSnapshot()
+}
+
+func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
+	return txn.KVTxn.GetMemBuffer()
+}
+
+func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
+	return &tikvUnionStore{txn.KVTxn.GetUnionStore()}
+}
+
 func (txn *tikvTxn) extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikv.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())
@@ -78,8 +91,7 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if tblInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
 	}
-
-	value, err := txn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}
@@ -170,16 +182,7 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		return genKeyExistsError(name, key.String(), errors.New("missing value"))
 	}
 
-	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
-	for _, idxCol := range idxInfo.Columns {
-		col := tblInfo.Columns[idxCol.Offset]
-		colInfo = append(colInfo, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
-	}
-
+	colInfo := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
 	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleNotNeeded, colInfo)
 	if err != nil {
 		return genKeyExistsError(name, key.String(), err)
@@ -197,4 +200,13 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		valueStr = append(valueStr, str)
 	}
 	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
+}
+
+//tikvUnionStore implements kv.UnionStore
+type tikvUnionStore struct {
+	*unionstore.KVUnionStore
+}
+
+func (u *tikvUnionStore) GetMemBuffer() kv.MemBuffer {
+	return u.KVUnionStore.GetMemBuffer()
 }
