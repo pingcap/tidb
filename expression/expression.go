@@ -995,16 +995,6 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	return ret
 }
 
-func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
-	// need review: can TiDB cop support all of scalar expression? can it do AggFuncApproxCountDistinct?
-	switch function.FuncName.L {
-	case ast.AggFuncApproxCountDistinct:
-		return false
-	default:
-		return true
-	}
-}
-
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case
@@ -1055,6 +1045,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	}
 }
 
+func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
+	// TiDB can support all functions, but TiPB may not include some functions.
+	return scalarExprSupportedByTiKV(function) || scalarExprSupportedByFlash(function)
+}
+
 func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	// Use the failpoint to control whether to push down an expression in the integration test.
 	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
@@ -1083,7 +1078,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	case kv.TiDB:
 		ret = scalarExprSupportedByTiDB(sf)
 	case kv.UnSpecified:
-		ret = scalarExprSupportedByFlash(sf) || scalarExprSupportedByTiKV(sf) || scalarExprSupportedByTiDB(sf)
+		ret = scalarExprSupportedByTiDB(sf) || scalarExprSupportedByTiKV(sf) || scalarExprSupportedByFlash(sf)
 	}
 
 	if ret {
