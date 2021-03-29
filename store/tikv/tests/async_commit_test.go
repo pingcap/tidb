@@ -181,7 +181,7 @@ func (s *testAsyncCommitSuite) lockKeysWithAsyncCommit(c *C, keys, values [][]by
 	tpc.SetPrimaryKey(primaryKey)
 
 	ctx := context.Background()
-	err = tpc.PrewriteMutations(ctx)
+	err = tpc.PrewriteAllMutations(ctx)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {

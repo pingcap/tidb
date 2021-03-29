@@ -48,7 +48,7 @@ var (
 type testCommitterSuite struct {
 	OneByOneSuite
 	cluster cluster.Cluster
-	store   *tikv.KVStore
+	store   tikv.StoreProbe
 }
 
 var _ = SerialSuites(&testCommitterSuite{})
@@ -86,7 +86,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	// )
 	// c.Assert(err, IsNil)
 
-	s.store = store
+	s.store = tikv.StoreProbe{KVStore: store}
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
@@ -98,14 +98,14 @@ func (s *testCommitterSuite) TearDownSuite(c *C) {
 func (s *testCommitterSuite) begin(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return tikv.TxnProbe{KVTxn: txn}
+	return txn
 }
 
 func (s *testCommitterSuite) beginAsyncCommit(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
-	return tikv.TxnProbe{KVTxn: txn}
+	return txn
 }
 
 func (s *testCommitterSuite) checkValues(c *C, m map[string]string) {
@@ -150,7 +150,7 @@ func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
 
 	{
 		txn := s.begin(c)
-		err := txn.GetMemBuffer().SetWithFlags(tidbkv.Key("bb"), []byte{0}, tidbkv.SetPresumeKeyNotExists)
+		err := txn.GetMemBuffer().SetWithFlags(tidbkv.Key("bb"), []byte{0}, kv.SetPresumeKeyNotExists)
 		c.Assert(err, IsNil)
 		err = txn.Set(tidbkv.Key("ba"), []byte{1})
 		c.Assert(err, IsNil)
@@ -158,14 +158,14 @@ func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
 		c.Assert(err, IsNil)
 		committer, err := txn.NewCommitter(0)
 		c.Assert(err, IsNil)
-		err = committer.PrewriteMutations(context.Background())
+		err = committer.PrewriteAllMutations(context.Background())
 		c.Assert(err, IsNil)
 		c.Check(committer.IsTTLRunning(), IsTrue)
 	}
 
 	{
 		txn := s.begin(c)
-		err := txn.GetMemBuffer().SetWithFlags(tidbkv.Key("dd"), []byte{0}, tidbkv.SetPresumeKeyNotExists)
+		err := txn.GetMemBuffer().SetWithFlags(tidbkv.Key("dd"), []byte{0}, kv.SetPresumeKeyNotExists)
 		c.Assert(err, IsNil)
 		err = txn.Set(tidbkv.Key("de"), []byte{1})
 		c.Assert(err, IsNil)
@@ -173,7 +173,7 @@ func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
 		c.Assert(err, IsNil)
 		committer, err := txn.NewCommitter(0)
 		c.Assert(err, IsNil)
-		err = committer.PrewriteMutations(context.Background())
+		err = committer.PrewriteAllMutations(context.Background())
 		c.Assert(err, IsNil)
 		c.Check(committer.IsTTLRunning(), IsTrue)
 	}
@@ -221,7 +221,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := txn1.NewCommitter(0)
 	c.Assert(err, IsNil)
-	err = committer.PrewriteMutations(ctx)
+	err = committer.PrewriteAllMutations(ctx)
 	c.Assert(err, IsNil)
 
 	txn2 := s.begin(c)
@@ -229,7 +229,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a0"))
 
-	err = committer.PrewriteMutations(ctx)
+	err = committer.PrewriteAllMutations(ctx)
 	if err != nil {
 		// Retry.
 		txn1 = s.begin(c)
@@ -239,7 +239,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		committer, err = txn1.NewCommitter(0)
 		c.Assert(err, IsNil)
-		err = committer.PrewriteMutations(ctx)
+		err = committer.PrewriteAllMutations(ctx)
 		c.Assert(err, IsNil)
 	}
 	commitTS, err := s.store.GetOracle().GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
@@ -265,7 +265,7 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel the context
-	err = committer.PrewriteMutations(ctx)
+	err = committer.PrewriteAllMutations(ctx)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 }
 
@@ -291,7 +291,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := txn1.NewCommitter(0)
 	c.Assert(err, IsNil)
-	err = committer.PrewriteMutations(context.Background())
+	err = committer.PrewriteAllMutations(context.Background())
 	c.Assert(err, IsNil)
 	// txn3 writes "c"
 	err = txn3.Set([]byte("c"), []byte("c3"))
@@ -320,7 +320,7 @@ func (s *testCommitterSuite) TestContextCancelCausingUndetermined(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := txn.NewCommitter(0)
 	c.Assert(err, IsNil)
-	err = committer.PrewriteMutations(context.Background())
+	err = committer.PrewriteAllMutations(context.Background())
 	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr", `return(true)`), IsNil)
@@ -438,7 +438,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	c.Assert(err, IsNil)
 	ctx := context.Background()
 	committer.Cleanup(ctx)
-	err = committer.PrewriteMutations(ctx)
+	err = committer.PrewriteAllMutations(ctx)
 	c.Assert(err, NotNil)
 	errMsgMustContain(c, err, "already rolled back")
 }
@@ -556,7 +556,7 @@ func (s *testCommitterSuite) TestPrewriteTxnSize(c *C) {
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	err = committer.PrewriteMutations(ctx)
+	err = committer.PrewriteAllMutations(ctx)
 	c.Assert(err, IsNil)
 
 	// Check the written locks in the first region (50 keys)
@@ -646,7 +646,7 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 	txn = s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
 	_, _ = txn.GetUnionStore().Get(context.TODO(), key)
-	c.Assert(txn.GetMemBuffer().SetWithFlags(key, key, tidbkv.SetPresumeKeyNotExists), IsNil)
+	c.Assert(txn.GetMemBuffer().SetWithFlags(key, key, kv.SetPresumeKeyNotExists), IsNil)
 	lockCtx := &tidbkv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
 	err := txn.LockKeys(context.Background(), lockCtx, key)
 	c.Assert(err, NotNil)
@@ -686,7 +686,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	msBeforeLockExpired := s.store.GetOracle().UntilExpired(txn.StartTS(), lockInfo.LockTtl, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(msBeforeLockExpired, GreaterEqual, int64(100))
 
-	lr := tikv.StoreProbe{KVStore: s.store}.NewLockResolver()
+	lr := s.store.NewLockResolver()
 	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 	status, err := lr.GetTxnStatus(bo, txn.StartTS(), key2, 0, txn.StartTS(), true, false, nil)
 	c.Assert(err, IsNil)
@@ -755,13 +755,13 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	// insert k1, k2, k3 and delete k1
 	txn1 := s.begin(c)
 	txn1.DelOption(kv.Pessimistic)
-	txn1.ClearStoreTxnLatches()
-	_, err := txn1.Get(context.Background(), k1)
-	// to fix: key not exist
+	s.store.ClearTxnLatches()
+  _, err := txn1.Get(context.Background(), k1)
+  // to fix: key not exist
 	c.Assert(err, NotNil)
-	err = txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, tidbkv.SetPresumeKeyNotExists)
+	err = txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, kv.SetPresumeKeyNotExists)
 	c.Assert(err, IsNil)
-	err = txn1.Set(k2, []byte{1})
+  err = txn1.Set(k2, []byte{1})
 	c.Assert(err, IsNil)
 	err = txn1.Set(k3, []byte{2})
 	c.Assert(err, IsNil)
@@ -786,7 +786,7 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	// start txn2 to read k3(prewrite success and primary should be committed)
 	txn2 := s.begin(c)
 	txn2.DelOption(kv.Pessimistic)
-	txn2.ClearStoreTxnLatches()
+	s.store.ClearTxnLatches()
 	v, err := txn2.Get(context.Background(), k3)
 	c.Assert(err, IsNil) // should resolve lock and read txn1 k3 result instead of rollback it.
 	c.Assert(v[0], Equals, byte(2))
@@ -803,19 +803,19 @@ func (s *testCommitterSuite) TestDeleteAllYourWrites(c *C) {
 	// insert k1, k2, k3 and delete k1, k2, k3
 	txn1 := s.begin(c)
 	txn1.DelOption(kv.Pessimistic)
-	txn1.ClearStoreTxnLatches()
-	err := txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, tidbkv.SetPresumeKeyNotExists)
-	c.Assert(err, IsNil)
+	s.store.ClearTxnLatches()
+  err := txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, kv.SetPresumeKeyNotExists)
+  c.Assert(err, IsNil)
 	err = txn1.Delete(k1)
-	c.Assert(err, IsNil)
-	err = txn1.GetMemBuffer().SetWithFlags(k2, []byte{1}, tidbkv.SetPresumeKeyNotExists)
-	c.Assert(err, IsNil)
+  c.Assert(err, IsNil)
+	err = txn1.GetMemBuffer().SetWithFlags(k2, []byte{1}, kv.SetPresumeKeyNotExists)
+  c.Assert(err, IsNil)
 	err = txn1.Delete(k2)
-	c.Assert(err, IsNil)
-	err = txn1.GetMemBuffer().SetWithFlags(k3, []byte{2}, tidbkv.SetPresumeKeyNotExists)
-	c.Assert(err, IsNil)
+  c.Assert(err, IsNil)
+	err = txn1.GetMemBuffer().SetWithFlags(k3, []byte{2}, kv.SetPresumeKeyNotExists)
+  c.Assert(err, IsNil)
 	err = txn1.Delete(k3)
-	c.Assert(err, IsNil)
+  c.Assert(err, IsNil)
 	err1 := txn1.Commit(context.Background())
 	c.Assert(err1, IsNil)
 }
@@ -829,12 +829,12 @@ func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
 	// insert k1, k2, k2 and delete k1
 	txn1 := s.begin(c)
 	txn1.DelOption(kv.Pessimistic)
-	txn1.ClearStoreTxnLatches()
-	err := txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, tidbkv.SetPresumeKeyNotExists)
-	c.Assert(err, IsNil)
+	s.store.ClearTxnLatches()
+  err := txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, kv.SetPresumeKeyNotExists)
+  c.Assert(err, IsNil)
 	err = txn1.Delete(k1)
-	c.Assert(err, IsNil)
-	err = txn1.LockKeys(context.Background(), &tidbkv.LockCtx{}, k2, k3) // select * from t where x in (k2, k3) for update
+  c.Assert(err, IsNil)
+	err := txn1.LockKeys(context.Background(), &tidbkv.LockCtx{}, k2, k3) // select * from t where x in (k2, k3) for update
 	c.Assert(err, IsNil)
 
 	committer1, err := txn1.NewCommitter(0)
@@ -855,7 +855,7 @@ func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
 	// start txn2 to read k3
 	txn2 := s.begin(c)
 	txn2.DelOption(kv.Pessimistic)
-	txn2.ClearStoreTxnLatches()
+	s.store.ClearTxnLatches()
 	err = txn2.Set(k3, []byte{33})
 	c.Assert(err, IsNil)
 	var meetLocks []*tikv.Lock
@@ -1147,7 +1147,7 @@ func (s *testCommitterSuite) TestPushPessimisticLock(c *C) {
 	// Strip the prewrite of the primary key.
 	committer.SetMutations(committer.GetMutations().Slice(1, 2))
 	c.Assert(err, IsNil)
-	err = committer.PrewriteMutations(ctx)
+	err = committer.PrewriteAllMutations(ctx)
 	c.Assert(err, IsNil)
 	// The primary lock is a pessimistic lock and the secondary lock is a optimistic lock.
 	lock1 := s.getLockInfo(c, k1)
@@ -1202,7 +1202,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	committer := txn1.GetCommitter()
 	err = committer.InitKeysAndMutations()
 	c.Assert(err, IsNil)
-	err = committer.PrewriteMutations(ctx)
+	err = committer.PrewriteAllMutations(ctx)
 	c.Assert(err, IsNil)
 	// lock the pessimistic keys
 	err = txn1.LockKeys(context.Background(), lockCtx, pessimisticLockKey)

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -56,7 +55,7 @@ var MaxRecvMsgSize = math.MaxInt64
 // Timeout durations.
 var (
 	dialTimeout               = 5 * time.Second
-	readTimeoutShort          = 20 * time.Second   // For requests that read/write several key-values.
+	ReadTimeoutShort          = 20 * time.Second   // For requests that read/write several key-values.
 	ReadTimeoutMedium         = 60 * time.Second   // For requests that may need scan region.
 	ReadTimeoutLong           = 150 * time.Second  // For requests that may need scan region multiple times.
 	ReadTimeoutUltraLong      = 3600 * time.Second // For requests that may scan many regions for tiflash.
@@ -360,7 +359,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	// TiDB will not send batch commands to TiFlash, to resolve the conflict with Batch Cop Request.
-	enableBatch := req.StoreTp != kv.TiDB && req.StoreTp != kv.TiFlash
+	enableBatch := req.StoreTp != tikvrpc.TiDB && req.StoreTp != tikvrpc.TiFlash
 	c.recycleMu.RLock()
 	defer c.recycleMu.RUnlock()
 	connArray, err := c.getConnArray(addr, enableBatch)
