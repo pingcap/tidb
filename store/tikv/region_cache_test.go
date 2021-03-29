@@ -27,8 +27,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -876,7 +876,7 @@ func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
 	c.Assert(lctx.Peer.Id, Equals, peer3)
 
 	// epoch-not-match on tiflash
-	ctxTiFlash, err := s.cache.GetTiFlashRPCContext(s.bo, loc1.Region)
+	ctxTiFlash, err := s.cache.GetTiFlashRPCContext(s.bo, loc1.Region, true)
 	c.Assert(err, IsNil)
 	c.Assert(ctxTiFlash.Peer.Id, Equals, s.peer1)
 	ctxTiFlash.Peer.Role = metapb.PeerRole_Learner
@@ -1390,6 +1390,25 @@ func (s *testRegionCacheSuite) TestContainsByEnd(c *C) {
 	c.Assert(createSampleRegion([]byte{10}, []byte{20}).ContainsByEnd([]byte{}), IsFalse)
 	c.Assert(createSampleRegion([]byte{10}, []byte{20}).ContainsByEnd([]byte{15}), IsTrue)
 	c.Assert(createSampleRegion([]byte{10}, []byte{20}).ContainsByEnd([]byte{30}), IsFalse)
+}
+
+func (s *testRegionCacheSuite) TestSwitchPeerWhenNoLeader(c *C) {
+	var prevCtx *RPCContext
+	for i := 0; i <= len(s.cluster.GetAllStores()); i++ {
+		loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+		c.Assert(err, IsNil)
+		ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
+		c.Assert(err, IsNil)
+		if prevCtx == nil {
+			c.Assert(i, Equals, 0)
+		} else {
+			c.Assert(ctx.AccessIdx, Not(Equals), prevCtx.AccessIdx)
+			c.Assert(ctx.Peer, Not(DeepEquals), prevCtx.Peer)
+		}
+		s.cache.InvalidateCachedRegionWithReason(loc.Region, NoLeader)
+		c.Assert(s.cache.getCachedRegionWithRLock(loc.Region).invalidReason, Equals, NoLeader)
+		prevCtx = ctx
+	}
 }
 
 func BenchmarkOnRequestFail(b *testing.B) {
