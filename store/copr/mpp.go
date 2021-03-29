@@ -206,7 +206,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPTask, mppReq, kvrpcpb.Context{})
-	wrappedReq.StoreTp = kv.TiFlash
+	wrappedReq.StoreTp = tikvrpc.TiFlash
 
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
 	var rpcResp *tikvrpc.Response
@@ -267,7 +267,7 @@ func (m *mppIterator) cancelMppTasks() {
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
-	wrappedReq.StoreTp = kv.TiFlash
+	wrappedReq.StoreTp = tikvrpc.TiFlash
 
 	usedStoreAddrs := make(map[string]bool)
 	for _, task := range m.tasks {
@@ -300,7 +300,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPConn, connReq, kvrpcpb.Context{})
-	wrappedReq.StoreTp = kv.TiFlash
+	wrappedReq.StoreTp = tikvrpc.TiFlash
 
 	// Drain result from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
