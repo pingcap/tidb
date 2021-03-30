@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
@@ -638,7 +637,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	}
 	txnCtx := sessVars.TxnCtx
 	var newForUpdateTS uint64
-	if deadlock, ok := errors.Cause(err).(*tikv.ErrDeadlock); ok {
+	if deadlock, ok := errors.Cause(err).(*tikvstore.ErrDeadlock); ok {
 		if !deadlock.IsRetryable {
 			return nil, ErrDeadlock
 		}
@@ -803,6 +802,8 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 var (
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
+	totalTiFlashQueryFailCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.LblError)
+	totalTiFlashQuerySuccCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.LblOK)
 )
 
 // FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
@@ -824,6 +825,13 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
+	if sessVars.StmtCtx.IsTiFlash.Load() {
+		if succ {
+			totalTiFlashQuerySuccCounter.Inc()
+		} else {
+			totalTiFlashQueryFailCounter.Inc()
+		}
+	}
 	prevStmt := a.GetTextToLog()
 	if sessVars.EnableRedactLog {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)

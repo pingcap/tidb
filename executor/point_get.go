@@ -202,6 +202,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
 			handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals)
 			if err != nil {
+				if kv.ErrNotExist.Equal(err) {
+					return nil
+				}
 				return err
 			}
 			e.handle, err = kv.NewCommonHandle(handleBytes)
