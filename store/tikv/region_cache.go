@@ -1773,8 +1773,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 // A quick and dirty solution to found whether an err is caused by StoreNotFound.
 // todo: A better solution, maybe some err-code based error handling?
 func isStoreNotFoundError(err error) bool {
-	return err.Error() == "[pd] store field in rpc response not set" ||
-		(strings.Contains(err.Error(), "invalid store ID") && strings.Contains(err.Error(), "not found"))
+	return strings.Contains(err.Error(), "invalid store ID") && strings.Contains(err.Error(), "not found")
 }
 
 // reResolve try to resolve addr for store that need check. Returns false if the region is in tombstone state or is
@@ -1787,9 +1786,9 @@ func (s *Store) reResolve(c *RegionCache) (bool, error) {
 	} else {
 		metrics.RegionCacheCounterWithGetStoreOK.Inc()
 	}
-	// `err` here can mean "load Store from PD failed" or "store not found"
-	// if load Store from PD is successful but pd didn't found the store
-	// these error should be handled by next `if` instead of here
+	// `err` here can mean either "load Store from PD failed" or "store not found"
+	// If load Store from PD is successful but PD didn't find the store
+	// the err should be handled by next `if` instead of here
 	if err != nil && !isStoreNotFoundError(err) {
 		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
