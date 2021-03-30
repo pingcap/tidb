@@ -76,7 +76,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		return errors.Trace(err)
 	}
 	if resp.Resp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return errors.Trace(kv.ErrBodyMissing)
 	}
 	commitResp := resp.Resp.(*pb.CommitResponse)
 	// Here we can make sure tikv has processed the commit primary key request. So
