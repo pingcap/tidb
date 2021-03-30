@@ -160,7 +160,6 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnRegionError(c *C) {
 		c.Assert(err, NotNil)
 		c.Assert(resp, IsNil)
 	}()
-
 }
 
 func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
