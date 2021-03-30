@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"container/list"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"sync"
@@ -169,9 +170,9 @@ type Lock struct {
 func (l *Lock) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	buf.WriteString("key: ")
-	prettyWriteKey(buf, l.Key)
+	buf.WriteString(hex.EncodeToString(l.Key))
 	buf.WriteString(", primary: ")
-	prettyWriteKey(buf, l.Primary)
+	buf.WriteString(hex.EncodeToString(l.Primary))
 	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, minCommitTs:%d, ttl: %d, type: %s, UseAsyncCommit: %t",
 		buf.String(), l.TxnID, l.LockForUpdateTS, l.MinCommitTS, l.TTL, l.LockType, l.UseAsyncCommit)
 }

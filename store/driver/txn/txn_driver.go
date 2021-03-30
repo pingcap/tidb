@@ -64,7 +64,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
-	return txn.KVTxn.GetSnapshot()
+	return &tikvSnapshot{txn.KVTxn.GetSnapshot()}
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
@@ -79,7 +79,7 @@ func (txn *tikvTxn) extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikvstore.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())
 	}
-	return errors.Trace(err)
+	return extractUnExtractKeyErr(err)
 }
 
 func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
