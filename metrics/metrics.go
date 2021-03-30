@@ -146,6 +146,12 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ServerInfo)
 	prometheus.MustRegister(TokenGauge)
 	prometheus.MustRegister(ConfigStatus)
+<<<<<<< HEAD
+=======
+	prometheus.MustRegister(TiFlashQueryTotalCounter)
+	prometheus.MustRegister(SmallTxnWriteDuration)
+	prometheus.MustRegister(TxnWriteThroughput)
+>>>>>>> f9708e604... *: collect transaction write duration/throughput metrics for SLI/SLO (#23462)
 
 	tikvmetrics.InitMetrics("tidb", "tikvclient")
 	tikvmetrics.RegisterMetrics()
