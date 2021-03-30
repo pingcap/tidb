@@ -195,7 +195,8 @@
       "select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
       "select /*+ inl_hash_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
       "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.b = t2.b",
-      "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.c = t2.c"
+      "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.c = t2.c",
+      "select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;"
     ]
   },
   {

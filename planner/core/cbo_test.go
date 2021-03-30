@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -355,7 +356,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("create table t3 (a int, b int)")
 	testKit.MustExec("create index a on t3 (a)")
 
-	testKit.MustExec("set @@tidb_partition_prune_mode = 'static-only';")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	testKit.MustExec("create table t4 (a int, b int) partition by range (a) (partition p1 values less than (2), partition p2 values less than (3))")
 	testKit.MustExec("create index a on t4 (a)")
 	testKit.MustExec("create index b on t4 (b)")
@@ -911,7 +912,7 @@ func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
 	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = false
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
 	err = s.loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom)
 	c.Assert(err, IsNil)
@@ -943,6 +944,7 @@ func (s *testAnalyzeSuite) TestLimitIndexEstimation(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key idx_a(a), key idx_b(b))")
+	tk.MustExec("set session tidb_enable_extended_stats = on")
 	// Values in column a are from 1 to 1000000, values in column b are from 1000000 to 1,
 	// these 2 columns are strictly correlated in reverse order.
 	err = s.loadTableStats("analyzeSuiteTestLimitIndexEstimationT.json", dom)

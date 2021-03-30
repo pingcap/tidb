@@ -1508,7 +1508,7 @@
           "    └─IndexFullScan 1.00 cop[tikv] table:tn, index:a(a, b, c, d) keep order:true, stats:pseudo"
         ],
         "Warning": [
-          "Scalar function 'mod'(signature: ModInt) can not be pushed to storage layer",
+          "Scalar function 'mod'(signature: ModIntSignedSigned) can not be pushed to storage layer",
           "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
         ]
       },
@@ -1854,13 +1854,16 @@
       {
         "SQL": "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;",
         "Plan": [
-          "HashAgg 16000.00 root  group by:Column#3, funcs:firstrow(Column#3)->Column#3",
-          "└─Projection 20000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#3",
-          "  └─PartitionUnion 20000.00 root  ",
-          "    ├─TableReader 10000.00 root  data:TableFullScan",
-          "    │ └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
-          "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
+          "HashAgg 16000.00 root  group by:Column#5, funcs:firstrow(Column#6)->Column#3",
+          "└─PartitionUnion 16000.00 root  ",
+          "  ├─HashAgg 8000.00 root  group by:Column#15, funcs:firstrow(Column#13)->Column#6, funcs:firstrow(Column#14)->Column#5",
+          "  │ └─Projection 10000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#13, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#14, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#15",
+          "  │   └─TableReader 10000.00 root  data:TableFullScan",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
+          "  └─HashAgg 8000.00 root  group by:Column#18, funcs:firstrow(Column#16)->Column#6, funcs:firstrow(Column#17)->Column#5",
+          "    └─Projection 10000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#16, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#17, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#18",
+          "      └─TableReader 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
         ],
         "Result": null
       }
@@ -2141,12 +2144,12 @@
       {
         "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
         "Plan": "LeftHashJoin{IndexReader(Index(t1.idx_a)[[NULL,+inf]])->IndexReader(Index(t2.idx_a)[[NULL,+inf]])}->Projection",
-        "Hints": "use_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_2` `test`.`t2` `idx_a`), hash_join(@`sel_2` `test`.`t1`)"
+        "Hints": "use_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_3` `test`.`t2` `idx_a`), hash_join(@`sel_2` `test`.`t1`)"
       },
       {
         "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
         "Plan": "LeftHashJoin{IndexReader(Index(t1.idx_a)[[NULL,+inf]])->IndexReader(Index(t2.idx_a)[[NULL,+inf]])}->Projection",
-        "Hints": "use_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_2` `test`.`t2` `idx_a`), hash_join(@`sel_2` `test`.`t1`)"
+        "Hints": "use_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_3` `test`.`t2` `idx_a`), hash_join(@`sel_2` `test`.`t1`)"
       },
       {
         "SQL": "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",

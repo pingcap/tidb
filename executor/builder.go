@@ -24,6 +24,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -1535,7 +1536,10 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableStatementsSummaryHistory),
 			strings.ToLower(infoschema.ClusterTableStatementsSummary),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
-			strings.ToLower(infoschema.TablePlacementPolicy):
+			strings.ToLower(infoschema.TablePlacementPolicy),
+			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
+			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
+			strings.ToLower(infoschema.TableClientErrorsSummaryByHost):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -1838,6 +1842,15 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
+	var assignFlag []int
+	assignFlag, b.err = getAssignFlag(b.ctx, v, selExec.Schema().Len())
+	if b.err != nil {
+		return nil
+	}
+	b.err = plannercore.CheckUpdateList(assignFlag, v)
+	if b.err != nil {
+		return nil
+	}
 	updateExec := &UpdateExec{
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
@@ -1846,8 +1859,27 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		multiUpdateOnSameTable:    multiUpdateOnSameTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
+		assignFlag:                assignFlag,
 	}
 	return updateExec
+}
+
+func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int) ([]int, error) {
+	assignFlag := make([]int, schemaLen)
+	for i := range assignFlag {
+		assignFlag[i] = -1
+	}
+	for _, assign := range v.OrderedList {
+		if !ctx.GetSessionVars().AllowWriteRowID && assign.Col.ID == model.ExtraHandleID {
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
+		tblIdx, found := v.TblColPosInfos.FindTblIdx(assign.Col.Index)
+		if found {
+			colIdx := assign.Col.Index
+			assignFlag[colIdx] = tblIdx
+		}
+	}
+	return assignFlag, nil
 }
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
@@ -2044,6 +2076,28 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	}
 	if task.TblInfo != nil {
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
+		if task.TblInfo.IsCommonHandle {
+			e.analyzePB.ColReq.PrimaryPrefixColumnIds = tables.PrimaryPrefixColumnIDs(task.TblInfo)
+		}
+	}
+	if task.CommonHandleInfo != nil {
+		topNSize := new(int32)
+		*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+		statsVersion := new(int32)
+		*statsVersion = int32(task.StatsVersion)
+		e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
+			BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
+			NumColumns: int32(len(task.CommonHandleInfo.Columns)),
+			TopNSize:   topNSize,
+			Version:    statsVersion,
+		}
+		depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
+		width := int32(opts[ast.AnalyzeOptCMSketchWidth])
+		e.analyzePB.IdxReq.CmsketchDepth = &depth
+		e.analyzePB.IdxReq.CmsketchWidth = &width
+		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
+		e.analyzePB.Tp = tipb.AnalyzeType_TypeMixed
+		e.commonHandle = task.CommonHandleInfo
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
@@ -2165,6 +2219,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		wg:           &sync.WaitGroup{},
+		opts:         v.Opts,
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	autoAnalyze := ""
@@ -2492,26 +2547,6 @@ func containsLimit(execs []*tipb.Executor) bool {
 	return false
 }
 
-// When allow batch cop is 1, only agg / topN uses batch cop.
-// When allow batch cop is 2, every query uses batch cop.
-func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
-	if e.storeType != kv.TiFlash || e.keepOrder {
-		return
-	}
-	switch e.ctx.GetSessionVars().AllowBatchCop {
-	case 1:
-		for _, p := range v.TablePlans {
-			switch p.(type) {
-			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN, *plannercore.PhysicalHashJoin:
-				e.batchCop = true
-			}
-		}
-	case 2:
-		e.batchCop = true
-	}
-	return
-}
-
 func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
 	tablePlans := v.TablePlans
 	if v.StoreType == kv.TiFlash {
@@ -2546,8 +2581,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:          v.TablePlans,
 		tablePlan:      v.GetTablePlan(),
 		storeType:      v.StoreType,
+		batchCop:       v.BatchCop,
 	}
-	e.setBatchCop(v)
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -2555,6 +2590,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		e.feedback = statistics.NewQueryFeedback(getFeedbackStatsTableID(e.ctx, tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
+	// Do not collect the feedback when the table is the partition table.
+	if collect && tbl.Meta().Partition != nil {
+		collect = false
+	}
 	if !collect {
 		e.feedback.Invalidate()
 	}
@@ -2593,6 +2632,16 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
+	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
+		if val.(bool) != useMPPExecution(b.ctx, v) {
+			if val.(bool) {
+				b.err = errors.New("expect mpp but not used")
+			} else {
+				b.err = errors.New("don't expect mpp but we used it")
+			}
+			failpoint.Return(nil)
+		}
+	})
 	if useMPPExecution(b.ctx, v) {
 		return b.buildMPPGather(v)
 	}
@@ -2624,6 +2673,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 	if v.StoreType == kv.TiFlash {
+		sctx.IsTiFlash.Store(true)
 		partsExecutor := make([]Executor, 0, len(partitions))
 		for _, part := range partitions {
 			exec, err := buildNoRangeTableReader(b, v)
@@ -2816,6 +2866,10 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		e.feedback = statistics.NewQueryFeedback(tblID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
+	// Do not collect the feedback when the table is the partition table.
+	if collect && tbl.Meta().Partition != nil {
+		collect = false
+	}
 	if !collect {
 		e.feedback.Invalidate()
 	}
@@ -2954,6 +3008,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
 	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
+	// Do not collect the feedback when the table is the partition table.
+	if collectIndex && tbl.Meta().Partition != nil {
+		collectIndex = false
+	}
 	if !collectIndex {
 		e.feedback.Invalidate()
 	}
@@ -3866,6 +3924,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, plan.IndexInfo, value)
 				if err != nil {
+					if kv.ErrNotExist.Equal(err) {
+						continue
+					}
 					b.err = err
 					return nil
 				}

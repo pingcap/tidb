@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -320,7 +321,7 @@ func (s *testPointGetSuite) TestCBOPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t (a varchar(20), b int, c int, d int, primary key(a), unique key(b, c))")
 	tk.MustExec("insert into t values('1',4,4,1), ('2',3,3,2), ('3',2,2,3), ('4',1,1,4)")
 
@@ -393,7 +394,7 @@ func (s *testPointGetSuite) TestBatchPointGetPartition(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
@@ -478,12 +479,10 @@ func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
 }
 
 func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
-	gcfg := config.GetGlobalConfig()
-	etl := gcfg.EnableTableLock
-	gcfg.EnableTableLock = true
-	defer func() {
-		gcfg.EnableTableLock = etl
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tbllock(id int, c int);")
@@ -568,7 +567,7 @@ func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
 func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop tables if exists t1, t2, t3, t4, t5")
 	tk.MustExec("create table t1(id varchar(20) primary key)")
 	tk.MustExec("create table t2(id varchar(20), unique(id))")
@@ -599,4 +598,37 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 		plan.Check(testkit.Rows(output[i].Plan...))
 		res.Check(testkit.Rows(output[i].Res...))
 	}
+}
+
+func (s *testPointGetSuite) TestIssue18042(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), index ab(a, b));")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustExec("SELECT /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 MB) */ * FROM t where a = 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(1<<20))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
+	tk.MustExec("drop table t")
+}
+
+func (s *testPointGetSuite) TestIssue23511(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("CREATE TABLE `t1`  (`COL1` bit(11) NOT NULL,PRIMARY KEY (`COL1`));")
+	tk.MustExec("CREATE TABLE `t2`  (`COL1` bit(11) NOT NULL);")
+	tk.MustExec("insert into t1 values(b'00000111001'), (b'00000000000');")
+	tk.MustExec("insert into t2 values(b'00000111001');")
+	tk.MustQuery("select * from t1 where col1 = 0x39;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x39;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t1 where col1 = 0x00;").Check(testkit.Rows("\x00\x00"))
+	tk.MustQuery("select * from t1 where col1 = 0x0000;").Check(testkit.Rows("\x00\x00"))
+	tk.MustQuery("explain format = 'brief' select * from t1 where col1 = 0x39;").
+		Check(testkit.Rows("Point_Get 1.00 root table:t1, index:PRIMARY(COL1) "))
+	tk.MustQuery("select * from t1 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t1 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
+	tk.MustExec("drop table t1, t2;")
 }

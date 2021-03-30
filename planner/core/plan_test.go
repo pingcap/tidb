@@ -109,7 +109,7 @@ func (s *testPlanNormalize) TestPreferRangeScan(c *C) {
 func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_partition_prune_mode='static-only';")
+	tk.MustExec("set @@tidb_partition_prune_mode='static';")
 	tk.MustExec("drop table if exists t1,t2,t3,t4")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
@@ -528,7 +528,7 @@ func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
 

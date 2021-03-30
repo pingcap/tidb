@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -512,7 +513,7 @@ func (s *testStatsSuite) TestPrimaryKeySelectivity(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = false
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	var input, output [][]string
 	s.testData.GetTestCases(c, &input, &output)
@@ -607,14 +608,13 @@ func (s *testStatsSuite) TestStatsVer2(c *C) {
 	testKit.MustExec("analyze table tprefix with 2 topn, 3 buckets")
 
 	// test with clustered index
-	testKit.MustExec("set @@tidb_enable_clustered_index = 1")
 	testKit.MustExec("drop table if exists ct1")
-	testKit.MustExec("create table ct1 (a int, pk varchar(10), primary key(pk))")
+	testKit.MustExec("create table ct1 (a int, pk varchar(10), primary key(pk) clustered)")
 	testKit.MustExec("insert into ct1 values (1, '1'), (2, '2'), (3, '3'), (4, '4'), (5, '5'), (6, '6'), (7, '7'), (8, '8')")
 	testKit.MustExec("analyze table ct1 with 2 topn, 3 buckets")
 
 	testKit.MustExec("drop table if exists ct2")
-	testKit.MustExec("create table ct2 (a int, b int, c int, primary key(a, b))")
+	testKit.MustExec("create table ct2 (a int, b int, c int, primary key(a, b) clustered)")
 	testKit.MustExec("insert into ct2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
 	testKit.MustExec("analyze table ct2 with 2 topn, 3 buckets")
 
@@ -673,7 +673,7 @@ func (s *testStatsSuite) TestUniqCompEqualEst(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = true
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, primary key(a, b))")
 	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),(1,8),(1,9),(1,10)")
