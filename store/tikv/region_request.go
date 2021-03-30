@@ -668,11 +668,12 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 
 	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
 		// store not match
-		logutil.BgLogger().Debug("tikv reports `StoreNotMatch` return error",
+		logutil.BgLogger().Debug("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
 		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
-		return false, errors.New(regionErr.String())
+		s.regionCache.InvalidateCachedRegion(ctx.Region)
+		return true, nil
 	}
 
 	if epochNotMatch := regionErr.GetEpochNotMatch(); epochNotMatch != nil {
