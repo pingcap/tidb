@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"bytes"
@@ -21,13 +21,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 )
 
 type testDeleteRangeSuite struct {
 	OneByOneSuite
 	cluster cluster.Cluster
-	store   *KVStore
+	store   *tikv.KVStore
 }
 
 var _ = Suite(&testDeleteRangeSuite{})
@@ -37,7 +38,7 @@ func (s *testDeleteRangeSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("b"), []byte("c"), []byte("d"))
 	s.cluster = cluster
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Check(err, IsNil)
 
 	// TODO: make this possible
@@ -93,7 +94,7 @@ func (s *testDeleteRangeSuite) checkData(c *C, expectedData map[string]string) {
 }
 
 func (s *testDeleteRangeSuite) deleteRange(c *C, startKey []byte, endKey []byte) int {
-	task := NewDeleteRangeTask(s.store, startKey, endKey, 1)
+	task := tikv.NewDeleteRangeTask(s.store, startKey, endKey, 1)
 
 	err := task.Execute(context.Background())
 	c.Assert(err, IsNil)
