@@ -1542,7 +1542,7 @@ CREATE TABLE t (
 	tk.MustGetErrCode("create index idx2 on t(c03, c04)", errno.ErrTooLongKey)
 	tk.MustExec("drop table t")
 
-	// test create index
+	// test change/modify column
 	tk.MustExec(`
 CREATE TABLE t (
   c01 varchar(255) NOT NULL,
@@ -1556,6 +1556,7 @@ CREATE TABLE t (
 )`)
 	tk.MustExec("alter table t change c03 c10 varchar(256) default null")
 	tk.MustGetErrCode("alter table t change c10 c100 varchar(1024) default null", errno.ErrTooLongKey)
+	tk.MustGetErrCode("alter table t modify c10 varchar(600) default null", errno.ErrTooLongKey)
 }
 
 func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
