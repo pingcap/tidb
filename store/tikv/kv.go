@@ -24,8 +24,9 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/latch"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -95,13 +96,13 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 	diff := time.Since(cachedTime)
 
 	if diff > (GcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
-		return ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point")
+		return kv.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point")
 	}
 
 	if startTime < cachedSafePoint {
 		t1 := oracle.GetTimeFromTS(startTime)
 		t2 := oracle.GetTimeFromTS(cachedSafePoint)
-		return ErrGCTooEarly.GenWithStackByArgs(t1, t2)
+		return kv.ErrGCTooEarly.GenWithStackByArgs(t1, t2)
 	}
 
 	return nil
@@ -255,7 +256,7 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 		// This may cause duplicate data to be written.
 		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
 			if val.(bool) && !IsMockCommitErrorEnable() {
-				err = ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
+				err = kv.ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
 			}
 		})
 
@@ -298,7 +299,7 @@ func (s *KVStore) GetPDClient() pd.Client {
 
 // ShowStatus returns the specified status of the storage
 func (s *KVStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
-	return nil, kv.ErrNotImplemented
+	return nil, tidbkv.ErrNotImplemented
 }
 
 // SupportDeleteRange gets the storage support delete range or not.
