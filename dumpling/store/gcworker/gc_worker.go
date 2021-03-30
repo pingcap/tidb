@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -1085,7 +1086,7 @@ retryScanAndResolve:
 			continue
 		}
 		if resp.Resp == nil {
-			return stat, errors.Trace(tikv.ErrBodyMissing)
+			return stat, errors.Trace(tikvstore.ErrBodyMissing)
 		}
 		locksResp := resp.Resp.(*kvrpcpb.ScanLockResponse)
 		if locksResp.GetError() != nil {
@@ -1266,7 +1267,7 @@ func (w *GCWorker) registerLockObservers(ctx context.Context, safePoint uint64, 
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
-			return errors.Trace(tikv.ErrBodyMissing)
+			return errors.Trace(tikvstore.ErrBodyMissing)
 		}
 		errStr := resp.Resp.(*kvrpcpb.RegisterLockObserverResponse).Error
 		if len(errStr) > 0 {
@@ -1307,7 +1308,7 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 			continue
 		}
 		if resp.Resp == nil {
-			logError(store, tikv.ErrBodyMissing)
+			logError(store, tikvstore.ErrBodyMissing)
 			continue
 		}
 		respInner := resp.Resp.(*kvrpcpb.CheckLockObserverResponse)
@@ -1373,7 +1374,7 @@ func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, st
 			continue
 		}
 		if resp.Resp == nil {
-			logError(store, tikv.ErrBodyMissing)
+			logError(store, tikvstore.ErrBodyMissing)
 			continue
 		}
 		errStr := resp.Resp.(*kvrpcpb.RemoveLockObserverResponse).Error
@@ -1600,7 +1601,7 @@ func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region ti
 	}
 
 	if resp.Resp == nil {
-		return nil, errors.Trace(tikv.ErrBodyMissing)
+		return nil, errors.Trace(tikvstore.ErrBodyMissing)
 	}
 	gcResp := resp.Resp.(*kvrpcpb.GCResponse)
 	if gcResp.GetError() != nil {
@@ -2184,7 +2185,7 @@ func (s *mergeLockScanner) physicalScanLocksForStore(ctx context.Context, safePo
 			return errors.Trace(err)
 		}
 		if response.Resp == nil {
-			return errors.Trace(tikv.ErrBodyMissing)
+			return errors.Trace(tikvstore.ErrBodyMissing)
 		}
 		resp := response.Resp.(*kvrpcpb.PhysicalScanLockResponse)
 		if len(resp.Error) > 0 {
