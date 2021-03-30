@@ -109,24 +109,28 @@ func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 	return lastCol, nil
 }
 
-func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
-	// The sum of length of all index columns.
-	sumLength := 0
-	for _, ic := range idxColumns {
-		col := model.FindColumnInfo(columns, ic.Name.L)
-		if col == nil {
-			return errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
+func checkIndexPrefixLength(tbInfo *model.TableInfo, columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
+	var pkLen int
+	if tbInfo.IsCommonHandle {
+		var pkIdx *model.IndexInfo
+		for _, idx := range tbInfo.Indices {
+			if idx.Primary {
+				pkIdx = idx
+				break
+			}
 		}
-
-		indexColumnLength, err := getIndexColumnLength(col, ic.Length)
+		var err error
+		pkLen, err = indexColumnLen(columns, pkIdx.Columns)
 		if err != nil {
 			return err
 		}
-		sumLength += indexColumnLength
-		// The sum of all lengths must be shorter than the max length for prefix.
-		if sumLength > config.GetGlobalConfig().MaxIndexLength {
-			return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
-		}
+	}
+	idxLen, err := indexColumnLen(columns, idxColumns)
+	if err != nil {
+		return err
+	}
+	if pkLen+idxLen > config.GetGlobalConfig().MaxIndexLength {
+		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
 }
@@ -489,7 +493,28 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.Global = global
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
-
+		if tblInfo.IsCommonHandle && !indexInfo.Primary {
+			var pkIdx *model.IndexInfo
+			for _, idx := range tblInfo.Indices {
+				if idx.Primary {
+					pkIdx = idx
+					break
+				}
+			}
+			var pkLen, idxLen int
+			pkLen, err = indexColumnLen(tblInfo.Columns, pkIdx.Columns)
+			if err != nil {
+				return
+			}
+			idxLen, err = indexColumnLen(tblInfo.Columns, indexInfo.Columns)
+			if err != nil {
+				return
+			}
+			if pkLen+idxLen > config.GetGlobalConfig().MaxIndexLength {
+				err = errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+				return
+			}
+		}
 		if err = checkTooManyIndexes(tblInfo.Indices); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)

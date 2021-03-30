@@ -1505,6 +1505,49 @@ func buildTableInfo(
 		idxInfo.ID = allocateIndexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
+	if tbInfo.IsCommonHandle {
+		var pkIdx *model.IndexInfo
+		for _, idx := range tbInfo.Indices {
+			if idx.Primary {
+				pkIdx = idx
+				break
+			}
+		}
+		var pkLen, idxLen int
+		pkLen, err = indexColumnLen(tbInfo.Columns, pkIdx.Columns)
+		if err != nil {
+			return
+		}
+		for _, idx := range tbInfo.Indices {
+			if idx.Primary {
+				continue
+			}
+			idxLen, err = indexColumnLen(tbInfo.Columns, idx.Columns)
+			if err != nil {
+				return
+			}
+			if pkLen+idxLen > config.GetGlobalConfig().MaxIndexLength {
+				return nil, errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+			}
+		}
+	}
+	return
+}
+
+func indexColumnLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (len int, err error) {
+	for _, idxCol := range idxCols {
+		col := model.FindColumnInfo(cols, idxCol.Name.L)
+		if col == nil {
+			err = errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", idxCol.Name.L)
+			return
+		}
+		var colLen int
+		colLen, err = getIndexColumnLength(col, idxCol.Length)
+		if err != nil {
+			return
+		}
+		len += colLen
+	}
 	return
 }
 
@@ -3920,7 +3963,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 			return err
 		}
 
-		err = checkIndexPrefixLength(columns, indexInfo.Columns)
+		err = checkIndexPrefixLength(tbInfo, columns, indexInfo.Columns)
 		if err != nil {
 			return err
 		}
@@ -5011,6 +5054,28 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	indexColumns, err := buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if tblInfo.IsCommonHandle {
+		var pkIdx *model.IndexInfo
+		for _, idx := range tblInfo.Indices {
+			if idx.Primary {
+				pkIdx = idx
+				break
+			}
+		}
+		var pkLen, idxLen int
+		pkLen, err = indexColumnLen(tblInfo.Columns, pkIdx.Columns)
+		if err != nil {
+			return err
+		}
+		idxLen, err = indexColumnLen(tblInfo.Columns, indexColumns)
+		if err != nil {
+			return err
+		}
+		if pkLen+idxLen > config.GetGlobalConfig().MaxIndexLength {
+			return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+		}
 	}
 
 	global := false
