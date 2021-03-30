@@ -276,6 +276,7 @@ func (s *testSuite5) TestIssue19411(c *C) {
 
 func (s *testSuite5) TestIssue23653(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key(c_str), unique key(c_int), unique key(c_str))")
 	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key(c_int, c_str(4)), key(c_int), unique key(c_str))")
@@ -287,6 +288,7 @@ func (s *testSuite5) TestIssue23653(c *C) {
 
 func (s *testSuite5) TestIssue23656(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (c_int int, c_str varchar(40), primary key(c_int, c_str(4)))")
 	tk.MustExec("create table t2 like t1")
