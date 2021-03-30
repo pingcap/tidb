@@ -477,11 +477,13 @@ const (
 	version66 = 66
 	// version67 restore all SQL bindings.
 	version67 = 67
+	// version68 update the global variable 'tidb_enable_clustered_index' from 'off' to 'int_only'.
+	version68 = 68
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version67
+var currentBootstrapVersion int64 = version68
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -552,6 +554,7 @@ var (
 		upgradeToVer65,
 		upgradeToVer66,
 		upgradeToVer67,
+		upgradeToVer68,
 	}
 )
 
@@ -1459,6 +1462,13 @@ func upgradeToVer66(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, "set @@global.tidb_track_aggregate_memory_usage = 1")
+}
+
+func upgradeToVer68(s Session, ver int64) {
+	if ver >= version68 {
+		return
+	}
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE = 'INT_ONLY' where VARIABLE_NAME = 'tidb_enable_clustered_index' and VARIABLE_VALUE = 'OFF'")
 }
 
 func writeOOMAction(s Session) {
