@@ -238,6 +238,7 @@ func (s *testSuite10) TestPaddingCommonHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
 	tk.MustExec(`insert into t1 set c1 = 0.1`)
 	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
