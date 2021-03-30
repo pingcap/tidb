@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"context"
@@ -24,6 +24,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
@@ -43,14 +44,14 @@ type testStoreSerialSuite struct {
 
 type testStoreSuiteBase struct {
 	OneByOneSuite
-	store *KVStore
+	store tikv.StoreProbe
 }
 
 var _ = Suite(&testStoreSuite{})
 var _ = SerialSuites(&testStoreSerialSuite{})
 
 func (s *testStoreSuiteBase) SetUpTest(c *C) {
-	s.store = NewTestStore(c)
+	s.store = tikv.StoreProbe{KVStore: NewTestStore(c)}
 }
 
 func (s *testStoreSuiteBase) TearDownTest(c *C) {
@@ -59,12 +60,12 @@ func (s *testStoreSuiteBase) TearDownTest(c *C) {
 
 func (s *testStoreSuite) TestOracle(c *C) {
 	o := &oracles.MockOracle{}
-	s.store.oracle = o
+	s.store.SetOracle(o)
 
 	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
+	t1, err := s.store.GetTimestampWithRetry(tikv.NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
+	t2, err := s.store.GetTimestampWithRetry(tikv.NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
@@ -90,10 +91,10 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 	go func() {
 		defer wg.Done()
-		t3, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, nil), oracle.GlobalTxnScope)
+		t3, err := s.store.GetTimestampWithRetry(tikv.NewBackofferWithVars(ctx, 5000, nil), oracle.GlobalTxnScope)
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
-		expired := s.store.oracle.IsExpired(t2, 50, &oracle.Option{})
+		expired := s.store.GetOracle().IsExpired(t2, 50, &oracle.Option{})
 		c.Assert(expired, IsTrue)
 	}()
 
@@ -241,7 +242,7 @@ func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.
 func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
 
 type checkRequestClient struct {
-	Client
+	tikv.Client
 	priority pb.CommandPri
 }
 
@@ -261,9 +262,9 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 
 func (s *testStoreSuite) TestRequestPriority(c *C) {
 	client := &checkRequestClient{
-		Client: s.store.client,
+		Client: s.store.GetTiKVClient(),
 	}
-	s.store.client = client
+	s.store.SetTiKVClient(client)
 
 	// Cover 2PC commit.
 	txn, err := s.store.Begin()
@@ -308,12 +309,12 @@ func (s *testStoreSerialSuite) TestOracleChangeByFailpoint(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD",
 		"return(10000)"), IsNil)
 	o := &oracles.MockOracle{}
-	s.store.oracle = o
+	s.store.SetOracle(o)
 	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
+	t1, err := s.store.GetTimestampWithRetry(tikv.NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
+	t2, err := s.store.GetTimestampWithRetry(tikv.NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(t1, Greater, t2)
 }
