@@ -103,6 +103,7 @@ func (i *MemdbIterator) init() {
 	}
 }
 
+// Valid returns true if the current iterator is valid.
 func (i *MemdbIterator) Valid() bool {
 	if !i.reverse {
 		return !i.curr.isNull() && (i.end == nil || bytes.Compare(i.Key(), i.end) < 0)
@@ -110,24 +111,29 @@ func (i *MemdbIterator) Valid() bool {
 	return !i.curr.isNull()
 }
 
+// Flags returns flags belong to current iterator.
 func (i *MemdbIterator) Flags() kv.KeyFlags {
 	return i.curr.getKeyFlags()
 }
 
+// UpdateFlags updates and apply with flagsOp.
 func (i *MemdbIterator) UpdateFlags(ops ...kv.FlagsOp) {
 	origin := i.curr.getKeyFlags()
 	n := kv.ApplyFlagsOps(origin, ops...)
 	i.curr.setKeyFlags(n)
 }
 
+// HasValue returns false if it is flags only.
 func (i *MemdbIterator) HasValue() bool {
 	return !i.isFlagsOnly()
 }
 
+// Key returns current key.
 func (i *MemdbIterator) Key() tidbkv.Key {
 	return i.curr.getKey()
 }
 
+// Handle returns MemKeyHandle with the current position.
 func (i *MemdbIterator) Handle() MemKeyHandle {
 	return MemKeyHandle{
 		idx: uint16(i.curr.addr.idx),
@@ -135,10 +141,12 @@ func (i *MemdbIterator) Handle() MemKeyHandle {
 	}
 }
 
+// Value returns the value.
 func (i *MemdbIterator) Value() []byte {
 	return i.db.vlog.getValue(i.curr.vptr)
 }
 
+// Next goes the next position.
 func (i *MemdbIterator) Next() error {
 	for {
 		if i.reverse {
@@ -155,6 +163,7 @@ func (i *MemdbIterator) Next() error {
 	return nil
 }
 
+// Close closes the current iterator.
 func (i *MemdbIterator) Close() {}
 
 func (i *MemdbIterator) seekToFirst() {
