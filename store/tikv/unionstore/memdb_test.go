@@ -157,7 +157,7 @@ func (s *testMemDBSuite) TestDiscard(c *C) {
 		c.Assert(err, NotNil)
 	}
 	it1, _ := db.Iter(nil, nil)
-	it := it1.(*memdbIterator)
+	it := it1.(*MemdbIterator)
 	it.seekToFirst()
 	c.Assert(it.Valid(), IsFalse)
 	it.seekToLast()
@@ -363,7 +363,7 @@ func (s *testMemDBSuite) TestEmptyDB(c *C) {
 	_, err := db.Get(context.TODO(), []byte{0})
 	c.Assert(err, NotNil)
 	it1, _ := db.Iter(nil, nil)
-	it := it1.(*memdbIterator)
+	it := it1.(*MemdbIterator)
 	it.seekToFirst()
 	c.Assert(it.Valid(), IsFalse)
 	it.seekToLast()
@@ -378,7 +378,7 @@ func (s *testMemDBSuite) TestReset(c *C) {
 	_, err := db.Get(context.TODO(), []byte{0, 0, 0, 0})
 	c.Assert(err, NotNil)
 	it1, _ := db.Iter(nil, nil)
-	it := it1.(*memdbIterator)
+	it := it1.(*MemdbIterator)
 	it.seekToFirst()
 	c.Assert(it.Valid(), IsFalse)
 	it.seekToLast()
@@ -504,7 +504,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 	c.Assert(db.Size(), Equals, 20000)
 
 	it1, _ := db.Iter(nil, nil)
-	it := it1.(*memdbIterator)
+	it := it1.(*MemdbIterator)
 	c.Assert(it.Valid(), IsFalse)
 
 	it.includeFlags = true
