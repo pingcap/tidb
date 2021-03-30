@@ -11,17 +11,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikvrpc
 
-import (
-	"github.com/pingcap/failpoint"
+// EndpointType represents the type of a remote endpoint..
+type EndpointType uint8
+
+// EndpointType type enums.
+const (
+	TiKV EndpointType = iota
+	TiFlash
+	TiDB
 )
 
-var (
-	// MockRetryableErrorResp mocks an retryable error while processing response
-	MockRetryableErrorResp failpoint.Failpoint
-	// MockScatterRegionTimeout mocks timeout when trying to scatter region
-	MockScatterRegionTimeout failpoint.Failpoint
-	// MockSplitRegionTimeout mocks timeout when trying to split region
-	MockSplitRegionTimeout failpoint.Failpoint
-)
+// Name returns the name of endpoint type.
+func (t EndpointType) Name() string {
+	switch t {
+	case TiKV:
+		return "tikv"
+	case TiFlash:
+		return "tiflash"
+	case TiDB:
+		return "tidb"
+	}
+	return "unspecified"
+}

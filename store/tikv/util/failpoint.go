@@ -1,5 +1,5 @@
 // Copyright 2021 PingCAP, Inc.
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,18 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package unionstore
+package util
 
 import (
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/failpoint"
 )
 
-// MemBufferIterator is an Iterator with KeyFlags related functions.
-type MemBufferIterator interface {
-	tidbkv.Iterator
-	HasValue() bool
-	Flags() kv.KeyFlags
-	UpdateFlags(...kv.FlagsOp)
-	Handle() MemKeyHandle
-}
+var (
+	// MockRetryableErrorResp mocks an retryable error while processing response
+	MockRetryableErrorResp failpoint.Failpoint
+	// MockScatterRegionTimeout mocks timeout when trying to scatter region
+	MockScatterRegionTimeout failpoint.Failpoint
+	// MockSplitRegionTimeout mocks timeout when trying to split region
+	MockSplitRegionTimeout failpoint.Failpoint
+)

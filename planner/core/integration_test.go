@@ -713,6 +713,48 @@ func (s *testIntegrationSerialSuite) TestMPPWithBroadcastExchangeUnderNewCollati
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestMPPAvgRewrite(c *C) {
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists table_1")
+	tk.MustExec("create table table_1(id int not null, value decimal(10,2))")
+	tk.MustExec("insert into table_1 values(1,1),(2,2)")
+	tk.MustExec("analyze table table_1")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "table_1" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	collate.SetNewCollationEnabledForTest(true)
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSerialSuite) TestAggPushDownEngine(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2674,10 +2716,17 @@ func (s *testIntegrationSuite) TestIssue22199(c *C) {
 func (s *testIntegrationSuite) TestIssue22892(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 5;")
 	tk.MustExec("insert into t1 values (0);")
 	tk.MustQuery("select * from t1 where a not between 1 and 2;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int) partition by hash (a) partitions 5;")
+	tk.MustExec("insert into t2 values (0);")
+	tk.MustQuery("select * from t2 where a not between 1 and 2;").Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {

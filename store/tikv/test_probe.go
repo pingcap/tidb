@@ -16,12 +16,14 @@ package tikv
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
+	pd "github.com/tikv/pd/client"
 )
 
 // StoreProbe wraps KVSTore and exposes internal states for testing purpose.
@@ -32,6 +34,43 @@ type StoreProbe struct {
 // NewLockResolver creates a new LockResolver instance.
 func (s StoreProbe) NewLockResolver() LockResolverProbe {
 	return LockResolverProbe{LockResolver: newLockResolver(s.KVStore)}
+}
+
+// GetTimestampWithRetry returns latest timestamp.
+func (s StoreProbe) GetTimestampWithRetry(bo *Backoffer, scope string) (uint64, error) {
+	return s.getTimestampWithRetry(bo, scope)
+}
+
+// Begin starts a transaction.
+func (s StoreProbe) Begin() (TxnProbe, error) {
+	txn, err := s.KVStore.Begin()
+	return TxnProbe{KVTxn: txn}, err
+}
+
+// SetRegionCachePDClient replaces pd client inside region cache.
+func (s StoreProbe) SetRegionCachePDClient(client pd.Client) {
+	s.regionCache.pdClient = client
+}
+
+// ClearTxnLatches clears store's txn latch scheduler.
+func (s StoreProbe) ClearTxnLatches() {
+	s.txnLatches = nil
+}
+
+// SendTxnHeartbeat renews a txn's ttl.
+func (s StoreProbe) SendTxnHeartbeat(ctx context.Context, key []byte, startTS uint64, ttl uint64) (uint64, error) {
+	bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
+	return sendTxnHeartBeat(bo, s.KVStore, key, startTS, ttl)
+}
+
+// LoadSafePoint from safepoint kv.
+func (s StoreProbe) LoadSafePoint() (uint64, error) {
+	return loadSafePoint(s.GetSafePointKV())
+}
+
+// SaveSafePoint saves safepoint to kv.
+func (s StoreProbe) SaveSafePoint(v uint64) error {
+	return saveSafePoint(s.GetSafePointKV(), v)
 }
 
 // TxnProbe wraps a txn and exports internal states for testing purpose.
@@ -75,14 +114,25 @@ func (txn TxnProbe) SetCommitter(committer CommitterProbe) {
 	txn.committer = committer.twoPhaseCommitter
 }
 
-// ClearStoreTxnLatches clears store's txn latch scheduler.
-func (txn TxnProbe) ClearStoreTxnLatches() {
-	txn.store.txnLatches = nil
-}
-
 // CollectLockedKeys returns all locked keys of a transaction.
 func (txn TxnProbe) CollectLockedKeys() [][]byte {
 	return txn.collectLockedKeys()
+}
+
+// BatchGetSingleRegion gets a batch of keys from a region.
+func (txn TxnProbe) BatchGetSingleRegion(bo *Backoffer, region RegionVerID, keys [][]byte, collect func([]byte, []byte)) error {
+	snapshot := txn.GetSnapshot()
+	return snapshot.batchGetSingleRegion(bo, batchKeys{region: region, keys: keys}, collect)
+}
+
+// NewScanner returns a scanner to iterate given key range.
+func (txn TxnProbe) NewScanner(start, end []byte, batchSize int, reverse bool) (*Scanner, error) {
+	return newScanner(txn.GetSnapshot(), start, end, batchSize, reverse)
+}
+
+// GetStartTime returns the time when txn starts.
+func (txn TxnProbe) GetStartTime() time.Time {
+	return txn.startTime
 }
 
 func newTwoPhaseCommitterWithInit(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, error) {
@@ -146,6 +196,11 @@ func (c CommitterProbe) SetMinCommitTS(ts uint64) {
 	c.minCommitTS = ts
 }
 
+// SetMaxCommitTS sets the max commit ts can be used.
+func (c CommitterProbe) SetMaxCommitTS(ts uint64) {
+	c.maxCommitTS = ts
+}
+
 // SetSessionID sets the session id of the committer.
 func (c CommitterProbe) SetSessionID(id uint64) {
 	c.sessionID = id
@@ -171,6 +226,16 @@ func (c CommitterProbe) GetLockTTL() uint64 {
 	return c.lockTTL
 }
 
+// SetLockTTL sets the lock ttl duration.
+func (c CommitterProbe) SetLockTTL(ttl uint64) {
+	c.lockTTL = ttl
+}
+
+// SetLockTTLByTimeAndSize sets the lock ttl duration by time and size.
+func (c CommitterProbe) SetLockTTLByTimeAndSize(start time.Time, size int) {
+	c.lockTTL = txnLockTTL(start, size)
+}
+
 // SetTxnSize resets the txn size of the committer and updates lock TTL.
 func (c CommitterProbe) SetTxnSize(sz int) {
 	c.txnSize = sz
@@ -187,9 +252,14 @@ func (c CommitterProbe) Execute(ctx context.Context) error {
 	return c.execute(ctx)
 }
 
-// PrewriteMutations performs the first phase of commit.
-func (c CommitterProbe) PrewriteMutations(ctx context.Context) error {
-	return c.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), c.mutations)
+// PrewriteAllMutations performs the first phase of commit.
+func (c CommitterProbe) PrewriteAllMutations(ctx context.Context) error {
+	return c.PrewriteMutations(ctx, c.mutations)
+}
+
+// PrewriteMutations performs the first phase of commit for given keys.
+func (c CommitterProbe) PrewriteMutations(ctx context.Context, mutations CommitterMutations) error {
+	return c.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), mutations)
 }
 
 // CommitMutations performs the second phase of commit.
@@ -281,6 +351,12 @@ func (c CommitterProbe) SetPrimaryKeyBlocker(ac, bk chan struct{}) {
 	c.testingKnobs.bkAfterCommitPrimary = bk
 }
 
+// CleanupMutations performs the clean up phase.
+func (c CommitterProbe) CleanupMutations(ctx context.Context) error {
+	bo := NewBackofferWithVars(ctx, cleanupMaxBackoff, nil)
+	return c.cleanupMutations(bo, c.mutations)
+}
+
 // LockProbe exposes some lock utilities for testing purpose.
 type LockProbe struct {
 }
@@ -299,6 +375,11 @@ func (l LockProbe) NewLockStatus(keys [][]byte, useAsyncCommit bool, minCommitTS
 			MinCommitTs:    minCommitTS,
 		},
 	}
+}
+
+// GetPrimaryKeyFromTxnStatus returns the primary key of the transaction.
+func (l LockProbe) GetPrimaryKeyFromTxnStatus(s TxnStatus) []byte {
+	return s.primaryLock.Key
 }
 
 // LockResolverProbe wraps a LockResolver and exposes internal stats for testing purpose.
@@ -344,6 +425,25 @@ func (l LockResolverProbe) SetMeetLockCallback(f func([]*Lock)) {
 	l.testingKnobs.meetLock = f
 }
 
+// CheckAllSecondaries checks the secondary locks of an async commit transaction to find out the final
+// status of the transaction.
+func (l LockResolverProbe) CheckAllSecondaries(bo *Backoffer, lock *Lock, status *TxnStatus) error {
+	_, err := l.checkAllSecondaries(bo, lock, status)
+	return err
+}
+
+// IsErrorNotFound checks if an error is caused by txnNotFoundErr.
+func (l LockResolverProbe) IsErrorNotFound(err error) bool {
+	_, ok := errors.Cause(err).(txnNotFoundErr)
+	return ok
+}
+
+// IsNonAsyncCommitLock checks if an error is nonAsyncCommitLock error.
+func (l LockResolverProbe) IsNonAsyncCommitLock(err error) bool {
+	_, ok := errors.Cause(err).(*nonAsyncCommitLock)
+	return ok
+}
+
 // ConfigProbe exposes configurations and global variables for testing purpose.
 type ConfigProbe struct{}
 
@@ -355,4 +455,49 @@ func (c ConfigProbe) GetTxnCommitBatchSize() uint64 {
 // GetBigTxnThreshold returns the txn size to be considered as big txn.
 func (c ConfigProbe) GetBigTxnThreshold() int {
 	return bigTxnThreshold
+}
+
+// GetScanBatchSize returns the batch size to scan ranges.
+func (c ConfigProbe) GetScanBatchSize() int {
+	return scanBatchSize
+}
+
+// GetDefaultLockTTL returns the default lock TTL.
+func (c ConfigProbe) GetDefaultLockTTL() uint64 {
+	return defaultLockTTL
+}
+
+// GetTTLFactor returns the factor to calculate txn TTL.
+func (c ConfigProbe) GetTTLFactor() int {
+	return ttlFactor
+}
+
+// GetGetMaxBackoff returns the max sleep for get command.
+func (c ConfigProbe) GetGetMaxBackoff() int {
+	return getMaxBackoff
+}
+
+// LoadPreSplitDetectThreshold returns presplit detect threshold config.
+func (c ConfigProbe) LoadPreSplitDetectThreshold() uint32 {
+	return atomic.LoadUint32(&preSplitDetectThreshold)
+}
+
+// StorePreSplitDetectThreshold updates presplit detect threshold config.
+func (c ConfigProbe) StorePreSplitDetectThreshold(v uint32) {
+	atomic.StoreUint32(&preSplitDetectThreshold, v)
+}
+
+// LoadPreSplitSizeThreshold returns presplit size threshold config.
+func (c ConfigProbe) LoadPreSplitSizeThreshold() uint32 {
+	return atomic.LoadUint32(&preSplitSizeThreshold)
+}
+
+// StorePreSplitSizeThreshold updates presplit size threshold config.
+func (c ConfigProbe) StorePreSplitSizeThreshold(v uint32) {
+	atomic.StoreUint32(&preSplitSizeThreshold, v)
+}
+
+// SetOracleUpdateInterval sets the interval of updating cached ts.
+func (c ConfigProbe) SetOracleUpdateInterval(v int) {
+	oracleUpdateInterval = v
 }

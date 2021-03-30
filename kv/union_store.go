@@ -13,17 +13,6 @@
 
 package kv
 
-import (
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-)
-
-// Priority value for transaction priority.TODO:remove it when br is ready
-const (
-	PriorityNormal = tikvstore.PriorityNormal
-	PriorityLow    = tikvstore.PriorityLow
-	PriorityHigh   = tikvstore.PriorityHigh
-)
-
 // UnionStore is a store that wraps a snapshot for read and a MemBuffer for buffered write.
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
@@ -43,20 +32,4 @@ type UnionStore interface {
 	GetOption(opt int) interface{}
 	// GetMemBuffer return the MemBuffer binding to this unionStore.
 	GetMemBuffer() MemBuffer
-}
-
-// AssertionType is the type of a assertion.
-type AssertionType int
-
-// The AssertionType constants.
-const (
-	None AssertionType = iota
-	Exist
-	NotExist
-)
-
-// Options is an interface of a set of options. Each option is associated with a value.
-type Options interface {
-	// Get gets an option value.
-	Get(opt int) (v interface{}, ok bool)
 }
