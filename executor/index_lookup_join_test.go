@@ -296,5 +296,5 @@ func (s *testSuite5) TestIssue23656(c *C) {
 	tk.MustExec("insert into t2 select * from t1")
 	tk.MustQuery("select /*+ inl_join(t2) */ * from t1 join t2 on t1.c_str = t2.c_str where t1.c_int = t2.c_int;").Check(testkit.Rows(
 		"1 clever jang 1 clever jang",
-		"2 reverent keller 2 reverent keller"))
+		"2 blissful aryabhata 2 blissful aryabhata"))
 }
