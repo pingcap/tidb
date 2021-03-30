@@ -600,6 +600,41 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 	}
 }
 
+func (s *testPointGetSuite) TestIssue23570(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	// point get
+	tk.MustExec("create table t(a int, b int, unique index ab(a, b), unique index ba(b, a))")
+	tk.MustQuery("explain format='brief' select a, b from t where a=1 and b=1").Check(testkit.Rows("Point_Get 1.00 root table:t, index:ab(a, b) "))
+	tk.MustQuery("explain format='brief' select a, b from t use index(ba) where a=1 and b=1").Check(testkit.Rows("Point_Get 1.00 root table:t, index:ba(b, a) "))
+	tk.MustQuery("explain format='brief' select a, b from t ignore index(ab, ba) where a=1 and b=1").Check(testkit.Rows(
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  eq(test.t.a, 1), eq(test.t.b, 1)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// batch get
+	tk.MustQuery("explain format='brief' select a, b from t where (a=1 and b=1) or (a=2 and b=2)").Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, index:ab(a, b) keep order:false, desc:false"))
+	tk.MustQuery("explain format='brief' select a, b from t use index(ba) where (a=1 and b=1) or (a=2 and b=2)").Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, index:ba(b, a) keep order:false, desc:false"))
+	tk.MustQuery("explain format='brief' select a, b from t ignore index(ab, ba) where (a=1 and b=1) or (a=2 and b=2)").Check(testkit.Rows(
+		"TableReader 2.00 root  data:Selection",
+		"└─Selection 2.00 cop[tikv]  or(and(eq(test.t.a, 1), eq(test.t.b, 1)), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format='brief' select a, b from t where (a, b) in ((1, 1), (2, 2))").Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, index:ab(a, b) keep order:false, desc:false"))
+	tk.MustQuery("explain format='brief' select a, b from t use index(ba) where (a, b) in ((1, 1), (2, 2))").Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, index:ba(b, a) keep order:false, desc:false"))
+	tk.MustQuery("explain format='brief' select a, b from t ignore index(ab, ba) where (a, b) in ((1, 1), (2, 2))").Check(testkit.Rows(
+		"TableReader 2.00 root  data:Selection",
+		"└─Selection 2.00 cop[tikv]  or(and(eq(test.t.a, 1), eq(test.t.b, 1)), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	// primary key
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int primary key, b int, unique index ab(a, b))")
+	tk.MustQuery("explain format='brief' select a from t1 where a=1").Check(testkit.Rows("Point_Get 1.00 root table:t1 handle:1"))
+	tk.MustQuery("explain format='brief' select a from t1 use index(ab) where a=1").Check(testkit.Rows(
+		"IndexReader 10.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 10.00 cop[tikv] table:t1, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo"))
+}
+
 func (s *testPointGetSuite) TestIssue18042(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
