@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -2447,7 +2448,7 @@ func (s *testSerialSuite) TestBatchPointGetRepeatableRead(c *C) {
 }
 
 func (s *testSerialSuite) TestSplitRegionTimeout(c *C) {
-	c.Assert(tikv.MockSplitRegionTimeout.Enable(`return(true)`), IsNil)
+	c.Assert(tikvutil.MockSplitRegionTimeout.Enable(`return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2456,24 +2457,24 @@ func (s *testSerialSuite) TestSplitRegionTimeout(c *C) {
 	tk.MustExec(`set @@tidb_wait_split_region_timeout=1`)
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
-	err := tikv.MockSplitRegionTimeout.Disable()
+	err := tikvutil.MockSplitRegionTimeout.Disable()
 	c.Assert(err, IsNil)
 
 	// Test scatter regions timeout.
-	c.Assert(tikv.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
+	c.Assert(tikvutil.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
-	err = tikv.MockScatterRegionTimeout.Disable()
+	err = tikvutil.MockScatterRegionTimeout.Disable()
 	c.Assert(err, IsNil)
 
 	// Test pre-split with timeout.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@global.tidb_scatter_region=1;")
-	c.Assert(tikv.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
+	c.Assert(tikvutil.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	start := time.Now()
 	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5;")
 	c.Assert(time.Since(start).Seconds(), Less, 10.0)
-	err = tikv.MockScatterRegionTimeout.Disable()
+	err = tikvutil.MockScatterRegionTimeout.Disable()
 	c.Assert(err, IsNil)
 }
 
