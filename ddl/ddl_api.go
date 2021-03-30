@@ -3574,8 +3574,8 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 	}
-	if types.IsTypeVarchar(origin.Tp) != types.IsTypeVarchar(to.Tp) && needRewriteCollationData {
-		unsupportedMsg := "index column type conversion between 'varchar' and 'non-varchar' is currently unsupported yet"
+	if types.IsTypeVarchar(origin.Tp) != types.IsTypeVarchar(to.Tp) {
+		unsupportedMsg := "column type conversion between 'varchar' and 'non-varchar' is currently unsupported yet"
 		return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 

@@ -454,19 +454,20 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenVarcharAndNonVarc
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
+	tk.MustExec("drop database if exists col_type_change_char;")
+	tk.MustExec("create database col_type_change_char;")
+	tk.MustExec("use col_type_change_char;")
 	tk.MustExec("create table t(a char(10), b varchar(10));")
 	tk.MustExec("insert into t values ('aaa    ', 'bbb   ');")
-	tk.MustExec("alter table t change column a a varchar(10);")
-	tk.MustExec("alter table t change column b b char(10);")
+	tk.MustExec("alter table t change column a a char(10);")
+	tk.MustExec("alter table t change column b b varchar(10);")
+	tk.MustGetErrCode("alter table t change column a a varchar(10);", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t change column b b char(10);", mysql.ErrUnsupportedDDLOperation)
 
 	tk.MustExec("alter table t add index idx_a(a);")
 	tk.MustExec("alter table t add index idx_b(b);")
-	tk.MustGetErrCode("alter table t change column a a char(10);", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t change column b b varchar(10);", mysql.ErrUnsupportedDDLOperation)
-	tk.MustExec("alter table t drop index idx_a;")
-	tk.MustExec("alter table t drop index idx_b;")
-	tk.MustExec("alter table t change column a a char(10);")
-	tk.MustExec("alter table t change column b b varchar(10);")
+	tk.MustGetErrCode("alter table t change column a a varchar(10);", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t change column b b char(10);", mysql.ErrUnsupportedDDLOperation)
 	tk.MustExec("admin check table t;")
 }
 
