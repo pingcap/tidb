@@ -272,6 +272,13 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE INDEX `` on t (a);", true, errors.New("[ddl:1280]Incorrect index name ''")},
 		{"CREATE INDEX `` on t ((lower(a)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
 
+		// issue 21082
+		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"CREATE TABLE t (a int) ENGINE=InnoDB;", false, nil},
+		{"CREATE TABLE t (a int);", false, nil},
+		{"ALTER TABLE t ENGINE=InnoDB;", false, nil},
+		{"ALTER TABLE t ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+
 		// issue 20295
 		// issue 11193
 		{"select cast(1.23 as decimal(65,65))", true, types.ErrTooBigScale.GenWithStackByArgs(65, "1.23", mysql.MaxDecimalScale)},
@@ -280,6 +287,10 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select CONVERT( 2, DECIMAL(28,29) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 		{"select CONVERT( 2, DECIMAL(30,65) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 		{"select CONVERT( 2, DECIMAL(66,99) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
+
+		// https://github.com/pingcap/parser/issues/609
+		{"CREATE TEMPORARY TABLE t (a INT);", false, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")},
+		{"DROP TEMPORARY TABLE t;", false, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")},
 
 		// TABLESAMPLE
 		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},

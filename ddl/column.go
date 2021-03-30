@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math/bits"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -823,7 +826,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	}
 
 	if !needChangeColumnData(oldCol, jobParam.newCol) {
-		return w.doModifyColumn(t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
+		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
 	}
 
 	if jobParam.changingCol == nil {
@@ -834,11 +837,26 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return ver, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
-		// TODO: Check whether we need to check OriginDefaultValue.
+
 		jobParam.changingCol = jobParam.newCol.Clone()
 		jobParam.changingCol.Name = newColName
 		jobParam.changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
-		_, _, _, err := createColumnInfo(tblInfo, jobParam.changingCol, changingColPos)
+
+		// Since column type change is implemented as adding a new column then substituting the old one.
+		// Case exists when update-where statement fetch a NULL for not-null column without any default data,
+		// it will errors.
+		// So we set zero original default value here to prevent this error. besides, in insert & update records,
+		// we have already implement using the casted value of relative column to insert rather than the origin
+		// default value.
+		originDefVal, err := generateOriginDefaultValue(jobParam.newCol)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err = jobParam.changingCol.SetOriginDefaultValue(originDefVal); err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		_, _, _, err = createColumnInfo(tblInfo, jobParam.changingCol, changingColPos)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -922,7 +940,12 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				defer w.sessPool.put(ctx)
 
-				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(valStr)
+				stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), valStr)
+				if err != nil {
+					job.State = model.JobStateCancelled
+					failpoint.Return(ver, err)
+				}
+				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					failpoint.Return(ver, err)
@@ -1119,6 +1142,10 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 			reorgInfo.StartKey, reorgInfo.EndKey = originalStartHandle, originalEndHandle
 		}
 
+		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
+		w.reorgCtx.setCurrentElement(reorgInfo.elements[i+1])
+
+		// Update the element in the reorgInfo for updating the reorg meta below.
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey)
@@ -1307,10 +1334,10 @@ func (w *updateColumnWorker) cleanRowMap() {
 // BackfillDataInTxn will backfill the table record in a transaction, lock corresponding rowKey, if the value of rowKey is changed.
 func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, w.priority)
+		txn.SetOption(tikvstore.Priority, w.priority)
 
 		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -1358,11 +1385,18 @@ func updateChangingInfo(changingCol *model.ColumnInfo, changingIdxs []*model.Ind
 
 // doModifyColumn updates the column information and reorders all columns. It does not support modifying column data.
 func (w *worker) doModifyColumn(
-	t *meta.Meta, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	d *ddlCtx, t *meta.Meta, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) (ver int64, _ error) {
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)
+
+		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
+		// We need to check after the flag is set
+		if d.lease > 0 && !noPreventNullFlag {
+			delayForAsyncCommit()
+		}
+
 		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 		err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, newCol.Name, oldCol.Tp != newCol.Tp)
 		if err != nil {
@@ -1476,7 +1510,7 @@ func adjustColumnInfoInModifyColumn(
 func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo,
 	newCol *model.ColumnInfo, oldName *model.CIStr, newAutoRandBits uint64) error {
 	schemaID := job.SchemaID
-	newLayout := autoid.NewAutoRandomIDLayout(&newCol.FieldType, newAutoRandBits)
+	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
 
 	// GenAutoRandomID first to prevent concurrent update.
 	_, err := t.GenAutoRandomID(schemaID, tblInfo.ID, 1)
@@ -1504,16 +1538,25 @@ func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model
 // checkForNullValue ensure there are no null values of the column of this table.
 // `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
 func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, newCol model.CIStr, oldCols ...*model.ColumnInfo) error {
-	colsStr := ""
+	var buf strings.Builder
+	buf.WriteString("select 1 from %n.%n where ")
+	paramsList := make([]interface{}, 0, 2+len(oldCols))
+	paramsList = append(paramsList, schema.L, table.L)
 	for i, col := range oldCols {
 		if i == 0 {
-			colsStr += "`" + col.Name.L + "` is null"
+			buf.WriteString("%n is null")
+			paramsList = append(paramsList, col.Name.L)
 		} else {
-			colsStr += " or `" + col.Name.L + "` is null"
+			buf.WriteString(" or %n is null")
+			paramsList = append(paramsList, col.Name.L)
 		}
 	}
-	sql := fmt.Sprintf("select 1 from `%s`.`%s` where %s limit 1;", schema.L, table.L, colsStr)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	buf.WriteString(" limit 1")
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), buf.String(), paramsList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1603,7 +1646,7 @@ func allocateColumnID(tblInfo *model.TableInfo) int64 {
 }
 
 func checkAddColumnTooManyColumns(colNum int) error {
-	if uint32(colNum) > atomic.LoadUint32(&TableColumnCountLimit) {
+	if uint32(colNum) > atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil

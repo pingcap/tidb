@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -137,9 +138,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 	if e.corColInAccess {
 		ts := e.plans[0].(*plannercore.PhysicalTableScan)
-		access := ts.AccessCondition
-		pkTP := ts.Table.GetPkColInfo().FieldType
-		e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
+		e.ranges, err = ts.ResolveCorrelatedColumns()
 		if err != nil {
 			return err
 		}
@@ -154,7 +153,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
-	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc)
+	firstPartRanges, secondPartRanges := distsql.SplitRangesBySign(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -208,7 +207,7 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
-// buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
+// buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResult returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
@@ -219,10 +218,8 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 			return nil, err
 		}
 		reqBuilder = builder.SetKeyRanges(kvRange)
-	} else if e.table.Meta() != nil && e.table.Meta().IsCommonHandle {
-		reqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), ranges)
 	} else {
-		reqBuilder = builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback)
+		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
 	}
 	kvReq, err := reqBuilder.
 		SetDAGRequest(e.dagPB).
@@ -234,6 +231,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		return nil, err

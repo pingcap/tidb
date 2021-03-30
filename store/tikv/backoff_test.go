@@ -21,23 +21,13 @@ import (
 )
 
 type testBackoffSuite struct {
-	OneByOneSuite
-	store *tikvStore
 }
 
 var _ = Suite(&testBackoffSuite{})
 
-func (s *testBackoffSuite) SetUpTest(c *C) {
-	s.store = NewTestStore(c).(*tikvStore)
-}
-
-func (s *testBackoffSuite) TearDownTest(c *C) {
-	s.store.Close()
-}
-
 func (s *testBackoffSuite) TestBackoffWithMax(c *C) {
 	b := NewBackofferWithVars(context.TODO(), 2000, nil)
-	err := b.BackoffWithMaxSleep(boTxnLockFast, 30, errors.New("test"))
+	err := b.BackoffWithMaxSleep(BoTxnLockFast, 30, errors.New("test"))
 	c.Assert(err, IsNil)
 	c.Assert(b.totalSleep, Equals, 30)
 }

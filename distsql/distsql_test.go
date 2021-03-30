@@ -47,7 +47,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []int
 		Build()
 	c.Assert(err, IsNil)
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
@@ -191,6 +191,17 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 	c.Assert(stats.String(), Equals, expect)
 	// Test for idempotence.
 	c.Assert(stats.String(), Equals, expect)
+
+	s1 = &selectResultRuntimeStats{
+		copRespTime:      []time.Duration{time.Second},
+		procKeys:         []int64{100},
+		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
+		totalProcessTime: time.Second,
+		totalWaitTime:    time.Second,
+		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
+	}
+	expect = "cop_task: {num: 1, max: 1s, proc_keys: 100, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
+	c.Assert(s1.String(), Equals, expect)
 }
 
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
@@ -203,7 +214,7 @@ func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamRe
 		Build()
 	c.Assert(err, IsNil)
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
@@ -473,7 +484,7 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,

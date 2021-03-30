@@ -111,7 +111,8 @@ PARTITION BY RANGE ( id ) (
 	// Value must locates in one partition.
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
-	ts.se.Execute(context.Background(), "rollback")
+	_, err = ts.se.Execute(context.Background(), "rollback")
+	c.Assert(err, IsNil)
 
 	createTable2 := `CREATE TABLE test.t2 (id int(11))
 PARTITION BY RANGE ( id ) (
@@ -517,4 +518,15 @@ func (ts *testSuite) TestHashPartitionInsertValue(c *C) {
 	tk.MustExec("INSERT INTO t4 VALUES(1, 1)")
 	result := tk.MustQuery("SELECT * FROM t4 WHERE a = 1")
 	result.Check(testkit.Rows("\x01 1"))
+}
+
+func (ts *testSuite) TestIssue21574(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by range columns (`key`) (partition p0 values less than (10));")
+	tk.MustExec("drop table t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`) (partition p0 values in (10));")
+	tk.MustExec("drop table t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`table`) (partition p0 values in ((1,1)));")
 }

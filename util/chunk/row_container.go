@@ -28,6 +28,7 @@ import (
 )
 
 // RowContainer provides a place for many rows, so many that we might want to spill them into disk.
+// nolint:structcheck
 type RowContainer struct {
 	m struct {
 		// RWMutex guarantees spill and get operator for rowContainer is mutually exclusive.

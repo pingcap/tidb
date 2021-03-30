@@ -34,25 +34,31 @@ func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 	c.Assert(err, IsNil)
 	req := rs.NewChunk()
 	for i := 0; i < 5; i++ {
-		rs.Next(context.Background(), req)
+		// FIXME: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
+		_ = rs.Next(context.Background(), req)
 	}
-	rs.Close()
+	err = rs.Close()
+	c.Assert(err, IsNil)
 
 	rs, err = tk.Exec("select /*+ INL_HASH_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
 	c.Assert(err, IsNil)
 	req = rs.NewChunk()
 	for i := 0; i < 5; i++ {
-		rs.Next(context.Background(), req)
+		// to fix: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
+		_ = rs.Next(context.Background(), req)
 	}
-	rs.Close()
+	err = rs.Close()
+	c.Assert(err, IsNil)
 
 	rs, err = tk.Exec("select /*+ INL_MERGE_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
 	c.Assert(err, IsNil)
 	req = rs.NewChunk()
 	for i := 0; i < 5; i++ {
-		rs.Next(context.Background(), req)
+		// to fix: cannot check err, since err exists,  Panic: [tikv:1690]BIGINT UNSIGNED value is out of range in '(Column#0 - 3)'
+		_ = rs.Next(context.Background(), req)
 	}
-	rs.Close()
+	err = rs.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite1) TestIndexJoinUnionScan(c *C) {
@@ -266,4 +272,29 @@ func (s *testSuite5) TestIssue19411(c *C) {
 		"1 1",
 		"2 2"))
 	tk.MustExec("commit")
+}
+
+func (s *testSuite5) TestIssue23653(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key(c_str), unique key(c_int), unique key(c_str))")
+	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key(c_int, c_str(4)), key(c_int), unique key(c_str))")
+	tk.MustExec("insert into t1 values (1, 'cool buck'), (2, 'reverent keller')")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustQuery("select /*+ inl_join(t2) */ * from t1, t2 where t1.c_str = t2.c_str and t1.c_int = t2.c_int and t1.c_int = 2").Check(testkit.Rows(
+		"2 reverent keller 2 reverent keller"))
+}
+
+func (s *testSuite5) TestIssue23656(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40), primary key(c_int, c_str(4)))")
+	tk.MustExec("create table t2 like t1")
+	tk.MustExec("insert into t1 values (1, 'clever jang'), (2, 'blissful aryabhata')")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustQuery("select /*+ inl_join(t2) */ * from t1 join t2 on t1.c_str = t2.c_str where t1.c_int = t2.c_int;").Check(testkit.Rows(
+		"1 clever jang 1 clever jang",
+		"2 blissful aryabhata 2 blissful aryabhata"))
 }

@@ -226,6 +226,9 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 				}
 				var items []item
 				for key, val := range data {
+					if config.ContainHiddenConfig(key) {
+						continue
+					}
 					var str string
 					switch val.(type) {
 					case string: // remove quotes
@@ -363,7 +366,8 @@ func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.S
 	opt := grpc.WithInsecure()
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
+		clusterSecurity := security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -527,7 +531,8 @@ func (e *clusterLogRetriever) startRetrieving(
 	opt := grpc.WithInsecure()
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
+		clusterSecurity := security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

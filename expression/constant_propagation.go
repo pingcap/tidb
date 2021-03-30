@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/disjointset"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -29,6 +28,7 @@ import (
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
 var MaxPropagateColsCnt = 100
 
+// nolint:structcheck
 type basePropConstSolver struct {
 	colMapper map[int64]int       // colMapper maps column to its index
 	eqList    []*Constant         // if eqList[i] != nil, it means col_i = eqList[i]
@@ -88,7 +88,7 @@ func validEqualCondHelper(ctx sessionctx.Context, eq *ScalarFunction, colIsLeft 
 	if ContainMutableConst(ctx, []Expression{con}) {
 		return nil, nil
 	}
-	if !collate.CompatibleCollate(col.GetType().Collate, con.GetType().Collate) {
+	if col.GetType().Collate != con.GetType().Collate {
 		return nil, nil
 	}
 	return col, con
@@ -120,6 +120,9 @@ func validEqualCond(ctx sessionctx.Context, cond Expression) (*Column, *Constant
 //  for 'a, b, sin(a) + cos(a) = 5', it returns 'true, false, returns sin(b) + cos(b) = 5'
 //  for 'a, b, cast(a) < rand()', it returns 'false, true, cast(a) < rand()'
 func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Expression, nullAware bool) (bool, bool, Expression) {
+	if src.RetType.Tp != tgt.RetType.Tp {
+		return false, false, cond
+	}
 	sf, ok := cond.(*ScalarFunction)
 	if !ok {
 		return false, false, cond

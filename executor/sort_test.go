@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -85,6 +86,10 @@ func (s *testSerialSuite1) TestIssue16696(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 	})
+	alarmRatio := variable.MemoryUsageAlarmRatio.Load()
+	variable.MemoryUsageAlarmRatio.Store(0.0)
+	defer variable.MemoryUsageAlarmRatio.Store(alarmRatio)
+
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)

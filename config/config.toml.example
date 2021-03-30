@@ -34,13 +34,6 @@ token-limit = 1000
 # The maximum memory available for a single SQL statement. Default: 1GB
 mem-quota-query = 1073741824
 
-# The maximum memory limitation for statistics. Default: 32GB
-# This value must not be less than 32GB.
-mem-quota-statistics = 34359738368
-
-# The maximum number available of a NLJ cache for a single SQL statement. Default: 20MB
-nested-loop-join-cache-capacity = 20971520
-
 # Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 oom-use-tmp-storage = true
 
@@ -63,6 +56,10 @@ enable-batch-dml = false
 
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
+
+# Make "kill query" behavior compatible with MySQL. It's not recommend to
+# turn on this option when TiDB server is behind a proxy.
+compatible-kill-query = false
 
 # Make SIGTERM wait N seconds before starting the shutdown procedure. This is designed for when TiDB is behind a proxy/load balancer.
 # The health check will fail immediately but the server will not start shutting down until the time has elapsed.
@@ -89,9 +86,10 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
-# alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
-# If it is true, we can add the primary key by "alter table". However, if a table already exists before the switch is turned true and the data type of its primary key column is an integer,
-# the primary key cannot be dropped.
+# alter-primary-key is used to control whether the primary keys are clustered. 
+# Note that this config is deprecated. Only valid when @@global.tidb_enable_clustered_index = 'int_only'.
+# Default is false, only the integer primary keys are clustered.
+# If it is true, all types of primary keys are nonclustered.
 alter-primary-key = false
 
 # server-version is used to change the version string of TiDB in the following scenarios:
@@ -126,9 +124,6 @@ enable-telemetry = true
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
 deprecate-integer-display-length = false
-
-# txn-scope indicates the default value for the `txn_scope` session variable.
-txn-scope = "global"
 
 # enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
 # According to MySQL 8.0 Refman:
@@ -260,7 +255,7 @@ stats-lease = "3s"
 run-auto-analyze = true
 
 # Probability to use the query feedback to update stats, 0.0 or 1.0 for always false/true.
-feedback-probability = 0.05
+feedback-probability = 0.0
 
 # The max number of query feedback that cache in memory.
 query-feedback-limit = 512
@@ -300,7 +295,7 @@ max-txn-ttl = 3600000
 mem-profile-interval = "1m"
 
 # Index usage sync lease duration, which influences the time of dump index usage information to KV.
-# Here we set to 0 to not dump index usage information to KV, 
+# Here we set to 0 to not dump index usage information to KV,
 # because we have not completed GC and other functions.
 index-usage-sync-lease = "0s"
 
@@ -318,7 +313,7 @@ networks = ""
 header-timeout = 5
 
 [prepared-plan-cache]
-enabled = true
+enabled = false
 capacity = 100
 memory-guard-ratio = 0.1
 
@@ -373,6 +368,10 @@ log-spans = false
 #  LocalAgentHostPort instructs reporter to send spans to jaeger-agent at this address
 local-agent-host-port = ""
 
+[pd-client]
+# Max time which PD client will wait for the PD server in seconds.
+pd-server-timeout = 3
+
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
 grpc-connection-count = 4
@@ -413,32 +412,15 @@ region-cache-ttl = 600
 store-limit = 0
 
 # store-liveness-timeout is used to control timeout for store liveness after sending request failed.
-store-liveness-timeout = "5s"
+store-liveness-timeout = "1s"
 
 # ttl-refreshed-txn-size decides whether a transaction should update its lock TTL.
 # If the size(in byte) of a transaction is large than `ttl-refreshed-txn-size`, it update the lock TTL during the 2PC.
 ttl-refreshed-txn-size = 33554432
 
-[tikv-client.async-commit]
-# The maximum allowed keys in an async commit transaction. Transactions with more keys than the limit
-# will be committed with normal 2PC way.
-keys-limit = 256
-# The maximum length total of keys in bytes. Transactions will be committed with the normal 2PC way
-# if the limit is exceeded.
-total-key-size-limit = 4096
-
 [tikv-client.copr-cache]
-# Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
-# reuses the result when corresponding data in TiKV is unchanged, on a region basis.
-enable = true
-
-# The capacity in MB of the cache.
+# The capacity in MB of the cache. Zero means disable coprocessor cache.
 capacity-mb = 1000.0
-
-# Only cache requests whose result set is small.
-admission-max-result-mb = 10.0
-# Only cache requests takes notable time to process.
-admission-min-process-ms = 5
 
 [binlog]
 # enable to write binlog.
@@ -485,6 +467,8 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
+# enable creating expression index.
+allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

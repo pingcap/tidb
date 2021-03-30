@@ -14,7 +14,6 @@
 package handle_test
 
 import (
-	"math"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -34,7 +33,6 @@ func (s *testStatsSuite) TestGCStats(c *C) {
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("12"))
 	h := s.do.StatsHandle()
-	h.SetLastUpdateVersion(math.MaxUint64)
 	ddlLease := time.Duration(0)
 	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("3"))
@@ -58,7 +56,7 @@ func (s *testStatsSuite) TestGCStats(c *C) {
 func (s *testStatsSuite) TestGCPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 		testKit.MustExec(`create table t (a bigint(64), b bigint(64), index idx(a, b))
@@ -71,7 +69,6 @@ func (s *testStatsSuite) TestGCPartition(c *C) {
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("6"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("15"))
 		h := s.do.StatsHandle()
-		h.SetLastUpdateVersion(math.MaxUint64)
 		ddlLease := time.Duration(0)
 		testKit.MustExec("alter table t drop index idx")
 		c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
@@ -96,33 +93,43 @@ func (s *testStatsSuite) TestGCPartition(c *C) {
 func (s *testStatsSuite) TestGCExtendedStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("set session tidb_enable_extended_stats = on")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
-	testKit.MustExec("create statistics s1(correlation) on t(a,b)")
-	testKit.MustExec("create statistics s2(correlation) on t(b,c)")
+	testKit.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	testKit.MustExec("alter table t add stats_extended s2 correlation(b,c)")
 	testKit.MustExec("analyze table t")
 
-	testKit.MustQuery("select stats_name, db, type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s1 test 2 [1,2] 1 <nil> 1",
-		"s2 test 2 [2,3] 1 <nil> 1",
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"s1 2 [1,2] 1.000000 1",
+		"s2 2 [2,3] 1.000000 1",
 	))
 	testKit.MustExec("alter table t drop column a")
-	testKit.MustQuery("select stats_name, db, type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s1 test 2 [1,2] 1 <nil> 1",
-		"s2 test 2 [2,3] 1 <nil> 1",
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"s1 2 [1,2] 1.000000 1",
+		"s2 2 [2,3] 1.000000 1",
 	))
 	h := s.do.StatsHandle()
-	h.SetLastUpdateVersion(math.MaxUint64)
 	ddlLease := time.Duration(0)
 	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
-	testKit.MustQuery("select stats_name, db, type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended").Check(testkit.Rows(
-		"s2 test 2 [2,3] 1 <nil> 1",
-	))
-	testKit.MustExec("drop table t")
-	testKit.MustQuery("select stats_name, db, type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended").Check(testkit.Rows(
-		"s2 test 2 [2,3] 1 <nil> 1",
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"s1 2 [1,2] 1.000000 2",
+		"s2 2 [2,3] 1.000000 1",
 	))
 	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
-	testKit.MustQuery("select stats_name, db, type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended").Check(testkit.Rows())
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"s2 2 [2,3] 1.000000 1",
+	))
+
+	testKit.MustExec("drop table t")
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"s2 2 [2,3] 1.000000 1",
+	))
+	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"s2 2 [2,3] 1.000000 2",
+	))
+	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows())
 }

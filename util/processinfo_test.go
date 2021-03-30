@@ -15,6 +15,7 @@ package util_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
 )
 
@@ -30,6 +31,13 @@ func (s *testProcessInfoSuite) TearDownSuite(c *C) {
 }
 
 func (s *testProcessInfoSuite) TestGlobalConnID(c *C) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Experimental.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
 	connID := util.GlobalConnID{
 		Is64bits:    true,
 		ServerID:    1001,

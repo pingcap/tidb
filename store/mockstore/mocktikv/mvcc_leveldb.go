@@ -1122,7 +1122,7 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 // callerStartTS is the start ts of reader transaction.
 // currentTS is the current ts, but it may be inaccurate. Just use it to check TTL.
 func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64,
-	rollbackIfNotExist bool) (ttl uint64, commitTS uint64, action kvrpcpb.Action, err error) {
+	rollbackIfNotExist bool, resolvingPessimisticLock bool) (ttl uint64, commitTS uint64, action kvrpcpb.Action, err error) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
@@ -1151,15 +1151,24 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 
 			// If the lock has already outdated, clean up it.
 			if uint64(oracle.ExtractPhysical(lock.startTS))+lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
-				if err = rollbackLock(batch, primaryKey, lockTS); err != nil {
-					err = errors.Trace(err)
-					return
+				if resolvingPessimisticLock && lock.op == kvrpcpb.Op_PessimisticLock {
+					action = kvrpcpb.Action_TTLExpirePessimisticRollback
+					if err = pessimisticRollbackKey(mvcc.db, batch, primaryKey, lock.startTS, lock.forUpdateTS); err != nil {
+						err = errors.Trace(err)
+						return
+					}
+				} else {
+					action = kvrpcpb.Action_TTLExpireRollback
+					if err = rollbackLock(batch, primaryKey, lockTS); err != nil {
+						err = errors.Trace(err)
+						return
+					}
 				}
 				if err = mvcc.db.Write(batch, nil); err != nil {
 					err = errors.Trace(err)
 					return
 				}
-				return 0, 0, kvrpcpb.Action_TTLExpireRollback, nil
+				return 0, 0, action, nil
 			}
 
 			// If the caller_start_ts is MaxUint64, it's a point get in the autocommit transaction.
@@ -1225,6 +1234,9 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 	// written before the primary lock.
 
 	if rollbackIfNotExist {
+		if resolvingPessimisticLock {
+			return 0, 0, kvrpcpb.Action_LockNotExistDoNothing, nil
+		}
 		// Write rollback record, but not delete the lock on the primary key. There may exist lock which has
 		// different lock.startTS with input lockTS, for example the primary key could be already
 		// locked by the caller transaction, deleting this key will mistakenly delete the lock on

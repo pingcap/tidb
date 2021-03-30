@@ -19,10 +19,10 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -31,15 +31,12 @@ type actionCommit struct{ retry bool }
 
 var _ twoPhaseCommitAction = actionCommit{}
 
-var tikvSecondaryLockCleanupFailureCounterCommit = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
-var tiKVTxnRegionsNumHistogramCommit = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("commit"))
-
 func (actionCommit) String() string {
 	return "commit"
 }
 
 func (actionCommit) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramCommit
+	return metrics.TxnRegionsNumHistogramCommit
 }
 
 func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
@@ -51,7 +48,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 
 	sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
-	resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+	resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutShort)
 
 	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
 	// transaction has been successfully committed.
@@ -79,7 +76,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		return errors.Trace(err)
 	}
 	if resp.Resp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return errors.Trace(kv.ErrBodyMissing)
 	}
 	commitResp := resp.Resp.(*pb.CommitResponse)
 	// Here we can make sure tikv has processed the commit primary key request. So

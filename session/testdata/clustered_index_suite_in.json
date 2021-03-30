@@ -1,0 +1,11 @@
+[
+  {
+    "name": "TestClusteredPrefixColumn",
+    "cases": [
+      "select c2 from t1 use index(idx1)",
+      "select count(1) from t1 use index(idx1) where c2 = 'cd'",
+      "select c2 from t2 use index(idx1)",
+      "select count(1) from t2 use index(idx1) where c2 = 'cd'"
+    ]
+  }
+]

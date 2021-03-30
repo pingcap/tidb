@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/opcode"
 )
 
 // UnCacheableFunctions stores functions which can not be cached to plan cache.
@@ -131,6 +132,50 @@ var DeferredFunctions = map[string]struct{}{
 	ast.Curdate:          {},
 	ast.CurrentDate:      {},
 	ast.UTCDate:          {},
+}
+
+// AllowedPartitionFuncMap stores functions which can be used in the partition expression.
+var AllowedPartitionFuncMap = map[string]struct{}{
+	ast.ToDays:        {},
+	ast.ToSeconds:     {},
+	ast.DayOfMonth:    {},
+	ast.Month:         {},
+	ast.DayOfYear:     {},
+	ast.Quarter:       {},
+	ast.YearWeek:      {},
+	ast.Year:          {},
+	ast.Weekday:       {},
+	ast.DayOfWeek:     {},
+	ast.Day:           {},
+	ast.Hour:          {},
+	ast.Minute:        {},
+	ast.Second:        {},
+	ast.TimeToSec:     {},
+	ast.MicroSecond:   {},
+	ast.UnixTimestamp: {},
+	ast.FromDays:      {},
+	ast.Extract:       {},
+	ast.Abs:           {},
+	ast.Ceiling:       {},
+	ast.DateDiff:      {},
+	ast.Floor:         {},
+	ast.Mod:           {},
+}
+
+// AllowedPartition4BinaryOpMap store the operator for Binary Expr
+// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html for more details
+var AllowedPartition4BinaryOpMap = map[opcode.Op]struct{}{
+	opcode.Plus:   {},
+	opcode.Minus:  {},
+	opcode.Mul:    {},
+	opcode.IntDiv: {},
+	opcode.Mod:    {},
+}
+
+// AllowedPartition4UnaryOpMap store the operator for Unary Expr
+var AllowedPartition4UnaryOpMap = map[opcode.Op]struct{}{
+	opcode.Plus:  {},
+	opcode.Minus: {},
 }
 
 // inequalFunctions stores functions which cannot be propagated from column equal condition.

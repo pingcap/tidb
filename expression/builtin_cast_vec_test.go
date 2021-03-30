@@ -16,6 +16,7 @@ package expression
 import (
 	"math"
 	"math/rand"
+	"strconv"
 	"testing"
 	"time"
 
@@ -37,7 +38,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}, geners: []dataGenerator{&constJSONGener{strconv.Itoa(rand.Int())}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
 		{
@@ -55,7 +56,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETReal}, geners: []dataGenerator{newRandDurReal()}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDecimal}, geners: []dataGenerator{newRandDurDecimal()}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
-		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETJson}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETJson}, geners: []dataGenerator{newDecimalJSONGener(0)}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newRealStringGener()}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDatetime}},

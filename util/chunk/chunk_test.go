@@ -560,7 +560,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	initCap := 10
 	chk := NewChunkWithCapacity(fieldTypes, initCap)
 
-	//cap(c.nullBitmap) + cap(c.offsets)*8 + cap(c.data) + cap(c.elemBuf)
+	// cap(c.nullBitmap) + cap(c.offsets)*8 + cap(c.data) + cap(c.elemBuf)
 	colUsage := make([]int, len(fieldTypes))
 	colUsage[0] = (initCap+7)>>3 + 0 + initCap*4 + 4
 	colUsage[1] = (initCap+7)>>3 + (initCap+1)*8 + initCap*8 + 0
@@ -631,22 +631,28 @@ func (s *testChunkSuite) TestSwapColumn(c *check.C) {
 		c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
 	}
 
-	chk1.SwapColumn(0, chk2, 0)
+	err := chk1.SwapColumn(0, chk2, 0)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk1.SwapColumn(0, chk2, 1)
+	err = chk1.SwapColumn(0, chk2, 1)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(1, chk2, 0)
+	err = chk2.SwapColumn(1, chk2, 0)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(1, chk2, 1)
+	err = chk2.SwapColumn(1, chk2, 1)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(1, chk2, 2)
+	err = chk2.SwapColumn(1, chk2, 2)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(2, chk2, 0)
+	err = chk2.SwapColumn(2, chk2, 0)
+	c.Assert(err, check.IsNil)
 	checkRef()
 }
 
@@ -779,8 +785,10 @@ func (s *testChunkSuite) TestMakeRefTo(c *check.C) {
 	chk1.AppendFloat32(1, 3)
 
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
-	chk2.MakeRefTo(0, chk1, 1)
-	chk2.MakeRefTo(1, chk1, 0)
+	err := chk2.MakeRefTo(0, chk1, 1)
+	c.Assert(err, check.IsNil)
+	err = chk2.MakeRefTo(1, chk1, 0)
+	c.Assert(err, check.IsNil)
 
 	c.Assert(chk2.columns[0] == chk1.columns[1], check.IsTrue)
 	c.Assert(chk2.columns[1] == chk1.columns[0], check.IsTrue)

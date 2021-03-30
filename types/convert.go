@@ -353,7 +353,7 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
-		return ZeroDuration, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
+		return ZeroDuration, errors.Trace(ErrTruncatedWrongVal.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
 	}
 	dur := NewDuration(int(number/10000), int((number/100)%100), int(number%100), 0, fsp)
 	if neg {
@@ -392,7 +392,7 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string, isFuncCast bool
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(str) {
-		return valid, errors.Trace(handleTruncateError(sc, ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", str)))
+		return valid, errors.Trace(sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", str)))
 	}
 	return valid, nil
 }
@@ -552,7 +552,7 @@ func ConvertJSONToInt64(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigne
 func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned bool, tp byte) (int64, error) {
 	switch j.TypeCode {
 	case json.TypeCodeObject, json.TypeCodeArray:
-		return 0, nil
+		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
 	case json.TypeCodeLiteral:
 		switch j.Value[0] {
 		case json.LiteralNil, json.LiteralFalse:
@@ -610,7 +610,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float64, error) {
 	switch j.TypeCode {
 	case json.TypeCodeObject, json.TypeCodeArray:
-		return 0, nil
+		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
 	case json.TypeCodeLiteral:
 		switch j.Value[0] {
 		case json.LiteralNil, json.LiteralFalse:
@@ -633,16 +633,31 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 
 // ConvertJSONToDecimal casts JSON into decimal.
 func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyDecimal, error) {
+	var err error = nil
 	res := new(MyDecimal)
-	if j.TypeCode != json.TypeCodeString {
-		f64, err := ConvertJSONToFloat(sc, j)
-		if err != nil {
-			return res, errors.Trace(err)
+	switch j.TypeCode {
+	case json.TypeCodeObject, json.TypeCodeArray:
+		err = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", j.String())
+	case json.TypeCodeLiteral:
+		switch j.Value[0] {
+		case json.LiteralNil, json.LiteralFalse:
+			res = res.FromInt(0)
+		default:
+			res = res.FromInt(1)
 		}
-		err = res.FromFloat64(f64)
+	case json.TypeCodeInt64:
+		res = res.FromInt(j.GetInt64())
+	case json.TypeCodeUint64:
+		res = res.FromUint(j.GetUint64())
+	case json.TypeCodeFloat64:
+		err = res.FromFloat64(j.GetFloat64())
+	case json.TypeCodeString:
+		err = res.FromString(j.GetString())
+	}
+	err = sc.HandleTruncate(err)
+	if err != nil {
 		return res, errors.Trace(err)
 	}
-	err := sc.HandleTruncate(res.FromString(j.GetString()))
 	return res, errors.Trace(err)
 }
 
@@ -695,7 +710,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string, isFuncCast bool
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(s) {
-		err = errors.Trace(handleTruncateError(sc, ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", s)))
+		err = errors.Trace(sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", s)))
 	}
 	return valid, err
 }

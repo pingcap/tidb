@@ -180,14 +180,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
-		if name == variable.TiDBFoundInPlanCache {
-			sessionVars.StmtCtx.AppendWarning(fmt.Errorf("Set operation for '%s' will not take effect", variable.TiDBFoundInPlanCache))
-			return nil
-		}
-		if name == variable.TiDBFoundInBinding {
-			sessionVars.StmtCtx.AppendWarning(fmt.Errorf("Set operation for '%s' will not take effect", variable.TiDBFoundInBinding))
-			return nil
-		}
 		err = variable.SetSessionSystemVar(sessionVars, name, value)
 		if err != nil {
 			return err
