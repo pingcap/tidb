@@ -75,7 +75,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1503,7 +1503,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
 			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-			if allowTiFlashFallback && errors.ErrorEqual(err, tikv.ErrTiFlashServerTimeout) && retryable {
+			if allowTiFlashFallback && errors.ErrorEqual(err, tikvstore.ErrTiFlashServerTimeout) && retryable {
 				// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 				// server and fallback to TiKV.
 				warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
@@ -1803,10 +1803,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			switch value.(string) {
 			case "firstNext":
-				failpoint.Return(firstNext, tikv.ErrTiFlashServerTimeout)
+				failpoint.Return(firstNext, tikvstore.ErrTiFlashServerTimeout)
 			case "secondNext":
 				if !firstNext {
-					failpoint.Return(firstNext, tikv.ErrTiFlashServerTimeout)
+					failpoint.Return(firstNext, tikvstore.ErrTiFlashServerTimeout)
 				}
 			}
 		})
