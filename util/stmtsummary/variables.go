@@ -31,6 +31,7 @@ const (
 	typeHistorySize
 	typeMaxStmtCount
 	typeMaxSQLLength
+	typeMaxEvictedInfoCount
 	typesNum
 )
 
@@ -81,7 +82,7 @@ func (s *systemVars) setVariable(varType int, valueStr string, isSession bool) e
 		valueInt = getBoolFinalVariable(varType, sessionValue, globalValue)
 	case typeHistorySize, typeMaxSQLLength:
 		valueInt = getIntFinalVariable(varType, sessionValue, globalValue, 0)
-	case typeRefreshInterval, typeMaxStmtCount:
+	case typeRefreshInterval, typeMaxStmtCount, typeMaxEvictedInfoCount:
 		valueInt = getIntFinalVariable(varType, sessionValue, globalValue, 1)
 	default:
 		return errors.New(fmt.Sprintf("no such type of variable: %d", varType))
@@ -152,6 +153,8 @@ func getConfigValue(varType int) int64 {
 		valueInt = int64(stmtSummaryConfig.MaxStmtCount)
 	case typeMaxSQLLength:
 		valueInt = int64(stmtSummaryConfig.MaxSQLLength)
+	case typeMaxEvictedInfoCount:
+		valueInt = int64(stmtSummaryConfig.MaxEvictedCount)
 	default:
 		panic(fmt.Sprintf("No such type of variable: %d", varType))
 	}

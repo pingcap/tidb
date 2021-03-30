@@ -2515,6 +2515,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBStmtSummaryRefreshInterval,
 	variable.TiDBStmtSummaryHistorySize,
 	variable.TiDBStmtSummaryMaxStmtCount,
+	variable.TiDBStmtSummaryMaxEvictedCount,
 	variable.TiDBStmtSummaryMaxSQLLength,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBCapturePlanBaseline,

@@ -516,6 +516,8 @@ type StmtSummary struct {
 	EnableInternalQuery bool `toml:"enable-internal-query" json:"enable-internal-query"`
 	// The maximum number of statements kept in memory.
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
+	// The maximum number of statements kept in memory.
+	MaxEvictedCount uint `toml:"max-evicted-count" json:"max-evicted-count"`
 	// The maximum length of displayed normalized SQL and sample SQL.
 	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
 	// The refresh interval of statement summary.
@@ -652,6 +654,7 @@ var defaultConf = Config{
 		MaxSQLLength:        4096,
 		RefreshInterval:     1800,
 		HistorySize:         24,
+		MaxEvictedCount:     48,
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
@@ -877,6 +880,9 @@ func (c *Config) Valid() error {
 
 	if c.StmtSummary.MaxStmtCount <= 0 {
 		return fmt.Errorf("max-stmt-count in [stmt-summary] should be greater than 0")
+	}
+	if c.StmtSummary.MaxEvictedCount <= 0 {
+		return fmt.Errorf("max-evicted-count in [stmt-summary] should be greater than 0")
 	}
 	if c.StmtSummary.HistorySize < 0 {
 		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")

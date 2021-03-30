@@ -72,6 +72,19 @@ type stmtSummaryByDigestMap struct {
 
 	// sysVars encapsulates system variables needed to control statement summary.
 	sysVars *systemVars
+
+	evictedInfo stmtSummaryEvictedInfo
+	evictedInfoHistory
+	evictedInfoCount int
+}
+type stmtSummaryEvictedInfo struct {
+	beginTime    int64
+	endTime      int64
+	evictedCount int
+}
+type evictedInfoHistory struct {
+	sync.Mutex
+	element []stmtSummaryEvictedInfo
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -234,9 +247,13 @@ type StmtExecInfo struct {
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	sysVars := newSysVars()
 	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
+	maxStmtEvictedCount := uint(sysVars.getVariable(typeMaxEvictedInfoCount))
 	return &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 		sysVars:    sysVars,
+		evictedInfoHistory: evictedInfoHistory{
+			element: make([]stmtSummaryEvictedInfo, 0, maxStmtEvictedCount),
+		},
 	}
 }
 
@@ -269,7 +286,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		if sei.IsInternal && !ssMap.EnabledInternal() {
 			return nil, 0
 		}
-
+		oldBeginTime := ssMap.beginTimeForCurInterval
 		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
 			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
 			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
@@ -282,6 +299,44 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		if !ok {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
+			if ssMap.summaryMap.Size() == ssMap.maxStmtCount() {
+				if ssMap.evictedInfo.beginTime != ssMap.beginTimeForCurInterval {
+					ssMap.evictedInfoHistory.Lock()
+					if len(ssMap.evictedInfoHistory.element) < ssMap.maxEvictedCount() {
+						temp := append(ssMap.evictedInfoHistory.element, stmtSummaryEvictedInfo{
+							beginTime:    ssMap.evictedInfo.beginTime,
+							endTime:      ssMap.evictedInfo.endTime,
+							evictedCount: ssMap.evictedInfo.evictedCount,
+						})
+						ssMap.evictedInfoHistory.element = temp
+						ssMap.evictedInfo.beginTime = oldBeginTime
+						ssMap.evictedInfo.endTime = ssMap.beginTimeForCurInterval + ssMap.refreshInterval()
+					} else {
+						index := ssMap.evictedInfoCount % len(ssMap.evictedInfoHistory.element)
+						ssMap.evictedInfoHistory.element[index] = stmtSummaryEvictedInfo{
+							beginTime:    ssMap.evictedInfo.beginTime,
+							endTime:      ssMap.evictedInfo.endTime,
+							evictedCount: ssMap.evictedInfo.evictedCount,
+						}
+					}
+					ssMap.evictedInfoHistory.Unlock()
+					ssMap.evictedInfo.evictedCount = 0
+					ssMap.evictedInfoCount++
+				}
+				_, oldestValue, err := ssMap.summaryMap.GetOldest()
+				values := oldestValue.(*stmtSummaryByDigest).history
+				if err && values != nil {
+					Count := 0
+					for i := values.Front(); i != nil; i = i.Next() {
+						if i.Value.(*stmtSummaryByDigestElement).endTime >= ssMap.beginTimeForCurInterval {
+							Count++
+						} else {
+							break
+						}
+					}
+					ssMap.evictedInfo.evictedCount += Count
+				}
+			}
 			ssMap.summaryMap.Put(key, summary)
 		} else {
 			summary = value.(*stmtSummaryByDigest)
@@ -349,6 +404,26 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isS
 	for _, value := range values {
 		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, user, isSuper)
 		rows = append(rows, records...)
+	}
+	return rows
+}
+
+func (ssMap *stmtSummaryByDigestMap) ToEvictedInfo() [][]types.Datum {
+	rows := make([][]types.Datum, 0, len(ssMap.evictedInfoHistory.element))
+	//if ssMap.evictedInfo.evictedCount != 0 {
+	//	rows = append(rows, types.MakeDatums(
+	//		types.NewTime(types.FromGoTime(time.Unix(ssMap.evictedInfo.beginTime, 0)), mysql.TypeTimestamp, 0),
+	//		types.NewTime(types.FromGoTime(time.Unix(ssMap.evictedInfo.endTime, 0)), mysql.TypeTimestamp, 0),
+	//		ssMap.evictedInfo.evictedCount,
+	//	))
+	//}
+	for _, v := range ssMap.evictedInfoHistory.element {
+		row := types.MakeDatums(
+			types.NewTime(types.FromGoTime(time.Unix(v.beginTime, 0)), mysql.TypeTimestamp, 0),
+			types.NewTime(types.FromGoTime(time.Unix(v.endTime, 0)), mysql.TypeTimestamp, 0),
+			v.evictedCount,
+		)
+		rows = append(rows, row)
 	}
 	return rows
 }
@@ -474,6 +549,22 @@ func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value string, inSession boo
 
 func (ssMap *stmtSummaryByDigestMap) maxStmtCount() int {
 	return int(ssMap.sysVars.getVariable(typeMaxStmtCount))
+}
+
+// SetHistorySize sets the history size for all summaries.
+func (ssMap *stmtSummaryByDigestMap) SetMaxEvictedCount(value string, inSession bool) error {
+	if err := ssMap.sysVars.setVariable(typeMaxEvictedInfoCount, value, inSession); err != nil {
+		return err
+	}
+	capacity := ssMap.sysVars.getVariable(typeMaxEvictedInfoCount)
+	ssMap.evictedInfoHistory.Lock()
+	ssMap.evictedInfoHistory.element = make([]stmtSummaryEvictedInfo, 0, capacity)
+	defer ssMap.evictedInfoHistory.Unlock()
+	return nil
+}
+
+func (ssMap *stmtSummaryByDigestMap) maxEvictedCount() int {
+	return int(ssMap.sysVars.getVariable(typeMaxEvictedInfoCount))
 }
 
 // SetHistorySize sets the history size for all summaries.

@@ -226,6 +226,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		return stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryMaxStmtCount:
 		return stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryMaxEvictedCount:
+		return stmtsummary.StmtSummaryByDigestMap.SetMaxEvictedCount(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryMaxSQLLength:
 		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:

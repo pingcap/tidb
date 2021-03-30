@@ -455,6 +455,9 @@ enable-internal-query = false
 # max number of statements kept in memory.
 max-stmt-count = 200
 
+# max number of evicted info kept in memory.
+max-evicted-count = 48
+
 # max length of displayed normalized sql and sample sql.
 max-sql-length = 4096
 

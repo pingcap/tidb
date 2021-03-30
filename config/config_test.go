@@ -216,6 +216,7 @@ total-key-size-limit=1024
 enable=false
 enable-internal-query=true
 max-stmt-count=1000
+max-evicted-count=1000
 max-sql-length=1024
 refresh-interval=100
 history-size=100
@@ -261,6 +262,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.StmtSummary.Enable, Equals, false)
 	c.Assert(conf.StmtSummary.EnableInternalQuery, Equals, true)
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
+	c.Assert(conf.StmtSummary.MaxEvictedCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
 	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)

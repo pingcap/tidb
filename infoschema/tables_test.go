@@ -1509,3 +1509,33 @@ func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
 	err = tk.ExecToErr("FLUSH CLIENT_ERRORS_SUMMARY")
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RELOAD privilege(s) for this operation")
 }
+
+func (s *testTableSuite) TestStmtEvictedInfoTable(c *C) {
+	tk := s.newTestKitWithRoot(c)
+
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustQuery("select column_comment from information_schema.columns " +
+		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
+	).Check(testkit.Rows("Statement type"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+
+	// Clear all statements.
+	tk.MustExec("set session tidb_enable_stmt_summary = 0")
+	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+
+	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
+	s.dom.GetGlobalVarsCache().Disable()
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+
+	// Create a new session to test.
+	tk = s.newTestKitWithRoot(c)
+
+	tk.MustQuery("set global tidb_stmt_summary_")
+}

@@ -118,6 +118,8 @@ func checkEnableServerGlobalVar(rows []chunk.Row) {
 			err = stmtsummary.StmtSummaryByDigestMap.SetHistorySize(sVal, false)
 		case variable.TiDBStmtSummaryMaxStmtCount:
 			err = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(sVal, false)
+		case variable.TiDBStmtSummaryMaxEvictedCount:
+			err = stmtsummary.StmtSummaryByDigestMap.SetMaxEvictedCount(sVal, false)
 		case variable.TiDBStmtSummaryMaxSQLLength:
 			err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
 		case variable.TiDBCapturePlanBaseline:
