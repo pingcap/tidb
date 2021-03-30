@@ -265,6 +265,10 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		o(opt)
 	}
 
+	// derive the context earlier:
+	// all services of DDL should be controlled by DDL itself
+	ctx, cancel := context.WithCancel(ctx)
+
 	id := uuid.New().String()
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
@@ -296,6 +300,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
 		ctx:        ctx,
+		cancel:     cancel,
 		ddlCtx:     ddlCtx,
 		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
 	}
@@ -329,7 +334,6 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
-	d.ctx, d.cancel = context.WithCancel(d.ctx)
 
 	d.wg.Add(1)
 	go d.limitDDLJobs()
