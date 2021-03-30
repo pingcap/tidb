@@ -3862,7 +3862,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	if len(pkCols) == 0 {
 		pkCols = tables.TryGetCommonPkColumnIds(tbl)
 		if len(pkCols) == 0 {
-			pkCols = []int64{0}
+			pkCols = []int64{-1}
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
