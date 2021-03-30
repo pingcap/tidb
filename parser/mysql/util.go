@@ -76,7 +76,7 @@ var defaultLengthAndDecimalForCast = map[byte]lengthAndDecimal{
 	TypeString:     {0, -1}, // Flen & Decimal differs.
 	TypeDate:       {10, 0},
 	TypeDatetime:   {19, 0},
-	TypeNewDecimal: {11, 0},
+	TypeNewDecimal: {10, 0},
 	TypeDuration:   {10, 0},
 	TypeLonglong:   {22, 0},
 	TypeDouble:     {22, -1},
