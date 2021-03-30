@@ -19,7 +19,8 @@ import (
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
@@ -31,11 +32,11 @@ type Scanner struct {
 	batchSize    int
 	cache        []*pb.KvPair
 	idx          int
-	nextStartKey kv.Key
-	endKey       kv.Key
+	nextStartKey tidbkv.Key
+	endKey       tidbkv.Key
 
 	// Use for reverse scan.
-	nextEndKey kv.Key
+	nextEndKey tidbkv.Key
 	reverse    bool
 
 	valid bool
@@ -57,7 +58,7 @@ func newScanner(snapshot *KVSnapshot, startKey []byte, endKey []byte, batchSize 
 		nextEndKey:   endKey,
 	}
 	err := scanner.Next()
-	if kv.IsErrNotFound(err) {
+	if tidbkv.IsErrNotFound(err) {
 		return scanner, nil
 	}
 	return scanner, errors.Trace(err)
@@ -69,7 +70,7 @@ func (s *Scanner) Valid() bool {
 }
 
 // Key return key.
-func (s *Scanner) Key() kv.Key {
+func (s *Scanner) Key() tidbkv.Key {
 	if s.valid {
 		return s.cache[s.idx].Key
 	}
@@ -109,8 +110,8 @@ func (s *Scanner) Next() error {
 		}
 
 		current := s.cache[s.idx]
-		if (!s.reverse && (len(s.endKey) > 0 && kv.Key(current.Key).Cmp(s.endKey) >= 0)) ||
-			(s.reverse && len(s.nextStartKey) > 0 && kv.Key(current.Key).Cmp(s.nextStartKey) < 0) {
+		if (!s.reverse && (len(s.endKey) > 0 && tidbkv.Key(current.Key).Cmp(s.endKey) >= 0)) ||
+			(s.reverse && len(s.nextStartKey) > 0 && tidbkv.Key(current.Key).Cmp(s.nextStartKey) < 0) {
 			s.eof = true
 			s.Close()
 			return nil
@@ -229,7 +230,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			continue
 		}
 		if resp.Resp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.Trace(kv.ErrBodyMissing)
 		}
 		cmdScanResp := resp.Resp.(*pb.ScanResponse)
 
@@ -292,7 +293,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// more data.
 		lastKey := kvPairs[len(kvPairs)-1].GetKey()
 		if !s.reverse {
-			s.nextStartKey = kv.Key(lastKey).Next()
+			s.nextStartKey = tidbkv.Key(lastKey).Next()
 		} else {
 			s.nextEndKey = lastKey
 		}
