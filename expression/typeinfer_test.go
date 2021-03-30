@@ -187,7 +187,7 @@ func (s *testInferTypeSuite) createTestCase4Cast() []typeInferTestCase {
 		{"CAST(c_int_d AS CHAR(5))", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 5, -1},
 		{"CAST(c_int_d AS DATE)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"CAST(c_int_d AS DATETIME)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
-		{"CAST(c_int_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"CAST(c_int_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"CAST(c_int_d AS DECIMAL(10))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"CAST(c_int_d AS DECIMAL(10,3))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 3}, // TODO: Flen should be 12
 		{"CAST(c_int_d AS JSON)", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag | mysql.ParseToJSONFlag, 12582912 / 3, 0},
