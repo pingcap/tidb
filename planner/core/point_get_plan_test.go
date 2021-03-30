@@ -600,7 +600,7 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 	}
 }
 
-func (s *testPointGetSuite) TestIssue23570(c *C) {
+func (s *testPointGetSuite) TestPointGetWithIndexHints(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -612,6 +612,7 @@ func (s *testPointGetSuite) TestIssue23570(c *C) {
 		"TableReader 1.00 root  data:Selection",
 		"└─Selection 1.00 cop[tikv]  eq(test.t.a, 1), eq(test.t.b, 1)",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+
 	// batch get
 	tk.MustQuery("explain format='brief' select a, b from t where (a=1 and b=1) or (a=2 and b=2)").Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, index:ab(a, b) keep order:false, desc:false"))
 	tk.MustQuery("explain format='brief' select a, b from t use index(ba) where (a=1 and b=1) or (a=2 and b=2)").Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, index:ba(b, a) keep order:false, desc:false"))
