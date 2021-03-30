@@ -143,12 +143,12 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnRegionError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
 
-	// test stale command retry.
 	func() {
 		oc := s.regionRequestSender.client
 		defer func() {
 			s.regionRequestSender.client = oc
 		}()
+		// test stale command retry.
 		s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
 			staleResp := &tikvrpc.Response{Resp: &kvrpcpb.GetResponse{
 				RegionError: &errorpb.Error{StaleCommand: &errorpb.StaleCommand{}},
@@ -160,6 +160,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnRegionError(c *C) {
 		c.Assert(err, NotNil)
 		c.Assert(resp, IsNil)
 
+		// test store not match retry.
 		s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
 			storeNotMatchResp := &tikvrpc.Response{Resp: &kvrpcpb.GetResponse{
 				RegionError: &errorpb.Error{StoreNotMatch: &errorpb.StoreNotMatch{}},
