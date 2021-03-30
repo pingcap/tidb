@@ -909,6 +909,8 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 		}
 		return idxInfo.Name.L == name.L
 	}
+	// NOTICE: it's supposed that ignore hints and use/force hints will not be applied together since the effect of
+	// the former will be eliminated by the latter.
 	isIgnore := false
 	for _, hint := range idxHints {
 		if hint.HintScope != ast.HintForScan {
