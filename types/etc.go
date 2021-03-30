@@ -122,7 +122,7 @@ func IsString(tp byte) bool {
 	return IsTypeChar(tp) || IsTypeBlob(tp) || IsTypeVarchar(tp) || IsTypeUnspecified(tp)
 }
 
-// IsString returns a boolean indicating
+// IsNonVarcharString returns a boolean indicating
 // whether the field type is a non-varchar string type.
 func IsNonVarcharString(tp byte) bool {
 	return tp == mysql.TypeString || IsTypeBlob(tp) || IsTypeUnspecified(tp)
