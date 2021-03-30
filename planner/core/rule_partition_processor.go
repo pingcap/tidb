@@ -655,14 +655,14 @@ func (or partitionRangeOR) Swap(i, j int) {
 
 func (or partitionRangeOR) union(x partitionRangeOR) partitionRangeOR {
 	or = append(or, x...)
-	// if the length of the `or` is zero. We should return early.
-	if len(or) == 0 {
-		return or
-	}
 	return or.simplify()
 }
 
 func (or partitionRangeOR) simplify() partitionRangeOR {
+	// if the length of the `or` is zero. We should return early.
+	if len(or) == 0 {
+		return or
+	}
 	// Make the ranges order by start.
 	sort.Sort(or)
 	sorted := or
