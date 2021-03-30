@@ -456,6 +456,7 @@ func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
 	// Test for issue https://github.com/pingcap/tidb/issues/23646
 	tk.MustExec("drop table if exists txx")
 	tk.MustExec("create table txx(c1 varchar(100), c2 set('dav', 'aaa'), c3 varchar(100), primary key(c1(2), c2) clustered, unique key uk1(c2), index idx1(c2, c1, c3))")
+	tk.MustExec("insert into txx select 'AarTrNoAL', 'dav', '1'")
 	tk.MustExec("update txx set c3 = '10', c1 = 'BxTXbyKRFBGbcPmPR' where c2 in ('dav', 'dav')")
 	tk.MustExec("admin check table txx")
 }
