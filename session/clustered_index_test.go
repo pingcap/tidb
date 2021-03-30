@@ -311,7 +311,7 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 
 func (s *testClusteredSerialSuite) TestCreateClusteredTable(c *C) {
 	tk := s.newTK(c)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.MustExec("set @@tidb_enable_clustered_index = 'int_only';")
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7, t8")
 	tk.MustExec("create table t1(id int primary key, v int)")
 	tk.MustExec("create table t2(id varchar(10) primary key, v int)")
@@ -329,7 +329,8 @@ func (s *testClusteredSerialSuite) TestCreateClusteredTable(c *C) {
 	tk.MustQuery("show index from t6").Check(testkit.Rows("t6 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
 	tk.MustQuery("show index from t7").Check(testkit.Rows("t7 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
 	tk.MustQuery("show index from t8").Check(testkit.Rows("t8 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
+
+	tk.MustExec("set @@tidb_enable_clustered_index = 'off';")
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7, t8")
 	tk.MustExec("create table t1(id int primary key, v int)")
 	tk.MustExec("create table t2(id varchar(10) primary key, v int)")
@@ -347,7 +348,8 @@ func (s *testClusteredSerialSuite) TestCreateClusteredTable(c *C) {
 	tk.MustQuery("show index from t6").Check(testkit.Rows("t6 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
 	tk.MustQuery("show index from t7").Check(testkit.Rows("t7 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
 	tk.MustQuery("show index from t8").Check(testkit.Rows("t8 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+
+	tk.MustExec("set @@tidb_enable_clustered_index = 'on';")
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7, t8")
 	tk.MustExec("create table t1(id int primary key, v int)")
 	tk.MustExec("create table t2(id varchar(10) primary key, v int)")
@@ -365,7 +367,8 @@ func (s *testClusteredSerialSuite) TestCreateClusteredTable(c *C) {
 	tk.MustQuery("show index from t6").Check(testkit.Rows("t6 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
 	tk.MustQuery("show index from t7").Check(testkit.Rows("t7 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES"))
 	tk.MustQuery("show index from t8").Check(testkit.Rows("t8 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+
+	tk.MustExec("set @@tidb_enable_clustered_index = 'int_only';")
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = true
