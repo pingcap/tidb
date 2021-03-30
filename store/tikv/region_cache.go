@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,13 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/ddl/placement"
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -46,6 +40,14 @@ import (
 	"google.golang.org/grpc/credentials"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
+
+	"github.com/pingcap/tidb/ddl/placement"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
 const (
@@ -1768,6 +1770,13 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 	}
 }
 
+// A quick and dirty solution to found whether an err is caused by StoreNotFound.
+// todo: A better solution, maybe some err-code based error handling?
+func isStoreNotFoundError(err error) bool {
+	return err.Error() == "[pd] store field in rpc response not set" ||
+		(strings.Contains(err.Error(), "invalid store ID") && strings.Contains(err.Error(), "not found"))
+}
+
 // reResolve try to resolve addr for store that need check. Returns false if the region is in tombstone state or is
 // deleted.
 func (s *Store) reResolve(c *RegionCache) (bool, error) {
@@ -1778,10 +1787,10 @@ func (s *Store) reResolve(c *RegionCache) (bool, error) {
 	} else {
 		metrics.RegionCacheCounterWithGetStoreOK.Inc()
 	}
-	// when the error is "[pd] store field in rpc response not set",
-	// it means load Store from PD success but pd didn't found the store
-	// so this error should be handled by next `if` instead of here
-	if err != nil && err.Error() != "[pd] store field in rpc response not set" {
+	// `err` here can mean "load Store from PD failed" or "store not found"
+	// if load Store from PD is successful but pd didn't found the store
+	// these error should be handled by next `if` instead of here
+	if err != nil && !isStoreNotFoundError(err) {
 		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
 		return false, err
