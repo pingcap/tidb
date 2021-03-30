@@ -2022,11 +2022,8 @@ func (cli *testServerClient) runTestInitConnect(c *C) {
 		config.User = "init_nonsuper"
 	}))
 	c.Assert(err, IsNil, Commentf("Error connecting")) // doesn't fail because of lazy loading
-	defer func() {
-		err := db.Close()
-		c.Assert(err, IsNil)
-	}()
-	_, err = db.Exec("SELECT 1") // fails because of init sql
+	defer db.Close()                                   // may already be closed
+	_, err = db.Exec("SELECT 1")                       // fails because of init sql
 	c.Assert(err, NotNil)
 }
 
