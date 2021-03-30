@@ -18,10 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/rand"
 	"runtime"
-	"sort"
-	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -560,31 +557,6 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	c.Assert(expire, Equals, int64(0))
 }
 
-func (s *testLockSuite) TestDeduplicateKeys(c *C) {
-	inputs := []string{
-		"a b c",
-		"a a b c",
-		"a a a b c",
-		"a a a b b b b c",
-		"a b b b b c c c",
-	}
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for _, in := range inputs {
-		strs := strings.Split(in, " ")
-		keys := make([][]byte, len(strs))
-		for _, i := range r.Perm(len(strs)) {
-			keys[i] = []byte(strs[i])
-		}
-		keys = deduplicateKeys(keys)
-		strs = strs[:len(keys)]
-		for i := range keys {
-			strs[i] = string(keys[i])
-		}
-		out := strings.Join(strs, " ")
-		c.Assert(out, Equals, "a b c")
-	}
-}
-
 func (s *testLockSuite) prepareTxnFallenBackFromAsyncCommit(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -668,18 +640,4 @@ func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
 	errMsgMustContain(c, err, "key not exist")
 	_, err = t3.Get(context.Background(), []byte("fb2"))
 	errMsgMustContain(c, err, "key not exist")
-}
-
-// deduplicateKeys deduplicate the keys, it use sort instead of map to avoid memory allocation.
-func deduplicateKeys(keys [][]byte) [][]byte {
-	sort.Slice(keys, func(i, j int) bool {
-		return bytes.Compare(keys[i], keys[j]) < 0
-	})
-	deduped := keys[:1]
-	for i := 1; i < len(keys); i++ {
-		if !bytes.Equal(deduped[len(deduped)-1], keys[i]) {
-			deduped = append(deduped, keys[i])
-		}
-	}
-	return deduped
 }
