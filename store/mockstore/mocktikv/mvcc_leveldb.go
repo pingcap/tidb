@@ -1687,7 +1687,7 @@ func (mvcc *MVCCLevelDB) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
 	return mvcc.mvccGetByKeyNoLock(key)
 }
 
-// mvccGetByKeyNoLock implements the MVCCDebugger interface without Lock.
+// mvcc.mu.RLock must be held before calling mvccGetByKeyNoLock.
 func (mvcc *MVCCLevelDB) mvccGetByKeyNoLock(key []byte) *kvrpcpb.MvccInfo {
 	info := &kvrpcpb.MvccInfo{}
 
