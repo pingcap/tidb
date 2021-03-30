@@ -273,3 +273,28 @@ func (s *testSuite5) TestIssue19411(c *C) {
 		"2 2"))
 	tk.MustExec("commit")
 }
+
+func (s *testSuite5) TestIssue23653(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key(c_str), unique key(c_int), unique key(c_str))")
+	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key(c_int, c_str(4)), key(c_int), unique key(c_str))")
+	tk.MustExec("insert into t1 values (1, 'cool buck'), (2, 'reverent keller')")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustQuery("select /*+ inl_join(t2) */ * from t1, t2 where t1.c_str = t2.c_str and t1.c_int = t2.c_int and t1.c_int = 2").Check(testkit.Rows(
+		"2 reverent keller 2 reverent keller"))
+}
+
+func (s *testSuite5) TestIssue23656(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40), primary key(c_int, c_str(4)))")
+	tk.MustExec("create table t2 like t1")
+	tk.MustExec("insert into t1 values (1, 'clever jang'), (2, 'blissful aryabhata')")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustQuery("select /*+ inl_join(t2) */ * from t1 join t2 on t1.c_str = t2.c_str where t1.c_int = t2.c_int;").Check(testkit.Rows(
+		"1 clever jang 1 clever jang",
+		"2 blissful aryabhata 2 blissful aryabhata"))
+}
