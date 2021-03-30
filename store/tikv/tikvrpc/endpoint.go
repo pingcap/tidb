@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,23 +11,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikvrpc
 
-import (
-	"context"
-	"errors"
+// EndpointType represents the type of a remote endpoint..
+type EndpointType uint8
 
-	. "github.com/pingcap/check"
+// EndpointType type enums.
+const (
+	TiKV EndpointType = iota
+	TiFlash
+	TiDB
 )
 
-type testBackoffSuite struct {
-}
-
-var _ = Suite(&testBackoffSuite{})
-
-func (s *testBackoffSuite) TestBackoffWithMax(c *C) {
-	b := NewBackofferWithVars(context.TODO(), 2000, nil)
-	err := b.BackoffWithMaxSleep(BoTxnLockFast, 30, errors.New("test"))
-	c.Assert(err, IsNil)
-	c.Assert(b.totalSleep, Equals, 30)
+// Name returns the name of endpoint type.
+func (t EndpointType) Name() string {
+	switch t {
+	case TiKV:
+		return "tikv"
+	case TiFlash:
+		return "tiflash"
+	case TiDB:
+		return "tidb"
+	}
+	return "unspecified"
 }
