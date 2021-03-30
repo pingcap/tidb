@@ -834,7 +834,7 @@ func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Delete(k1)
 	c.Assert(err, IsNil)
-	err := txn1.LockKeys(context.Background(), &tidbkv.LockCtx{}, k2, k3) // select * from t where x in (k2, k3) for update
+	err = txn1.LockKeys(context.Background(), &tidbkv.LockCtx{}, k2, k3) // select * from t where x in (k2, k3) for update
 	c.Assert(err, IsNil)
 
 	committer1, err := txn1.NewCommitter(0)
