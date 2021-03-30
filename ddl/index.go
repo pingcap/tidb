@@ -810,16 +810,8 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 
-		// Finish this job.
-		if job.IsRollingback() {
-			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			job.Args[0] = indexIDs
-			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
-			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
-		} else {
-			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
-		}
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 	default:
 		err = ErrInvalidDDLState.GenWithStackByArgs("index", indexInfos[0].State)
 	}
