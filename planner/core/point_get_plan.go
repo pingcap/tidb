@@ -909,11 +909,13 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 		}
 		return idxInfo.Name.L == name.L
 	}
+	isIgnore := false
 	for _, hint := range idxHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
 		}
 		if hint.HintType == ast.HintIgnore && hint.IndexNames != nil {
+			isIgnore = true
 			for _, name := range hint.IndexNames {
 				if match(name) {
 					return false
@@ -928,7 +930,7 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 			}
 		}
 	}
-	return false
+	return isIgnore
 }
 
 func partitionNameInSet(name model.CIStr, pnames []model.CIStr) bool {

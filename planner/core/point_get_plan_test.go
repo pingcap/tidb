@@ -634,6 +634,16 @@ func (s *testPointGetSuite) TestPointGetWithIndexHints(c *C) {
 	tk.MustQuery("explain format='brief' select a from t1 use index(ab) where a=1").Check(testkit.Rows(
 		"IndexReader 10.00 root  index:IndexRangeScan",
 		"└─IndexRangeScan 10.00 cop[tikv] table:t1, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo"))
+
+	// other cases
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a int, b int, unique index aa(a), unique index bb(b))")
+	tk.MustQuery("explain format='brief' select a from t2 ignore index(bb) where a=1").Check(testkit.Rows("Point_Get 1.00 root table:t2, index:aa(a) "))
+	tk.MustQuery("explain format='brief' select a from t2 use index(bb) where a=1").Check(testkit.Rows(
+		"IndexLookUp 1.00 root  ",
+		"├─IndexFullScan(Build) 10000.00 cop[tikv] table:t2, index:bb(b) keep order:false, stats:pseudo",
+		"└─Selection(Probe) 1.00 cop[tikv]  eq(test.t2.a, 1)",
+		"  └─TableRowIDScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func (s *testPointGetSuite) TestIssue18042(c *C) {
