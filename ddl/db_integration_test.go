@@ -1510,6 +1510,54 @@ func (s *testIntegrationSuite8) TestCreateTooManyIndexes(c *C) {
 	tk.MustGetErrCode(alterSQL, errno.ErrTooManyKeys)
 }
 
+func (s *testIntegrationSuite8) TestCreateSecondaryIndexInCluster(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// test create table
+	tk.MustGetErrCode(`
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02,c03) clustered,
+  KEY c04 (c04)
+)`, errno.ErrTooLongKey)
+
+	// test create index
+	tk.MustExec(`
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02) clustered
+)`)
+	tk.MustExec("create index idx1 on t(c03)")
+	tk.MustGetErrCode("create index idx2 on t(c03, c04)", errno.ErrTooLongKey)
+	tk.MustExec("drop table t")
+
+	// test create index
+	tk.MustExec(`
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02) clustered,
+  Index idx1(c03)
+)`)
+	tk.MustExec("alter table t change c03 c10 varchar(256) default null")
+	tk.MustGetErrCode("alter table t change c10 c100 varchar(1024) default null", errno.ErrTooLongKey)
+}
+
 func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
