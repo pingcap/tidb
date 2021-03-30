@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"bytes"
@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -28,9 +29,11 @@ import (
 	"go.uber.org/zap"
 )
 
+var scanBatchSize = tikv.ConfigProbe{}.GetScanBatchSize()
+
 type testScanSuite struct {
 	OneByOneSuite
-	store        *KVStore
+	store        *tikv.KVStore
 	recordPrefix []byte
 	rowNums      []int
 	ctx          context.Context
@@ -65,7 +68,7 @@ func (s *testScanSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testScanSuite) beginTxn(c *C) *KVTxn {
+func (s *testScanSuite) beginTxn(c *C) *tikv.KVTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	return txn
