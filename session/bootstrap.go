@@ -485,13 +485,15 @@ const (
 	version66 = 66
 	// version67 restore all SQL bindings.
 	version67 = 67
-	// version68 adds mysql.global_grants for DYNAMIC privileges
+	// version68 update the global variable 'tidb_enable_clustered_index' from 'off' to 'int_only'.
 	version68 = 68
+	// version69 adds mysql.global_grants for DYNAMIC privileges
+	version69 = 69
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version68
+var currentBootstrapVersion int64 = version69
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -563,6 +565,7 @@ var (
 		upgradeToVer66,
 		upgradeToVer67,
 		upgradeToVer68,
+		upgradeToVer69,
 	}
 )
 
@@ -1474,6 +1477,13 @@ func upgradeToVer66(s Session, ver int64) {
 
 func upgradeToVer68(s Session, ver int64) {
 	if ver >= version68 {
+		return
+	}
+	mustExecute(s, "DELETE FROM mysql.global_variables where VARIABLE_NAME = 'tidb_enable_clustered_index' and VARIABLE_VALUE = 'OFF'")
+}
+
+func upgradeToVer69(s Session, ver int64) {
+	if ver >= version69 {
 		return
 	}
 	doReentrantDDL(s, CreateGlobalGrantsTable)
