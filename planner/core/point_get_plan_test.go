@@ -599,8 +599,6 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 		res.Check(testkit.Rows(output[i].Res...))
 	}
 }
-<<<<<<< HEAD
-=======
 
 func (s *testPointGetSuite) TestPointGetWithIndexHints(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -647,37 +645,3 @@ func (s *testPointGetSuite) TestPointGetWithIndexHints(c *C) {
 		"└─Selection(Probe) 1.00 cop[tikv]  eq(test.t2.a, 1)",
 		"  └─TableRowIDScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
-
-func (s *testPointGetSuite) TestIssue18042(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, c int, primary key(a), index ab(a, b));")
-	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
-	tk.MustExec("SELECT /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 MB) */ * FROM t where a = 1;")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(1<<20))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
-	tk.MustExec("drop table t")
-}
-
-func (s *testPointGetSuite) TestIssue23511(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("CREATE TABLE `t1`  (`COL1` bit(11) NOT NULL,PRIMARY KEY (`COL1`));")
-	tk.MustExec("CREATE TABLE `t2`  (`COL1` bit(11) NOT NULL);")
-	tk.MustExec("insert into t1 values(b'00000111001'), (b'00000000000');")
-	tk.MustExec("insert into t2 values(b'00000111001');")
-	tk.MustQuery("select * from t1 where col1 = 0x39;").Check(testkit.Rows("\x009"))
-	tk.MustQuery("select * from t2 where col1 = 0x39;").Check(testkit.Rows("\x009"))
-	tk.MustQuery("select * from t1 where col1 = 0x00;").Check(testkit.Rows("\x00\x00"))
-	tk.MustQuery("select * from t1 where col1 = 0x0000;").Check(testkit.Rows("\x00\x00"))
-	tk.MustQuery("explain format = 'brief' select * from t1 where col1 = 0x39;").
-		Check(testkit.Rows("Point_Get 1.00 root table:t1, index:PRIMARY(COL1) "))
-	tk.MustQuery("select * from t1 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
-	tk.MustQuery("select * from t2 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
-	tk.MustQuery("select * from t1 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
-	tk.MustQuery("select * from t2 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
-	tk.MustExec("drop table t1, t2;")
-}
->>>>>>> 60111e1c4... planner: fix the issue that planner hints don't work in some batch/point-get plans (#23666)
