@@ -873,11 +873,11 @@ func (s *testInfoschemaTableSuite) TestTablesPKType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t_int (a int primary key, b int)")
 	tk.MustQuery(fmt.Sprintf("SELECT TIDB_PK_TYPE FROM %s.tables where table_schema = 'test' and table_name = 't_int'", util.InformationSchemaName)).Check(testkit.Rows("CLUSTERED"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t_implicit (a varchar(64) primary key, b int)")
-	tk.MustQuery(fmt.Sprintf("SELECT TIDB_PK_TYPE FROM %s.tables where table_schema = 'test' and table_name = 't_implicit'", util.InformationSchemaName)).Check(testkit.Rows("NON-CLUSTERED"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.MustQuery(fmt.Sprintf("SELECT TIDB_PK_TYPE FROM %s.tables where table_schema = 'test' and table_name = 't_implicit'", util.InformationSchemaName)).Check(testkit.Rows("NONCLUSTERED"))
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t_common (a varchar(64) primary key, b int)")
 	tk.MustQuery(fmt.Sprintf("SELECT TIDB_PK_TYPE FROM %s.tables where table_schema = 'test' and table_name = 't_common'", util.InformationSchemaName)).Check(testkit.Rows("CLUSTERED"))
-	tk.MustQuery(fmt.Sprintf("SELECT TIDB_PK_TYPE FROM %s.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'", util.InformationSchemaName)).Check(testkit.Rows("NON-CLUSTERED"))
+	tk.MustQuery(fmt.Sprintf("SELECT TIDB_PK_TYPE FROM %s.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'", util.InformationSchemaName)).Check(testkit.Rows("NONCLUSTERED"))
 }

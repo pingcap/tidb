@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -158,7 +159,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
 		sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
-		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutShort)
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
 		// transaction has been successfully committed.
@@ -184,7 +185,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.Trace(kv.ErrBodyMissing)
 		}
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
@@ -248,7 +249,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		for _, keyErr := range keyErrs {
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
-				e := &ErrKeyExist{AlreadyExist: alreadyExist}
+				e := &kv.ErrKeyExist{AlreadyExist: alreadyExist}
 				return c.extractKeyExistsErr(e)
 			}
 

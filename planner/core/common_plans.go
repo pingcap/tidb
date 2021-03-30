@@ -187,6 +187,21 @@ type Execute struct {
 	Plan          Plan
 }
 
+// Check if result of GetVar expr is BinaryLiteral
+// Because GetVar use String to represent BinaryLiteral, here we need to convert string back to BinaryLiteral.
+func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) (res bool) {
+	scalarFunc, ok := expr.(*expression.ScalarFunction)
+	if ok && scalarFunc.FuncName.L == ast.GetVar {
+		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
+		if err != nil || isNull {
+			res = false
+		} else if dt, ok2 := sctx.GetSessionVars().Users[name]; ok2 {
+			res = (dt.Kind() == types.KindBinaryLiteral)
+		}
+	}
+	return res
+}
+
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := sctx.GetSessionVars()
@@ -228,6 +243,13 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 				return err
 			}
 			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			if isGetVarBinaryLiteral(sctx, usingVar) {
+				binVal, convErr := val.ToBytes()
+				if convErr != nil {
+					return convErr
+				}
+				val.SetBinaryLiteral(types.BinaryLiteral(binVal))
+			}
 			param.Datum = val
 			param.InExecute = true
 			vars.PreparedParams = append(vars.PreparedParams, val)
@@ -275,7 +297,8 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
-	stmtCtx := sctx.GetSessionVars().StmtCtx
+	sessVars := sctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
 	stmtCtx.UseCache = prepared.UseCache
 	var cacheKey kvcache.Key
@@ -375,6 +398,12 @@ REBUILD:
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache && !stmtCtx.OptimDependOnMutableConst {
+		// rebuild key to exclude kv.TiFlash when stmt is not read only
+		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
+			delete(sessVars.IsolationReadEngines, kv.TiFlash)
+			cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
@@ -403,6 +432,9 @@ REBUILD:
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
+	if sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst {
+		return nil
+	}
 	var (
 		prepared = preparedStmt.PreparedAst
 		ok       bool
@@ -417,15 +449,17 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 			return err
 		}
 	case *Update:
-		ok, err = IsPointUpdateByAutoCommit(sctx, p)
-		if err != nil {
-			return err
-		}
-		if ok {
-			// make constant expression store paramMarker
-			sctx.GetSessionVars().StmtCtx.PointExec = true
-			p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
-		}
+		// Temporarily turn off the cache for UPDATE to solve #21884.
+
+		//ok, err = IsPointUpdateByAutoCommit(sctx, p)
+		//if err != nil {
+		//	return err
+		//}
+		//if ok {
+		//	// make constant expression store paramMarker
+		//	sctx.GetSessionVars().StmtCtx.PointExec = true
+		//	p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+		//}
 	}
 	if ok {
 		// just cache point plan now
@@ -752,6 +786,8 @@ type Update struct {
 	// Used when partition sets are given.
 	// e.g. update t partition(p0) set a = 1;
 	PartitionedTable []table.PartitionedTable
+
+	tblID2Table map[int64]table.Table
 }
 
 // Delete represents a delete plan.
@@ -1323,5 +1359,6 @@ func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
 	if _, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
 		return true, nil
 	}
+
 	return false, nil
 }
