@@ -1050,6 +1050,8 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				tp := &col.FieldType
 				idxVal := idxRow.GetDatum(i, tp)
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
+				idxVal.SetCollation(charset.CollationBin)
+				val.SetCollation(charset.CollationBin)
 				cmpRes, err := idxVal.CompareDatum(sctx, &val)
 				if err != nil {
 					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v, compare err:%#v", col.Name,
