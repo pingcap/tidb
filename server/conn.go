@@ -723,35 +723,38 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 	return
 }
 
+// skipInitConnect follows MySQL's rules of when init-connect should be skipped.
+// In 5.7 it is any user with SUPER privilege, but in 8.0 it is
+// SUPER or the CONNECTION_ADMIN dynamic privilege.
+func (cc *clientConn) skipInitConnect() bool {
+	checker := privilege.GetPrivilegeManager(cc.ctx.Session)
+	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
+	return checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv)
+}
+
+// initConnect runs the initConnect SQL statement if it has been specified.
+// The semantics are MySQL compatible.
 func (cc *clientConn) initConnect(ctx context.Context) error {
 	val, err := cc.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.InitConnect)
 	if err != nil {
 		return err
 	}
-	if val == "" {
+	if val == "" || cc.skipInitConnect() {
 		return nil
 	}
-	// This is different to most privilege checks.
-	// init_connect *does not* apply to SUPER users.
-	checker := privilege.GetPrivilegeManager(cc.ctx.Session)
-	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
-	if checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
-		return nil
-	}
+	logutil.Logger(ctx).Debug("init_connect starting")
 	stmts, err := cc.ctx.Parse(ctx, val)
 	if err != nil {
-		logutil.Logger(ctx).Warn("failed to parse init_connect", zap.Error(err))
 		return err
 	}
-	// We don't care about the results, but the semantics of
-	// init_connect requires that they are fully read.
 	for _, stmt := range stmts {
-		rs, err1 := cc.ctx.ExecuteStmt(ctx, stmt)
-		if err1 != nil {
-			logutil.Logger(ctx).Warn("init_connect stmt failed", zap.Error(err1))
+		rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+		if err != nil {
 			return err
 		}
-		if rs != nil { // it could have been a SET stmt
+		// init_connect does not care about the results,
+		// but they need to be drained because of lazy loading.
+		if rs != nil {
 			req := rs.NewChunk()
 			for {
 				if err = rs.Next(ctx, req); err != nil {
@@ -798,9 +801,9 @@ func (cc *clientConn) Run(ctx context.Context) {
 
 	// MySQL supports an "init_connect" query, which can be run on initial connection.
 	// The query must return a non-error or the client is disconnected.
-	// It is not executed for SUPER users.
-	initConnectFailed := false
+	var initConnectFailed bool
 	if err := cc.initConnect(ctx); err != nil {
+		logutil.Logger(ctx).Warn("init_connect failed", zap.Error(err))
 		initConnectFailed = true
 	}
 
