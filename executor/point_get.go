@@ -547,9 +547,6 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 }
 
 func notPKPrefixCol(colID int64, prefixColIDs []int64) bool {
-	if len(prefixColIDs) == 0 {
-		return true
-	}
 	for _, pCol := range prefixColIDs {
 		if pCol == colID {
 			return false
