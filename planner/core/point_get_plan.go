@@ -825,7 +825,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	}
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
-	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 && pkIsAvailableByHints(tblName.IndexHints) {
+	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 && indexIsAvailableByHints(nil, tblName.IndexHints) {
 		if isTableDual {
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
@@ -897,13 +897,17 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	return nil
 }
 
-func pkIsAvailableByHints(idxHints []*ast.IndexHint) bool {
-	return indexIsAvailableByHints(&model.IndexInfo{Name: model.NewCIStr("primary")}, idxHints)
-}
-
+// indexIsAvailableByHints checks whether this index is filtered by these specified index hints.
+// idxInfo is PK if it's nil
 func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint) bool {
 	if len(idxHints) == 0 {
 		return true
+	}
+	match := func(name model.CIStr) bool {
+		if idxInfo == nil {
+			return name.L == "primary"
+		}
+		return idxInfo.Name.L == name.L
 	}
 	for _, hint := range idxHints {
 		if hint.HintScope != ast.HintForScan {
@@ -911,14 +915,14 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 		}
 		if hint.HintType == ast.HintIgnore && hint.IndexNames != nil {
 			for _, name := range hint.IndexNames {
-				if name.L == idxInfo.Name.L {
+				if match(name) {
 					return false
 				}
 			}
 		}
 		if (hint.HintType == ast.HintForce || hint.HintType == ast.HintUse) && hint.IndexNames != nil {
 			for _, name := range hint.IndexNames {
-				if name.L == idxInfo.Name.L {
+				if match(name) {
 					return true
 				}
 			}
