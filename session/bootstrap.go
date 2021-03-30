@@ -1468,7 +1468,7 @@ func upgradeToVer68(s Session, ver int64) {
 	if ver >= version68 {
 		return
 	}
-	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE = 'INT_ONLY' where VARIABLE_NAME = 'tidb_enable_clustered_index' and VARIABLE_VALUE = 'OFF'")
+	mustExecute(s, "DELETE FROM mysql.global_variables where VARIABLE_NAME = 'tidb_enable_clustered_index' and VARIABLE_VALUE = 'OFF'")
 }
 
 func writeOOMAction(s Session) {

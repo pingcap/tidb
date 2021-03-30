@@ -625,6 +625,7 @@ func (s *testBootstrapSuite) TestUpgradeClusteredIndexDefaultValue(c *C) {
 	c.Assert(err, IsNil)
 	mustExecSQL(c, seV67, "update mysql.tidb set variable_value='67' where variable_name='tidb_server_version'")
 	mustExecSQL(c, seV67, "UPDATE mysql.global_variables SET VARIABLE_VALUE = 'OFF' where VARIABLE_NAME = 'tidb_enable_clustered_index'")
+	c.Assert(seV67.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(1))
 	mustExecSQL(c, seV67, "commit")
 	unsetStoreBootstrapped(store.UUID())
 	ver, err := getBootstrapVersion(seV67)
