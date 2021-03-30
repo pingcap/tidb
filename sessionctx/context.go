@@ -23,7 +23,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/util/memory"
+=======
+	"github.com/pingcap/tidb/util/sli"
+>>>>>>> f9708e604... *: collect transaction write duration/throughput metrics for SLI/SLO (#23462)
 	"github.com/pingcap/tipb/go-binlog"
 )
 
@@ -103,6 +107,13 @@ type Context interface {
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context)
+<<<<<<< HEAD
+=======
+	// StoreIndexUsage stores the index usage information.
+	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
+	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
+	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
+>>>>>>> f9708e604... *: collect transaction write duration/throughput metrics for SLI/SLO (#23462)
 }
 
 type basicCtxType int
