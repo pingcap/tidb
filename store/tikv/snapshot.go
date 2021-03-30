@@ -295,7 +295,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 		if len(matchStoreLabels) > 0 {
 			ops = append(ops, WithMatchLabels(matchStoreLabels))
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, tidbkv.TiKV, "", ops...)
+		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, tikvrpc.TiKV, "", ops...)
 
 		if err != nil {
 			return errors.Trace(err)
@@ -313,7 +313,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.Trace(kv.ErrBodyMissing)
 		}
 		batchGetResp := resp.Resp.(*pb.BatchGetResponse)
 		var (
@@ -458,7 +458,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k tidbkv.Key) ([]by
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, tidbkv.TiKV, "", ops...)
+		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, ReadTimeoutShort, tikvrpc.TiKV, "", ops...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -474,7 +474,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k tidbkv.Key) ([]by
 			continue
 		}
 		if resp.Resp == nil {
-			return nil, errors.Trace(ErrBodyMissing)
+			return nil, errors.Trace(kv.ErrBodyMissing)
 		}
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		if cmdGetResp.ExecDetailsV2 != nil {
@@ -550,55 +550,55 @@ func (s *KVSnapshot) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 
 // SetOption sets an option with a value, when val is nil, uses the default
 // value of this option. Only ReplicaRead is supported for snapshot
-func (s *KVSnapshot) SetOption(opt tidbkv.Option, val interface{}) {
+func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case tidbkv.IsolationLevel:
+	case kv.IsolationLevel:
 		s.isolationLevel = val.(kv.IsoLevel)
-	case tidbkv.Priority:
+	case kv.Priority:
 		s.priority = PriorityToPB(val.(int))
-	case tidbkv.NotFillCache:
+	case kv.NotFillCache:
 		s.notFillCache = val.(bool)
-	case tidbkv.SyncLog:
+	case kv.SyncLog:
 		s.syncLog = val.(bool)
-	case tidbkv.KeyOnly:
+	case kv.KeyOnly:
 		s.keyOnly = val.(bool)
-	case tidbkv.SnapshotTS:
+	case kv.SnapshotTS:
 		s.setSnapshotTS(val.(uint64))
-	case tidbkv.ReplicaRead:
+	case kv.ReplicaRead:
 		s.mu.Lock()
 		s.mu.replicaRead = val.(kv.ReplicaReadType)
 		s.mu.Unlock()
-	case tidbkv.TaskID:
+	case kv.TaskID:
 		s.mu.Lock()
 		s.mu.taskID = val.(uint64)
 		s.mu.Unlock()
-	case tidbkv.CollectRuntimeStats:
+	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
 		s.mu.Unlock()
-	case tidbkv.SampleStep:
+	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
-	case tidbkv.IsStalenessReadOnly:
+	case kv.IsStalenessReadOnly:
 		s.mu.Lock()
 		s.mu.isStaleness = val.(bool)
 		s.mu.Unlock()
-	case tidbkv.MatchStoreLabels:
+	case kv.MatchStoreLabels:
 		s.mu.Lock()
 		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
 		s.mu.Unlock()
-	case tidbkv.TxnScope:
+	case kv.TxnScope:
 		s.txnScope = val.(string)
 	}
 }
 
 // DelOption deletes an option.
-func (s *KVSnapshot) DelOption(opt tidbkv.Option) {
+func (s *KVSnapshot) DelOption(opt int) {
 	switch opt {
-	case tidbkv.ReplicaRead:
+	case kv.ReplicaRead:
 		s.mu.Lock()
 		s.mu.replicaRead = kv.ReplicaReadLeader
 		s.mu.Unlock()
-	case tidbkv.CollectRuntimeStats:
+	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = nil
 		s.mu.Unlock()
@@ -625,7 +625,7 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 }
 
 func extractKeyErr(keyErr *pb.KeyError) error {
-	if val, err := MockRetryableErrorResp.Eval(); err == nil {
+	if val, err := util.MockRetryableErrorResp.Eval(); err == nil {
 		if val.(bool) {
 			keyErr.Conflict = nil
 			keyErr.Retryable = "mock retryable error"

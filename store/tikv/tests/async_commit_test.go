@@ -25,9 +25,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -121,7 +122,7 @@ func (s *testAsyncCommitCommon) mustGetFromSnapshot(c *C, version uint64, key, e
 func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, key []byte) {
 	snap := s.store.GetSnapshot(version)
 	_, err := snap.Get(context.Background(), key)
-	c.Assert(errors.Cause(err), Equals, kv.ErrNotExist)
+	c.Assert(errors.Cause(err), Equals, tidbkv.ErrNotExist)
 }
 
 func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) tikv.TxnProbe {
@@ -180,7 +181,7 @@ func (s *testAsyncCommitSuite) lockKeysWithAsyncCommit(c *C, keys, values [][]by
 	tpc.SetPrimaryKey(primaryKey)
 
 	ctx := context.Background()
-	err = tpc.PrewriteMutations(ctx)
+	err = tpc.PrewriteAllMutations(ctx)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {

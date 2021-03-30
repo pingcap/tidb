@@ -639,7 +639,10 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 		endPoint := &point{value: types.MaxValueDatum()}
 		return []*point{startPoint, endPoint}
 	}
-	return nil
+	// TODO: currently we don't handle ast.LogicAnd, ast.LogicOr, ast.GT, ast.LT and so on. Most of those cases are eliminated
+	// by PushDownNot but they may happen. For now, we return full range for those unhandled cases in order to keep correctness.
+	// Later we need to cover those cases and set r.err when meeting some unexpected case.
+	return getFullRange()
 }
 
 func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []*point {
