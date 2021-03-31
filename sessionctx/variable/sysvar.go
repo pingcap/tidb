@@ -115,8 +115,6 @@ type SysVar struct {
 	Validation func(*SessionVars, string, string, ScopeFlag) (string, error)
 	// SetSession is called after validation
 	SetSession func(*SessionVars, string) error
-	// SetGlobal is called after validation
-	SetGlobal func(*SessionVars, string) error
 	// IsHintUpdatable indicate whether it's updatable via SET_VAR() hint (optional)
 	IsHintUpdatable bool
 }
@@ -125,14 +123,6 @@ type SysVar struct {
 func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 	if sv.SetSession != nil {
 		return sv.SetSession(s, val)
-	}
-	return nil
-}
-
-// SetGlobalFromHook calls the SetSession func if it exists.
-func (sv *SysVar) SetGlobalFromHook(s *SessionVars, val string) error {
-	if sv.SetGlobal != nil {
-		return sv.SetGlobal(s, val)
 	}
 	return nil
 }
@@ -857,16 +847,13 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBFoundInBinding, Value: BoolToOnOff(DefTiDBFoundInBinding), Type: TypeBool, ReadOnly: true},
 	{Scope: ScopeSession, Name: TiDBEnableCollectExecutionInfo, Value: BoolToOnOff(DefTiDBEnableCollectExecutionInfo), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowAutoRandExplicitInsert, Value: BoolToOnOff(DefTiDBAllowAutoRandExplicitInsert), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: IntOnly, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly}, SetSession: func(s *SessionVars, val string) error {
-		if val == IntOnly {
-			s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(val, fmt.Sprintf("'%s' or '%s'", On, Off)))
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: IntOnly, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if normalizedValue == IntOnly {
+			vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(normalizedValue, fmt.Sprintf("'%s' or '%s'", On, Off)))
 		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
 		s.EnableClusteredIndex = TiDBOptEnableClustered(val)
-		return nil
-	}, SetGlobal: func(s *SessionVars, val string) error {
-		if val == IntOnly {
-			s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(val, fmt.Sprintf("'%s' or '%s'", On, Off)))
-		}
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPartitionPruneMode, Value: string(Static), Type: TypeStr, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {

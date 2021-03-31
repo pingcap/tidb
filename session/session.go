@@ -976,9 +976,6 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if err != nil {
 		return err
 	}
-	if err = sv.SetGlobalFromHook(s.sessionVars, sVal); err != nil {
-		return err
-	}
 	name = strings.ToLower(name)
 	// update mysql.tidb if required.
 	if s.varFromTiDBTable(name) {
