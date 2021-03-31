@@ -1566,8 +1566,8 @@ CREATE TABLE t (
   c04 varchar(255) DEFAULT NULL,
   c05 varchar(255) DEFAULT NULL,
   c06 varchar(255) DEFAULT NULL,
-  PRIMARY KEY (c01,c02) clustered,
   Index idx1(c03),
+  PRIMARY KEY (c01,c02) clustered,
   unique index uk1(c06)
 )`)
 	tk.MustExec("alter table t change c03 c10 varchar(256) default null")
