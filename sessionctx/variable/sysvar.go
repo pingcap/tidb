@@ -773,6 +773,10 @@ var defaultSysVars = []*SysVar{
 		return formatVal, nil
 	}},
 	/* The following variable is defined as session scope but is actually server scope. */
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableDynamicPrivileges, Value: BoolOff, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableDynamicPrivileges = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBGeneralLog, Value: BoolToOnOff(DefTiDBGeneralLog), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(DefTiDBPProfSQLCPU), Type: TypeInt, MinValue: 0, MaxValue: 1},
 	{Scope: ScopeSession, Name: TiDBDDLSlowOprThreshold, Value: strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
