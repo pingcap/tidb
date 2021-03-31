@@ -607,6 +607,48 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	mustExecSQL(c, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
 }
 
+func (s *testBootstrapSuite) TestUpgradeClusteredIndexDefaultValue(c *C) {
+	var err error
+	defer testleak.AfterTest(c)()
+	store, _ := newStoreWithBootstrap(c, s.dbName)
+	defer func() {
+		c.Assert(store.Close(), IsNil)
+	}()
+
+	seV67 := newSession(c, store, s.dbName)
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(67))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	mustExecSQL(c, seV67, "update mysql.tidb set variable_value='67' where variable_name='tidb_server_version'")
+	mustExecSQL(c, seV67, "UPDATE mysql.global_variables SET VARIABLE_VALUE = 'OFF' where VARIABLE_NAME = 'tidb_enable_clustered_index'")
+	c.Assert(seV67.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(1))
+	mustExecSQL(c, seV67, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV67)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(67))
+
+	domV68, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer domV68.Close()
+	seV68 := newSession(c, store, s.dbName)
+	ver, err = getBootstrapVersion(seV68)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, currentBootstrapVersion)
+
+	r := mustExecSQL(c, seV68, `select @@global.tidb_enable_clustered_index, @@session.tidb_enable_clustered_index`)
+	req := r.NewChunk()
+	c.Assert(r.Next(context.Background(), req), IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+	row := req.GetRow(0)
+	c.Assert(row.GetString(0), Equals, "INT_ONLY")
+	c.Assert(row.GetString(1), Equals, "INT_ONLY")
+}
+
 func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
 	var err error
 	defer testleak.AfterTest(c)()
