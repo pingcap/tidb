@@ -1738,7 +1738,7 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 	for i, pkCol := range pkIdx.Columns {
 		for _, idxCol := range idx.Columns {
 			if idxCol.Offset == pkCol.Offset {
-				if idxCol.Length == types.UnspecifiedLength {
+				if idxCol.Length == types.UnspecifiedLength || pkCol.Length == types.UnspecifiedLength {
 					break
 				}
 				useIdx := idxCol
