@@ -1291,7 +1291,7 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 			err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, &keysNeedToLock)
 			if err != nil {
 				// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
-				if terror.ErrorEqual(tidbkv.ErrWriteConflict, err) {
+				if _, ok := errors.Cause(err).(*kv.ErrWriteConflict); ok {
 					newForUpdateTSVer, err := c.store.CurrentTimestamp(oracle.GlobalTxnScope)
 					if err != nil {
 						return errors.Trace(err)

@@ -103,9 +103,8 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = t1.Commit(ctx)
 	c.Assert(err, NotNil)
-	e, ok := errors.Cause(err).(*tikverr.UnExtractKeyErr)
+	_, ok := errors.Cause(err).(*tikverr.ErrWriteConflict)
 	c.Assert(ok, IsTrue, Commentf("%s", errors.ErrorStack(err)))
-	c.Assert(e.GetConflict(), NotNil, Commentf("%s", errors.ErrorStack(err)))
 }
 
 func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {

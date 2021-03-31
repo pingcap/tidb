@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/terror"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -471,7 +470,12 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 					txn.us.UnmarkPresumeKeyNotExists(key)
 				}
 			}
-			keyMayBeLocked := terror.ErrorNotEqual(tidbkv.ErrWriteConflict, err) && terror.ErrorNotEqual(tidbkv.ErrKeyExists, err)
+			_, ok := errors.Trace(err).(*kv.ErrWriteConflict)
+			keyMayBeLocked := !ok
+			if keyMayBeLocked {
+				_, ok = errors.Trace(err).(*kv.ErrKeyExist)
+				keyMayBeLocked = !ok
+			}
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
 				wg := txn.asyncPessimisticRollback(ctx, keys)

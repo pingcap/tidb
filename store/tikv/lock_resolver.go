@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -404,7 +403,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				// This could avoids the deadlock scene of two large transaction.
 				if l.LockType != kvrpcpb.Op_PessimisticLock && l.TxnID > callerStartTS {
 					metrics.LockResolverCountWithWriteConflict.Inc()
-					return tidbkv.ErrWriteConflict.GenWithStackByArgs(callerStartTS, l.TxnID, status.commitTS, l.Key)
+					return kv.NewErrWriteConfictWithArgs(callerStartTS, l.TxnID, status.commitTS, l.Key)
 				}
 			} else {
 				if status.action != kvrpcpb.Action_MinCommitTSPushed {

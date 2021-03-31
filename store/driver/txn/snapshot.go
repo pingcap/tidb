@@ -69,23 +69,20 @@ func extractUnExtractKeyErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	e, ok := errors.Cause(err).(*tikvstore.UnExtractKeyErr)
-	if !ok {
-		return errors.Trace(err)
+	if e, ok := errors.Cause(err).(*tikvstore.ErrWriteConflict); ok {
+		return newWriteConflictError(e.WriteConflict)
 	}
-
-	if e.Conflict != nil {
-		return newWriteConflictError(e.Conflict)
+	if e, ok := errors.Cause(err).(*tikvstore.ErrRetryable); ok {
+		notFoundDetail := prettyLockNotFoundKey(e.Retryable)
+		return kv.ErrTxnRetryable.GenWithStackByArgs(e.Retryable + " " + notFoundDetail)
 	}
-	if e.Retryable != "" {
-		notFoundDetail := prettyLockNotFoundKey(e.GetRetryable())
-		return kv.ErrTxnRetryable.GenWithStackByArgs(e.GetRetryable() + " " + notFoundDetail)
-	}
-	// unexpected error
-	return e
+	return err
 }
 
 func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
+	if conflict == nil {
+		return kv.ErrWriteConflict
+	}
 	var buf bytes.Buffer
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
