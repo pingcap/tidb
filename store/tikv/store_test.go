@@ -304,7 +304,11 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 func (s *testStoreSerialSuite) TestOracleChangeByFailpoint(c *C) {
 	defer func() {
 		// to fix: err not nil
-		_ = failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
+		_, err := failpoint.Status("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD") 
+		if err == nil {
+			err = failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
+			c.Assert(err, IsNil)
+		} 
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD",
 		"return(10000)"), IsNil)

@@ -528,7 +528,6 @@ func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
 		committer1.WaitCleanup()
 		txn3 := s.begin(c)
 		start := time.Now()
-		// to fix: key not exist
 		_, err = txn3.Get(context.TODO(), []byte("y1"))
 		c.Assert(err, NotNil)
 		totalTime += time.Since(start)
