@@ -411,7 +411,7 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	})
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+	resp, err := s.store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	keyErr := resp.Resp.(*kvrpcpb.GetResponse).GetError()
@@ -671,4 +671,20 @@ func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
 	errMsgMustContain(c, err, "key not exist")
 	_, err = t3.Get(context.Background(), []byte("fb2"))
 	errMsgMustContain(c, err, "key not exist")
+}
+
+func errMsgMustContain(c *C, err error, msg string) {
+	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
+}
+
+func randKV(keyLen, valLen int) (string, string) {
+	const letters = "abc"
+	k, v := make([]byte, keyLen), make([]byte, valLen)
+	for i := range k {
+		k[i] = letters[rand.Intn(len(letters))]
+	}
+	for i := range v {
+		v[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(k), string(v)
 }
