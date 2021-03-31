@@ -811,9 +811,6 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 			gotRow = false
 		} else {
 			isTrue, err := d.ToBool(e.sc)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
 			isTrue, err = expression.HandleOverflowOnSelection(e.sc, isTrue, err)
 			if err != nil {
 				return false, errors.Trace(err)
