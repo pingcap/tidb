@@ -521,7 +521,7 @@ func (d *Dumper) L() log.Logger {
 	return d.tctx.L()
 }
 
-func selectTiDBTableSample(conn *sql.Conn, dbName, tableName string) (pkFields []string, pkVals []string, err error) {
+func selectTiDBTableSample(conn *sql.Conn, dbName, tableName string) (pkFields []string, pkVals [][]string, err error) {
 	pkFields, pkColTypes, err := GetPrimaryKeyAndColumnTypes(conn, dbName, tableName)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -538,18 +538,25 @@ func selectTiDBTableSample(conn *sql.Conn, dbName, tableName string) (pkFields [
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	iter := newRowIter(rows, len(pkFields))
+	pkValNum := len(pkFields)
+	iter := newRowIter(rows, pkValNum)
 	defer iter.Close()
 	rowRec := MakeRowReceiver(pkColTypes)
 	buf := new(bytes.Buffer)
+
 	for iter.HasNext() {
 		err = iter.Decode(rowRec)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		pkValRow := make([]string, 0, pkValNum)
+		for _, rec := range rowRec.receivers {
+			rec.WriteToBuffer(buf, true)
+			pkValRow = append(pkValRow, buf.String())
+			buf.Reset()
+		}
 		rowRec.WriteToBuffer(buf, true)
-		pkVals = append(pkVals, buf.String())
-		buf.Reset()
+		pkVals = append(pkVals, pkValRow)
 		iter.Next()
 	}
 	return pkFields, pkVals, nil
