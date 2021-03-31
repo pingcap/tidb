@@ -6748,7 +6748,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("drop table if exists t1,t2,t3,t4")
 	tk.MustExec(`create table t1(
 	a int(11),
 	b varchar(10) DEFAULT NULL,
@@ -6800,6 +6800,11 @@ func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 
 	tk.MustExec("update t2 partition(p0) set a = 3 where a = 2")
 	tk.MustExec("update t2 partition(p0, p3) set a = 33 where a = 1")
+
+	tk.MustExec("create table t4(a int primary key, b int) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t4(a, b) values(1, 1),(2, 2),(3, 3);")
+	err = tk.ExecToErr("update t4 partition(p0) set a = 6 where a = 2")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
 }
 
 func (s *testSuiteP2) TestApplyCache(c *C) {
