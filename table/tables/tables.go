@@ -1732,8 +1732,8 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 	// Try to truncate index values.
 	// Says that primary key(a (8)),
 	// For index t(a), don't truncate the value.
-	// For index t(9), truncate to a(9).
-	// For index t(7), truncate to a(8).
+	// For index t(a(9)), truncate to a(9).
+	// For index t(a(7)), truncate to a(8).
 	pkIdx := FindPrimaryIndex(t.Meta())
 	for i, pkCol := range pkIdx.Columns {
 		for _, idxCol := range idx.Columns {
