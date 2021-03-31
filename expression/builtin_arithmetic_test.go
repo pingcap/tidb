@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -501,6 +502,34 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 			expect: int64(2),
 		},
 		{
+			args:   []interface{}{int64(13), int64(11)},
+			expect: int64(2),
+		},
+		{
+			args:   []interface{}{int64(13), int64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{uint64(13), int64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{int64(13), uint64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{uint64(math.MaxInt64 + 1), int64(math.MinInt64)},
+			expect: int64(0),
+		},
+		{
+			args:   []interface{}{int64(-22), uint64(10)},
+			expect: int64(-2),
+		},
+		{
+			args:   []interface{}{int64(math.MinInt64), uint64(3)},
+			expect: int64(-2),
+		},
+		{
 			args:   []interface{}{int64(-13), int64(11)},
 			expect: int64(-2),
 		},
@@ -598,8 +627,14 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 		switch sig.(type) {
 		case *builtinArithmeticModRealSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModReal)
-		case *builtinArithmeticModIntSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModInt)
+		case *builtinArithmeticModIntUnsignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntUnsignedUnsigned)
+		case *builtinArithmeticModIntUnsignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntUnsignedSigned)
+		case *builtinArithmeticModIntSignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntSignedUnsigned)
+		case *builtinArithmeticModIntSignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntSignedSigned)
 		case *builtinArithmeticModDecimalSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModDecimal)
 		}

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
 // Store wraps tikv.KVStore and provides coprocessor utilities.
@@ -66,5 +67,18 @@ func (s *Store) GetClient() kv.Client {
 func (s *Store) GetMPPClient() kv.MPPClient {
 	return &MPPClient{
 		store: s.KVStore,
+	}
+}
+
+func getEndPointType(t kv.StoreType) tikvrpc.EndpointType {
+	switch t {
+	case kv.TiKV:
+		return tikvrpc.TiKV
+	case kv.TiFlash:
+		return tikvrpc.TiFlash
+	case kv.TiDB:
+		return tikvrpc.TiDB
+	default:
+		return tikvrpc.TiKV
 	}
 }

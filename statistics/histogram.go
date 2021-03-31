@@ -1756,7 +1756,10 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	res := bucket4Merging{}
 	res.upper = buckets[len(buckets)-1].upper.Clone()
 	right := buckets[len(buckets)-1].Clone()
+
+	totNDV := int64(0)
 	for i := len(buckets) - 1; i >= 0; i-- {
+		totNDV += buckets[i].NDV
 		res.Count += buckets[i].Count
 		compare, err := buckets[i].upper.CompareDatum(sc, res.upper)
 		if err != nil {
@@ -1774,6 +1777,14 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		}
 	}
 	res.NDV = right.NDV + right.disjointNDV
+
+	// since `mergeBucketNDV` is based on uniform and inclusion assumptions, it has the trend to under-estimate,
+	// and as the number of buckets increases, these assumptions become weak,
+	// so to mitigate this problem, a damping factor based on the number of buckets is introduced.
+	res.NDV = int64(float64(res.NDV) * math.Pow(1.15, float64(len(buckets)-1)))
+	if res.NDV > totNDV {
+		res.NDV = totNDV
+	}
 	return &res, nil
 }
 
@@ -1855,6 +1866,16 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		buckets = append(buckets, meta.buildBucket4Merging(&d))
 	}
 
+	// Remove empty buckets
+	tail := 0
+	for i := range buckets {
+		if buckets[i].Count != 0 {
+			buckets[tail] = buckets[i]
+			tail++
+		}
+	}
+	buckets = buckets[:tail]
+
 	var sortError error
 	sort.Slice(buckets, func(i, j int) bool {
 		res, err := buckets[i].upper.CompareDatum(sc, buckets[j].upper)
@@ -1873,14 +1894,17 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if sortError != nil {
 		return nil, sortError
 	}
-	var sum int64
-	r := len(buckets)
+
+	var sum, prevSum int64
+	r, prevR := len(buckets), 0
 	bucketCount := int64(1)
+	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
+	var bucketNDV int64
 	for i := len(buckets) - 1; i >= 0; i-- {
 		sum += buckets[i].Count
-		if sum >= totCount*bucketCount/expBucketNumber {
-			// if the buckets have the same upper, we merge them into the same new buckets.
-			for ; i > 0; i-- {
+		bucketNDV += buckets[i].NDV
+		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
+			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
 				res, err := buckets[i-1].upper.CompareDatum(sc, buckets[i].upper)
 				if err != nil {
 					return nil, err
@@ -1888,18 +1912,33 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				if res != 0 {
 					break
 				}
+				sum += buckets[i-1].Count
+				bucketNDV += buckets[i-1].NDV
 			}
 			merged, err := mergePartitionBuckets(sc, buckets[i:r])
 			if err != nil {
 				return nil, err
 			}
 			globalBuckets = append(globalBuckets, merged)
+			prevR = r
 			r = i
 			bucketCount++
+			prevSum = sum
+			bucketNDV = 0
 		}
 	}
 	if r > 0 {
-		merged, err := mergePartitionBuckets(sc, buckets[0:r])
+		bucketSum := int64(0)
+		for _, b := range buckets[:r] {
+			bucketSum += b.Count
+		}
+
+		if len(globalBuckets) > 0 && bucketSum < gBucketCountThreshold { // merge them into the previous global bucket
+			r = prevR
+			globalBuckets = globalBuckets[:len(globalBuckets)-1]
+		}
+
+		merged, err := mergePartitionBuckets(sc, buckets[:r])
 		if err != nil {
 			return nil, err
 		}
@@ -1911,14 +1950,31 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 
 	// Calc the bucket lower.
-	if minValue == nil { // both hists and popedTopN are empty, returns an empty hist in this case
+	if minValue == nil || len(globalBuckets) == 0 { // both hists and popedTopN are empty, returns an empty hist in this case
 		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
 	}
 	globalBuckets[0].lower = minValue.Clone()
 	for i := 1; i < len(globalBuckets); i++ {
-		globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+		if globalBuckets[i].NDV == 1 { // there is only 1 value so lower = upper
+			globalBuckets[i].lower = globalBuckets[i].upper.Clone()
+		} else {
+			globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+		}
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}
+
+	// Recalculate repeats
+	// TODO: optimize it later since it's a simple but not the fastest implementation whose complexity is O(nBkt * nHist * log(nBkt))
+	for _, bucket := range globalBuckets {
+		var repeat float64
+		for _, hist := range hists {
+			repeat += hist.equalRowCount(*bucket.upper, isIndex) // only hists of indexes have bucket.NDV
+		}
+		if int64(repeat) > bucket.Repeat {
+			bucket.Repeat = int64(repeat)
+		}
+	}
+
 	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize)
 	for _, bucket := range globalBuckets {
 		if !isIndex {

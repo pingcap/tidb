@@ -21,6 +21,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -34,10 +35,11 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 	// we only garbage collect version before 10 lease.
 	lease := mathutil.MaxInt64(int64(h.Lease()), int64(ddlLease))
 	offset := DurationToTS(10 * time.Duration(lease))
-	if h.LastUpdateVersion() < offset {
+	now := oracle.GoTimeToTS(time.Now())
+	if now < offset {
 		return nil
 	}
-	gcVer := h.LastUpdateVersion() - offset
+	gcVer := now - offset
 	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version < %?", gcVer)
 	if err != nil {
 		return errors.Trace(err)

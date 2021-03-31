@@ -750,6 +750,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "CLUSTERED", tp: mysql.TypeVarchar, size: 64},
 }
 
 var slowQueryCols = []columnInfo{
