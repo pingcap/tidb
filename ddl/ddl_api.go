@@ -1506,15 +1506,8 @@ func buildTableInfo(
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 	if tbInfo.IsCommonHandle {
-		var pkIdx *model.IndexInfo
-		for _, idx := range tbInfo.Indices {
-			if idx.Primary {
-				pkIdx = idx
-				break
-			}
-		}
 		var pkLen, idxLen int
-		pkLen, err = indexColumnLen(tbInfo.Columns, pkIdx.Columns)
+		pkLen, err = indexColumnLen(tbInfo.Columns, tables.FindPrimaryIndex(tbInfo).Columns)
 		if err != nil {
 			return
 		}
@@ -5057,15 +5050,8 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	if tblInfo.IsCommonHandle {
-		var pkIdx *model.IndexInfo
-		for _, idx := range tblInfo.Indices {
-			if idx.Primary {
-				pkIdx = idx
-				break
-			}
-		}
 		var pkLen, idxLen int
-		pkLen, err = indexColumnLen(tblInfo.Columns, pkIdx.Columns)
+		pkLen, err = indexColumnLen(tblInfo.Columns, tables.FindPrimaryIndex(tblInfo).Columns)
 		if err != nil {
 			return err
 		}

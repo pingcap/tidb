@@ -112,15 +112,8 @@ func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 func checkIndexPrefixLength(tbInfo *model.TableInfo, columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
 	var pkLen int
 	if tbInfo.IsCommonHandle {
-		var pkIdx *model.IndexInfo
-		for _, idx := range tbInfo.Indices {
-			if idx.Primary {
-				pkIdx = idx
-				break
-			}
-		}
 		var err error
-		pkLen, err = indexColumnLen(columns, pkIdx.Columns)
+		pkLen, err = indexColumnLen(columns, tables.FindPrimaryIndex(tbInfo).Columns)
 		if err != nil {
 			return err
 		}
@@ -494,15 +487,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 		if tblInfo.IsCommonHandle && !indexInfo.Primary {
-			var pkIdx *model.IndexInfo
-			for _, idx := range tblInfo.Indices {
-				if idx.Primary {
-					pkIdx = idx
-					break
-				}
-			}
 			var pkLen, idxLen int
-			pkLen, err = indexColumnLen(tblInfo.Columns, pkIdx.Columns)
+			pkLen, err = indexColumnLen(tblInfo.Columns, tables.FindPrimaryIndex(tblInfo).Columns)
 			if err != nil {
 				return
 			}
