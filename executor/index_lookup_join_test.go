@@ -307,4 +307,11 @@ func (s *testSuite5) TestIssue23722(c *C) {
 	tk.MustExec("insert into t values (20301,'Charlie',x'7a');")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("20301 Charlie z"))
 	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie z"))
+
+	// Test lookup content exceeds primary key prefix.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b char(10), c varchar(255), primary key (c(5)) clustered);")
+	tk.MustExec("insert into t values (20301,'Charlie','aaaaaaa');")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("20301 Charlie aaaaaaa"))
+	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie aaaaaaa"))
 }

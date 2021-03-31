@@ -532,8 +532,9 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			if iw.hasPrefixCol {
 				for i, outerOffset := range iw.outerCtx.keyCols {
 					// If it's a prefix column. Try to fix it.
-					if iw.colLens[outerOffset] != types.UnspecifiedLength {
-						ranger.CutDatumByPrefixLen(&dLookUpKey[i], iw.colLens[outerOffset], iw.rowTypes[iw.keyCols[i]])
+					joinKeyColPrefixLen := iw.colLens[outerOffset]
+					if joinKeyColPrefixLen != types.UnspecifiedLength {
+						ranger.CutDatumByPrefixLen(&dLookUpKey[i], joinKeyColPrefixLen, iw.rowTypes[iw.keyCols[i]])
 					}
 				}
 				// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
