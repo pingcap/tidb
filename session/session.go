@@ -963,12 +963,12 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(name, value string) error {
+	if name == variable.TiDBSlowLogMasking {
+		name = variable.TiDBRedactLog
+	}
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	if name == variable.TiDBSlowLogMasking {
-		name = variable.TiDBRedactLog
 	}
 	var sVal string
 	var err error
