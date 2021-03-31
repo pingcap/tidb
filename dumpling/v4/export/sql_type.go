@@ -159,7 +159,7 @@ func SQLTypeNumberMaker() RowReceiverStringer {
 }
 
 // MakeRowReceiver constructs RowReceiverArr from column types
-func MakeRowReceiver(colTypes []string) RowReceiverStringer {
+func MakeRowReceiver(colTypes []string) RowReceiverArr {
 	rowReceiverArr := make([]RowReceiverStringer, len(colTypes))
 	for i, colTp := range colTypes {
 		recMaker, ok := colTypeRowReceiverMap[colTp]
