@@ -2359,7 +2359,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			innerTypes[i].Flen = types.UnspecifiedLength
 		}
 		// Use the probe table's collation.
-		//outerTypes[i].Collate = innerTypes[i].Collate
+		outerTypes[i].Collate = innerTypes[i].Collate
 	}
 
 	var (
