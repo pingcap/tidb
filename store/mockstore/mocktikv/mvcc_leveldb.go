@@ -1669,7 +1669,7 @@ func (mvcc *MVCCLevelDB) MvccGetByStartTS(starTS uint64) (*kvrpcpb.MvccInfo, []b
 		iter.Next()
 	}
 
-	return mvcc.MvccGetByKey(key), key
+	return mvcc.mvccGetByKeyNoLock(key), key
 }
 
 var valueTypeOpMap = [...]kvrpcpb.Op{
@@ -1684,6 +1684,11 @@ func (mvcc *MVCCLevelDB) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
+	return mvcc.mvccGetByKeyNoLock(key)
+}
+
+// mvcc.mu.RLock must be held before calling mvccGetByKeyNoLock.
+func (mvcc *MVCCLevelDB) mvccGetByKeyNoLock(key []byte) *kvrpcpb.MvccInfo {
 	info := &kvrpcpb.MvccInfo{}
 
 	startKey := mvccEncode(key, lockVer)
