@@ -478,22 +478,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.Global = global
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
-		if tblInfo.IsCommonHandle && !indexInfo.Primary && !indexInfo.Unique {
-			// ensure new created non-unique secondary-index's len + primary-key's len <= MaxIndexLength in clustered index table
-			var pkLen, idxLen int
-			pkLen, err = indexColumnsLen(tblInfo.Columns, tables.FindPrimaryIndex(tblInfo).Columns)
-			if err != nil {
-				return
-			}
-			idxLen, err = indexColumnsLen(tblInfo.Columns, indexInfo.Columns)
-			if err != nil {
-				return
-			}
-			if pkLen+idxLen > config.GetGlobalConfig().MaxIndexLength {
-				err = errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
-				return
-			}
-		}
 		if err = checkTooManyIndexes(tblInfo.Indices); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)

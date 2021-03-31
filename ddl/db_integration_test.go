@@ -1514,7 +1514,7 @@ func (s *testIntegrationSuite8) TestCreateSecondaryIndexInCluster(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	// test create table
+	// test create table with non-unique key
 	tk.MustGetErrCode(`
 CREATE TABLE t (
   c01 varchar(255) NOT NULL,
@@ -1527,7 +1527,7 @@ CREATE TABLE t (
   KEY c04 (c04)
 )`, errno.ErrTooLongKey)
 
-	// test create table
+	// test create table with unique key
 	tk.MustExec(`
 CREATE TABLE t (
   c01 varchar(255) NOT NULL,
@@ -1575,6 +1575,7 @@ CREATE TABLE t (
 	tk.MustGetErrCode("alter table t modify c10 varchar(600) default null", errno.ErrTooLongKey)
 	tk.MustExec("alter table t modify c06 varchar(600) default null")
 	tk.MustGetErrCode("alter table t modify c01 varchar(510) default null", errno.ErrTooLongKey)
+	tk.MustExec("create table t2 like t")
 }
 
 func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
