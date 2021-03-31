@@ -410,6 +410,54 @@ func UnionRanges(sc *stmtctx.StatementContext, ranges []*Range) ([]*Range, error
 	return ranges, nil
 }
 
+// GetNextRangeByLastKey get next Range by last key.
+// For ranges ([a, b], [c, d]) we have guaranteed that a <= c.
+// If a <= val <= b. this two range can be split as ([a, val]),([val, b], [c, d]).
+func GetNextRangeByLastKey(sc *stmtctx.StatementContext, ranges []*Range, lastKey []types.Datum, desc bool) ([]*Range, error) {
+	if len(ranges) == 0 {
+		return nil, nil
+	}
+	var left, right []*Range
+	encodeKey, err := codec.EncodeKey(sc, nil, lastKey...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, ran := range ranges {
+		leftKey, err := codec.EncodeKey(sc, nil, ran.LowVal...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rightKey, err := codec.EncodeKey(sc, nil, ran.HighVal...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if bytes.Compare(encodeKey, leftKey) < 0 {
+			right = append(right, ran)
+			continue
+		}
+		if bytes.Compare(encodeKey, rightKey) > 0 {
+			left = append(left, ran)
+			continue
+		}
+		left = append(left, &Range{
+			LowVal:      ran.LowVal,
+			HighVal:     lastKey,
+			LowExclude:  ran.LowExclude,
+			HighExclude: true,
+		})
+		right = append(right, &Range{
+			LowVal:      lastKey,
+			HighVal:     ran.HighVal,
+			LowExclude:  true,
+			HighExclude: ran.HighExclude,
+		})
+	}
+	if desc {
+		return left, nil
+	}
+	return right, nil
+}
+
 func hasPrefix(lengths []int) bool {
 	for _, l := range lengths {
 		if l != types.UnspecifiedLength {

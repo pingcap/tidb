@@ -260,11 +260,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		logutil.Logger(ctx).Error("invalid cop task execution summaries length",
-			zap.Int("expected", len(r.copPlanIDs)),
-			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
-
-		return
+		if len(r.selectResp.GetExecutionSummaries()) > len(r.copPlanIDs) {
+			r.selectResp.ExecutionSummaries = r.selectResp.ExecutionSummaries[:len(r.copPlanIDs)]
+		} else {
+			logutil.Logger(ctx).Error("invalid cop task execution summaries length",
+				zap.Int("expected", len(r.copPlanIDs)),
+				zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+			return
+		}
 	}
 	if r.stats == nil {
 		id := r.rootPlanID
