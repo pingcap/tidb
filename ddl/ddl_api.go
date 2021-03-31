@@ -1506,16 +1506,18 @@ func buildTableInfo(
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 	if tbInfo.IsCommonHandle {
+		// ensure tblInfo's each non-unique secondary-index's len + primary-key's len <= MaxIndexLength for clustered index table
 		var pkLen, idxLen int
-		pkLen, err = indexColumnLen(tbInfo.Columns, tables.FindPrimaryIndex(tbInfo).Columns)
+		pkLen, err = indexColumnsLen(tbInfo.Columns, tables.FindPrimaryIndex(tbInfo).Columns)
 		if err != nil {
 			return
 		}
 		for _, idx := range tbInfo.Indices {
-			if idx.Primary {
+			if idx.Primary || idx.Unique {
+				// only need check for secondary and non-unique index
 				continue
 			}
-			idxLen, err = indexColumnLen(tbInfo.Columns, idx.Columns)
+			idxLen, err = indexColumnsLen(tbInfo.Columns, idx.Columns)
 			if err != nil {
 				return
 			}
@@ -1527,7 +1529,7 @@ func buildTableInfo(
 	return
 }
 
-func indexColumnLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (len int, err error) {
+func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (len int, err error) {
 	for _, idxCol := range idxCols {
 		col := model.FindColumnInfo(cols, idxCol.Name.L)
 		if col == nil {
@@ -3924,39 +3926,68 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 // checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.
 // Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
 // will cause index idx to break the max-prefix-length constraint.
+//
+// for clustered index:
+//  change column in pk need recheck all non-unique index, new pk len + index len < maxIndexLength
+//  change column in secondary only need related index, pk len + new index len < maxIndexLength
 func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
-	var columns []*model.ColumnInfo
-	for _, indexInfo := range tbInfo.Indices {
-		containColumn := false
-		for _, col := range indexInfo.Columns {
-			if col.Name.L == originalCol.Name.L {
-				containColumn = true
-				break
-			}
-		}
-		if !containColumn {
+	columns := make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
+	columns = append(columns, tbInfo.Columns...)
+	// replace old column with new column.
+	for i, col := range columns {
+		if col.Name.L != originalCol.Name.L {
 			continue
 		}
-		if columns == nil {
-			columns = make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
-			columns = append(columns, tbInfo.Columns...)
-			// replace old column with new column.
-			for i, col := range columns {
-				if col.Name.L != originalCol.Name.L {
-					continue
-				}
-				columns[i] = newCol.Clone()
-				columns[i].Name = originalCol.Name
-				break
-			}
-		}
+		columns[i] = newCol.Clone()
+		columns[i].Name = originalCol.Name
+		break
+	}
 
-		err := checkIndexInModifiableColumns(columns, indexInfo.Columns)
+	pkIndex := tables.FindPrimaryIndex(tbInfo)
+	var clusteredPkLen int
+	if tbInfo.IsCommonHandle {
+		var err error
+		clusteredPkLen, err = indexColumnsLen(columns, pkIndex.Columns)
 		if err != nil {
 			return err
 		}
+	}
 
-		err = checkIndexPrefixLength(tbInfo, columns, indexInfo.Columns)
+	checkOneIndex := func(indexInfo *model.IndexInfo, pkLenAppendToKey int, skipCheckIfNotModify bool) (modified bool, err error) {
+		for _, col := range indexInfo.Columns {
+			if col.Name.L == originalCol.Name.L {
+				modified = true
+				break
+			}
+		}
+		if skipCheckIfNotModify && !modified {
+			return
+		}
+		err = checkIndexInModifiableColumns(columns, indexInfo.Columns)
+		if err != nil {
+			return
+		}
+		err = checkIndexPrefixLength(columns, indexInfo.Columns, pkLenAppendToKey)
+		return
+	}
+
+	// check primary key first, because pk maybe not in first item in tblInfo.Indices
+	pkModified, err := checkOneIndex(pkIndex, 0, true)
+	if err != nil {
+		return err
+	}
+
+	// check secondary index
+	for _, indexInfo := range tbInfo.Indices {
+		if indexInfo.Primary {
+			continue
+		}
+		var pkLenAppendToKey int
+		if !indexInfo.Unique {
+			pkLenAppendToKey = clusteredPkLen
+		}
+
+		_, err = checkOneIndex(indexInfo, pkLenAppendToKey, !tbInfo.IsCommonHandle || !pkModified)
 		if err != nil {
 			return err
 		}
@@ -5049,13 +5080,14 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 
-	if tblInfo.IsCommonHandle {
+	if !unique && tblInfo.IsCommonHandle {
+		// ensure new created non-unique secondary-index's len + primary-key's len <= MaxIndexLength in clustered index table
 		var pkLen, idxLen int
-		pkLen, err = indexColumnLen(tblInfo.Columns, tables.FindPrimaryIndex(tblInfo).Columns)
+		pkLen, err = indexColumnsLen(tblInfo.Columns, tables.FindPrimaryIndex(tblInfo).Columns)
 		if err != nil {
 			return err
 		}
-		idxLen, err = indexColumnLen(tblInfo.Columns, indexColumns)
+		idxLen, err = indexColumnsLen(tblInfo.Columns, indexColumns)
 		if err != nil {
 			return err
 		}

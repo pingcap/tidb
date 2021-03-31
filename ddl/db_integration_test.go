@@ -1527,6 +1527,20 @@ CREATE TABLE t (
   KEY c04 (c04)
 )`, errno.ErrTooLongKey)
 
+	// test create table
+	tk.MustExec(`
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02,c03) clustered,
+  unique key c04 (c04)
+)`)
+	tk.MustExec("drop table t")
+
 	// test create index
 	tk.MustExec(`
 CREATE TABLE t (
@@ -1540,6 +1554,7 @@ CREATE TABLE t (
 )`)
 	tk.MustExec("create index idx1 on t(c03)")
 	tk.MustGetErrCode("create index idx2 on t(c03, c04)", errno.ErrTooLongKey)
+	tk.MustExec("create unique index uk2 on t(c03, c04)")
 	tk.MustExec("drop table t")
 
 	// test change/modify column
@@ -1552,11 +1567,14 @@ CREATE TABLE t (
   c05 varchar(255) DEFAULT NULL,
   c06 varchar(255) DEFAULT NULL,
   PRIMARY KEY (c01,c02) clustered,
-  Index idx1(c03)
+  Index idx1(c03),
+  unique index uk1(c06)
 )`)
 	tk.MustExec("alter table t change c03 c10 varchar(256) default null")
 	tk.MustGetErrCode("alter table t change c10 c100 varchar(1024) default null", errno.ErrTooLongKey)
 	tk.MustGetErrCode("alter table t modify c10 varchar(600) default null", errno.ErrTooLongKey)
+	tk.MustExec("alter table t modify c06 varchar(600) default null")
+	tk.MustGetErrCode("alter table t modify c01 varchar(510) default null", errno.ErrTooLongKey)
 }
 
 func (s *testIntegrationSuite3) TestAlterColumn(c *C) {

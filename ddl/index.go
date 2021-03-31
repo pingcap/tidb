@@ -109,20 +109,12 @@ func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 	return lastCol, nil
 }
 
-func checkIndexPrefixLength(tbInfo *model.TableInfo, columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
-	var pkLen int
-	if tbInfo.IsCommonHandle {
-		var err error
-		pkLen, err = indexColumnLen(columns, tables.FindPrimaryIndex(tbInfo).Columns)
-		if err != nil {
-			return err
-		}
-	}
-	idxLen, err := indexColumnLen(columns, idxColumns)
+func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, pkLenAppendToKey int) error {
+	idxLen, err := indexColumnsLen(columns, idxColumns)
 	if err != nil {
 		return err
 	}
-	if pkLen+idxLen > config.GetGlobalConfig().MaxIndexLength {
+	if idxLen+pkLenAppendToKey > config.GetGlobalConfig().MaxIndexLength {
 		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
@@ -486,13 +478,14 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.Global = global
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
-		if tblInfo.IsCommonHandle && !indexInfo.Primary {
+		if tblInfo.IsCommonHandle && !indexInfo.Primary && !indexInfo.Unique {
+			// ensure new created non-unique secondary-index's len + primary-key's len <= MaxIndexLength in clustered index table
 			var pkLen, idxLen int
-			pkLen, err = indexColumnLen(tblInfo.Columns, tables.FindPrimaryIndex(tblInfo).Columns)
+			pkLen, err = indexColumnsLen(tblInfo.Columns, tables.FindPrimaryIndex(tblInfo).Columns)
 			if err != nil {
 				return
 			}
-			idxLen, err = indexColumnLen(tblInfo.Columns, indexInfo.Columns)
+			idxLen, err = indexColumnsLen(tblInfo.Columns, indexInfo.Columns)
 			if err != nil {
 				return
 			}
