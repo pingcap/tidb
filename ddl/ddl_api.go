@@ -3972,9 +3972,15 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	}
 
 	// check primary key first, because pk maybe not in first item in tblInfo.Indices
-	pkModified, err := checkOneIndex(pkIndex, 0, true)
-	if err != nil {
-		return err
+	var (
+		pkModified bool
+		err        error
+	)
+	if pkIndex != nil {
+		pkModified, err = checkOneIndex(pkIndex, 0, true)
+		if err != nil {
+			return err
+		}
 	}
 
 	// check secondary index
