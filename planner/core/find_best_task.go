@@ -1426,6 +1426,9 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		if prop.Items[0].Desc {
 			ts.Desc = true
 			cost = rowCount * rowSize * sessVars.DescScanFactor
+			if rowCount < 10000 {
+				cost = rowCount * rowSize * sessVars.ScanFactor
+			}
 		}
 		ts.KeepOrder = true
 	}
@@ -1475,6 +1478,9 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		if prop.Items[0].Desc {
 			is.Desc = true
 			cost = rowCount * rowSize * sessVars.DescScanFactor
+			if rowCount < 10000 {
+				cost = rowCount * rowSize * sessVars.ScanFactor
+			}
 		}
 		is.KeepOrder = true
 	}
