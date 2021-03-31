@@ -118,6 +118,7 @@ func (s *testCollateSuite) TestGeneralCICollator(c *C) {
 		{"😜", "😃", 0},
 		{"a ", "a  ", 0},
 		{"a\t", "a", 1},
+		{"\x80", "a", 1},
 	}
 	keyTable := []keyTable{
 		{"a", []byte{0x0, 0x41}},
@@ -128,6 +129,7 @@ func (s *testCollateSuite) TestGeneralCICollator(c *C) {
 			0x3, 0x0, 0x20, 0x0, 0x51, 0x0, 0x55, 0x0, 0x58}},
 		{"a ", []byte{0x0, 0x41}},
 		{"a", []byte{0x0, 0x41}},
+		{"\x80\x81", []byte{}},
 	}
 	testCompareTable(compareTable, "utf8mb4_general_ci", c)
 	testKeyTable(keyTable, "utf8mb4_general_ci", c)
@@ -149,6 +151,7 @@ func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
 		{"a\t", "a", 1},
 		{"ß", "s", 1},
 		{"ß", "ss", 0},
+		{"\x80", "a", 1},
 	}
 	keyTable := []keyTable{
 		{"a", []byte{0x0E, 0x33}},
@@ -160,6 +163,7 @@ func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
 			0xB4, 0x10, 0x1F, 0x10, 0x5A}},
 		{"a ", []byte{0x0E, 0x33}},
 		{"ﷻ", []byte{0x13, 0x5E, 0x13, 0xAB, 0x02, 0x09, 0x13, 0x5E, 0x13, 0xAB, 0x13, 0x50, 0x13, 0xAB, 0x13, 0xB7}},
+		{"\x80\x81", []byte{}},
 	}
 
 	testCompareTable(compareTable, "utf8mb4_unicode_ci", c)
