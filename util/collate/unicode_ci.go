@@ -15,6 +15,8 @@ package collate
 
 import (
 	"github.com/pingcap/tidb/util/stringutil"
+	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -36,12 +38,16 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 	// rune of a, b
 	ar, br := rune(0), rune(0)
 	// decode index of a, b
-	ai, bi := 0, 0
+	asize, bsize := 0, 0
 	for {
 		if an == 0 {
 			if as == 0 {
-				for an == 0 && ai < len(a) {
-					ar, ai = decodeRune(a, ai)
+				for an == 0 && len(a) > 0 {
+					ar, asize = utf8.DecodeRuneInString(a)
+					if ar == utf8.RuneError && asize == 1 {
+						return strings.Compare(a, b)
+					}
+					a = a[asize:]
 					an, as = convertRuneUnicodeCI(ar)
 				}
 			} else {
@@ -52,8 +58,12 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 
 		if bn == 0 {
 			if bs == 0 {
-				for bn == 0 && bi < len(b) {
-					br, bi = decodeRune(b, bi)
+				for bn == 0 && len(b) > 0 {
+					br, bsize = utf8.DecodeRuneInString(b)
+					if br == utf8.RuneError && bsize == 1 {
+						return strings.Compare(a, b)
+					}
+					b = b[bsize:]
 					bn, bs = convertRuneUnicodeCI(br)
 				}
 			} else {
@@ -86,12 +96,13 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 func (uc *unicodeCICollator) Key(str string) []byte {
 	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str)*2)
-	r := rune(0)
-	si := 0                        // decode index of s
 	sn, ss := uint64(0), uint64(0) // weight of str. weight in unicode_ci may has 8 uint16s. sn indicate first 4 u16s, ss indicate last 4 u16s
 
-	for si < len(str) {
-		r, si = decodeRune(str, si)
+	for len(str) > 0 {
+		r, size := utf8.DecodeRuneInString(str)
+		if r == utf8.RuneError && size == 1 {
+			return buf
+		}
 		sn, ss = convertRuneUnicodeCI(r)
 		for sn != 0 {
 			buf = append(buf, byte((sn&0xFF00)>>8), byte(sn))
@@ -101,6 +112,7 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 			buf = append(buf, byte((ss&0xFF00)>>8), byte(ss))
 			ss >>= 16
 		}
+		str = str[size:]
 	}
 	return buf
 }
@@ -116,6 +128,25 @@ func convertRuneUnicodeCI(r rune) (first, second uint64) {
 		return longRuneMap[r][0], longRuneMap[r][1]
 	}
 	return mapTable[r], 0
+}
+
+func getWeight(an, as uint64, a string) (uint64, uint64, string) {
+	if an == 0 {
+		if as == 0 {
+			for an == 0 && len(a) > 0 {
+				ar, ai := utf8.DecodeRuneInString(a)
+				if ar == utf8.RuneError && ai == 1 {
+					return utf8.RuneError, 1, a
+				}
+				a = a[ai:]
+				an, as = convertRuneUnicodeCI(ar)
+			}
+		} else {
+			return as, 0, a
+		}
+	}
+
+	return an, as, a
 }
 
 // Pattern implements Collator interface.

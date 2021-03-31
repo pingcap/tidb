@@ -14,6 +14,9 @@
 package collate
 
 import (
+	"strings"
+	"unicode/utf8"
+
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -24,30 +27,37 @@ type generalCICollator struct {
 func (gc *generalCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
-	r1, r2 := rune(0), rune(0)
-	ai, bi := 0, 0
-	for ai < len(a) && bi < len(b) {
-		r1, ai = decodeRune(a, ai)
-		r2, bi = decodeRune(b, bi)
+	for len(a) > 0 && len(b) > 0 {
+		r1, asize := utf8.DecodeRuneInString(a)
+		r2, bsize := utf8.DecodeRuneInString(b)
+
+		// Incorrect string, compare bytewise
+		if (r1 == utf8.RuneError && asize == 1) || (r2 == utf8.RuneError && bsize == 1) {
+			return strings.Compare(a, b)
+		}
 
 		cmp := int(convertRuneGeneralCI(r1)) - int(convertRuneGeneralCI(r2))
 		if cmp != 0 {
 			return sign(cmp)
 		}
+		a = a[asize:]
+		b = b[bsize:]
 	}
-	return sign((len(a) - ai) - (len(b) - bi))
+	return sign(len(a) - len(b))
 }
 
 // Key implements Collator interface.
 func (gc *generalCICollator) Key(str string) []byte {
 	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str))
-	i := 0
-	r := rune(0)
-	for i < len(str) {
-		r, i = decodeRune(str, i)
+	for len(str) > 0 {
+		r, size := utf8.DecodeRuneInString(str)
+		if r == utf8.RuneError && size == 1 {
+			return buf
+		}
 		u16 := convertRuneGeneralCI(r)
 		buf = append(buf, byte(u16>>8), byte(u16))
+		str = str[size:]
 	}
 	return buf
 }
