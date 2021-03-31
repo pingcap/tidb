@@ -2358,8 +2358,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		if innerTypes[i].EvalType() == types.ETString {
 			innerTypes[i].Flen = types.UnspecifiedLength
 		}
-		// Use the probe table's collation.
-		outerTypes[i].Collate = innerTypes[i].Collate
+	}
+
+	// Use the probe table's collation.
+	for i, col := range v.InnerHashKeys {
+		outerTypes[col.Index].Collate = innerTypes[v.OuterHashKeys[i].Index].Collate
 	}
 
 	var (
