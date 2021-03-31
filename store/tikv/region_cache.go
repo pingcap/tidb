@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1463,7 +1464,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		} else {
 			tikvRegionCacheCounterWithGetStoreOK.Inc()
 		}
-		if err != nil {
+		if err != nil && !isStoreNotFoundError(err) {
 			// TODO: more refine PD error status handle.
 			if errors.Cause(err) == context.Canceled {
 				return
@@ -1475,7 +1476,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 			continue
 		}
 		if store == nil {
-			return
+			return "", nil
 		}
 		addr = store.GetAddress()
 		s.addr = addr
@@ -1508,6 +1509,12 @@ func GetStoreTypeByMeta(store *metapb.Store) kv.StoreType {
 	return tp
 }
 
+// A quick and dirty solution to find out whether an err is caused by StoreNotFound.
+// todo: A better solution, maybe some err-code based error handling?
+func isStoreNotFoundError(err error) bool {
+	return strings.Contains(err.Error(), "invalid store ID") && strings.Contains(err.Error(), "not found")
+}
+
 // reResolve try to resolve addr for store that need check.
 func (s *Store) reResolve(c *RegionCache) {
 	var addr string
@@ -1517,16 +1524,20 @@ func (s *Store) reResolve(c *RegionCache) {
 	} else {
 		tikvRegionCacheCounterWithGetStoreOK.Inc()
 	}
-	if err != nil {
+	// `err` here can mean either "load Store from PD failed" or "store not found"
+	// If load Store from PD is successful but PD didn't find the store
+	// the err should be handled by next `if` instead of here
+	if err != nil && !isStoreNotFoundError(err) {
 		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
 		return
 	}
-	if store == nil || store.State == metapb.StoreState_Tombstone {
+	if store == nil {
 		// store has be removed in PD, we should invalidate all regions using those store.
 		logutil.BgLogger().Info("invalidate regions in removed store",
 			zap.Uint64("store", s.storeID), zap.String("add", s.addr))
 		atomic.AddUint32(&s.epoch, 1)
+		atomic.StoreUint64(&s.state, uint64(deleted))
 		tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		return
 	}
