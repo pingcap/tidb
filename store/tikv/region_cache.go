@@ -1534,8 +1534,9 @@ func isStoreNotFoundError(err error) bool {
 	return strings.Contains(err.Error(), "invalid store ID") && strings.Contains(err.Error(), "not found")
 }
 
-// reResolve try to resolve addr for store that need check.
-func (s *Store) reResolve(c *RegionCache) {
+// reResolve try to resolve addr for store that need check. Returns false if the region is in tombstone state or is
+// deleted.
+func (s *Store) reResolve(c *RegionCache) (bool, error) {
 	var addr string
 	store, err := c.pdClient.GetStore(context.Background(), s.storeID)
 	if err != nil {
@@ -1549,7 +1550,7 @@ func (s *Store) reResolve(c *RegionCache) {
 	if err != nil && !isStoreNotFoundError(err) {
 		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
-		return
+		return false, err
 	}
 	if store == nil {
 		// store has be removed in PD, we should invalidate all regions using those store.
@@ -1558,7 +1559,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		atomic.AddUint32(&s.epoch, 1)
 		atomic.StoreUint64(&s.state, uint64(deleted))
 		tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
-		return
+		return false, nil
 	}
 
 	storeType := GetStoreTypeByMeta(store)
@@ -1574,23 +1575,24 @@ func (s *Store) reResolve(c *RegionCache) {
 		// all region used those
 		oldState := s.getResolveState()
 		if oldState == deleted {
-			return
+			return false, nil
 		}
 		newState := deleted
 		if !s.compareAndSwapState(oldState, newState) {
 			goto retryMarkDel
 		}
-		return
+		return false, nil
 	}
 retryMarkResolved:
 	oldState := s.getResolveState()
 	if oldState != needCheck {
-		return
+		return true, nil
 	}
 	newState := resolved
 	if !s.compareAndSwapState(oldState, newState) {
 		goto retryMarkResolved
 	}
+	return true, nil
 }
 
 func (s *Store) getResolveState() resolveState {
