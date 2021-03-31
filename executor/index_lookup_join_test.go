@@ -298,3 +298,12 @@ func (s *testSuite5) TestIssue23656(c *C) {
 		"1 clever jang 1 clever jang",
 		"2 blissful aryabhata 2 blissful aryabhata"))
 }
+
+func (s *testSuite5) TestIssue23722(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b char(10), c blob, primary key (c(5)) clustered);")
+	tk.MustExec("insert into t values (20301,'Charlie',x'7a');")
+	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie 0x7A"))
+}
