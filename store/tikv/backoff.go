@@ -25,7 +25,8 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -92,7 +93,8 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 		}
 		logutil.BgLogger().Debug("backoff",
 			zap.Int("base", base),
-			zap.Int("sleep", sleep))
+			zap.Int("sleep", sleep),
+			zap.Int("attempts", attempts))
 
 		realSleep := sleep
 		// when set maxSleepMs >= 0 in `tikv.BackoffWithMaxSleep` will force sleep maxSleepMs milliseconds.
@@ -132,7 +134,7 @@ const (
 	boMaxTsNotSynced
 )
 
-func (t BackoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
+func (t BackoffType) createFn(vars *tidbkv.Variables) func(context.Context, int) int {
 	if vars.Hook != nil {
 		vars.Hook(t.String(), vars)
 	}
@@ -192,25 +194,25 @@ func (t BackoffType) String() string {
 func (t BackoffType) TError() error {
 	switch t {
 	case BoTiKVRPC:
-		return ErrTiKVServerTimeout
+		return kv.ErrTiKVServerTimeout
 	case BoTiFlashRPC:
-		return ErrTiFlashServerTimeout
+		return kv.ErrTiFlashServerTimeout
 	case BoTxnLock, BoTxnLockFast, boTxnNotFound:
-		return ErrResolveLockTimeout
+		return kv.ErrResolveLockTimeout
 	case BoPDRPC:
-		return ErrPDServerTimeout
+		return kv.ErrPDServerTimeout
 	case BoRegionMiss:
-		return ErrRegionUnavailable
+		return kv.ErrRegionUnavailable
 	case boTiKVServerBusy:
-		return ErrTiKVServerBusy
+		return kv.ErrTiKVServerBusy
 	case boTiFlashServerBusy:
-		return ErrTiFlashServerBusy
+		return kv.ErrTiFlashServerBusy
 	case boStaleCmd:
-		return ErrTiKVStaleCommand
+		return kv.ErrTiKVStaleCommand
 	case boMaxTsNotSynced:
-		return ErrTiKVMaxTimestampNotSynced
+		return kv.ErrTiKVMaxTimestampNotSynced
 	}
-	return ErrUnknown
+	return kv.ErrUnknown
 }
 
 // Maximum total sleep time(in ms) for kv/cop commands.
@@ -250,7 +252,7 @@ type Backoffer struct {
 	totalSleep int
 	errors     []error
 	types      []fmt.Stringer
-	vars       *kv.Variables
+	vars       *tidbkv.Variables
 	noop       bool
 
 	backoffSleepMS map[BackoffType]int
@@ -267,12 +269,12 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
 		ctx:      ctx,
 		maxSleep: maxSleep,
-		vars:     kv.DefaultVars,
+		vars:     tidbkv.DefaultVars,
 	}
 }
 
-// NewBackofferWithVars creates a Backoffer with maximum sleep time(in ms) and kv.Variables.
-func NewBackofferWithVars(ctx context.Context, maxSleep int, vars *kv.Variables) *Backoffer {
+// NewBackofferWithVars creates a Backoffer with maximum sleep time(in ms) and tidbkv.Variables.
+func NewBackofferWithVars(ctx context.Context, maxSleep int, vars *tidbkv.Variables) *Backoffer {
 	return NewBackoffer(ctx, maxSleep).withVars(vars)
 }
 
@@ -281,8 +283,8 @@ func NewNoopBackoff(ctx context.Context) *Backoffer {
 	return &Backoffer{ctx: ctx, noop: true}
 }
 
-// withVars sets the kv.Variables to the Backoffer and return it.
-func (b *Backoffer) withVars(vars *kv.Variables) *Backoffer {
+// withVars sets the tidbkv.Variables to the Backoffer and return it.
+func (b *Backoffer) withVars(vars *tidbkv.Variables) *Backoffer {
 	if vars != nil {
 		b.vars = vars
 	}
@@ -308,7 +310,7 @@ func (b *Backoffer) Backoff(typ BackoffType, err error) error {
 // BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
 // and never sleep more than maxSleepMs for each sleep.
 func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err error) error {
-	if strings.Contains(err.Error(), mismatchClusterID) {
+	if strings.Contains(err.Error(), kv.MismatchClusterID) {
 		logutil.BgLogger().Fatal("critical error", zap.Error(err))
 	}
 	select {
@@ -363,7 +365,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err err
 
 	if b.vars != nil && b.vars.Killed != nil {
 		if atomic.LoadUint32(b.vars.Killed) == 1 {
-			return ErrQueryInterrupted
+			return kv.ErrQueryInterrupted
 		}
 	}
 
@@ -413,7 +415,7 @@ func (b *Backoffer) Fork() (*Backoffer, context.CancelFunc) {
 }
 
 // GetVars returns the binded vars.
-func (b *Backoffer) GetVars() *kv.Variables {
+func (b *Backoffer) GetVars() *tidbkv.Variables {
 	return b.vars
 }
 

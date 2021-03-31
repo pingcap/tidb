@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/codec"
 	"golang.org/x/net/context"
@@ -68,7 +67,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
-	if req.StoreTp == kv.TiDB {
+	if req.StoreTp == tikvrpc.TiDB {
 		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
 	}
 
@@ -248,6 +247,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			}
 		})
 		resp.Resp, err = c.handleDispatchMPPTask(ctx, req.DispatchMPPTask(), storeID)
+	case tikvrpc.CmdMPPCancel:
 	case tikvrpc.CmdMvccGetByKey:
 		resp.Resp, err = c.usSvr.MvccGetByKey(ctx, req.MvccGetByKey())
 	case tikvrpc.CmdMvccGetByStartTs:
@@ -297,7 +297,12 @@ func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.Est
 	if err != nil {
 		return nil, err
 	}
-	var mockClient = mockMPPConnectionClient{mppResponses: mockServer.mppResponses, idx: 0, targetTask: r.ReceiverMeta}
+	failpoint.Inject("establishMppConnectionErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("rpc error"))
+		}
+	})
+	var mockClient = mockMPPConnectionClient{mppResponses: mockServer.mppResponses, idx: 0, ctx: ctx, targetTask: r.ReceiverMeta}
 	streamResp := &tikvrpc.MPPStreamResponse{Tikv_EstablishMPPConnectionClient: &mockClient}
 	_, cancel := context.WithCancel(ctx)
 	streamResp.Lease.Cancel = cancel
@@ -472,8 +477,8 @@ type mockMPPConnectionClient struct {
 	mockClientStream
 	mppResponses []*mpp.MPPDataPacket
 	idx          int
-
-	targetTask *mpp.TaskMeta
+	ctx          context.Context
+	targetTask   *mpp.TaskMeta
 }
 
 func (mock *mockMPPConnectionClient) Recv() (*mpp.MPPDataPacket, error) {
@@ -485,6 +490,18 @@ func (mock *mockMPPConnectionClient) Recv() (*mpp.MPPDataPacket, error) {
 	failpoint.Inject("mppRecvTimeout", func(val failpoint.Value) {
 		if int64(val.(int)) == mock.targetTask.TaskId {
 			failpoint.Return(nil, context.Canceled)
+		}
+	})
+	failpoint.Inject("mppRecvHang", func(val failpoint.Value) {
+		for val.(bool) {
+			select {
+			case <-mock.ctx.Done():
+				{
+					failpoint.Return(nil, context.Canceled)
+				}
+			default:
+				time.Sleep(1 * time.Second)
+			}
 		}
 	})
 	return nil, io.EOF

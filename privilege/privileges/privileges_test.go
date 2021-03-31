@@ -156,6 +156,31 @@ func (s *testPrivilegeSuite) TestCheckPointGetDBPrivilege(c *C) {
 	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 }
 
+func (s *testPrivilegeSuite) TestIssue22946(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, "create database db1;")
+	mustExec(c, rootSe, "create database db2;")
+	mustExec(c, rootSe, "use test;")
+	mustExec(c, rootSe, "create table a(id int);")
+	mustExec(c, rootSe, "use db1;")
+	mustExec(c, rootSe, "create table a(id int primary key,name varchar(20));")
+	mustExec(c, rootSe, "use db2;")
+	mustExec(c, rootSe, "create table b(id int primary key,address varchar(50));")
+	mustExec(c, rootSe, "CREATE USER 'delTest'@'localhost';")
+	mustExec(c, rootSe, "grant all on db1.* to delTest@'localhost';")
+	mustExec(c, rootSe, "grant all on db2.* to delTest@'localhost';")
+	mustExec(c, rootSe, "grant select on test.* to delTest@'localhost';")
+	mustExec(c, rootSe, "flush privileges;")
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "delTest", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.ExecuteInternal(context.Background(), `delete from db1.a as A where exists(select 1 from db2.b as B where A.id = B.id);`)
+	c.Assert(err, IsNil)
+	mustExec(c, rootSe, "use db1;")
+	_, err = se.ExecuteInternal(context.Background(), "delete from test.a as A;")
+	c.Assert(terror.ErrorEqual(err, core.ErrPrivilegeCheckFail), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'test1'@'localhost';`)

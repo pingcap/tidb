@@ -1536,7 +1536,10 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableStatementsSummaryHistory),
 			strings.ToLower(infoschema.ClusterTableStatementsSummary),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
-			strings.ToLower(infoschema.TablePlacementPolicy):
+			strings.ToLower(infoschema.TablePlacementPolicy),
+			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
+			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
+			strings.ToLower(infoschema.TableClientErrorsSummaryByHost):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -1839,6 +1842,15 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
+	var assignFlag []int
+	assignFlag, b.err = getAssignFlag(b.ctx, v, selExec.Schema().Len())
+	if b.err != nil {
+		return nil
+	}
+	b.err = plannercore.CheckUpdateList(assignFlag, v)
+	if b.err != nil {
+		return nil
+	}
 	updateExec := &UpdateExec{
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
@@ -1847,8 +1859,27 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		multiUpdateOnSameTable:    multiUpdateOnSameTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
+		assignFlag:                assignFlag,
 	}
 	return updateExec
+}
+
+func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int) ([]int, error) {
+	assignFlag := make([]int, schemaLen)
+	for i := range assignFlag {
+		assignFlag[i] = -1
+	}
+	for _, assign := range v.OrderedList {
+		if !ctx.GetSessionVars().AllowWriteRowID && assign.Col.ID == model.ExtraHandleID {
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
+		tblIdx, found := v.TblColPosInfos.FindTblIdx(assign.Col.Index)
+		if found {
+			colIdx := assign.Col.Index
+			assignFlag[colIdx] = tblIdx
+		}
+	}
+	return assignFlag, nil
 }
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
@@ -2516,26 +2547,6 @@ func containsLimit(execs []*tipb.Executor) bool {
 	return false
 }
 
-// When allow batch cop is 1, only agg / topN uses batch cop.
-// When allow batch cop is 2, every query uses batch cop.
-func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
-	if e.storeType != kv.TiFlash || e.keepOrder {
-		return
-	}
-	switch e.ctx.GetSessionVars().AllowBatchCop {
-	case 1:
-		for _, p := range v.TablePlans {
-			switch p.(type) {
-			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN, *plannercore.PhysicalHashJoin:
-				e.batchCop = true
-			}
-		}
-	case 2:
-		e.batchCop = true
-	}
-	return
-}
-
 func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
 	tablePlans := v.TablePlans
 	if v.StoreType == kv.TiFlash {
@@ -2570,8 +2581,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:          v.TablePlans,
 		tablePlan:      v.GetTablePlan(),
 		storeType:      v.StoreType,
+		batchCop:       v.BatchCop,
 	}
-	e.setBatchCop(v)
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -2579,6 +2590,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		e.feedback = statistics.NewQueryFeedback(getFeedbackStatsTableID(e.ctx, tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
+	// Do not collect the feedback when the table is the partition table.
+	if collect && tbl.Meta().Partition != nil {
+		collect = false
+	}
 	if !collect {
 		e.feedback.Invalidate()
 	}
@@ -2658,6 +2673,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 	if v.StoreType == kv.TiFlash {
+		sctx.IsTiFlash.Store(true)
 		partsExecutor := make([]Executor, 0, len(partitions))
 		for _, part := range partitions {
 			exec, err := buildNoRangeTableReader(b, v)
@@ -2850,6 +2866,10 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		e.feedback = statistics.NewQueryFeedback(tblID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
+	// Do not collect the feedback when the table is the partition table.
+	if collect && tbl.Meta().Partition != nil {
+		collect = false
+	}
 	if !collect {
 		e.feedback.Invalidate()
 	}
@@ -2988,6 +3008,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
 	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
+	// Do not collect the feedback when the table is the partition table.
+	if collectIndex && tbl.Meta().GetPartitionInfo() != nil {
+		collectIndex = false
+	}
 	if !collectIndex {
 		e.feedback.Invalidate()
 	}
@@ -3839,7 +3863,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	if len(pkCols) == 0 {
 		pkCols = tables.TryGetCommonPkColumnIds(tbl)
 		if len(pkCols) == 0 {
-			pkCols = []int64{0}
+			pkCols = []int64{-1}
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
@@ -3900,6 +3924,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, plan.IndexInfo, value)
 				if err != nil {
+					if kv.ErrNotExist.Equal(err) {
+						continue
+					}
 					b.err = err
 					return nil
 				}

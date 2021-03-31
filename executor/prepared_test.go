@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -200,7 +201,7 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	plannercore.SetPreparedPlanCache(true)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
 	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
@@ -254,7 +255,6 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustExec(`set @v1 = 'a', @v2 = 'b'`)
 	tk.MustQuery(`execute stmt1 using @v1`).Check(testkit.Rows("a 1 a 1"))
 	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 b 2"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// case 2:
 	tk.MustExec(`drop table if exists ta, tb`)
@@ -266,7 +266,6 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustExec(`set @v1 = 'a', @v2 = 'b'`)
 	tk.MustQuery(`execute stmt1 using @v1`).Check(testkit.Rows("a 1 1 1"))
 	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
@@ -289,7 +288,7 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustQuery(`execute stmt2 using @v2, @v2, @v3, @v3`).Check(testkit.Rows("b b 2 2 2", "c c 3 3 3"))
 
 	// For issue 19002
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(a int, b int, c int, primary key(a, b))`)
 	tk.MustExec(`insert into t1 values(1,1,111),(2,2,222),(3,3,333)`)

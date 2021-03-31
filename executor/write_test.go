@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -3893,12 +3894,25 @@ func (s *testSerialSuite) TestIssue20840(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t1 (i varchar(20) unique key) collate=utf8mb4_general_ci")
 	tk.MustExec("insert into t1 values ('a')")
 	tk.MustExec("replace into t1 values ('A')")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
 	tk.MustExec("drop table t1")
+}
+
+func (s *testSerialSuite) TestIssue22496(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t12")
+	tk.MustExec("create table t12(d decimal(15,2));")
+	_, err := tk.Exec("insert into t12 values('1,9999.00')")
+	c.Assert(err, NotNil)
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("insert into t12 values('1,999.00');")
+	tk.MustQuery("SELECT * FROM t12;").Check(testkit.Rows("1.00"))
+	tk.MustExec("drop table t12")
 }
 
 func (s *testSuite) TestEqualDatumsAsBinary(c *C) {
