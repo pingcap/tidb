@@ -527,7 +527,7 @@ func (c RawKVClientProbe) SetPDClient(client pd.Client) {
 	c.pdClient = client
 }
 
-// GetRPCClient resets the internal RPC client.
+// SetRPCClient resets the internal RPC client.
 func (c RawKVClientProbe) SetRPCClient(client Client) {
 	c.rpcClient = client
 }
