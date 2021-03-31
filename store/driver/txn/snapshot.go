@@ -14,20 +14,11 @@
 package txn
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/tablecodec"
-	"go.uber.org/zap"
 )
 
 type tikvSnapshot struct {
@@ -38,13 +29,13 @@ type tikvSnapshot struct {
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	data, err := s.KVSnapshot.BatchGet(ctx, keys)
-	return data, extractUnExtractKeyErr(err)
+	return data, extractKeyErr(err)
 }
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	data, err := s.KVSnapshot.Get(ctx, k)
-	return data, extractUnExtractKeyErr(err)
+	return data, extractKeyErr(err)
 }
 
 // Iter return a list of key-value pair after `k`.
@@ -63,94 +54,4 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 		return nil, errors.Trace(err)
 	}
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
-}
-
-func extractUnExtractKeyErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if e, ok := errors.Cause(err).(*tikvstore.ErrWriteConflict); ok {
-		return newWriteConflictError(e.WriteConflict)
-	}
-	if e, ok := errors.Cause(err).(*tikvstore.ErrRetryable); ok {
-		notFoundDetail := prettyLockNotFoundKey(e.Retryable)
-		return kv.ErrTxnRetryable.GenWithStackByArgs(e.Retryable + " " + notFoundDetail)
-	}
-	return err
-}
-
-func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
-	if conflict == nil {
-		return kv.ErrWriteConflict
-	}
-	var buf bytes.Buffer
-	prettyWriteKey(&buf, conflict.Key)
-	buf.WriteString(" primary=")
-	prettyWriteKey(&buf, conflict.Primary)
-	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
-}
-
-func prettyWriteKey(buf *bytes.Buffer, key []byte) {
-	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
-	if err == nil {
-		_, err1 := fmt.Fprintf(buf, "{tableID=%d, indexID=%d, indexValues={", tableID, indexID)
-		if err1 != nil {
-			logutil.BgLogger().Error("error", zap.Error(err1))
-		}
-		for _, v := range indexValues {
-			_, err2 := fmt.Fprintf(buf, "%s, ", v)
-			if err2 != nil {
-				logutil.BgLogger().Error("error", zap.Error(err2))
-			}
-		}
-		buf.WriteString("}}")
-		return
-	}
-
-	tableID, handle, err := tablecodec.DecodeRecordKey(key)
-	if err == nil {
-		_, err3 := fmt.Fprintf(buf, "{tableID=%d, handle=%d}", tableID, handle)
-		if err3 != nil {
-			logutil.BgLogger().Error("error", zap.Error(err3))
-		}
-		return
-	}
-
-	mKey, mField, err := tablecodec.DecodeMetaKey(key)
-	if err == nil {
-		_, err3 := fmt.Fprintf(buf, "{metaKey=true, key=%s, field=%s}", string(mKey), string(mField))
-		if err3 != nil {
-			logutil.Logger(context.Background()).Error("error", zap.Error(err3))
-		}
-		return
-	}
-
-	_, err4 := fmt.Fprintf(buf, "%#v", key)
-	if err4 != nil {
-		logutil.BgLogger().Error("error", zap.Error(err4))
-	}
-}
-
-func prettyLockNotFoundKey(rawRetry string) string {
-	if !strings.Contains(rawRetry, "TxnLockNotFound") {
-		return ""
-	}
-	start := strings.Index(rawRetry, "[")
-	if start == -1 {
-		return ""
-	}
-	rawRetry = rawRetry[start:]
-	end := strings.Index(rawRetry, "]")
-	if end == -1 {
-		return ""
-	}
-	rawRetry = rawRetry[:end+1]
-	var key []byte
-	err := json.Unmarshal([]byte(rawRetry), &key)
-	if err != nil {
-		return ""
-	}
-	var buf bytes.Buffer
-	prettyWriteKey(&buf, key)
-	return buf.String()
 }
