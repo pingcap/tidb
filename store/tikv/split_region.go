@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -60,7 +61,7 @@ func (s *KVStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter boo
 			zap.Int("split key count", len(keys)),
 			zap.Int("batch count", len(batches)),
 			zap.Uint64("first batch, region ID", batches[0].regionID.id),
-			zap.Stringer("first split key", kv.Key(batches[0].keys[0])))
+			zap.Stringer("first split key", tidbkv.Key(batches[0].keys[0])))
 	}
 	if len(batches) == 1 {
 		resp := s.batchSendSingleRegion(bo, batches[0], scatter, tableID)
@@ -159,7 +160,7 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 	}
 	logutil.BgLogger().Info("batch split regions complete",
 		zap.Uint64("batch region ID", batch.regionID.id),
-		zap.Stringer("first at", kv.Key(batch.keys[0])),
+		zap.Stringer("first at", tidbkv.Key(batch.keys[0])),
 		zap.String("first new region left", newRegionLeft),
 		zap.Int("new region count", len(spResp.Regions)))
 
@@ -171,20 +172,20 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 		if err = s.scatterRegion(bo, r.Id, tableID); err == nil {
 			logutil.BgLogger().Info("batch split regions, scatter region complete",
 				zap.Uint64("batch region ID", batch.regionID.id),
-				zap.Stringer("at", kv.Key(batch.keys[i])),
+				zap.Stringer("at", tidbkv.Key(batch.keys[i])),
 				zap.Stringer("new region left", logutil.Hex(r)))
 			continue
 		}
 
 		logutil.BgLogger().Info("batch split regions, scatter region failed",
 			zap.Uint64("batch region ID", batch.regionID.id),
-			zap.Stringer("at", kv.Key(batch.keys[i])),
+			zap.Stringer("at", tidbkv.Key(batch.keys[i])),
 			zap.Stringer("new region left", logutil.Hex(r)),
 			zap.Error(err))
 		if batchResp.err == nil {
 			batchResp.err = err
 		}
-		if ErrPDServerTimeout.Equal(err) {
+		if kv.ErrPDServerTimeout.Equal(err) {
 			break
 		}
 	}
@@ -218,7 +219,7 @@ func (s *KVStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64) 
 
 		if val, err2 := util.MockScatterRegionTimeout.Eval(); err2 == nil {
 			if val.(bool) {
-				err = ErrPDServerTimeout
+				err = kv.ErrPDServerTimeout
 			}
 		}
 
@@ -293,7 +294,7 @@ func (s *KVStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64, 
 				return nil
 			}
 			if resp.GetHeader().GetError() != nil {
-				err = errors.AddStack(&PDError{
+				err = errors.AddStack(&kv.PDError{
 					Err: resp.Header.Error,
 				})
 				logutil.BgLogger().Warn("wait scatter region error",

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"context"
@@ -21,12 +21,14 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type testSafePointSuite struct {
 	OneByOneSuite
-	store  *KVStore
+	store  tikv.StoreProbe
 	prefix string
 }
 
@@ -34,7 +36,7 @@ var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c)
+	s.store = tikv.StoreProbe{KVStore: NewTestStore(c)}
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 }
 
@@ -44,14 +46,14 @@ func (s *testSafePointSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSafePointSuite) beginTxn(c *C) *KVTxn {
+func (s *testSafePointSuite) beginTxn(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	return txn
 }
 
-func mymakeKeys(rowNum int, prefix string) []kv.Key {
-	keys := make([]kv.Key, 0, rowNum)
+func mymakeKeys(rowNum int, prefix string) []tidbkv.Key {
+	keys := make([]tidbkv.Key, 0, rowNum)
 	for i := 0; i < rowNum; i++ {
 		k := encodeKey(prefix, s08d("key", i))
 		keys = append(keys, k)
@@ -61,12 +63,12 @@ func mymakeKeys(rowNum int, prefix string) []kv.Key {
 
 func (s *testSafePointSuite) waitUntilErrorPlugIn(t uint64) {
 	for {
-		err := saveSafePoint(s.store.GetSafePointKV(), t+10)
+		err := s.store.SaveSafePoint(t + 10)
 		if err != nil {
 			panic(err)
 		}
 		cachedTime := time.Now()
-		newSafePoint, err := loadSafePoint(s.store.GetSafePointKV())
+		newSafePoint, err := s.store.LoadSafePoint()
 		if err == nil {
 			s.store.UpdateSPCache(newSafePoint, cachedTime)
 			break
@@ -89,24 +91,24 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	_, err = txn2.Get(context.TODO(), encodeKey(s.prefix, s08d("key", 0)))
 	c.Assert(err, IsNil)
 
-	s.waitUntilErrorPlugIn(txn2.startTS)
+	s.waitUntilErrorPlugIn(txn2.StartTS())
 
 	_, geterr2 := txn2.Get(context.TODO(), encodeKey(s.prefix, s08d("key", 0)))
 	c.Assert(geterr2, NotNil)
-	isFallBehind := terror.ErrorEqual(errors.Cause(geterr2), ErrGCTooEarly)
-	isMayFallBehind := terror.ErrorEqual(errors.Cause(geterr2), ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point"))
+	isFallBehind := terror.ErrorEqual(errors.Cause(geterr2), kv.ErrGCTooEarly)
+	isMayFallBehind := terror.ErrorEqual(errors.Cause(geterr2), kv.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point"))
 	isBehind := isFallBehind || isMayFallBehind
 	c.Assert(isBehind, IsTrue)
 
 	// for txn seek
 	txn3 := s.beginTxn(c)
 
-	s.waitUntilErrorPlugIn(txn3.startTS)
+	s.waitUntilErrorPlugIn(txn3.StartTS())
 
 	_, seekerr := txn3.Iter(encodeKey(s.prefix, ""), nil)
 	c.Assert(seekerr, NotNil)
-	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrGCTooEarly)
-	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point"))
+	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), kv.ErrGCTooEarly)
+	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), kv.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point"))
 	isBehind = isFallBehind || isMayFallBehind
 	c.Assert(isBehind, IsTrue)
 
@@ -114,13 +116,12 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	keys := mymakeKeys(10, s.prefix)
 	txn4 := s.beginTxn(c)
 
-	s.waitUntilErrorPlugIn(txn4.startTS)
+	s.waitUntilErrorPlugIn(txn4.StartTS())
 
-	snapshot := newTiKVSnapshot(s.store, txn4.StartTS(), 0)
-	_, batchgeterr := snapshot.BatchGet(context.Background(), keys)
+	_, batchgeterr := txn4.BatchGet(context.Background(), keys)
 	c.Assert(batchgeterr, NotNil)
-	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrGCTooEarly)
-	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point"))
+	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), kv.ErrGCTooEarly)
+	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), kv.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point"))
 	isBehind = isFallBehind || isMayFallBehind
 	c.Assert(isBehind, IsTrue)
 }

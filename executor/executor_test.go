@@ -7974,18 +7974,106 @@ func (s *testSuiteP1) TestIssue22941(c *C) {
 		PRIMARY KEY (mid),
 		KEY ind_bm_parent (ParentId,mid)
 	)`)
-
+	// mp should have more columns than m
 	tk.MustExec(`CREATE TABLE mp (
 		mpid bigint(20) unsigned NOT NULL DEFAULT '0',
 		mid varchar(50) DEFAULT NULL COMMENT '模块主键',
+		sid int,
 	PRIMARY KEY (mpid)
 	);`)
 
-	tk.MustExec(`insert into mp values("1","1");`)
+	tk.MustExec(`insert into mp values("1","1","0");`)
 	tk.MustExec(`insert into m values("0", "0");`)
-	rs := tk.MustQuery(`SELECT ( SELECT COUNT(1) FROM m WHERE ParentId = c.mid ) expand,  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
-	rs.Check(testkit.Rows("1 <nil> 1 0"))
+	rs := tk.MustQuery(`SELECT ( SELECT COUNT(1) FROM m WHERE ParentId = c.mid ) expand,  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL, sid FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
+	rs.Check(testkit.Rows("1 <nil> 1 0 <nil>"))
 
 	rs = tk.MustQuery(`SELECT  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
 	rs.Check(testkit.Rows("<nil> 1 0"))
+}
+
+func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int key, b int)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput", "return(true)"), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput")
+		c.Assert(err, IsNil)
+	}()
+
+	mustExec := func(sql string) {
+		tk.MustExec(sql)
+		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().InTxn())
+	}
+	errExec := func(sql string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().InTxn())
+	}
+
+	// Test insert in small txn
+	mustExec("insert into t values (1,3),(2,4)")
+	writeSLI := tk.Se.GetTxnWriteThroughputSLI()
+	c.Assert(writeSLI.IsInvalid(), Equals, false)
+	c.Assert(writeSLI.IsSmallTxn(), Equals, true)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test insert ... select ... from
+	mustExec("insert into t select b, a from t")
+	c.Assert(writeSLI.IsInvalid(), Equals, true)
+	c.Assert(writeSLI.IsSmallTxn(), Equals, true)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: true, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test for delete
+	mustExec("delete from t")
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 4, writeSize: 76, readKeys: 0, writeKeys: 4, writeTime: 1s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test insert not in small txn
+	mustExec("begin")
+	for i := 0; i < 20; i++ {
+		mustExec(fmt.Sprintf("insert into t values (%v,%v)", i, i))
+		c.Assert(writeSLI.IsSmallTxn(), Equals, true)
+	}
+	// The statement which affect rows is 0 shouldn't record into time.
+	mustExec("select count(*) from t")
+	mustExec("select * from t")
+	mustExec("insert into t values (20,20)")
+	c.Assert(writeSLI.IsSmallTxn(), Equals, false)
+	mustExec("commit")
+	c.Assert(writeSLI.IsInvalid(), Equals, false)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 21, writeSize: 609, readKeys: 0, writeKeys: 21, writeTime: 22s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test invalid when transaction has replace ... select ... from ... statement.
+	mustExec("delete from t")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+	mustExec("begin")
+	mustExec("insert into t values (1,3),(2,4)")
+	mustExec("replace into t select b, a from t")
+	mustExec("commit")
+	c.Assert(writeSLI.IsInvalid(), Equals, true)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: true, affectRow: 4, writeSize: 116, readKeys: 0, writeKeys: 4, writeTime: 3s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test clean last failed transaction information.
+	err := failpoint.Disable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput")
+	c.Assert(err, IsNil)
+	mustExec("begin")
+	mustExec("insert into t values (1,3),(2,4)")
+	errExec("commit")
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput", "return(true)"), IsNil)
+	mustExec("begin")
+	mustExec("insert into t values (5, 6)")
+	mustExec("commit")
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 1, writeSize: 29, readKeys: 0, writeKeys: 1, writeTime: 2s")
+
+	// Test for reset
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s")
 }
