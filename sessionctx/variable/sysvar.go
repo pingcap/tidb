@@ -137,7 +137,7 @@ func (sv *SysVar) SetGlobalFromHook(s *SessionVars, val string) error {
 	return nil
 }
 
-// ValidateSetSystemVar checks if system variable satisfies specific restriction.
+// Validate checks if system variable satisfies specific restriction.
 func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// Normalize the value and apply validation based on type.
 	// i.e. TypeBool converts 1/on/ON to ON.
