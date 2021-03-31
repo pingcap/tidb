@@ -11,12 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv"
 )
 
 type testScanMockSuite struct {
@@ -26,7 +27,7 @@ type testScanMockSuite struct {
 var _ = Suite(&testScanMockSuite{})
 
 func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
-	store := NewTestStore(c)
+	store := tikv.StoreProbe{KVStore: NewTestStore(c)}
 	defer store.Close()
 
 	txn, err := store.Begin()
@@ -40,8 +41,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(store, txn.StartTS(), 0)
-	scanner, err := newScanner(snapshot, []byte("a"), nil, 10, false)
+	scanner, err := txn.NewScanner([]byte("a"), nil, 10, false)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert([]byte{ch}, BytesEquals, []byte(scanner.Key()))
@@ -49,7 +49,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	}
 	c.Assert(scanner.Valid(), IsFalse)
 
-	scanner, err = newScanner(snapshot, []byte("a"), []byte("i"), 10, false)
+	scanner, err = txn.NewScanner([]byte("a"), []byte("i"), 10, false)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('h'); ch++ {
 		c.Assert([]byte{ch}, BytesEquals, []byte(scanner.Key()))
@@ -59,7 +59,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 }
 
 func (s *testScanMockSuite) TestReverseScan(c *C) {
-	store := NewTestStore(c)
+	store := tikv.StoreProbe{KVStore: NewTestStore(c)}
 	defer store.Close()
 
 	txn, err := store.Begin()
@@ -73,8 +73,7 @@ func (s *testScanMockSuite) TestReverseScan(c *C) {
 
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(store, txn.StartTS(), 0)
-	scanner, err := newScanner(snapshot, nil, []byte("z"), 10, true)
+	scanner, err := txn.NewScanner(nil, []byte("z"), 10, true)
 	c.Assert(err, IsNil)
 	for ch := byte('y'); ch >= byte('a'); ch-- {
 		c.Assert(string([]byte{ch}), Equals, string(scanner.Key()))
@@ -82,7 +81,7 @@ func (s *testScanMockSuite) TestReverseScan(c *C) {
 	}
 	c.Assert(scanner.Valid(), IsFalse)
 
-	scanner, err = newScanner(snapshot, []byte("a"), []byte("i"), 10, true)
+	scanner, err = txn.NewScanner([]byte("a"), []byte("i"), 10, true)
 	c.Assert(err, IsNil)
 	for ch := byte('h'); ch >= byte('a'); ch-- {
 		c.Assert(string([]byte{ch}), Equals, string(scanner.Key()))
