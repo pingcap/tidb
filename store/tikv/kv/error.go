@@ -87,7 +87,7 @@ func (k *ErrKeyExist) Error() string {
 	return k.AlreadyExist.String()
 }
 
-// ErrKeyExist wraps *kvrpcpb.KeyError to implement the error interface.
+// UnExtractKeyErr wraps *kvrpcpb.KeyError to implement the error interface.
 type UnExtractKeyErr struct {
 	*kvrpcpb.KeyError
 }

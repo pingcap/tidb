@@ -631,7 +631,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 
 	// extract the key in the driver.
 	if keyErr.Conflict != nil || keyErr.Retryable != "" {
-		return &kv.UnExtractKeyErr{keyErr}
+		return &kv.UnExtractKeyErr{KeyError: keyErr}
 	}
 
 	if keyErr.Abort != "" {
