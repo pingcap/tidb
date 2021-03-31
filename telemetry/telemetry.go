@@ -17,14 +17,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"go.etcd.io/etcd/clientv3"
 )
 
@@ -34,7 +33,7 @@ const (
 	// Prompt is the prompt for telemetry owner manager.
 	Prompt = "telemetry"
 	// ReportInterval is the interval of the report.
-	ReportInterval = 24 * time.Hour
+	ReportInterval = 6 * time.Hour
 )
 
 const (
@@ -44,17 +43,12 @@ const (
 )
 
 func getTelemetryGlobalVariable(ctx sessionctx.Context) (bool, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(`SELECT @@global.tidb_enable_telemetry`)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if len(rows) != 1 || rows[0].Len() == 0 {
-		return false, fmt.Errorf("unexpected telemetry global variable")
-	}
-	return rows[0].GetString(0) == "1", nil
+	val, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableTelemetry)
+	return variable.TiDBOptOn(val), err
 }
 
-func isTelemetryEnabled(ctx sessionctx.Context) (bool, error) {
+// IsTelemetryEnabled check whether telemetry enabled.
+func IsTelemetryEnabled(ctx sessionctx.Context) (bool, error) {
 	if !config.GetGlobalConfig().EnableTelemetry {
 		return false, nil
 	}
@@ -70,7 +64,7 @@ func PreviewUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (stri
 	if etcdClient == nil {
 		return "", nil
 	}
-	if enabled, err := isTelemetryEnabled(ctx); err != nil || !enabled {
+	if enabled, err := IsTelemetryEnabled(ctx); err != nil || !enabled {
 		return "", err
 	}
 
@@ -95,7 +89,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 		// silently ignore
 		return false, nil
 	}
-	enabled, err := isTelemetryEnabled(ctx)
+	enabled, err := IsTelemetryEnabled(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -115,6 +109,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 	}
 
 	data := generateTelemetryData(ctx, trackingID)
+	postReportTelemetryData()
 
 	rawJSON, err := json.Marshal(data)
 	if err != nil {

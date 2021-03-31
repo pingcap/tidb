@@ -14,16 +14,16 @@
 package plugin
 
 import (
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 var (
-	errInvalidPluginID         = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginID)
-	errInvalidPluginManifest   = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginManifest)
-	errInvalidPluginName       = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginName)
-	errInvalidPluginVersion    = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginVersion)
-	errDuplicatePlugin         = terror.ClassPlugin.NewStd(errno.ErrDuplicatePlugin)
-	errInvalidPluginSysVarName = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginSysVarName)
-	errRequireVersionCheckFail = terror.ClassPlugin.NewStd(errno.ErrRequireVersionCheckFail)
+	errInvalidPluginID         = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginID)
+	errInvalidPluginManifest   = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginManifest)
+	errInvalidPluginName       = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginName)
+	errInvalidPluginVersion    = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginVersion)
+	errDuplicatePlugin         = dbterror.ClassPlugin.NewStd(errno.ErrDuplicatePlugin)
+	errInvalidPluginSysVarName = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginSysVarName)
+	errRequireVersionCheckFail = dbterror.ClassPlugin.NewStd(errno.ErrRequireVersionCheckFail)
 )

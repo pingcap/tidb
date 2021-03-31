@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -44,7 +44,10 @@ var _ = Suite(&testSuite{})
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	TestingT(t)
 }
 
@@ -57,8 +60,8 @@ type testSuite struct {
 func (s *testSuite) SetUpSuite(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = &stmtctx.StatementContext{
-		MemTracker:  memory.NewTracker(stringutil.StringerStr("testSuite"), -1),
-		DiskTracker: disk.NewTracker(stringutil.StringerStr("testSuite"), -1),
+		MemTracker:  memory.NewTracker(-1, -1),
+		DiskTracker: disk.NewTracker(-1, -1),
 	}
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{
@@ -279,7 +282,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		},
 	}
 
-	actual, err := (&RequestBuilder{}).SetTableRanges(12, ranges, nil).
+	actual, err := (&RequestBuilder{}).SetHandleRanges(nil, 12, false, ranges, nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
@@ -321,7 +324,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    kv.ReplicaReadLeader,
+		ReplicaRead:    tikvstore.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -397,7 +400,7 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    kv.ReplicaReadLeader,
+		ReplicaRead:    tikvstore.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -444,7 +447,7 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    kv.ReplicaReadLeader,
+		ReplicaRead:    tikvstore.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -491,7 +494,7 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		Streaming:      true,
 		NotFillCache:   false,
 		SyncLog:        false,
-		ReplicaRead:    kv.ReplicaReadLeader,
+		ReplicaRead:    tikvstore.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -530,7 +533,7 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		KeepOrder:      true,
 		Desc:           false,
 		Concurrency:    15,
-		IsolationLevel: kv.RC,
+		IsolationLevel: tikvstore.RC,
 		Priority:       1,
 		NotFillCache:   true,
 		SyncLog:        false,
@@ -574,32 +577,38 @@ func (s *testSuite) TestRequestBuilder6(c *C) {
 }
 
 func (s *testSuite) TestRequestBuilder7(c *C) {
-	vars := variable.NewSessionVars()
-	vars.SetReplicaRead(kv.ReplicaReadFollower)
+	for _, replicaRead := range []tikvstore.ReplicaReadType{
+		tikvstore.ReplicaReadLeader,
+		tikvstore.ReplicaReadFollower,
+		tikvstore.ReplicaReadMixed,
+	} {
+		vars := variable.NewSessionVars()
+		vars.SetReplicaRead(replicaRead)
 
-	concurrency := 10
+		concurrency := 10
 
-	actual, err := (&RequestBuilder{}).
-		SetFromSessionVars(vars).
-		SetConcurrency(concurrency).
-		Build()
-	c.Assert(err, IsNil)
+		actual, err := (&RequestBuilder{}).
+			SetFromSessionVars(vars).
+			SetConcurrency(concurrency).
+			Build()
+		c.Assert(err, IsNil)
 
-	expect := &kv.Request{
-		Tp:             0,
-		StartTs:        0x0,
-		KeepOrder:      false,
-		Desc:           false,
-		Concurrency:    concurrency,
-		IsolationLevel: 0,
-		Priority:       0,
-		NotFillCache:   false,
-		SyncLog:        false,
-		Streaming:      false,
-		ReplicaRead:    kv.ReplicaReadFollower,
+		expect := &kv.Request{
+			Tp:             0,
+			StartTs:        0x0,
+			KeepOrder:      false,
+			Desc:           false,
+			Concurrency:    concurrency,
+			IsolationLevel: 0,
+			Priority:       0,
+			NotFillCache:   false,
+			SyncLog:        false,
+			Streaming:      false,
+			ReplicaRead:    replicaRead,
+		}
+
+		c.Assert(actual, DeepEquals, expect)
 	}
-
-	c.Assert(actual, DeepEquals, expect)
 }
 
 func (s *testSuite) TestRequestBuilder8(c *C) {
@@ -681,5 +690,35 @@ func (s *testSuite) TestIndexRangesToKVRangesWithFbs(c *C) {
 	}
 	for i := 0; i < len(actual); i++ {
 		c.Assert(actual[i], DeepEquals, expect[i])
+	}
+}
+
+func (s *testSuite) TestScanLimitConcurrency(c *C) {
+	vars := variable.NewSessionVars()
+	for _, tt := range []struct {
+		tp          tipb.ExecType
+		limit       uint64
+		concurrency int
+	}{
+		{tipb.ExecType_TypeTableScan, 1, 1},
+		{tipb.ExecType_TypeIndexScan, 1, 1},
+		{tipb.ExecType_TypeTableScan, 1000000, vars.Concurrency.DistSQLScanConcurrency()},
+		{tipb.ExecType_TypeIndexScan, 1000000, vars.Concurrency.DistSQLScanConcurrency()},
+	} {
+		firstExec := &tipb.Executor{Tp: tt.tp}
+		switch tt.tp {
+		case tipb.ExecType_TypeTableScan:
+			firstExec.TblScan = &tipb.TableScan{}
+		case tipb.ExecType_TypeIndexScan:
+			firstExec.IdxScan = &tipb.IndexScan{}
+		}
+		limitExec := &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: &tipb.Limit{Limit: tt.limit}}
+		dag := &tipb.DAGRequest{Executors: []*tipb.Executor{firstExec, limitExec}}
+		actual, err := (&RequestBuilder{}).
+			SetDAGRequest(dag).
+			SetFromSessionVars(vars).
+			Build()
+		c.Assert(err, IsNil)
+		c.Assert(actual.Concurrency, Equals, tt.concurrency)
 	}
 }

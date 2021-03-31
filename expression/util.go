@@ -239,11 +239,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
 					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
-						collStrictness, ok1 := CollationStrictness[coll]
-						newResStrictness, ok2 := CollationStrictness[newFuncExpr.GetType().Collate]
-						if ok1 && ok2 && newResStrictness >= collStrictness {
-							changed = true
-						}
+						changed = checkCollationStrictness(coll, newFuncExpr.GetType().Collate)
 					}
 				}
 			}
@@ -257,6 +253,27 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		}
 	}
 	return false, expr
+}
+
+// checkCollationStrictness check collation strictness-ship between `coll` and `newFuncColl`
+// return true iff `newFuncColl` is not weaker than `coll`
+func checkCollationStrictness(coll, newFuncColl string) bool {
+	collGroupID, ok1 := CollationStrictnessGroup[coll]
+	newFuncCollGroupID, ok2 := CollationStrictnessGroup[newFuncColl]
+
+	if ok1 && ok2 {
+		if collGroupID == newFuncCollGroupID {
+			return true
+		}
+
+		for _, id := range CollationStrictness[collGroupID] {
+			if newFuncCollGroupID == id {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // getValidPrefix gets a prefix of string which can parsed to a number with base. the minimum base is 2 and the maximum is 36.
@@ -356,21 +373,21 @@ func timeZone2Duration(tz string) time.Duration {
 }
 
 var logicalOps = map[string]struct{}{
-	ast.LT:        {},
-	ast.GE:        {},
-	ast.GT:        {},
-	ast.LE:        {},
-	ast.EQ:        {},
-	ast.NE:        {},
-	ast.UnaryNot:  {},
-	ast.LogicAnd:  {},
-	ast.LogicOr:   {},
-	ast.LogicXor:  {},
-	ast.In:        {},
-	ast.IsNull:    {},
-	ast.IsTruth:   {},
-	ast.IsFalsity: {},
-	ast.Like:      {},
+	ast.LT:                 {},
+	ast.GE:                 {},
+	ast.GT:                 {},
+	ast.LE:                 {},
+	ast.EQ:                 {},
+	ast.NE:                 {},
+	ast.UnaryNot:           {},
+	ast.LogicAnd:           {},
+	ast.LogicOr:            {},
+	ast.LogicXor:           {},
+	ast.In:                 {},
+	ast.IsNull:             {},
+	ast.IsTruthWithoutNull: {},
+	ast.IsFalsity:          {},
+	ast.Like:               {},
 }
 
 var oppositeOp = map[string]string{
@@ -637,47 +654,11 @@ func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err e
 	return
 }
 
-// exprStack is a stack of expressions.
-type exprStack struct {
-	stack []Expression
-}
-
-// pop pops an expression from the stack.
-func (s *exprStack) pop() Expression {
-	if s.len() == 0 {
-		return nil
-	}
-	lastIdx := s.len() - 1
-	expr := s.stack[lastIdx]
-	s.stack = s.stack[:lastIdx]
-	return expr
-}
-
-// popN pops n expressions from the stack.
-// If n greater than stack length or n is negative, it pops all the expressions.
-func (s *exprStack) popN(n int) []Expression {
-	if n > s.len() || n < 0 {
-		n = s.len()
-	}
-	idx := s.len() - n
-	exprs := s.stack[idx:]
-	s.stack = s.stack[:idx]
-	return exprs
-}
-
-// push pushes one expression to the stack.
-func (s *exprStack) push(expr Expression) {
-	s.stack = append(s.stack, expr)
-}
-
-// len returns the length of th stack.
-func (s *exprStack) len() int {
-	return len(s.stack)
-}
-
 // DatumToConstant generates a Constant expression from a Datum.
-func DatumToConstant(d types.Datum, tp byte) *Constant {
-	return &Constant{Value: d, RetType: types.NewFieldType(tp)}
+func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
+	t := types.NewFieldType(tp)
+	t.Flag |= flag
+	return &Constant{Value: d, RetType: t}
 }
 
 // ParamMarkerExpression generate a getparam function expression.
@@ -873,6 +854,21 @@ func ContainVirtualColumn(exprs []Expression) bool {
 			}
 		case *ScalarFunction:
 			if ContainVirtualColumn(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ContainCorrelatedColumn checks if the expressions contain a correlated column
+func ContainCorrelatedColumn(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *CorrelatedColumn:
+			return true
+		case *ScalarFunction:
+			if ContainCorrelatedColumn(v.GetArgs()) {
 				return true
 			}
 		}

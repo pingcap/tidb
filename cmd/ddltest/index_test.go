@@ -25,8 +25,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/gcworker"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -51,7 +50,7 @@ func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 
 	// read handles form table
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(),
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(),
 		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles.Set(h, struct{}{})
 			return true, nil
@@ -65,7 +64,8 @@ func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 	txn, err := ctx.Txn(false)
 	c.Assert(err, IsNil)
 	defer func() {
-		txn.Rollback()
+		err = txn.Rollback()
+		c.Assert(err, IsNil)
 	}()
 
 	it, err := idx.SeekFirst(txn)
@@ -88,7 +88,7 @@ func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 }
 
 func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
-	gcWorker, err := gcworker.NewMockGCWorker(s.store.(tikv.Storage))
+	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	c.Assert(err, IsNil)
 	err = gcWorker.DeleteRanges(goctx.Background(), uint64(math.MaxInt32))
 	c.Assert(err, IsNil)
@@ -104,7 +104,10 @@ func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(false)
 	c.Assert(err, IsNil)
-	defer txn.Rollback()
+	defer func() {
+		err := txn.Rollback()
+		c.Assert(err, IsNil)
+	}()
 
 	it, err := idx.SeekFirst(txn)
 	c.Assert(err, IsNil)

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
@@ -144,7 +145,7 @@ type LogicalJoin struct {
 	DefaultValues []types.Datum
 
 	// redundantSchema contains columns which are eliminated in join.
-	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
+	// For select * from a join b using (c); a.c will in output schema, and b.c will only in redundantSchema.
 	redundantSchema *expression.Schema
 	redundantNames  types.NameSlice
 
@@ -266,10 +267,6 @@ type LogicalProjection struct {
 
 	Exprs []expression.Expression
 
-	// calculateGenCols indicates the projection is for calculating generated columns.
-	// In *UPDATE*, we should know this to tell different projections.
-	calculateGenCols bool
-
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
 	// Currently it is "true" only when the current sql query is a "DO" statement.
@@ -307,14 +304,16 @@ type LogicalAggregation struct {
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
-	// groupByCols stores the columns that are group-by items.
-	groupByCols []*expression.Column
 
 	// aggHints stores aggregation hint information.
 	aggHints aggHintInfo
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
+
+	// noCopPushDown indicates if planner must not push this agg down to coprocessor.
+	// It is true when the agg is in the outer child tree of apply.
+	noCopPushDown bool
 }
 
 // HasDistinct shows whether LogicalAggregation has functions with distinct.
@@ -349,14 +348,16 @@ func (la *LogicalAggregation) IsCompleteModeAgg() bool {
 	return la.AggFuncs[0].Mode == aggregation.CompleteMode
 }
 
-// GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
-// this method would collect them at first. If the GroupByItems have been changed,
-// we should explicitly collect GroupByColumns before this method.
+// GetGroupByCols returns the columns that are group-by items.
+// For example, `group by a, b, c+d` will return [a, b].
 func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
-	if la.groupByCols == nil {
-		la.collectGroupByColumns()
+	groupByCols := make([]*expression.Column, 0, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols = append(groupByCols, col)
+		}
 	}
-	return la.groupByCols
+	return groupByCols
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -500,7 +501,7 @@ type DataSource struct {
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
-	//handleCol *expression.Column
+	// handleCol *expression.Column
 	handleCols HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
@@ -515,6 +516,12 @@ type DataSource struct {
 	preferStoreType int
 	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
 	preferPartitions map[int][]model.CIStr
+	SampleInfo       *TableSampleInfo
+	is               infoschema.InfoSchema
+	// isForUpdateRead should be true in either of the following situations
+	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
+	// 2. isolation level is RC
+	isForUpdateRead bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -575,8 +582,8 @@ func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (matc
 		return false
 	}
 	for i, col := range p.IdxCols {
-		if col.Equal(nil, prop.Items[0].Col) {
-			return matchIndicesProp(p.IdxCols[i:], p.IdxColLens[i:], prop.Items)
+		if col.Equal(nil, prop.SortItems[0].Col) {
+			return matchIndicesProp(p.IdxCols[i:], p.IdxColLens[i:], prop.SortItems)
 		} else if i >= p.EqCondCount {
 			break
 		}
@@ -985,9 +992,10 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
-	ByItems []*util.ByItems
-	Offset  uint64
-	Count   uint64
+	ByItems    []*util.ByItems
+	Offset     uint64
+	Count      uint64
+	limitHints limitHintInfo
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1006,17 +1014,18 @@ func (lt *LogicalTopN) isLimit() bool {
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
-	Offset uint64
-	Count  uint64
+	Offset     uint64
+	Count      uint64
+	limitHints limitHintInfo
 }
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock             ast.SelectLockType
+	Lock             *ast.SelectLockInfo
 	tblID2Handle     map[int64][]HandleCols
 	partitionedTable []table.PartitionedTable
 }
@@ -1046,8 +1055,8 @@ type LogicalWindow struct {
 	logicalSchemaProducer
 
 	WindowFuncDescs []*aggregation.WindowFuncDesc
-	PartitionBy     []property.Item
-	OrderBy         []property.Item
+	PartitionBy     []property.SortItem
+	OrderBy         []property.SortItem
 	Frame           *WindowFrame
 }
 

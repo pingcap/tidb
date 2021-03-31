@@ -200,7 +200,7 @@ func Load(ctx context.Context, cfg Config) (err error) {
 			}
 			if cfg.GlobalSysVar != nil {
 				for key, value := range tiPlugins.plugins[kind][i].SysVars {
-					(*cfg.GlobalSysVar)[key] = value
+					variable.RegisterSysVar(value)
 					if value.Scope != variable.ScopeSession && cfg.PluginVarNames != nil {
 						*cfg.PluginVarNames = append(*cfg.PluginVarNames, key)
 					}
@@ -331,6 +331,11 @@ func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 		return
 	}
 	return
+}
+
+// SetTestHook for uint test in custom plugin.
+func SetTestHook(fn func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error)) {
+	testHook = &struct{ loadOne loadFn }{loadOne: fn}
 }
 
 func loadManifestByGoPlugin(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {

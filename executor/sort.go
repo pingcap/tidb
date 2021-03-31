@@ -17,22 +17,18 @@ import (
 	"container/heap"
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
-
-var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
 
 // SortExec represents sorting executor.
 type SortExec struct {
@@ -43,8 +39,6 @@ type SortExec struct {
 	fetched bool
 	schema  *expression.Schema
 
-	keyExprs []expression.Expression
-	keyTypes []*types.FieldType
 	// keyColumns is the column index of the by items.
 	keyColumns []int
 	// keyCmpFuncs is used to compare each ByItem.
@@ -216,7 +210,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	}
 	e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		e.spillAction = e.rowChunks.ActionSpill()
 		failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
@@ -227,7 +221,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		})
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
-		e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
+		e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 	}
 	for {
 		chk := newFirstChunk(e.children[0])
@@ -244,9 +238,9 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 				e.partitionList = append(e.partitionList, e.rowChunks)
 				e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-				e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+				e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 				e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
-				e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
+				e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 				e.spillAction = e.rowChunks.ActionSpill()
 				failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
 					if val.(bool) {
@@ -411,10 +405,14 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
-		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-		req.AppendRow(row)
-		e.Idx++
+	if !req.IsFull() {
+		numToAppend := mathutil.Min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
+		rows := make([]chunk.Row, numToAppend)
+		for index := 0; index < numToAppend; index++ {
+			rows[index] = e.rowChunks.GetRow(e.rowPtrs[e.Idx])
+			e.Idx++
+		}
+		req.AppendRows(rows)
 	}
 	return nil
 }
@@ -423,7 +421,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
 	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
 		srcChk := newFirstChunk(e.children[0])
 		// adjust required rows by total limit
@@ -501,7 +499,7 @@ func (e *TopNExec) doCompaction() error {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
-	newRowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+	newRowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
 

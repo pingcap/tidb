@@ -436,9 +436,9 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 
 	str := strings.Join(strs, sep)
 	// todo check whether the length of result is larger than Flen
-	//if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
+	// if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
 	//	return "", true, nil
-	//}
+	// }
 	return str, false, nil
 }
 
@@ -3370,8 +3370,10 @@ func (b *builtinFormatWithLocaleSig) evalString(row chunk.Row) (string, bool, er
 	}
 	if isNull {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
-		locale = "en_US"
+	} else if !strings.EqualFold(locale, "en_US") { // TODO: support other locales.
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(locale))
 	}
+	locale = "en_US"
 	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
 	return formatString, false, err
 }
@@ -3549,13 +3551,13 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 		return "", true, nil
 	}
 	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
-		return "", true, nil
+		b.tp.Flen = mysql.MaxBlobWidth
 	}
 
-	//encode
+	// encode
 	strBytes := []byte(str)
 	result := base64.StdEncoding.EncodeToString(strBytes)
-	//A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
+	// A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
 	count := len(result)
 	if count > 76 {
 		resultArr := splitToSubN(result, 76)
@@ -3883,7 +3885,12 @@ func (c *weightStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if padding == weightStringPaddingNull {
 		sig = &builtinWeightStringNullSig{bf}
 	} else {
-		sig = &builtinWeightStringSig{bf, padding, length}
+		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		sig = &builtinWeightStringSig{bf, padding, length, maxAllowedPacket}
 	}
 	return sig, nil
 }
@@ -3907,8 +3914,9 @@ func (b *builtinWeightStringNullSig) evalString(row chunk.Row) (string, bool, er
 type builtinWeightStringSig struct {
 	baseBuiltinFunc
 
-	padding weightStringPadding
-	length  int
+	padding          weightStringPadding
+	length           int
+	maxAllowedPacket uint64
 }
 
 func (b *builtinWeightStringSig) Clone() builtinFunc {
@@ -3916,6 +3924,7 @@ func (b *builtinWeightStringSig) Clone() builtinFunc {
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.padding = b.padding
 	newSig.length = b.length
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -3939,6 +3948,10 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 		if b.length < lenRunes {
 			str = string(runes[:b.length])
 		} else if b.length > lenRunes {
+			if uint64(b.length-lenRunes) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("weight_string", b.maxAllowedPacket))
+				return "", true, nil
+			}
 			str += strings.Repeat(" ", b.length-lenRunes)
 		}
 		ctor = collate.GetCollator(b.args[0].GetType().Collate)
@@ -3949,6 +3962,10 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errTruncatedWrongValue.GenWithStackByArgs(tpInfo, str))
 			str = str[:b.length]
 		} else if b.length > lenStr {
+			if uint64(b.length-lenStr) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", b.maxAllowedPacket))
+				return "", true, nil
+			}
 			str += strings.Repeat("\x00", b.length-lenStr)
 		}
 		ctor = collate.GetCollator(charset.CollationBin)

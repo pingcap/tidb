@@ -40,6 +40,22 @@ type testTableSuite struct {
 	d *ddl
 }
 
+func testTableInfoWith2IndexOnFirstColumn(c *C, d *ddl, name string, num int) *model.TableInfo {
+	normalInfo := testTableInfo(c, d, name, num)
+	idxs := make([]*model.IndexInfo, 0, 2)
+	for i := range idxs {
+		idx := &model.IndexInfo{
+			Name:    model.NewCIStr(fmt.Sprintf("i%d", i+1)),
+			State:   model.StatePublic,
+			Columns: []*model.IndexColumn{{Name: model.NewCIStr("c1")}},
+		}
+		idxs = append(idxs, idx)
+	}
+	normalInfo.Indices = idxs
+	normalInfo.Columns[0].FieldType.Flen = 11
+	return normalInfo
+}
+
 // testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	tblInfo := &model.TableInfo{
@@ -229,7 +245,7 @@ func testLockTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblI
 }
 
 func checkTableLockedTest(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp model.TableLockType) {
-	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		info, err := t.GetTable(dbInfo.ID, tblInfo.ID)
 		c.Assert(err, IsNil)
@@ -282,7 +298,7 @@ func testTruncateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInf
 }
 
 func testCheckTableState(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
-	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		info, err := t.GetTable(dbInfo.ID, tblInfo.ID)
 		c.Assert(err, IsNil)
@@ -307,7 +323,7 @@ func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.Table {
 
 func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error) {
 	var tblInfo *model.TableInfo
-	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		tblInfo, err1 = t.GetTable(schemaID, tableID)
@@ -345,8 +361,10 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 
 func (s *testTableSuite) TearDownSuite(c *C) {
 	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
-	s.d.Stop()
-	s.store.Close()
+	err := s.d.Stop()
+	c.Assert(err, IsNil)
+	err = s.store.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testTableSuite) TestTable(c *C) {
@@ -393,30 +411,4 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 	checkTableLockedTest(c, d, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
-}
-
-func (s *testTableSuite) TestTableResume(c *C) {
-	d := s.d
-
-	testCheckOwner(c, d, true)
-
-	tblInfo := testTableInfo(c, d, "t1", 3)
-	job := &model.Job{
-		SchemaID:   s.dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo},
-	}
-	testRunInterruptedJob(c, d, job)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
-
-	job = &model.Job{
-		SchemaID:   s.dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropTable,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-	testRunInterruptedJob(c, d, job)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateNone)
 }

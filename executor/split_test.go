@@ -134,7 +134,7 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	// region10: [90 ~ +inf)
 	ctx := mock.NewContext()
 	e := &SplitIndexRegionExec{
-		baseExecutor: newBaseExecutor(ctx, nil, nil),
+		baseExecutor: newBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
 		indexInfo:    idxInfo,
 		lower:        []types.Datum{types.NewDatum(0)},
@@ -323,7 +323,7 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 	// region10: [90 ~ +inf)
 	ctx := mock.NewContext()
 	e := &SplitTableRegionExec{
-		baseExecutor: newBaseExecutor(ctx, nil, nil),
+		baseExecutor: newBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
 		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
 		lower:        []types.Datum{types.NewDatum(0)},
@@ -368,9 +368,10 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 
 func (s *testSplitIndex) TestClusterIndexSplitTable(c *C) {
 	tbInfo := &model.TableInfo{
-		Name:           model.NewCIStr("t"),
-		ID:             1,
-		IsCommonHandle: true,
+		Name:                model.NewCIStr("t"),
+		ID:                  1,
+		IsCommonHandle:      true,
+		CommonHandleVersion: 1,
 		Indices: []*model.IndexInfo{
 			{
 				ID:      1,
@@ -413,7 +414,7 @@ func (s *testSplitIndex) TestClusterIndexSplitTable(c *C) {
 	ctx := mock.NewContext()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	e := &SplitTableRegionExec{
-		baseExecutor: newBaseExecutor(ctx, nil, nil),
+		baseExecutor: newBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
 		handleCols:   buildHandleColsForSplit(sc, tbInfo),
 		lower:        types.MakeDatums(1, 0),

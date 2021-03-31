@@ -74,8 +74,8 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	de := decoder.NewRowDecoder(tbl, decodeColsMap)
-	deWithNoGenCols := decoder.NewRowDecoder(tbl, decodeColsMap2)
+	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
+	deWithNoGenCols := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap2)
 
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
@@ -171,7 +171,7 @@ func (s *testDecoderSuite) TestClusterIndexRowDecoder(c *C) {
 
 	cols := []*model.ColumnInfo{c1, c2, c3}
 
-	tblInfo := &model.TableInfo{ID: 1, Columns: cols, Indices: []*model.IndexInfo{pk}, IsCommonHandle: true}
+	tblInfo := &model.TableInfo{ID: 1, Columns: cols, Indices: []*model.IndexInfo{pk}, IsCommonHandle: true, CommonHandleVersion: 1}
 	tbl := tables.MockTableFromMeta(tblInfo)
 
 	ctx := mock.NewContext()
@@ -183,7 +183,7 @@ func (s *testDecoderSuite) TestClusterIndexRowDecoder(c *C) {
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	de := decoder.NewRowDecoder(tbl, decodeColsMap)
+	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
 
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)

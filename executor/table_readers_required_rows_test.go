@@ -89,21 +89,29 @@ func (r *requiredRowsSelectResult) genValue(valType *types.FieldType) interface{
 	}
 }
 
+type totalRowsContextKey struct{}
+
+var totalRowsKey = totalRowsContextKey{}
+
+type expectedRowsRetContextKey struct{}
+
+var expectedRowsRetKey = expectedRowsRetContextKey{}
+
 func mockDistsqlSelectCtxSet(totalRows int, expectedRowsRet []int) context.Context {
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, "totalRows", totalRows)
-	ctx = context.WithValue(ctx, "expectedRowsRet", expectedRowsRet)
+	ctx = context.WithValue(ctx, totalRowsKey, totalRows)
+	ctx = context.WithValue(ctx, expectedRowsRetKey, expectedRowsRet)
 	return ctx
 }
 
 func mockDistsqlSelectCtxGet(ctx context.Context) (totalRows int, expectedRowsRet []int) {
-	totalRows = ctx.Value("totalRows").(int)
-	expectedRowsRet = ctx.Value("expectedRowsRet").([]int)
+	totalRows = ctx.Value(totalRowsKey).(int)
+	expectedRowsRet = ctx.Value(expectedRowsRetKey).([]int)
 	return
 }
 
 func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error) {
 	totalRows, expectedRowsRet := mockDistsqlSelectCtxGet(ctx)
 	return &requiredRowsSelectResult{
 		retTypes:        fieldTypes,
@@ -123,8 +131,7 @@ func buildTableReader(sctx sessionctx.Context) Executor {
 }
 
 func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
-	builder := newExecutorBuilder(sctx, nil)
-	req, _, err := builder.constructDAGReq([]core.PhysicalPlan{&core.PhysicalTableScan{
+	req, _, err := constructDAGReq(sctx, []core.PhysicalPlan{&core.PhysicalTableScan{
 		Columns: []*model.ColumnInfo{},
 		Table:   &model.TableInfo{ID: 12345, PKIsHandle: false},
 		Desc:    false,
@@ -142,7 +149,7 @@ func buildMockBaseExec(sctx sessionctx.Context) baseExecutor {
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(sctx, schema, nil)
+	baseExec := newBaseExecutor(sctx, schema, 0)
 	return baseExec
 }
 

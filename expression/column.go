@@ -201,6 +201,13 @@ type Column struct {
 	OrigName string
 	IsHidden bool
 
+	// IsPrefix indicates whether this column is a prefix column in index.
+	//
+	// for example:
+	// 	pk(col1, col2), index(col1(10)), key: col1(10)_col1_col2 => index's col1 will be true
+	// 	pk(col1(10), col2), index(col1), key: col1_col1(10)_col2 => pk's col1 will be true
+	IsPrefix bool
+
 	// InOperand indicates whether this column is the inner operand of column equal condition converted
 	// from `[not] in (subq)`.
 	InOperand bool
@@ -257,13 +264,12 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 			}
 			return nil
 		}
+		result.MergeNulls(src)
 		for i := range f32s {
-			// TODO(zhangyuanjia): speed up the way to manipulate null-bitmaps.
-			if src.IsNull(i) {
-				result.SetNull(i, true)
-			} else {
-				f64s[i] = float64(f32s[i])
+			if result.IsNull(i) {
+				continue
 			}
+			f64s[i] = float64(f32s[i])
 		}
 		return nil
 	}
@@ -331,7 +337,7 @@ func (col *Column) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (col *Column) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("\"%s\"", col)), nil
+	return []byte(fmt.Sprintf("%q", col)), nil
 }
 
 // GetType implements Expression interface.
@@ -509,6 +515,11 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 func indexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
 	for i, info := range colInfos {
 		if info.Name.L == col.Name.L {
+			if col.Length > 0 && info.FieldType.Flen > col.Length {
+				c := *cols[i]
+				c.IsPrefix = true
+				return &c
+			}
 			return cols[i]
 		}
 	}

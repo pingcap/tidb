@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -118,7 +119,7 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].NullCount, Equals, int64(2))
-	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].NDV, Equals, int64(0))
+	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].Histogram.NDV, Equals, int64(0))
 
 	testKit.MustExec("alter table t add column c3 int NOT NULL")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
@@ -184,75 +185,77 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 func (s *testStatsSuite) TestDDLPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
+	testkit.WithPruneMode(testKit, variable.Static, func() {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t")
+		createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11),
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 )`
-	testKit.MustExec(createTable)
-	do := s.do
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
-	pi := tableInfo.GetPartitionInfo()
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.Pseudo, IsFalse)
-	}
+		testKit.MustExec(createTable)
+		do := s.do
+		is := do.InfoSchema()
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo := tbl.Meta()
+		h := do.StatsHandle()
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
+		c.Assert(h.Update(is), IsNil)
+		pi := tableInfo.GetPartitionInfo()
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.Pseudo, IsFalse)
+		}
 
-	testKit.MustExec("insert into t values (1,2),(6,2),(11,2),(16,2)")
-	testKit.MustExec("analyze table t")
-	testKit.MustExec("alter table t add column c varchar(15) DEFAULT '123'")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	is = do.InfoSchema()
-	c.Assert(h.Update(is), IsNil)
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo = tbl.Meta()
-	pi = tableInfo.GetPartitionInfo()
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.Pseudo, IsFalse)
-		c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false), Equals, 3.0)
-	}
+		testKit.MustExec("insert into t values (1,2),(6,2),(11,2),(16,2)")
+		testKit.MustExec("analyze table t")
+		testKit.MustExec("alter table t add column c varchar(15) DEFAULT '123'")
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
+		is = do.InfoSchema()
+		c.Assert(h.Update(is), IsNil)
+		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo = tbl.Meta()
+		pi = tableInfo.GetPartitionInfo()
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.Pseudo, IsFalse)
+			c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false), Equals, 3.0)
+		}
 
-	addPartition := "alter table t add partition (partition p4 values less than (26))"
-	testKit.MustExec(addPartition)
-	is = s.do.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
-	pi = tableInfo.GetPartitionInfo()
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.Pseudo, IsFalse)
-	}
+		addPartition := "alter table t add partition (partition p4 values less than (26))"
+		testKit.MustExec(addPartition)
+		is = s.do.InfoSchema()
+		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo = tbl.Meta()
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
+		c.Assert(h.Update(is), IsNil)
+		pi = tableInfo.GetPartitionInfo()
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.Pseudo, IsFalse)
+		}
 
-	truncatePartition := "alter table t truncate partition p4"
-	testKit.MustExec(truncatePartition)
-	is = s.do.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
-	pi = tableInfo.GetPartitionInfo()
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.Pseudo, IsFalse)
-	}
+		truncatePartition := "alter table t truncate partition p4"
+		testKit.MustExec(truncatePartition)
+		is = s.do.InfoSchema()
+		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo = tbl.Meta()
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
+		c.Assert(h.Update(is), IsNil)
+		pi = tableInfo.GetPartitionInfo()
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.Pseudo, IsFalse)
+		}
+	})
 }

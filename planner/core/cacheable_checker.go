@@ -117,9 +117,11 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			return in, true
 		}
 	case *ast.TableName:
-		if checker.isPartitionTable(node) {
-			checker.cacheable = false
-			return in, true
+		if checker.schema != nil {
+			if checker.isPartitionTable(node) {
+				checker.cacheable = false
+				return in, true
+			}
 		}
 	}
 	return in, false
@@ -131,7 +133,7 @@ func (checker *cacheableChecker) isPartitionTable(tn *ast.TableName) bool {
 		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
 		return false
 	}
-	if tb.Meta().Partition != nil {
+	if tb.Meta().GetPartitionInfo() != nil {
 		return true
 	}
 	return false
