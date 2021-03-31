@@ -2362,6 +2362,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 
 	// Use the probe table's collation.
 	for i, col := range v.InnerHashKeys {
+		outerTypes[col.Index] = outerTypes[col.Index].Clone()
 		outerTypes[col.Index].Collate = innerTypes[v.OuterHashKeys[i].Index].Collate
 	}
 
