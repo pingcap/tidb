@@ -294,11 +294,6 @@ max-txn-ttl = 3600000
 # the interval duration between two memory profile into global tracker
 mem-profile-interval = "1m"
 
-# Index usage sync lease duration, which influences the time of dump index usage information to KV.
-# Here we set to 0 to not dump index usage information to KV,
-# because we have not completed GC and other functions.
-index-usage-sync-lease = "0s"
-
 # The Go GC trigger factor, you can get more information about it at https://golang.org/pkg/runtime.
 # If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
 # If you find the CPU used by GC is too high or GC is too frequent and impact your business you can increase this value.
