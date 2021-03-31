@@ -3855,7 +3855,7 @@
           },
           "yaxes": [
             {
-              "format": "s",
+              "format": "ns",
               "label": null,
               "logBase": 2,
               "max": null,
