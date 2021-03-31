@@ -15,14 +15,18 @@ package executor_test
 
 import (
 	"context"
+	"crypto/tls"
 	"math"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 	dto "github.com/prometheus/client_model/go"
@@ -138,7 +142,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Se, stmtID, []types.Datum{types.NewDatum(1)})
+		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Se, stmtID, []types.Datum{types.NewDatum(1)})
 		c.Assert(err, IsNil)
 		c.Assert(stmt.OriginText(), Equals, query)
 
@@ -155,7 +159,8 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 
 		// Make schema change.
 		tk.MustExec("drop table if exists prepare2")
-		tk.Exec("create table prepare2 (a int)")
+		_, err = tk.Exec("create table prepare2 (a int)")
+		c.Assert(err, IsNil)
 
 		// Should success as the changed schema do not affect the prepared statement.
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
@@ -233,10 +238,25 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("5"))
 
+		// issue 19371
+		tk.MustExec("SET @sql = 'update prepare1 set a=a+1';")
+		_, err = tk.Exec("prepare stmt FROM @SQL")
+		c.Assert(err, IsNil)
+		_, err = tk.Exec("execute stmt")
+		c.Assert(err, IsNil)
+		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("6"))
+		_, err = tk.Exec("prepare stmt FROM @Sql")
+		c.Assert(err, IsNil)
+		_, err = tk.Exec("execute stmt")
+		c.Assert(err, IsNil)
+		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("7"))
+
 		// Coverage.
 		exec := &executor.ExecuteExec{}
-		exec.Next(ctx, nil)
-		exec.Close()
+		err = exec.Next(ctx, nil)
+		c.Assert(err, IsNil)
+		err = exec.Close()
+		c.Assert(err, IsNil)
 
 		// issue 8065
 		stmtID, _, _, err = tk.Se.PrepareStmt("select ? from dual")
@@ -430,19 +450,22 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 		tk.MustExec(`prepare stmt_insert from 'insert into prepare_test values (?, ?)'`)
 		tk.MustExec(`set @a=1,@b=1; execute stmt_insert using @a, @b;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(0))
 		}
 		tk.MustExec(`set @a=2,@b=2; execute stmt_insert using @a, @b;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(1))
 		}
 		tk.MustExec(`set @a=3,@b=3; execute stmt_insert using @a, @b;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(2))
 		}
@@ -457,21 +480,24 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 		tk.MustExec(`prepare stmt_insert_select from 'insert into prepare_test (id, c1) select id + 100, c1 + 100 from prepare_test where id = ?'`)
 		tk.MustExec(`set @a=1; execute stmt_insert_select using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(2))
 		}
 		tk.MustExec(`set @a=2; execute stmt_insert_select using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(3))
+			c.Check(hit, Equals, float64(2))
 		}
 		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(4))
+			c.Check(hit, Equals, float64(2))
 		}
 
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 101)
@@ -512,21 +538,24 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		tk.MustExec(`prepare stmt_update from 'update prepare_test set c1 = c1 + ? where id = ?'`)
 		tk.MustExec(`set @a=1,@b=100; execute stmt_update using @b,@a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(2))
+			c.Check(hit, Equals, float64(0))
 		}
 		tk.MustExec(`set @a=2,@b=200; execute stmt_update using @b,@a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(3))
+			c.Check(hit, Equals, float64(1))
 		}
 		tk.MustExec(`set @a=3,@b=300; execute stmt_update using @b,@a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(4))
+			c.Check(hit, Equals, float64(2))
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
@@ -536,6 +565,30 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 3)
 		result.Check(testkit.Rows("3 303"))
 	}
+}
+
+func (s *seqTestSuite) TestIssue21884(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists prepare_test")
+	tk.MustExec("create table prepare_test(a bigint primary key, status bigint, last_update_time datetime)")
+	tk.MustExec("insert into prepare_test values (100, 0, '2020-12-18 20:00:00')")
+	tk.MustExec("prepare stmt from 'update prepare_test set status = ?, last_update_time = now() where a = 100'")
+	tk.MustExec("set @status = 1")
+	tk.MustExec("execute stmt using @status")
+	updateTime := tk.MustQuery("select last_update_time from prepare_test").Rows()[0][0]
+	// Sleep 1 second to make sure `last_update_time` is updated.
+	time.Sleep(1 * time.Second)
+	tk.MustExec("execute stmt using @status")
+	newUpdateTime := tk.MustQuery("select last_update_time from prepare_test").Rows()[0][0]
+	c.Assert(updateTime == newUpdateTime, IsFalse)
 }
 
 func (s *seqTestSuite) TestPreparedDelete(c *C) {
@@ -567,19 +620,22 @@ func (s *seqTestSuite) TestPreparedDelete(c *C) {
 		tk.MustExec(`prepare stmt_delete from 'delete from prepare_test where id = ?'`)
 		tk.MustExec(`set @a=1; execute stmt_delete using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(0))
 		}
 		tk.MustExec(`set @a=2; execute stmt_delete using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(1))
 		}
 		tk.MustExec(`set @a=3; execute stmt_delete using @a;`)
 		if flag {
-			counter.Write(pb)
+			err = counter.Write(pb)
+			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(2))
 		}
@@ -699,18 +755,104 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 		c.Assert(err, IsNil)
 
 		tk.MustExec("use test")
+
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(data mediumblob)")
-
-		tk.MustExec(`prepare stmt1 from 'insert t (data) values (?)'`)
-
+		tk.MustExec(`prepare stmt from 'insert t (data) values (?)'`)
 		tk.MustExec(`set @a = 'a'`)
-		tk.MustExec(`execute stmt1 using @a;`)
-
+		tk.MustExec(`execute stmt using @a;`)
 		tk.MustExec(`set @b = 'aaaaaaaaaaaaaaaaaa'`)
-		tk.MustExec(`execute stmt1 using @b;`)
+		tk.MustExec(`execute stmt using @b;`)
 
 		r := tk.MustQuery(`select * from t`)
 		r.Check(testkit.Rows("a", "aaaaaaaaaaaaaaaaaa"))
+
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(data decimal)")
+		tk.MustExec(`prepare stmt from 'insert t (data) values (?)'`)
+		tk.MustExec(`set @a = '1'`)
+		tk.MustExec(`execute stmt using @a;`)
+		tk.MustExec(`set @b = '11111.11111'`) // '.11111' will be truncated.
+		tk.MustExec(`execute stmt using @b;`)
+
+		r = tk.MustQuery(`select * from t`)
+		r.Check(testkit.Rows("1", "11111"))
+
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(data decimal(10,3));")
+		tk.MustExec("prepare stmt from 'insert t (data) values (?)';")
+		tk.MustExec("set @a = 1.1;")
+		tk.MustExec("execute stmt using @a;")
+		tk.MustExec("set @b = 11.11;")
+		tk.MustExec("execute stmt using @b;")
+
+		r = tk.MustQuery(`select * from t`)
+		r.Check(testkit.Rows("1.100", "11.110"))
 	}
+}
+
+// mockSessionManager is a mocked session manager which is used for test.
+type mockSessionManager1 struct {
+	Se session.Session
+}
+
+// ShowProcessList implements the SessionManager.ShowProcessList interface.
+func (msm *mockSessionManager1) ShowProcessList() map[uint64]*util.ProcessInfo {
+	ret := make(map[uint64]*util.ProcessInfo)
+	return ret
+}
+
+func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	pi := msm.Se.ShowProcess()
+	return pi, true
+}
+
+// Kill implements the SessionManager.Kill interface.
+func (msm *mockSessionManager1) Kill(cid uint64, query bool) {}
+
+func (msm *mockSessionManager1) KillAllConnections() {}
+
+func (msm *mockSessionManager1) ServerID() uint64 {
+	return 1
+}
+
+func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {}
+
+func (s *seqTestSuite) TestPreparedIssue17419(c *C) {
+	ctx := context.Background()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t (a) values (1), (2), (3)")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+
+	var err error
+	tk1.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	tk1.GetConnectionID()
+
+	query := "select * from test.t"
+	stmtID, _, _, err := tk1.Se.PrepareStmt(query)
+	c.Assert(err, IsNil)
+
+	sm := &mockSessionManager1{
+		Se: tk1.Se,
+	}
+	tk1.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+
+	rs, err := tk1.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1", "2", "3"))
+	tk1.Se.SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
+
+	s.domain.ExpensiveQueryHandle().LogOnQueryExceedMemQuota(tk.Se.GetSessionVars().ConnectionID)
+
+	// After entirely fixing https://github.com/pingcap/tidb/issues/17419
+	// c.Assert(tk1.Se.ShowProcess().Plan, NotNil)
+	// _, ok := tk1.Se.ShowProcess().Plan.(*plannercore.Execute)
+	// c.Assert(ok, IsTrue)
 }

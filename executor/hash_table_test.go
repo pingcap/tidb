@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -119,9 +120,7 @@ func (h hashCollision) Size() int                         { panic("not implement
 func (h hashCollision) BlockSize() int                    { panic("not implemented") }
 
 func (s *pkgTestSerialSuite) TestHashRowContainer(c *C) {
-	hashFunc := func() hash.Hash64 {
-		return fnv.New64()
-	}
+	hashFunc := fnv.New64
 	rowContainer := s.testHashRowContainer(c, hashFunc, false)
 	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
 	// On windows time.Now() is imprecise, the elapse time may equal 0
@@ -159,7 +158,7 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	}
 	rowContainer := newHashRowContainer(sctx, 0, hCtx)
 	tracker := rowContainer.GetMemTracker()
-	tracker.SetLabel(buildSideResultLabel)
+	tracker.SetLabel(memory.LabelForBuildSideResult)
 	if spill {
 		tracker.SetBytesLimit(1)
 		rowContainer.rowContainer.ActionSpillForTest().Action(tracker)

@@ -104,12 +104,16 @@ func (t *testTableSuite) TestCheck(c *C) {
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag
 	cols := []*Column{col, col}
-	CheckOnce(cols)
+	err := CheckOnce(cols)
+	c.Assert(err, NotNil)
 	cols = cols[:1]
-	CheckNotNull(cols, types.MakeDatums(nil))
+	err = CheckNotNull(cols, types.MakeDatums(nil))
+	c.Assert(err, IsNil)
 	cols[0].Flag |= mysql.NotNullFlag
-	CheckNotNull(cols, types.MakeDatums(nil))
-	CheckOnce([]*Column{})
+	err = CheckNotNull(cols, types.MakeDatums(nil))
+	c.Assert(err, NotNil)
+	err = CheckOnce([]*Column{})
+	c.Assert(err, IsNil)
 }
 
 func (t *testTableSuite) TestHandleBadNull(c *C) {
@@ -187,7 +191,7 @@ func (t *testTableSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeBlob),
-			types.NewBytesDatum([]byte{}),
+			types.NewStringDatum(""),
 		},
 		{
 			types.NewFieldType(mysql.TypeDuration),
@@ -265,18 +269,6 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	val, err = CastValue(ctx, types.NewDatum("test"), &colInfo, false, false)
 	c.Assert(err, Not(Equals), nil)
 	c.Assert(val.GetInt64(), Equals, int64(0))
-
-	col := ToColumn(&model.ColumnInfo{
-		FieldType: *types.NewFieldType(mysql.TypeTiny),
-		State:     model.StatePublic,
-	})
-
-	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
-	c.Assert(err, NotNil)
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
-	c.Assert(err, IsNil)
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = false
 
 	colInfoS := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeString),

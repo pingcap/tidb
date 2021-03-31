@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&testSchemaSuite{})
@@ -97,7 +96,7 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 	isDropped := true
 
 	for {
-		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			info, err := t.GetDatabase(dbInfo.ID)
 			c.Assert(err, IsNil)
@@ -115,6 +114,7 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 			c.Assert(info.State, Equals, state)
 			return nil
 		})
+		c.Assert(err, IsNil)
 
 		if isDropped {
 			break
@@ -124,14 +124,20 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 
 func (s *testSchemaSuite) TestSchema(c *C) {
 	store := testCreateStore(c, "test_schema")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	d := testNewDDLAndStart(
 		context.Background(),
 		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 	ctx := testNewContext(d)
 	dbInfo := testSchemaInfo(c, d, "test")
 
@@ -189,7 +195,10 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	store := testCreateStore(c, "test_schema_wait")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	d1 := testNewDDLAndStart(
 		context.Background(),
@@ -197,7 +206,10 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d1.Stop()
+	defer func() {
+		err := d1.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	testCheckOwner(c, d1, true)
 
@@ -207,7 +219,10 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 		WithStore(store),
 		WithLease(testLease*4),
 	)
-	defer d2.Stop()
+	defer func() {
+		err := d2.Stop()
+		c.Assert(err, IsNil)
+	}()
 	ctx := testNewContext(d2)
 
 	// d2 must not be owner.
@@ -226,67 +241,9 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	doDDLJobErr(c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
 }
 
-func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
-	ctx := mock.NewContext()
-	ctx.Store = d.store
-
-	done := make(chan error, 1)
-	go func() {
-		done <- d.doDDLJob(ctx, job)
-	}()
-
-	ticker := time.NewTicker(d.lease * 1)
-	defer ticker.Stop()
-LOOP:
-	for {
-		select {
-		case <-ticker.C:
-			d.Stop()
-			d.restartWorkers(context.Background())
-			time.Sleep(time.Millisecond * 20)
-		case err := <-done:
-			c.Assert(err, IsNil)
-			break LOOP
-		}
-	}
-}
-
-func (s *testSchemaSuite) TestSchemaResume(c *C) {
-	store := testCreateStore(c, "test_schema_resume")
-	defer store.Close()
-
-	d1 := testNewDDLAndStart(
-		context.Background(),
-		c,
-		WithStore(store),
-		WithLease(testLease),
-	)
-	defer d1.Stop()
-
-	testCheckOwner(c, d1, true)
-
-	dbInfo := testSchemaInfo(c, d1, "test")
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionCreateSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo},
-	}
-	testRunInterruptedJob(c, d1, job)
-	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
-
-	job = &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionDropSchema,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-	testRunInterruptedJob(c, d1, job)
-	testCheckSchemaState(c, d1, dbInfo, model.StateNone)
-}
-
 func testGetSchemaInfoWithError(d *ddl, schemaID int64) (*model.DBInfo, error) {
 	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)

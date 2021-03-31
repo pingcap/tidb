@@ -35,7 +35,10 @@ var _ = Suite(&testDDLTableSplitSuite{})
 func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	session.SetSchemaLease(100 * time.Millisecond)
 	session.DisableStats4Test()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
@@ -75,7 +78,7 @@ func checkRegionStartWithTableID(c *C, id int64, store kvStore) {
 	var loc *tikv.KeyLocation
 	var err error
 	cache := store.GetRegionCache()
-	loc, err = cache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 5000, nil), regionStartKey)
+	loc, err = cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
 	c.Assert(err, IsNil)
 	// Region cache may be out of date, so we need to drop this expired region and load it again.
 	cache.InvalidateCachedRegion(loc.Region)

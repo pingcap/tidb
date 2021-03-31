@@ -30,27 +30,57 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
-	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
+// Storage represents a storage that connects TiKV.
+// Methods copied from kv.Storage and tikv.Storage due to limitation of go1.13.
+type Storage interface {
+	Begin() (kv.Transaction, error)
+	BeginWithOption(option kv.TransactionOption) (kv.Transaction, error)
+	GetSnapshot(ver kv.Version) kv.Snapshot
+	GetClient() kv.Client
+	GetMPPClient() kv.MPPClient
+	Close() error
+	UUID() string
+	CurrentVersion(txnScope string) (kv.Version, error)
+	CurrentTimestamp(txnScop string) (uint64, error)
+	GetOracle() oracle.Oracle
+	SupportDeleteRange() (supported bool)
+	Name() string
+	Describe() string
+	ShowStatus(ctx context.Context, key string) (interface{}, error)
+	GetMemCache() kv.MemManager
+	GetRegionCache() *tikv.RegionCache
+	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
+	GetLockResolver() *tikv.LockResolver
+	GetSafePointKV() tikv.SafePointKV
+	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
+	SetOracle(oracle oracle.Oracle)
+	SetTiKVClient(client tikv.Client)
+	GetTiKVClient() tikv.Client
+	Closed() <-chan struct{}
+}
+
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
 type Helper struct {
-	Store       tikv.Storage
+	Store       Storage
 	RegionCache *tikv.RegionCache
 }
 
-// NewHelper get a Helper from Storage
-func NewHelper(store tikv.Storage) *Helper {
+// NewHelper gets a Helper from Storage
+func NewHelper(store Storage) *Helper {
 	return &Helper{
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
@@ -118,11 +148,14 @@ func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) ([]HotTabl
 
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
+	}
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
@@ -201,6 +234,7 @@ type HotTableIndex struct {
 func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
+		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {
@@ -241,20 +275,20 @@ func (h *Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *Re
 func findRangeInTable(hotRange *RegionFrameRange, db *model.DBInfo, tbl *model.TableInfo) *FrameItem {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
-		return findRangeInPhysicalTable(hotRange, tbl.ID, db.Name.O, tbl.Name.O, tbl.Indices)
+		return findRangeInPhysicalTable(hotRange, tbl.ID, db.Name.O, tbl.Name.O, tbl.Indices, tbl.IsCommonHandle)
 	}
 
 	for _, def := range pi.Definitions {
 		tablePartition := fmt.Sprintf("%s(%s)", tbl.Name.O, def.Name)
-		if f := findRangeInPhysicalTable(hotRange, def.ID, db.Name.O, tablePartition, tbl.Indices); f != nil {
+		if f := findRangeInPhysicalTable(hotRange, def.ID, db.Name.O, tablePartition, tbl.Indices, tbl.IsCommonHandle); f != nil {
 			return f
 		}
 	}
 	return nil
 }
 
-func findRangeInPhysicalTable(hotRange *RegionFrameRange, physicalID int64, dbName, tblName string, indices []*model.IndexInfo) *FrameItem {
-	if f := hotRange.GetRecordFrame(physicalID, dbName, tblName); f != nil {
+func findRangeInPhysicalTable(hotRange *RegionFrameRange, physicalID int64, dbName, tblName string, indices []*model.IndexInfo, isCommonHandle bool) *FrameItem {
+	if f := hotRange.GetRecordFrame(physicalID, dbName, tblName, isCommonHandle); f != nil {
 		return f
 	}
 	for _, idx := range indices {
@@ -314,7 +348,23 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 			var handle kv.Handle
 			_, handle, err = tablecodec.DecodeRecordKey(key)
 			if err == nil {
-				frame.RecordID = handle.IntValue()
+				if handle.IsInt() {
+					frame.RecordID = handle.IntValue()
+				} else {
+					data, err := handle.Data()
+					if err != nil {
+						return nil, err
+					}
+					frame.IndexName = "PRIMARY"
+					frame.IndexValues = make([]string, 0, len(data))
+					for _, datum := range data {
+						str, err := datum.ToString()
+						if err != nil {
+							return nil, err
+						}
+						frame.IndexValues = append(frame.IndexValues, str)
+					}
+				}
 			}
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
@@ -354,25 +404,25 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 
 // GetRecordFrame returns the record frame of a table. If the table's records
 // are not covered by this frame range, it returns nil.
-func (r *RegionFrameRange) GetRecordFrame(tableID int64, dbName, tableName string) *FrameItem {
+func (r *RegionFrameRange) GetRecordFrame(tableID int64, dbName, tableName string, isCommonHandle bool) (f *FrameItem) {
 	if tableID == r.First.TableID && r.First.IsRecord {
 		r.First.DBName, r.First.TableName = dbName, tableName
-		return r.First
-	}
-	if tableID == r.Last.TableID && r.Last.IsRecord {
+		f = r.First
+	} else if tableID == r.Last.TableID && r.Last.IsRecord {
 		r.Last.DBName, r.Last.TableName = dbName, tableName
-		return r.Last
-	}
-
-	if tableID >= r.First.TableID && tableID < r.Last.TableID {
-		return &FrameItem{
+		f = r.Last
+	} else if tableID >= r.First.TableID && tableID < r.Last.TableID {
+		f = &FrameItem{
 			DBName:    dbName,
 			TableName: tableName,
 			TableID:   tableID,
 			IsRecord:  true,
 		}
 	}
-	return nil
+	if f != nil && f.IsRecord && isCommonHandle {
+		f.IndexName = "PRIMARY"
+	}
+	return
 }
 
 // GetIndexFrame returns the indnex frame of a table. If the table's indices are
@@ -552,6 +602,22 @@ func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 	}
 }
 
+func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitionID int64) tableInfoWithKeyRange {
+	sk, ek := tablecodec.GetTableHandleKeyRange(partitionID)
+	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	return tableInfoWithKeyRange{
+		&TableInfo{
+			DB:      db,
+			Table:   table,
+			IsIndex: false,
+			Index:   nil,
+		},
+		startKey,
+		endKey,
+	}
+}
+
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
@@ -567,7 +633,13 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.
 	tables := []tableInfoWithKeyRange{}
 	for _, db := range schemas {
 		for _, table := range db.Tables {
-			tables = append(tables, newTableWithKeyRange(db, table))
+			if table.Partition != nil {
+				for _, partition := range table.Partition.Definitions {
+					tables = append(tables, newPartitionTableWithKeyRange(db, table, partition.ID))
+				}
+			} else {
+				tables = append(tables, newTableWithKeyRange(db, table))
+			}
 			for _, index := range table.Indices {
 				tables = append(tables, newIndexWithKeyRange(db, table, index))
 			}
@@ -619,15 +691,17 @@ func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
 
 // request PD API, decode the response body into res
 func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) error {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return err
+	}
 	if len(pdHosts) == 0 {
 		return errors.New("pd unavailable")
 	}
-
 	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
 	req, err := http.NewRequest(method, util.InternalHTTPSchema()+"://"+pdHosts[0]+uri, body)
 	if err != nil {
@@ -703,11 +777,14 @@ type StoreDetailStat struct {
 
 // GetStoresStat gets the TiKV store information by accessing PD's api.
 func (h *Helper) GetStoresStat() (*StoresStat, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
+	}
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
@@ -735,12 +812,14 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 
 // GetPDAddr return the PD Address.
 func (h *Helper) GetPDAddr() ([]string, error) {
-	var pdAddrs []string
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs = etcd.EtcdAddrs()
+	pdAddrs, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
+	}
 	if len(pdAddrs) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
@@ -782,7 +861,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Error(err)
+			log.Error("err", zap.Error(err))
 		}
 	}()
 

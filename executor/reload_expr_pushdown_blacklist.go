@@ -37,12 +37,16 @@ func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.Chu
 
 // LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
 func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
-	sql := "select HIGH_PRIORITY name, store_type from mysql.expr_pushdown_blacklist"
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), "select HIGH_PRIORITY name, store_type from mysql.expr_pushdown_blacklist")
 	if err != nil {
 		return err
 	}
-	newBlacklist := make(map[string]uint32, len(rows))
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return err
+	}
+	newBlocklist := make(map[string]uint32, len(rows))
 	for _, row := range rows {
 		name := strings.ToLower(row.GetString(0))
 		storeTypeString := strings.ToLower(row.GetString(1))
@@ -50,7 +54,7 @@ func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 			name = alias
 		}
 		var value uint32 = 0
-		if val, ok := newBlacklist[name]; ok {
+		if val, ok := newBlocklist[name]; ok {
 			value = val
 		}
 		storeTypes := strings.Split(storeTypeString, ",")
@@ -63,9 +67,9 @@ func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 				value |= 1 << kv.TiKV
 			}
 		}
-		newBlacklist[name] = value
+		newBlocklist[name] = value
 	}
-	expression.DefaultExprPushDownBlacklist.Store(newBlacklist)
+	expression.DefaultExprPushDownBlacklist.Store(newBlocklist)
 	return nil
 }
 
@@ -103,7 +107,7 @@ var funcName2Alias = map[string]string{
 	"case":                       ast.Case,
 	"regexp":                     ast.Regexp,
 	"is null":                    ast.IsNull,
-	"is true":                    ast.IsTruth,
+	"is true":                    ast.IsTruthWithoutNull,
 	"is false":                   ast.IsFalsity,
 	"values":                     ast.Values,
 	"bit_count":                  ast.BitCount,

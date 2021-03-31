@@ -14,12 +14,22 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
+)
+
+const (
+	// DefPartialResult4JsonObjectAgg is the size of partialResult4JsonObject
+	DefPartialResult4JsonObjectAgg = int64(unsafe.Sizeof(partialResult4JsonObjectAgg{}))
+	// DefMapStringInterfaceBucketSize = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(interface{}))+2*ptrSize
+	DefMapStringInterfaceBucketSize = 8*(1+16+16) + 16
 )
 
 type jsonObjectAgg struct {
@@ -28,17 +38,20 @@ type jsonObjectAgg struct {
 
 type partialResult4JsonObjectAgg struct {
 	entries map[string]interface{}
+	bInMap  int // indicate there are 2^bInMap buckets in entries.
 }
 
 func (e *jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
-	return PartialResult(&p), 0
+	p.bInMap = 0
+	return PartialResult(&p), DefPartialResult4JsonObjectAgg + (1<<p.bInMap)*DefMapStringInterfaceBucketSize
 }
 
 func (e *jsonObjectAgg) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	p.entries = make(map[string]interface{})
+	p.bInMap = 0
 }
 
 func (e *jsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -97,12 +110,47 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		realVal := value.Clone().GetValue()
 		switch x := realVal.(type) {
 		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
+			if _, ok := p.entries[keyString]; !ok {
+				memDelta += int64(len(keyString)) + getValMemDelta(realVal)
+				if len(p.entries)+1 > (1<<p.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+					memDelta += (1 << p.bInMap) * DefMapStringInterfaceBucketSize
+					p.bInMap++
+				}
+			}
 			p.entries[keyString] = realVal
 		default:
 			return 0, json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
 	}
-	return 0, nil
+	return memDelta, nil
+}
+
+func getValMemDelta(val interface{}) (memDelta int64) {
+	memDelta = DefInterfaceSize
+	switch v := val.(type) {
+	case bool:
+		memDelta += DefBoolSize
+	case int64:
+		memDelta += DefInt64Size
+	case uint64:
+		memDelta += DefUint64Size
+	case float64:
+		memDelta += DefFloat64Size
+	case string:
+		memDelta += int64(len(v))
+	case json.BinaryJSON:
+		// +1 for the memory usage of the TypeCode of json
+		memDelta += int64(len(v.Value) + 1)
+	case *types.MyDecimal:
+		memDelta += DefMyDecimalSize
+	case []uint8:
+		memDelta += int64(len(v))
+	case types.Time:
+		memDelta += DefTimeSize
+	case types.Duration:
+		memDelta += DefDurationSize
+	}
+	return memDelta
 }
 
 func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
@@ -111,6 +159,11 @@ func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst Par
 	// and only the last value encountered is used with that key in the returned object
 	for k, v := range p1.entries {
 		p2.entries[k] = v
+		memDelta += int64(len(k)) + getValMemDelta(v)
+		if len(p2.entries)+1 > (1<<p2.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+			memDelta += (1 << p2.bInMap) * DefMapStringInterfaceBucketSize
+			p2.bInMap++
+		}
 	}
 	return 0, nil
 }

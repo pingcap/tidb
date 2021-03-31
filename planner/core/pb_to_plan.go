@@ -17,10 +17,13 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -29,14 +32,15 @@ import (
 
 // PBPlanBuilder uses to build physical plan from dag protocol buffers.
 type PBPlanBuilder struct {
-	sctx sessionctx.Context
-	tps  []*types.FieldType
-	is   infoschema.InfoSchema
+	sctx   sessionctx.Context
+	tps    []*types.FieldType
+	is     infoschema.InfoSchema
+	ranges []*coprocessor.KeyRange
 }
 
 // NewPBPlanBuilder creates a new pb plan builder.
-func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PBPlanBuilder {
-	return &PBPlanBuilder{sctx: sctx, is: is}
+func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, ranges []*coprocessor.KeyRange) *PBPlanBuilder {
+	return &PBPlanBuilder{sctx: sctx, is: is, ranges: ranges}
 }
 
 // Build builds physical plan from dag protocol buffers.
@@ -47,7 +51,9 @@ func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p PhysicalPlan, err e
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		curr.SetChildren(src)
+		if src != nil {
+			curr.SetChildren(src)
+		}
 		src = curr
 	}
 	_, src = b.predicatePushDown(src, nil)
@@ -68,6 +74,8 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err 
 		p, err = b.pbToAgg(e, false)
 	case tipb.ExecType_TypeStreamAgg:
 		p, err = b.pbToAgg(e, true)
+	case tipb.ExecType_TypeKill:
+		p, err = b.pbToKill(e)
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", e.GetTp())
@@ -98,10 +106,18 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 		DBName:  dbInfo.Name,
 		Table:   tbl.Meta(),
 		Columns: columns,
-	}.Init(b.sctx, nil, 0)
+	}.Init(b.sctx, &property.StatsInfo{}, 0)
 	p.SetSchema(schema)
 	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
-		p.Extractor = &SlowQueryExtractor{}
+		extractor := &SlowQueryExtractor{}
+		extractor.Desc = tblScan.Desc
+		if b.ranges != nil {
+			err := extractor.buildTimeRangeFromKeyRange(b.ranges)
+			if err != nil {
+				return nil, err
+			}
+		}
+		p.Extractor = extractor
 	}
 	return p, nil
 }
@@ -131,7 +147,7 @@ func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (PhysicalPlan, error) {
 	}
 	p := PhysicalSelection{
 		Conditions: conds,
-	}.Init(b.sctx, nil, 0)
+	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
 }
 
@@ -149,14 +165,14 @@ func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (PhysicalPlan, error) {
 	p := PhysicalTopN{
 		ByItems: byItems,
 		Count:   topN.Limit,
-	}.Init(b.sctx, nil, 0)
+	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
 }
 
 func (b *PBPlanBuilder) pbToLimit(e *tipb.Executor) (PhysicalPlan, error) {
 	p := PhysicalLimit{
 		Count: e.Limit.Limit,
-	}.Init(b.sctx, nil, 0)
+	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
 }
 
@@ -173,9 +189,9 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (PhysicalPla
 	baseAgg.schema = schema
 	var partialAgg PhysicalPlan
 	if isStreamAgg {
-		partialAgg = baseAgg.initForStream(b.sctx, nil, 0)
+		partialAgg = baseAgg.initForStream(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	} else {
-		partialAgg = baseAgg.initForHash(b.sctx, nil, 0)
+		partialAgg = baseAgg.initForHash(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	}
 	return partialAgg, nil
 }
@@ -228,6 +244,15 @@ func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, pbColumns []
 	}
 	b.tps = tps
 	return columns, nil
+}
+
+func (b *PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
+	node := &ast.KillStmt{
+		ConnectionID: e.Kill.ConnID,
+		Query:        e.Kill.Query,
+	}
+	simple := Simple{Statement: node, IsFromRemote: true}
+	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 
 func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {

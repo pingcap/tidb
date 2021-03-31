@@ -54,7 +54,7 @@ func (s *testSuiteP1) TestGrantGlobal(c *C) {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
 	}
-	//with grant option
+	// with grant option
 	tk.MustExec("GRANT ALL ON *.* TO 'testGlobal1'@'localhost' WITH GRANT OPTION;")
 	for _, v := range mysql.AllGlobalPrivs {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
@@ -383,4 +383,15 @@ func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
 	c.Assert(err, IsNil)
+}
+
+func (s *testSuite3) TestIssue22721(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists xx (id int)")
+	tk.MustExec("CREATE USER 'sync_ci_data'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';")
+	tk.MustExec("GRANT USAGE ON *.* TO 'sync_ci_data'@'%';")
+	tk.MustExec("GRANT USAGE ON sync_ci_data.* TO 'sync_ci_data'@'%';")
+	tk.MustExec("GRANT USAGE ON test.* TO 'sync_ci_data'@'%';")
+	tk.MustExec("GRANT USAGE ON test.xx TO 'sync_ci_data'@'%';")
 }

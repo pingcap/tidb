@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"math"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -32,13 +33,15 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var (
-	errInvalidKey       = terror.ClassXEval.New(errno.ErrInvalidKey, errno.MySQLErrName[errno.ErrInvalidKey])
-	errInvalidRecordKey = terror.ClassXEval.New(errno.ErrInvalidRecordKey, errno.MySQLErrName[errno.ErrInvalidRecordKey])
-	errInvalidIndexKey  = terror.ClassXEval.New(errno.ErrInvalidIndexKey, errno.MySQLErrName[errno.ErrInvalidIndexKey])
+	errInvalidKey       = dbterror.ClassXEval.NewStd(errno.ErrInvalidKey)
+	errInvalidRecordKey = dbterror.ClassXEval.NewStd(errno.ErrInvalidRecordKey)
+	errInvalidIndexKey  = dbterror.ClassXEval.NewStd(errno.ErrInvalidIndexKey)
 )
 
 var (
@@ -61,6 +64,13 @@ const (
 
 	// CommonHandleFlag is the flag used to decode the common handle in an unique index value.
 	CommonHandleFlag byte = 127
+	// PartitionIDFlag is the flag used to decode the partition ID in global index value.
+	PartitionIDFlag byte = 126
+	// IndexVersionFlag is the flag used to decode the index's version info.
+	IndexVersionFlag byte = 125
+	// RestoreDataFlag is the flag that RestoreData begin with.
+	// See rowcodec.Encoder.Encode and rowcodec.row.toBytes
+	RestoreDataFlag byte = rowcodec.CodecVer
 )
 
 // TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
@@ -468,6 +478,9 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 			if id != hid {
 				continue
 			}
+			if types.NeedRestoredData(ft) {
+				continue
+			}
 			d, err := decodeHandleToDatum(handle, ft, idx)
 			if err != nil {
 				return row, err
@@ -622,14 +635,6 @@ func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key 
 	return key
 }
 
-// EncodeCommonHandleSeekKey encodes a common handle value to kv.Key.
-func EncodeCommonHandleSeekKey(tableID int64, encodedValue []byte) kv.Key {
-	key := make([]byte, 0, prefixLen+len(encodedValue))
-	key = appendTableRecordPrefix(key, tableID)
-	key = append(key, encodedValue...)
-	return key
-}
-
 // CutIndexKey cuts encoded index key into colIDs to bytes slices map.
 // The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
 // if it is non-unique index.
@@ -718,43 +723,17 @@ func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 	return [][]byte{intHandleBytes}, err
 }
 
-func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, colLens int, columns []rowcodec.ColInfo) ([][]byte, error) {
-	vLen := len(value)
-	tailLen := int(value[0])
-	restoredVal := value[1 : vLen-tailLen]
-	resultValues, err := decodeRestoredValues(columns[:colLens], restoredVal)
-	if err != nil {
-		return nil, errors.Trace(err)
+// reEncodeHandleConsiderNewCollation encodes the handle as a Datum so it can be properly decoded later.
+func reEncodeHandleConsiderNewCollation(handle kv.Handle, columns []rowcodec.ColInfo, restoreData []byte) ([][]byte, error) {
+	handleColLen := handle.NumCols()
+	cHandleBytes := make([][]byte, 0, handleColLen)
+	for i := 0; i < handleColLen; i++ {
+		cHandleBytes = append(cHandleBytes, handle.EncodedCol(i))
 	}
-	if hdStatus == HandleNotNeeded {
-		return resultValues, nil
+	if len(restoreData) == 0 {
+		return cHandleBytes, nil
 	}
-
-	if tailLen < 8 {
-		// In non-unique index.
-		_, keySuffix, err := CutIndexKeyNew(key, colLens)
-		if err != nil {
-			return nil, err
-		}
-		handle, err := decodeHandleInIndexKey(keySuffix)
-		if err != nil {
-			return nil, err
-		}
-		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
-		if err != nil {
-			return nil, err
-		}
-		resultValues = append(resultValues, handleBytes...)
-	} else {
-		// In unique int handle index.
-		handle := decodeIntHandleInIndexValue(value[vLen-tailLen:])
-		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resultValues = append(resultValues, handleBytes...)
-	}
-	return resultValues, nil
+	return decodeRestoredValuesV5(columns, cHandleBytes, restoreData)
 }
 
 func decodeRestoredValues(columns []rowcodec.ColInfo, restoredVal []byte) ([][]byte, error) {
@@ -769,6 +748,78 @@ func decodeRestoredValues(columns []rowcodec.ColInfo, restoredVal []byte) ([][]b
 		return nil, errors.Trace(err)
 	}
 	return resultValues, nil
+}
+
+// decodeRestoredValuesV5 decodes index values whose format is introduced in TiDB 5.0.
+// Unlike the format in TiDB 4.0, the new format is optimized for storage space:
+// 1. If the index is a composed index, only the non-binary string column's value need to write to value, not all.
+// 2. If a string column's collation is _bin, then we only write the number of the truncated spaces to value.
+// 3. If a string column is char, not varchar, then we use the sortKey directly.
+func decodeRestoredValuesV5(columns []rowcodec.ColInfo, results [][]byte, restoredVal []byte) ([][]byte, error) {
+	colIDOffsets := buildColumnIDOffsets(columns)
+	colInfosNeedRestore := buildRestoredColumn(columns)
+	rd := rowcodec.NewByteDecoder(colInfosNeedRestore, nil, nil, nil)
+	newResults, err := rd.DecodeToBytesNoHandle(colIDOffsets, restoredVal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i := range newResults {
+		noRestoreData := len(newResults[i]) == 0
+		if noRestoreData {
+			newResults[i] = results[i]
+			continue
+		}
+		if collate.IsBinCollation(columns[i].Ft.Collate) {
+			noPaddingDatum, err := DecodeColumnValue(results[i], columns[i].Ft, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			paddingCountDatum, err := DecodeColumnValue(newResults[i], types.NewFieldType(mysql.TypeLonglong), nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			noPaddingStr, paddingCount := noPaddingDatum.GetString(), int(paddingCountDatum.GetInt64())
+			// Skip if padding count is 0.
+			if paddingCount == 0 {
+				newResults[i] = results[i]
+				continue
+			}
+			newDatum := &noPaddingDatum
+			newDatum.SetString(noPaddingStr+strings.Repeat(" ", paddingCount), newDatum.Collation())
+			newResults[i] = newResults[i][:0]
+			newResults[i] = append(newResults[i], rowcodec.BytesFlag)
+			newResults[i] = codec.EncodeBytes(newResults[i], newDatum.GetBytes())
+		}
+	}
+	return newResults, nil
+}
+
+func buildColumnIDOffsets(allCols []rowcodec.ColInfo) map[int64]int {
+	colIDOffsets := make(map[int64]int, len(allCols))
+	for i, col := range allCols {
+		colIDOffsets[col.ID] = i
+	}
+	return colIDOffsets
+}
+
+func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
+	restoredColumns := make([]rowcodec.ColInfo, 0, len(allCols))
+	for i, col := range allCols {
+		if !types.NeedRestoredData(col.Ft) {
+			continue
+		}
+		copyColInfo := rowcodec.ColInfo{
+			ID: col.ID,
+		}
+		if collate.IsBinCollation(col.Ft.Collate) {
+			// Change the fieldType from string to uint since we store the number of the truncated spaces.
+			copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
+		} else {
+			copyColInfo.Ft = allCols[i].Ft
+		}
+		restoredColumns = append(restoredColumns, copyColInfo)
+	}
+	return restoredColumns
 }
 
 func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleStatus) ([][]byte, error) {
@@ -803,50 +854,28 @@ func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleSt
 	return resultValues, nil
 }
 
-// DecodeIndexKV uses to decode index key values.
-func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
-	if len(value) > MaxOldEncodeValueLen {
-		if value[0] <= 1 && value[1] == CommonHandleFlag {
-			return decodeIndexKVUniqueCommonHandle(key, value, colsLen, hdStatus, columns)
-		}
-		return decodeIndexKvNewCollation(key, value, hdStatus, colsLen, columns)
+func getIndexVersion(value []byte) int {
+	if len(value) <= MaxOldEncodeValueLen {
+		return 0
 	}
-	return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
+	tailLen := int(value[0])
+	if (tailLen == 0 || tailLen == 1) && value[1] == IndexVersionFlag {
+		return int(value[2])
+	}
+	return 0
 }
 
-func decodeIndexKVUniqueCommonHandle(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
-	tailLen := int(value[0])
-	value = value[:len(value)-tailLen]
-	handleLen := uint16(value[2])<<8 + uint16(value[3])
-	handleEndOff := 4 + handleLen
-	var resultValues [][]byte
-	var err error
-	if int(handleEndOff) < len(value) {
-		// new collation values.
-		restoredValue := value[handleEndOff:]
-		resultValues, err = decodeRestoredValues(columns[:colsLen], restoredValue)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		resultValues, _, err = CutIndexKeyNew(key, colsLen)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+// DecodeIndexKV uses to decode index key values.
+//   `colsLen` is expected to be index columns count.
+//   `columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
+func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+	if len(value) <= MaxOldEncodeValueLen {
+		return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
 	}
-	if hdStatus == HandleNotNeeded {
-		return resultValues, nil
+	if getIndexVersion(value) == 1 {
+		return decodeIndexKvForClusteredIndexVersion1(key, value, colsLen, hdStatus, columns)
 	}
-	cHandle, err := decodeHandleInIndexKey(value[4:handleEndOff])
-	if err != nil {
-		return nil, err
-	}
-	cHandleBytes, err := reEncodeHandle(cHandle, false /* doesn't matter */)
-	if err != nil {
-		return nil, err
-	}
-	resultValues = append(resultValues, cHandleBytes...)
-	return resultValues, nil
+	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns)
 }
 
 // DecodeIndexHandle uses to decode the handle from index key/value.
@@ -876,6 +905,10 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 }
 
 func decodeHandleInIndexValue(value []byte) (kv.Handle, error) {
+	if getIndexVersion(value) == 1 {
+		seg := SplitIndexValueForClusteredIndexVersion1(value)
+		return kv.NewCommonHandle(seg.CommonHandle)
+	}
 	if len(value) > MaxOldEncodeValueLen {
 		tailLen := value[0]
 		if tailLen >= 8 {
@@ -934,6 +967,11 @@ func GenTableRecordPrefix(tableID int64) kv.Key {
 func GenTableIndexPrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(tablePrefix)+8+len(indexPrefixSep))
 	return appendTableIndexPrefix(buf, tableID)
+}
+
+// IsRecordKey is used to check whether the key is an record key.
+func IsRecordKey(k []byte) bool {
+	return len(k) > 11 && k[0] == 't' && k[10] == 'r'
 }
 
 // IsIndexKey is used to check whether the key is an index key.
@@ -1035,11 +1073,155 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	return
 }
 
-// GenIndexValue creates encoded index value and returns the result
-func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
-	containNonBinaryString bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle) ([]byte, error) {
-	var idxVal []byte
-	if collate.NewCollationEnabled() && containNonBinaryString {
+// GenIndexValuePortal is the portal for generating index value.
+// Value layout:
+//		+-- IndexValueVersion0  (with restore data, or common handle, or index is global)
+//		|
+//		|  Layout: TailLen | Options      | Padding      | [IntHandle] | [UntouchedFlag]
+//		|  Length:   1     | len(options) | len(padding) |    8        |     1
+//		|
+//		|  TailLen:       len(padding) + len(IntHandle) + len(UntouchedFlag)
+//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
+//		|                 See below for more information.
+//		|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
+//		|  IntHandle:     Only exists when table use int handles and index is unique.
+//		|  UntouchedFlag: Only exists when index is untouched.
+//		|
+//		+-- Old Encoding (without restore data, integer handle, local)
+//		|
+//		|  Layout: [Handle] | [UntouchedFlag]
+//		|  Length:   8      |     1
+//		|
+//		|  Handle:        Only exists in unique index.
+//		|  UntouchedFlag: Only exists when index is untouched.
+//		|
+//		|  If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
+//		|  Length of value <= 9, use to distinguish from the new encoding.
+// 		|
+//		+-- IndexValueForClusteredIndexVersion1
+//		|
+//		|  Layout: TailLen |    VersionFlag  |    Version     ｜ Options      |   [UntouchedFlag]
+//		|  Length:   1     |        1        |      1         |  len(options) |         1
+//		|
+//		|  TailLen:       len(UntouchedFlag)
+//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
+//		|                 See below for more information.
+//		|  UntouchedFlag: Only exists when index is untouched.
+//		|
+//		|  Layout of Options:
+//		|
+//		|     Segment:             Common Handle                 |     Global Index      |   New Collation
+// 		|     Layout:  CHandle Flag | CHandle Len | CHandle      | PidFlag | PartitionID |    restoreData
+//		|     Length:     1         | 2           | len(CHandle) |    1    |    8        |   len(restoreData)
+//		|
+//		|     Common Handle Segment: Exists when unique index used common handles.
+//		|     Global Index Segment:  Exists when index is global.
+//		|     New Collation Segment: Exists when new collation is used and index or handle contains non-binary string.
+//		|     In v4.0, restored data contains all the index values. For example, (a int, b char(10)) and index (a, b).
+//		|     The restored data contains both the values of a and b.
+//		|     In v5.0, restored data contains only non-binary data(except for char and _bin). In the above example, the restored data contains only the value of b.
+//		|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
+//		|     and the restored data together to restore original data.
+func GenIndexValuePortal(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, restoredData []types.Datum) ([]byte, error) {
+	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
+		return GenIndexValueForClusteredIndexVersion1(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData)
+	}
+	return genIndexValueVersion0(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID)
+}
+
+// TryGetCommonPkColumnRestoredIds get the IDs of primary key columns which need restored data if the table has common handle.
+// Caller need to make sure the table has common handle.
+func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
+	var pkColIds []int64
+	var pkIdx *model.IndexInfo
+	for _, idx := range tbl.Indices {
+		if idx.Primary {
+			pkIdx = idx
+			break
+		}
+	}
+	if pkIdx == nil {
+		return pkColIds
+	}
+	for _, idxCol := range pkIdx.Columns {
+		if types.NeedRestoredData(&tbl.Columns[idxCol.Offset].FieldType) {
+			pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
+		}
+	}
+	return pkColIds
+}
+
+// GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
+func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
+	idxVal := make([]byte, 1)
+	tailLen := 0
+	// Version info.
+	idxVal = append(idxVal, IndexVersionFlag)
+	idxVal = append(idxVal, byte(1))
+
+	if distinct {
+		idxVal = encodeCommonHandle(idxVal, h)
+	}
+	if idxInfo.Global {
+		idxVal = encodePartitionID(idxVal, partitionID)
+	}
+	if IdxValNeedRestoredData || len(handleRestoredData) > 0 {
+		colIds := make([]int64, 0, len(idxInfo.Columns))
+		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
+		for i, idxCol := range idxInfo.Columns {
+			col := tblInfo.Columns[idxCol.Offset]
+			// If  the column is the primary key's column,
+			// the restored data will be written later. Skip writing it here to avoid redundancy.
+			if mysql.HasPriKeyFlag(col.Flag) {
+				continue
+			}
+			if types.NeedRestoredData(&col.FieldType) {
+				colIds = append(colIds, col.ID)
+				if collate.IsBinCollation(col.Collate) {
+					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
+				} else {
+					allRestoredData = append(allRestoredData, indexedValues[i])
+				}
+			}
+		}
+
+		if len(handleRestoredData) > 0 {
+			pkColIds := TryGetCommonPkColumnRestoredIds(tblInfo)
+			colIds = append(colIds, pkColIds...)
+			allRestoredData = append(allRestoredData, handleRestoredData...)
+		}
+
+		rd := rowcodec.Encoder{Enable: true}
+		rowRestoredValue, err := rd.Encode(sc, colIds, allRestoredData, nil)
+		if err != nil {
+			return nil, err
+		}
+		idxVal = append(idxVal, rowRestoredValue...)
+	}
+
+	if untouched {
+		tailLen = 1
+		idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
+	}
+	idxVal[0] = byte(tailLen)
+
+	return idxVal, nil
+}
+
+// genIndexValueVersion0 create index value for both local and global index.
+func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
+	idxVal := make([]byte, 1)
+	newEncode := false
+	tailLen := 0
+	if !h.IsInt() && distinct {
+		idxVal = encodeCommonHandle(idxVal, h)
+		newEncode = true
+	}
+	if idxInfo.Global {
+		idxVal = encodePartitionID(idxVal, partitionID)
+		newEncode = true
+	}
+	if IdxValNeedRestoredData {
 		colIds := make([]int64, len(idxInfo.Columns))
 		for i, col := range idxInfo.Columns {
 			colIds[i] = tblInfo.Columns[col.Offset].ID
@@ -1049,14 +1231,11 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 		if err != nil {
 			return nil, err
 		}
-		// tailLen(1) + commonHandleFlag(1) + handleLen(2) + handle + restoredValue
-		idxValCap := 1 + 1 + 2 + h.Len() + len(rowRestoredValue)
-		idxVal = make([]byte, 1, idxValCap)
-		if !h.IsInt() && distinct {
-			idxVal = encodeCommonHandle(idxVal, h)
-		}
 		idxVal = append(idxVal, rowRestoredValue...)
-		tailLen := 0
+		newEncode = true
+	}
+
+	if newEncode {
 		if h.IsInt() && distinct {
 			// The len of the idxVal is always >= 10 since len (restoredValue) > 0.
 			tailLen += 8
@@ -1076,6 +1255,7 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 		}
 		idxVal[0] = byte(tailLen)
 	} else {
+		// Old index value encoding.
 		idxVal = make([]byte, 0)
 		if distinct {
 			idxVal = EncodeHandleInUniqueIndexValue(h, untouched)
@@ -1096,32 +1276,35 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 // TruncateIndexValues truncates the index values created using only the leading part of column values.
 func TruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) {
 	for i := 0; i < len(indexedValues); i++ {
-		v := &indexedValues[i]
 		idxCol := idxInfo.Columns[i]
-		noPrefixIndex := idxCol.Length == types.UnspecifiedLength
-		if noPrefixIndex {
-			continue
-		}
-		notStringType := v.Kind() != types.KindString && v.Kind() != types.KindBytes
-		if notStringType {
-			continue
-		}
+		tblCol := tblInfo.Columns[idxCol.Offset]
+		TruncateIndexValue(&indexedValues[i], idxCol, tblCol)
+	}
+}
 
-		colInfo := tblInfo.Columns[idxCol.Offset]
-		isUTF8Charset := colInfo.Charset == charset.CharsetUTF8 || colInfo.Charset == charset.CharsetUTF8MB4
-		if isUTF8Charset && utf8.RuneCount(v.GetBytes()) > idxCol.Length {
-			rs := bytes.Runes(v.GetBytes())
-			truncateStr := string(rs[:idxCol.Length])
-			// truncate value and limit its length
-			v.SetString(truncateStr, colInfo.Collate)
-			if v.Kind() == types.KindBytes {
-				v.SetBytes(v.GetBytes())
-			}
-		} else if !isUTF8Charset && len(v.GetBytes()) > idxCol.Length {
-			v.SetBytes(v.GetBytes()[:idxCol.Length])
-			if v.Kind() == types.KindString {
-				v.SetString(v.GetString(), colInfo.Collate)
-			}
+// TruncateIndexValue truncate one value in the index.
+func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model.ColumnInfo) {
+	noPrefixIndex := idxCol.Length == types.UnspecifiedLength
+	if noPrefixIndex {
+		return
+	}
+	notStringType := v.Kind() != types.KindString && v.Kind() != types.KindBytes
+	if notStringType {
+		return
+	}
+	isUTF8Charset := tblCol.Charset == charset.CharsetUTF8 || tblCol.Charset == charset.CharsetUTF8MB4
+	if isUTF8Charset && utf8.RuneCount(v.GetBytes()) > idxCol.Length {
+		rs := bytes.Runes(v.GetBytes())
+		truncateStr := string(rs[:idxCol.Length])
+		// truncate value and limit its length
+		v.SetString(truncateStr, tblCol.Collate)
+		if v.Kind() == types.KindBytes {
+			v.SetBytes(v.GetBytes())
+		}
+	} else if !isUTF8Charset && len(v.GetBytes()) > idxCol.Length {
+		v.SetBytes(v.GetBytes()[:idxCol.Length])
+		if v.Kind() == types.KindString {
+			v.SetString(v.GetString(), tblCol.Collate)
 		}
 	}
 }
@@ -1157,6 +1340,15 @@ func DecodeHandleInUniqueIndexValue(data []byte, isCommonHandle bool) (kv.Handle
 		}
 		return kv.IntHandle(int64(binary.BigEndian.Uint64(data[dLen-int(data[0]):]))), nil
 	}
+	if getIndexVersion(data) == 1 {
+		seg := SplitIndexValueForClusteredIndexVersion1(data)
+		h, err := kv.NewCommonHandle(seg.CommonHandle)
+		if err != nil {
+			return nil, err
+		}
+		return h, nil
+	}
+
 	tailLen := int(data[0])
 	data = data[:len(data)-tailLen]
 	handleLen := uint16(data[2])<<8 + uint16(data[3])
@@ -1168,12 +1360,167 @@ func DecodeHandleInUniqueIndexValue(data []byte, isCommonHandle bool) (kv.Handle
 	return h, nil
 }
 
-// DecodeHandleInUniqueIndexValueDeprecated decodes old handle in data.
-// TODO: remove me after ddl full support cluster index
-func DecodeHandleInUniqueIndexValueDeprecated(data []byte) (int64, error) {
-	dLen := len(data)
-	if dLen <= MaxOldEncodeValueLen {
-		return int64(binary.BigEndian.Uint64(data)), nil
+func encodePartitionID(idxVal []byte, partitionID int64) []byte {
+	idxVal = append(idxVal, PartitionIDFlag)
+	idxVal = codec.EncodeInt(idxVal, partitionID)
+	return idxVal
+}
+
+// IndexValueSegments use to store result of SplitIndexValue.
+type IndexValueSegments struct {
+	CommonHandle   []byte
+	PartitionID    []byte
+	RestoredValues []byte
+	IntHandle      []byte
+}
+
+// SplitIndexValue splits index value into segments.
+func SplitIndexValue(value []byte) (segs IndexValueSegments) {
+	tailLen := int(value[0])
+	tail := value[len(value)-tailLen:]
+	value = value[1 : len(value)-tailLen]
+	if len(tail) >= 8 {
+		segs.IntHandle = tail[:8]
 	}
-	return int64(binary.BigEndian.Uint64(data[dLen-int(data[0]):])), nil
+	if len(value) > 0 && value[0] == CommonHandleFlag {
+		handleLen := uint16(value[1])<<8 + uint16(value[2])
+		handleEndOff := 3 + handleLen
+		segs.CommonHandle = value[3:handleEndOff]
+		value = value[handleEndOff:]
+	}
+	if len(value) > 0 && value[0] == PartitionIDFlag {
+		segs.PartitionID = value[1:9]
+		value = value[9:]
+	}
+	if len(value) > 0 && value[0] == RestoreDataFlag {
+		segs.RestoredValues = value
+	}
+	return
+}
+
+// SplitIndexValueForClusteredIndexVersion1 splits index value into segments.
+func SplitIndexValueForClusteredIndexVersion1(value []byte) (segs IndexValueSegments) {
+	tailLen := int(value[0])
+	// Skip the tailLen and version info.
+	value = value[3 : len(value)-tailLen]
+	if len(value) > 0 && value[0] == CommonHandleFlag {
+		handleLen := uint16(value[1])<<8 + uint16(value[2])
+		handleEndOff := 3 + handleLen
+		segs.CommonHandle = value[3:handleEndOff]
+		value = value[handleEndOff:]
+	}
+	if len(value) > 0 && value[0] == PartitionIDFlag {
+		segs.PartitionID = value[1:9]
+		value = value[9:]
+	}
+	if len(value) > 0 && value[0] == RestoreDataFlag {
+		segs.RestoredValues = value
+	}
+	return
+}
+
+func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+	var resultValues [][]byte
+	var keySuffix []byte
+	var handle kv.Handle
+	var err error
+	segs := SplitIndexValueForClusteredIndexVersion1(value)
+	resultValues, keySuffix, err = CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return nil, err
+	}
+	if segs.RestoredValues != nil {
+		resultValues, err = decodeRestoredValuesV5(columns[:colsLen], resultValues, segs.RestoredValues)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if hdStatus == HandleNotNeeded {
+		return resultValues, nil
+	}
+	if segs.CommonHandle != nil {
+		// In unique common handle index.
+		handle, err = kv.NewCommonHandle(segs.CommonHandle)
+	} else {
+		// In non-unique index, decode handle in keySuffix.
+		handle, err = kv.NewCommonHandle(keySuffix)
+	}
+	if err != nil {
+		return nil, err
+	}
+	handleBytes, err := reEncodeHandleConsiderNewCollation(handle, columns[colsLen:], segs.RestoredValues)
+	if err != nil {
+		return nil, err
+	}
+	resultValues = append(resultValues, handleBytes...)
+	if segs.PartitionID != nil {
+		_, pid, err := codec.DecodeInt(segs.PartitionID)
+		if err != nil {
+			return nil, err
+		}
+		datum := types.NewIntDatum(pid)
+		pidBytes, err := codec.EncodeValue(nil, nil, datum)
+		if err != nil {
+			return nil, err
+		}
+		resultValues = append(resultValues, pidBytes)
+	}
+	return resultValues, nil
+}
+
+// decodeIndexKvGeneral decodes index key value pair of new layout in an extensible way.
+func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+	var resultValues [][]byte
+	var keySuffix []byte
+	var handle kv.Handle
+	var err error
+	segs := SplitIndexValue(value)
+	resultValues, keySuffix, err = CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return nil, err
+	}
+	if segs.RestoredValues != nil { // new collation
+		resultValues, err = decodeRestoredValues(columns[:colsLen], segs.RestoredValues)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if hdStatus == HandleNotNeeded {
+		return resultValues, nil
+	}
+
+	if segs.IntHandle != nil {
+		// In unique int handle index.
+		handle = decodeIntHandleInIndexValue(segs.IntHandle)
+	} else if segs.CommonHandle != nil {
+		// In unique common handle index.
+		handle, err = decodeHandleInIndexKey(segs.CommonHandle)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// In non-unique index, decode handle in keySuffix
+		handle, err = decodeHandleInIndexKey(keySuffix)
+		if err != nil {
+			return nil, err
+		}
+	}
+	handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
+	if err != nil {
+		return nil, err
+	}
+	resultValues = append(resultValues, handleBytes...)
+	if segs.PartitionID != nil {
+		_, pid, err := codec.DecodeInt(segs.PartitionID)
+		if err != nil {
+			return nil, err
+		}
+		datum := types.NewIntDatum(pid)
+		pidBytes, err := codec.EncodeValue(nil, nil, datum)
+		if err != nil {
+			return nil, err
+		}
+		resultValues = append(resultValues, pidBytes)
+	}
+	return resultValues, nil
 }

@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/opcode"
 )
 
 // UnCacheableFunctions stores functions which can not be cached to plan cache.
@@ -56,6 +57,19 @@ var DisableFoldFunctions = map[string]struct{}{
 	ast.Benchmark: {},
 }
 
+// TryFoldFunctions stores functions which try to fold constant in child scope functions if without errors/warnings,
+// otherwise, the child functions do not fold constant.
+// Note: the function itself should fold constant.
+var TryFoldFunctions = map[string]struct{}{
+	ast.If:       {},
+	ast.Ifnull:   {},
+	ast.Case:     {},
+	ast.LogicAnd: {},
+	ast.LogicOr:  {},
+	ast.Coalesce: {},
+	ast.Interval: {},
+}
+
 // IllegalFunctions4GeneratedColumns stores functions that is illegal for generated columns.
 // See https://github.com/mysql/mysql-server/blob/5.7/mysql-test/suite/gcol/inc/gcol_blocked_sql_funcs_main.inc for details
 var IllegalFunctions4GeneratedColumns = map[string]struct{}{
@@ -87,6 +101,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.MasterPosWait:    {},
 	ast.NameConst:        {},
 	ast.ReleaseLock:      {},
+	ast.RowFunc:          {},
 	ast.RowCount:         {},
 	ast.Schema:           {},
 	ast.SessionUser:      {},
@@ -117,6 +132,50 @@ var DeferredFunctions = map[string]struct{}{
 	ast.Curdate:          {},
 	ast.CurrentDate:      {},
 	ast.UTCDate:          {},
+}
+
+// AllowedPartitionFuncMap stores functions which can be used in the partition expression.
+var AllowedPartitionFuncMap = map[string]struct{}{
+	ast.ToDays:        {},
+	ast.ToSeconds:     {},
+	ast.DayOfMonth:    {},
+	ast.Month:         {},
+	ast.DayOfYear:     {},
+	ast.Quarter:       {},
+	ast.YearWeek:      {},
+	ast.Year:          {},
+	ast.Weekday:       {},
+	ast.DayOfWeek:     {},
+	ast.Day:           {},
+	ast.Hour:          {},
+	ast.Minute:        {},
+	ast.Second:        {},
+	ast.TimeToSec:     {},
+	ast.MicroSecond:   {},
+	ast.UnixTimestamp: {},
+	ast.FromDays:      {},
+	ast.Extract:       {},
+	ast.Abs:           {},
+	ast.Ceiling:       {},
+	ast.DateDiff:      {},
+	ast.Floor:         {},
+	ast.Mod:           {},
+}
+
+// AllowedPartition4BinaryOpMap store the operator for Binary Expr
+// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html for more details
+var AllowedPartition4BinaryOpMap = map[opcode.Op]struct{}{
+	opcode.Plus:   {},
+	opcode.Minus:  {},
+	opcode.Mul:    {},
+	opcode.IntDiv: {},
+	opcode.Mod:    {},
+}
+
+// AllowedPartition4UnaryOpMap store the operator for Unary Expr
+var AllowedPartition4UnaryOpMap = map[opcode.Op]struct{}{
+	opcode.Plus:  {},
+	opcode.Minus: {},
 }
 
 // inequalFunctions stores functions which cannot be propagated from column equal condition.
@@ -171,4 +230,30 @@ var mutableEffectsFunctions = map[string]struct{}{
 var noopFuncs = map[string]struct{}{
 	ast.GetLock:     {},
 	ast.ReleaseLock: {},
+}
+
+// booleanFunctions stores boolean functions
+var booleanFunctions = map[string]struct{}{
+	ast.UnaryNot:           {},
+	ast.EQ:                 {},
+	ast.NE:                 {},
+	ast.NullEQ:             {},
+	ast.LT:                 {},
+	ast.LE:                 {},
+	ast.GT:                 {},
+	ast.GE:                 {},
+	ast.In:                 {},
+	ast.LogicAnd:           {},
+	ast.LogicOr:            {},
+	ast.LogicXor:           {},
+	ast.IsTruthWithNull:    {},
+	ast.IsTruthWithoutNull: {},
+	ast.IsFalsity:          {},
+	ast.IsNull:             {},
+	ast.Like:               {},
+	ast.Regexp:             {},
+	ast.IsIPv4:             {},
+	ast.IsIPv4Compat:       {},
+	ast.IsIPv4Mapped:       {},
+	ast.IsIPv6:             {},
 }

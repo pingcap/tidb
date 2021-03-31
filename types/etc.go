@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	ast "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // IsTypeBlob returns a boolean indicating whether the tp is a blob type.
@@ -64,6 +65,15 @@ func IsTypeTime(tp byte) bool {
 	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeTimestamp
 }
 
+// IsTypeInteger returns a boolean indicating whether the tp is integer type.
+func IsTypeInteger(tp byte) bool {
+	switch tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		return true
+	}
+	return false
+}
+
 // IsTypeNumeric returns a boolean indicating whether the tp is numeric type.
 func IsTypeNumeric(tp byte) bool {
 	switch tp {
@@ -90,6 +100,17 @@ func IsBinaryStr(ft *FieldType) bool {
 // whether the field type is a non-binary string type.
 func IsNonBinaryStr(ft *FieldType) bool {
 	if ft.Collate != charset.CollationBin && IsString(ft.Tp) {
+		return true
+	}
+	return false
+}
+
+// NeedRestoredData returns if a type needs restored data.
+// If the type is char and the collation is _bin, NeedRestoredData() returns false.
+func NeedRestoredData(ft *FieldType) bool {
+	if collate.NewCollationEnabled() &&
+		IsNonBinaryStr(ft) &&
+		!(collate.IsBinCollation(ft.Collate) && !IsTypeVarchar(ft.Tp)) {
 		return true
 	}
 	return false

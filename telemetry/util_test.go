@@ -29,8 +29,9 @@ func TestT(t *testing.T) {
 
 func (s *testUtilSuite) TestHashString(c *C) {
 	c.Parallel()
-
-	c.Assert(hashString("127.0.0.1"), Equals, "4b84b15bff6ee5796152495a230e45e3d7e947d9")
+	actual, err := hashString("127.0.0.1")
+	c.Assert(err, IsNil)
+	c.Assert(actual, Equals, "4b84b15bff6ee5796152495a230e45e3d7e947d9")
 }
 
 func (s *testUtilSuite) TestParseAddress(c *C) {
@@ -53,8 +54,11 @@ func (s *testUtilSuite) TestParseAddress(c *C) {
 		{"[2001:db8:85a3:8d3:1319:8a2e:370:7348]:443", "[2001:db8:85a3:8d3:1319:8a2e:370:7348]", "443"},
 	}
 	for _, tt := range cases {
-		host, port := parseAddressAndHash(tt.src)
-		c.Assert(host, Equals, hashString(tt.expectedHost))
+		host, port, err := parseAddressAndHash(tt.src)
+		c.Assert(err, IsNil)
+		exp, err := hashString(tt.expectedHost)
+		c.Assert(err, IsNil)
+		c.Assert(host, Equals, exp)
 		c.Assert(port, Equals, tt.expectedPort)
 	}
 }

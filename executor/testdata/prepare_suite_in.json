@@ -1,0 +1,62 @@
+[
+  {
+    "name": "TestPlanCacheWithDifferentVariableTypes",
+    "cases": [
+      {
+        "PrepareStmt": "prepare stmt from \"select ?, ?\"",
+        "Executes": [
+          {
+            "Vars": [{"Name": "v1", "Value": "1"}, {"Name": "v2", "Value": "2"}],
+            "ExecuteSQL": "execute stmt using @v1, @v2"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "1"}, {"Name": "v2", "Value": "\"abc\""}],
+            "ExecuteSQL": "execute stmt using @v1, @v2"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "10"}, {"Name": "v2", "Value": "\"cba\""}],
+            "ExecuteSQL": "execute stmt using @v1, @v2"
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select a from t1 where t1.b = ?\"",
+        "Executes": [
+          {
+            "Vars": [{"Name": "v1", "Value": "3"}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "2"}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "-200"}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"abc\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select t1.c, t2.c from t1 join t2 on t1.b = t2.b and t1.a = t2.a where t1.b = ?\"",
+        "Executes": [
+          {
+            "Vars": [{"Name": "v1", "Value": "1"}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "2"}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"abc\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          }
+        ]
+      }
+    ]
+  }
+]

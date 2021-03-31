@@ -17,8 +17,12 @@ package set
 type IntSet map[int]struct{}
 
 // NewIntSet builds a IntSet.
-func NewIntSet() IntSet {
-	return make(map[int]struct{})
+func NewIntSet(is ...int) IntSet {
+	set := make(IntSet, len(is))
+	for _, x := range is {
+		set.Insert(x)
+	}
+	return set
 }
 
 // Exist checks whether `val` exists in `s`.

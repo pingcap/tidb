@@ -16,15 +16,20 @@ package core
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
-// injectExtraProjection is used to extract the expressions of specific
+// InjectExtraProjection is used to extract the expressions of specific
 // operators into a physical Projection operator and inject the Projection below
 // the operators. Thus we can accelerate the expression evaluation by eager
 // evaluation.
-func injectExtraProjection(plan PhysicalPlan) PhysicalPlan {
+// This function will be called in two situations:
+// 1. In postOptimize.
+// 2. TiDB can be used as a coprocessor, when a plan tree been pushed down to
+// TiDB, we need to inject extra projections for the plan tree as well.
+func InjectExtraProjection(plan PhysicalPlan) PhysicalPlan {
 	return NewProjInjector().inject(plan)
 }
 
@@ -39,6 +44,11 @@ func NewProjInjector() *projInjector {
 func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 	for i, child := range plan.Children() {
 		plan.Children()[i] = pe.inject(child)
+	}
+
+	if tr, ok := plan.(*PhysicalTableReader); ok && tr.StoreType == kv.TiFlash {
+		tr.tablePlan = pe.inject(tr.tablePlan)
+		tr.TablePlans = flattenPushDownPlan(tr.tablePlan)
 	}
 
 	switch p := plan.(type) {
@@ -61,6 +71,7 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 // since the types of the args are already the expected.
 func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) {
 	for i := range aggFuncs {
+		aggFuncs[i].WrapCastAsDecimalForAggArgs(sctx)
 		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
 			aggFuncs[i].WrapCastForAggArgs(sctx)
 		}
@@ -144,7 +155,7 @@ func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 	}
 
 	child := aggPlan.Children()[0]
-	prop := aggPlan.GetChildReqProps(0).Clone()
+	prop := aggPlan.GetChildReqProps(0).CloneEssentialFields()
 	proj := PhysicalProjection{
 		Exprs:                projExprs,
 		AvoidColumnEvaluator: false,
@@ -211,7 +222,7 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalP
 		item.Expr = newArg
 	}
 
-	childProp := p.GetChildReqProps(0).Clone()
+	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := PhysicalProjection{
 		Exprs:                bottomProjExprs,
 		AvoidColumnEvaluator: false,
@@ -260,7 +271,7 @@ func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*ut
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)
 	}
 
-	childProp := p.GetChildReqProps(0).Clone()
+	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := PhysicalProjection{
 		Exprs:                bottomProjExprs,
 		AvoidColumnEvaluator: false,

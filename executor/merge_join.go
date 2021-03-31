@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -52,11 +50,6 @@ type MergeJoinExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 }
-
-var (
-	innerTableLabel fmt.Stringer = stringutil.StringerStr("innerTable")
-	outerTableLabel fmt.Stringer = stringutil.StringerStr("outerTable")
-)
 
 type mergeJoinTable struct {
 	isInner    bool
@@ -95,9 +88,9 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 	if t.isInner {
 		t.rowContainer = chunk.NewRowContainer(child.base().retFieldTypes, t.childChunk.Capacity())
 		t.rowContainer.GetMemTracker().AttachTo(exec.memTracker)
-		t.rowContainer.GetMemTracker().SetLabel(innerTableLabel)
+		t.rowContainer.GetMemTracker().SetLabel(memory.LabelForInnerTable)
 		t.rowContainer.GetDiskTracker().AttachTo(exec.diskTracker)
-		t.rowContainer.GetDiskTracker().SetLabel(innerTableLabel)
+		t.rowContainer.GetDiskTracker().SetLabel(memory.LabelForInnerTable)
 		if config.GetGlobalConfig().OOMUseTmpStorage {
 			actionSpill := t.rowContainer.ActionSpill()
 			failpoint.Inject("testMergeJoinRowContainerSpill", func(val failpoint.Value) {
@@ -107,10 +100,10 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 			})
 			exec.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 		}
-		t.memTracker = memory.NewTracker(innerTableLabel, -1)
+		t.memTracker = memory.NewTracker(memory.LabelForInnerTable, -1)
 	} else {
 		t.filtersSelected = make([]bool, 0, exec.maxChunkSize)
-		t.memTracker = memory.NewTracker(outerTableLabel, -1)
+		t.memTracker = memory.NewTracker(memory.LabelForOuterTable, -1)
 	}
 
 	t.memTracker.AttachTo(exec.memTracker)

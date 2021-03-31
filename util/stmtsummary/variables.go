@@ -16,12 +16,12 @@ package stmtsummary
 import (
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	svariable "github.com/pingcap/tidb/sessionctx/variable"
 )
 
 const (
@@ -104,14 +104,10 @@ func getBoolFinalVariable(varType int, sessionValue, globalValue string) int64 {
 
 // normalizeEnableValue converts 'ON' or '1' to 1 and 'OFF' or '0' to 0.
 func normalizeEnableValue(value string) int64 {
-	switch {
-	case strings.EqualFold(value, "ON"):
+	if svariable.TiDBOptOn(value) {
 		return 1
-	case value == "1":
-		return 1
-	default:
-		return 0
 	}
+	return 0
 }
 
 func getIntFinalVariable(varType int, sessionValue, globalValue string, minValue int64) int64 {
