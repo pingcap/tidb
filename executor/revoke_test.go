@@ -95,9 +95,9 @@ func (s *testSuite1) TestRevokeTableScope(c *C) {
 		row := rows[0]
 		c.Assert(row, HasLen, 1)
 
-		op := mysql.Priv2SetStr[v]
+		op := v.SetString()
 		found := false
-		for _, p := range strings.Split(fmt.Sprintf("%s", row[0]), ",") {
+		for _, p := range executor.SetFromString(fmt.Sprintf("%s", row[0])) {
 			if op == p {
 				found = true
 				break

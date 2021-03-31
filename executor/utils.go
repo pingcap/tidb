@@ -15,11 +15,11 @@ package executor
 
 import (
 	"strings"
-
-	"github.com/pingcap/parser/mysql"
 )
 
-func setFromString(value string) []string {
+// SetFromString constructs a slice of strings from a comma separated string.
+// It is assumed that there is no duplicated entry. You could use addToSet to maintain this property.
+func SetFromString(value string) []string {
 	if len(value) == 0 {
 		return nil
 	}
@@ -51,13 +51,4 @@ func deleteFromSet(set []string, value string) []string {
 		}
 	}
 	return set
-}
-
-func hasPriv(privs []mysql.PrivilegeType, p mysql.PrivilegeType) bool {
-	for _, tp := range privs {
-		if tp == p {
-			return true
-		}
-	}
-	return false
 }
