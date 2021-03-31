@@ -17,6 +17,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+<<<<<<< HEAD
+=======
+	"math/rand"
+	"strings"
+>>>>>>> addbd46c3... store/tikv: fix misuse of PD client's GetStore (#23695)
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1020,8 +1025,20 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 	}
 }
 
+<<<<<<< HEAD
 // reResolve try to resolve addr for store that need check.
 func (s *Store) reResolve(c *RegionCache) {
+=======
+// A quick and dirty solution to find out whether an err is caused by StoreNotFound.
+// todo: A better solution, maybe some err-code based error handling?
+func isStoreNotFoundError(err error) bool {
+	return strings.Contains(err.Error(), "invalid store ID") && strings.Contains(err.Error(), "not found")
+}
+
+// reResolve try to resolve addr for store that need check. Returns false if the region is in tombstone state or is
+// deleted.
+func (s *Store) reResolve(c *RegionCache) (bool, error) {
+>>>>>>> addbd46c3... store/tikv: fix misuse of PD client's GetStore (#23695)
 	var addr string
 	store, err := c.pdClient.GetStore(context.Background(), s.storeID)
 	if err != nil {
@@ -1029,8 +1046,16 @@ func (s *Store) reResolve(c *RegionCache) {
 	} else {
 		tikvRegionCacheCounterWithGetStoreOK.Inc()
 	}
+<<<<<<< HEAD
 	if err != nil {
 		logutil.Logger(context.Background()).Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
+=======
+	// `err` here can mean either "load Store from PD failed" or "store not found"
+	// If load Store from PD is successful but PD didn't find the store
+	// the err should be handled by next `if` instead of here
+	if err != nil && !isStoreNotFoundError(err) {
+		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
+>>>>>>> addbd46c3... store/tikv: fix misuse of PD client's GetStore (#23695)
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
 		return
 	}
@@ -1038,9 +1063,16 @@ func (s *Store) reResolve(c *RegionCache) {
 		// store has be removed in PD, we should invalidate all regions using those store.
 		logutil.Logger(context.Background()).Info("invalidate regions in removed store",
 			zap.Uint64("store", s.storeID), zap.String("add", s.addr))
+<<<<<<< HEAD
 		atomic.AddUint32(&s.fail, 1)
 		tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		return
+=======
+		atomic.AddUint32(&s.epoch, 1)
+		atomic.StoreUint64(&s.state, uint64(deleted))
+		metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+		return false, nil
+>>>>>>> addbd46c3... store/tikv: fix misuse of PD client's GetStore (#23695)
 	}
 
 	addr = store.GetAddress()
