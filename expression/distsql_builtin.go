@@ -40,6 +40,7 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 		Decimal: int(tp.Decimal),
 		Charset: tp.Charset,
 		Collate: protoToCollation(tp.Collate),
+		Elems:   tp.Elems,
 	}
 }
 

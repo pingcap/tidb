@@ -211,8 +211,13 @@ func (e *evalContext) fillColumnInfo(fieldTypes []*tipb.FieldType) {
 			Tp: pbType.Tp, Collation: pbType.Collate, ColumnLen: pbType.Flen,
 			Decimal: pbType.Decimal, Flag: int32(pbType.Flag)})
 		// todo fill collate and charset field
-		e.fieldTps = append(e.fieldTps, &types.FieldType{Tp: byte(pbType.Tp),
-			Flag: uint(pbType.Flag), Flen: int(pbType.Flen), Decimal: int(pbType.Decimal)})
+		e.fieldTps = append(e.fieldTps, &types.FieldType{
+			Tp:      byte(pbType.Tp),
+			Flag:    uint(pbType.Flag),
+			Flen:    int(pbType.Flen),
+			Decimal: int(pbType.Decimal),
+			Elems:   pbType.Elems,
+		})
 	}
 }
 
@@ -222,8 +227,13 @@ func (e *evalContext) fillColumnInfoFromTPs(fieldTypes []*types.FieldType) {
 	for i, fieldType := range fieldTypes {
 		pbType := expression.ToPBFieldType(fieldType)
 		e.columnInfos = append(e.columnInfos, &tipb.ColumnInfo{ColumnId: int64(i),
-			Tp: pbType.Tp, Collation: pbType.Collate, ColumnLen: pbType.Flen,
-			Decimal: pbType.Decimal, Flag: int32(pbType.Flag)})
+			Tp:        pbType.Tp,
+			Collation: pbType.Collate,
+			ColumnLen: pbType.Flen,
+			Decimal:   pbType.Decimal,
+			Flag:      int32(pbType.Flag),
+			Elems:     pbType.Elems,
+		})
 	}
 }
 
