@@ -63,7 +63,7 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err := e.ctx.NewTxn(ctx); err != nil {
 		return err
 	}
-	defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()
+	defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()
 
 	// Create internal session to start internal transaction.
 	isCommit := false

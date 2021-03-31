@@ -706,10 +706,6 @@ type dateTimeGener struct {
 	randGen *defaultRandGen
 }
 
-func newDateTimeGener(fsp, year, month, day int) *dateTimeGener {
-	return &dateTimeGener{fsp, year, month, day, newDefaultRandGen()}
-}
-
 func (g *dateTimeGener) gen() interface{} {
 	if g.Year == 0 {
 		g.Year = 1970 + g.randGen.Intn(100)

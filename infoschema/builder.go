@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -146,7 +147,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				// While session 1 performs the DML operation associated with partition 1,
 				// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 				tblIDs = append(tblIDs, opt.OldTableID)
-
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
 				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
 				if err != nil {
@@ -451,7 +451,7 @@ func (b *Builder) applyPlacementDelete(id string) {
 }
 
 func (b *Builder) applyPlacementUpdate(id string) error {
-	bundle, err := infosync.GetRuleBundle(nil, id)
+	bundle, err := infosync.GetRuleBundle(context.TODO(), id)
 	if err != nil {
 		return err
 	}
