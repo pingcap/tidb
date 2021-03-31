@@ -2340,6 +2340,14 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	c.Assert(hasNotNull, IsFalse)
 	// for enum
 	s.mustExec(tk, c, "alter table t3 add column en enum('a', 'b', 'c') not null default 'a'")
+	// https://github.com/pingcap/tidb/issues/23488
+	// if there is a prefix index on the varchar column, then we can change it to text
+	s.mustExec(tk, c, "drop table if exists t")
+	s.mustExec(tk, c, "create table t (k varchar(10), v int, INDEX(k(7)));")
+	s.mustExec(tk, c, "alter table t change column k k tinytext")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
 
 	// for failing tests
 	sql := "alter table t3 change aa a bigint default ''"
@@ -2363,6 +2371,12 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	// https://github.com/pingcap/tidb/issues/23488
 	s.mustExec(tk, c, "drop table if exists t5")
 	s.mustExec(tk, c, "create table t5 (k varchar(10) primary key, v int)")
+	sql = "alter table t5 change column k k tinytext;"
+	tk.MustGetErrCode(sql, mysql.ErrBlobKeyWithoutLength)
+	tk.MustExec("drop table t5")
+
+	s.mustExec(tk, c, "drop table if exists t5")
+	s.mustExec(tk, c, "create table t (k varchar(10), v int, INDEX(k))")
 	sql = "alter table t5 change column k k tinytext;"
 	tk.MustGetErrCode(sql, mysql.ErrBlobKeyWithoutLength)
 	tk.MustExec("drop table t5")
