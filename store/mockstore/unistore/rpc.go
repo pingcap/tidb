@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/codec"
 	"golang.org/x/net/context"
@@ -68,7 +67,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
-	if req.StoreTp == kv.TiDB {
+	if req.StoreTp == tikvrpc.TiDB {
 		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
 	}
 
@@ -298,6 +297,11 @@ func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.Est
 	if err != nil {
 		return nil, err
 	}
+	failpoint.Inject("establishMppConnectionErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("rpc error"))
+		}
+	})
 	var mockClient = mockMPPConnectionClient{mppResponses: mockServer.mppResponses, idx: 0, ctx: ctx, targetTask: r.ReceiverMeta}
 	streamResp := &tikvrpc.MPPStreamResponse{Tikv_EstablishMPPConnectionClient: &mockClient}
 	_, cancel := context.WithCancel(ctx)

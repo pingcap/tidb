@@ -574,7 +574,7 @@ func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 		copy(result, ip.To4())
 	}
 
-	return string(result[:]), false, nil
+	return string(result), false, nil
 }
 
 type inet6NtoaFunctionClass struct {
