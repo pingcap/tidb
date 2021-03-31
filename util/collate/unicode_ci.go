@@ -15,7 +15,6 @@ package collate
 
 import (
 	"github.com/pingcap/tidb/util/stringutil"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -45,7 +44,8 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 				for an == 0 && len(a) > 0 {
 					ar, asize = utf8.DecodeRuneInString(a)
 					if ar == utf8.RuneError && asize == 1 {
-						return strings.Compare(a, b)
+						an = 0
+						break
 					}
 					a = a[asize:]
 					an, as = convertRuneUnicodeCI(ar)
@@ -61,7 +61,8 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 				for bn == 0 && len(b) > 0 {
 					br, bsize = utf8.DecodeRuneInString(b)
 					if br == utf8.RuneError && bsize == 1 {
-						return strings.Compare(a, b)
+						bn = 0
+						break
 					}
 					b = b[bsize:]
 					bn, bs = convertRuneUnicodeCI(br)

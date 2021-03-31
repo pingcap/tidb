@@ -8154,6 +8154,26 @@ func (s *testIntegrationSerialSuite) TestIssue20161(c *C) {
 		Check(testkit.Rows("<nil>", "<nil>", "<nil>"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue23506(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`create table t(a char(10) collate utf8mb4_general_ci, b char(10) collate utf8mb4_unicode_ci);`)
+	tk.MustExec(`insert into t values ('a', 'a')`)
+	tk.MustExec(`insert into t values ('一', '一')`)
+	tk.MustQuery(`select * from t where a > 0x80;`).Check(testkit.Rows("一 一"))
+	tk.MustQuery(`select * from t where b > 0x80;`).Check(testkit.Rows("a a", "一 一"))
+
+	// uncomment this when #23759 fix
+	//tk.MustQuery(`select concat(a, 0x80) = concat(a, 0x81) collate utf8mb4_unicode_ci from t;`).Check(testkit.Rows("1 1"))
+	//tk.MustQuery(`select hex(weight_string(concat(a, 0x80))) from t`).Check(testkit.Rows("0041 4E00"))
+	//tk.MustQuery(`select hex(weight_string(concat(b, 0x80))) from t`).Check(testkit.Rows("0E33 FB40CE00"))
+	//tk.MustQuery(`select collation(concat(a, 0x80)) from t`).Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
+	//tk.MustQuery(`select collation(concat(b, 0x80)) from t`).Check(testkit.Rows("utf8mb4_unicode_ci", "utf8mb4_unicode_ci"))
+}
+
 func (s *testIntegrationSuite) TestIssue10462(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
