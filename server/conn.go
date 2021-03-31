@@ -252,6 +252,18 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		}
 		return err
 	}
+
+	// MySQL supports an "init_connect" query, which can be run on initial connection.
+	// The query must return a non-error or the client is disconnected.
+	if err := cc.initConnect(ctx); err != nil {
+		logutil.Logger(ctx).Warn("init_connect failed", zap.Error(err))
+		initErr := errNewAbortingConnection.FastGenByArgs(cc.connectionID, "unconnected", cc.user, cc.peerHost, "init_connect command failed")
+		if err1 := cc.writeError(ctx, initErr); err1 != nil {
+			terror.Log(err1)
+		}
+		return initErr
+	}
+
 	data := cc.alloc.AllocWithLen(4, 32)
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
@@ -724,12 +736,14 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 }
 
 // skipInitConnect follows MySQL's rules of when init-connect should be skipped.
-// In 5.7 it is any user with SUPER privilege, but in 8.0 it is
-// SUPER or the CONNECTION_ADMIN dynamic privilege.
+// In 5.7 it is any user with SUPER privilege, but in 8.0 it is:
+// - SUPER or the CONNECTION_ADMIN dynamic privilege.
+// - (additional exception) users with expired passwords (not yet supported)
+// In TiDB CONNECTION_ADMIN is satisfied by SUPER, so we only need to check once.
 func (cc *clientConn) skipInitConnect() bool {
 	checker := privilege.GetPrivilegeManager(cc.ctx.Session)
 	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
-	return checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv)
+	return checker != nil && checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false)
 }
 
 // initConnect runs the initConnect SQL statement if it has been specified.
@@ -799,14 +813,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 	}()
 
-	// MySQL supports an "init_connect" query, which can be run on initial connection.
-	// The query must return a non-error or the client is disconnected.
-	var initConnectFailed bool
-	if err := cc.initConnect(ctx); err != nil {
-		logutil.Logger(ctx).Warn("init_connect failed", zap.Error(err))
-		initConnectFailed = true
-	}
-
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.
@@ -826,14 +832,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
 		data, err := cc.readPacket()
-		if initConnectFailed {
-			disconnectErrorUndetermined.Inc()
-			initErr := errNewAbortingConnection.FastGenByArgs(cc.connectionID, "unconnected", cc.user, cc.peerHost, "init_connect command failed")
-			if err1 := cc.writeError(ctx, initErr); err1 != nil {
-				terror.Log(err1)
-			}
-			return
-		}
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
