@@ -120,10 +120,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
 	finishJobWithLogFn := func(ctx context.Context, job *statistics.AnalyzeJob, meetError bool) {
 		job.Finish(meetError)
-		logutil.Logger(ctx).Info("analyze finished",
-			zap.Time("start time", job.StartTime),
-			zap.Time("end time", job.EndTime),
-			zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
+		if job != nil {
+			logutil.Logger(ctx).Info("analyze finished",
+				zap.Time("start time", job.StartTime),
+				zap.Time("end time", job.EndTime),
+				zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
+		}
 	}
 	for panicCnt < concurrency {
 		result, ok := <-resultCh
