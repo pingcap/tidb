@@ -3796,6 +3796,14 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// Adjust the flen for blob types after the default flen is set.
 	adjustBlobTypesFlen(newCol)
 
+	// Copy index related options to the new spec.
+	indexFlags := col.FieldType.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
+	newCol.FieldType.Flag |= indexFlags
+	if mysql.HasPriKeyFlag(col.FieldType.Flag) {
+		newCol.FieldType.Flag |= mysql.NotNullFlag
+		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
+	}
+
 	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3819,14 +3827,6 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		} else if t.Meta().Partition != nil {
 			return nil, errUnsupportedModifyColumn.GenWithStackByArgs("tidb_enable_change_column_type is true, table is partition table")
 		}
-	}
-
-	// Copy index related options to the new spec.
-	indexFlags := col.FieldType.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
-	newCol.FieldType.Flag |= indexFlags
-	if mysql.HasPriKeyFlag(col.FieldType.Flag) {
-		newCol.FieldType.Flag |= mysql.NotNullFlag
-		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
