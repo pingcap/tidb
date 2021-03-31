@@ -314,4 +314,20 @@ func (s *testSuite5) TestIssue23722(c *C) {
 	tk.MustExec("insert into t values (20301,'Charlie','aaaaaaa');")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("20301 Charlie aaaaaaa"))
 	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie aaaaaaa"))
+
+	// Test the original case.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`CREATE TABLE t (
+		col_15 decimal(49,3),
+		col_16 smallint(5),
+		col_17 char(118) CHARACTER SET utf8 COLLATE utf8_general_ci DEFAULT 'tLOOjbIXuuLKPFjkLo',
+		col_18 set('Alice','Bob','Charlie','David') NOT NULL,
+		col_19 tinyblob,
+		PRIMARY KEY (col_19(5),col_16) /*T![clustered_index] NONCLUSTERED */,
+		UNIQUE KEY idx_10 (col_19(5),col_16)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec("INSERT INTO `t` VALUES (38799.400,20301,'KETeFZhkoxnwMAhA','Charlie',x'7a7968584570705a647179714e56');")
+	tk.MustQuery("select  t.* from t where col_19 in  " +
+		"( select col_19 from t where t.col_18 <> 'David' and t.col_19 >= 'jDzNn' ) " +
+		"order by col_15 , col_16 , col_17 , col_18 , col_19;").Check(testkit.Rows("38799.400 20301 KETeFZhkoxnwMAhA Charlie zyhXEppZdqyqNV"))
 }
