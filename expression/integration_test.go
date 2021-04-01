@@ -8978,3 +8978,23 @@ func (s *testIntegrationSerialSuite) TestCollationPrefixClusteredIndex(c *C) {
 	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows("01233 1"))
 	tk.MustExec("admin check table t;")
 }
+
+func (s *testIntegrationSerialSuite) TestIssue23805(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk.MustExec("CREATE TABLE `tbl_5` (" +
+		"  `col_25` time NOT NULL DEFAULT '05:35:58'," +
+		"  `col_26` blob NOT NULL," +
+		"  `col_27` double NOT NULL," +
+		"  `col_28` char(83) CHARACTER SET utf8 COLLATE utf8_bin NOT NULL," +
+		"  `col_29` timestamp NOT NULL," +
+		"  `col_30` varchar(36) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'ywzIn'," +
+		"  `col_31` binary(85) DEFAULT 'OIstcXsGmAyc'," +
+		"  `col_32` datetime NOT NULL DEFAULT '2024-08-02 00:00:00'," +
+		"  PRIMARY KEY (`col_26`(3),`col_27`) /*T![clustered_index] CLUSTERED */," +
+		"  UNIQUE KEY `idx_10` (`col_26`(5)));")
+	tk.MustExec("insert ignore into tbl_5 set col_28 = 'ZmZIdSnq' , col_25 = '18:50:52.00' on duplicate key update col_26 = 'y';\n")
+}
