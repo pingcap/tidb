@@ -777,6 +777,18 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	testSQL = `select * from t;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1", "2 2"))
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(`col_25` set('Alice','Bob','Charlie','David') NOT NULL,`col_26` date NOT NULL DEFAULT '2016-04-15', PRIMARY KEY (`col_26`) clustered, UNIQUE KEY `idx_9` (`col_25`,`col_26`),UNIQUE KEY `idx_10` (`col_25`))")
+	tk.MustExec("insert into t2(col_25, col_26) values('Bob', '1989-03-23'),('Alice', '2023-11-24'), ('Charlie', '2023-12-05')")
+	tk.MustExec("insert ignore into t2 (col_25,col_26) values ( 'Bob','1977-11-23' ) on duplicate key update col_25 = 'Alice', col_26 = '2036-12-13'")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("Bob 1989-03-23", "Alice 2023-11-24", "Charlie 2023-12-05"))
+
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t4(id int primary key clustered, k int, v int, unique key uk1(k))")
+	tk.MustExec("insert into t4 values (1, 10, 100), (3, 30, 300)")
+	tk.MustExec("insert ignore into t4 (id, k, v) values(1, 0, 0) on duplicate key update id = 2, k = 30")
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 10 100", "3 30 300"))
 }
 
 func (s *testSuite4) TestInsertSetWithDefault(c *C) {
