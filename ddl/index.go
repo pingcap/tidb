@@ -65,7 +65,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*a
 			return nil, errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
 		}
 
-		if err := checkIndexColumn(col, ip); err != nil {
+		if err := checkIndexColumn(col, ip.Length); err != nil {
 			return nil, err
 		}
 
@@ -131,12 +131,12 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 	return nil
 }
 
-func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) error {
+func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
 		if col.GeneratedExprString != "" {
 			return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
 		}
-		return errors.Trace(errWrongKeyColumn.GenWithStackByArgs(ic.Column.Name))
+		return errors.Trace(errWrongKeyColumn.GenWithStackByArgs(col.Name))
 	}
 
 	// JSON column cannot index.
@@ -146,33 +146,33 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) err
 
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
 	if types.IsTypeBlob(col.FieldType.Tp) {
-		if ic.Length == types.UnspecifiedLength {
+		if indexColumnLen == types.UnspecifiedLength {
 			return errors.Trace(errBlobKeyWithoutLength.GenWithStackByArgs(col.Name.O))
 		}
-		if ic.Length == types.ErrorLength {
+		if indexColumnLen == types.ErrorLength {
 			return errors.Trace(errKeyPart0.GenWithStackByArgs(col.Name.O))
 		}
 	}
 
 	// Length can only be specified for specifiable types.
-	if ic.Length != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
+	if indexColumnLen != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
 		return errors.Trace(errIncorrectPrefixKey)
 	}
 
 	// Key length must be shorter or equal to the column length.
-	if ic.Length != types.UnspecifiedLength &&
+	if indexColumnLen != types.UnspecifiedLength &&
 		types.IsTypeChar(col.FieldType.Tp) {
-		if col.Flen < ic.Length {
+		if col.Flen < indexColumnLen {
 			return errors.Trace(errIncorrectPrefixKey)
 		}
 		// Length must be non-zero for char.
-		if ic.Length == types.ErrorLength {
+		if indexColumnLen == types.ErrorLength {
 			return errors.Trace(errKeyPart0.GenWithStackByArgs(col.Name.O))
 		}
 	}
 
 	// Specified length must be shorter than the max length for prefix.
-	if ic.Length > config.GetGlobalConfig().MaxIndexLength {
+	if indexColumnLen > config.GetGlobalConfig().MaxIndexLength {
 		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
