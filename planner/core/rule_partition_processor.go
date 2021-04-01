@@ -128,11 +128,11 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 		partIdx[i].Index = i
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
-	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partIdx, colLen)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partIdx, colLen)
 	if err != nil {
 		return nil, nil, err
 	}
-	ranges := datchedResult.Ranges
+	ranges := detachedResult.Ranges
 	used := make([]int, 0, len(ranges))
 	for _, r := range ranges {
 		if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
@@ -142,7 +142,10 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 					break
 				}
 			}
-			pos, isNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+			highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
+			highLowVals = append(highLowVals, r.HighVal...)
+			highLowVals = append(highLowVals, r.LowVal...)
+			pos, isNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(highLowVals).ToRow())
 			if err != nil {
 				return nil, nil, err
 			}
@@ -170,7 +173,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 			ret = append(ret, used[i])
 		}
 	}
-	return ret, datchedResult.RemainedConds, nil
+	return ret, detachedResult.RemainedConds, nil
 }
 
 func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []model.CIStr) []int {
