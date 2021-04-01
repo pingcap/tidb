@@ -6803,7 +6803,7 @@ func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 
 	tk.MustExec("create table t4(a int primary key, b int) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t4(a, b) values(1, 1),(2, 2),(3, 3);")
-	err = tk.ExecToErr("update t4 partition(p0) set a = 6 where a = 2")
+	err = tk.ExecToErr("update t4 partition(p0) set a = 5 where a = 2")
 	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
 }
 

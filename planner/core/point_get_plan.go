@@ -1288,16 +1288,23 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	}
 	if tbl.GetPartitionInfo() != nil {
 		pt := t.(table.PartitionedTable)
-		pids := make(map[int64]struct{}, len(tbl.GetPartitionInfo().Definitions))
-		for _, def := range tbl.Partition.Definitions {
-			pid, err := tables.FindPartitionByName(tbl, def.Name.L)
-			if err != nil {
-				return updatePlan
+		var updateTableList []*ast.TableName
+		updateTableList = extractTableList(updateStmt.TableRefs.TableRefs, updateTableList, true)
+		updatePlan.PartitionedTable = make([]table.PartitionedTable, 0, len(updateTableList))
+		for _, updateTable := range updateTableList {
+			if len(updateTable.PartitionNames) > 0 {
+				pids := make(map[int64]struct{}, len(updateTable.PartitionNames))
+				for _, name := range updateTable.PartitionNames {
+					pid, err := tables.FindPartitionByName(tbl, name.L)
+					if err != nil {
+						return updatePlan
+					}
+					pids[pid] = struct{}{}
+				}
+				pt = tables.NewPartitionTableithGivenSets(pt, pids)
 			}
-			pids[pid] = struct{}{}
+			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
 		}
-		pt = tables.NewPartitionTableithGivenSets(pt, pids)
-		updatePlan.PartitionedTable = []table.PartitionedTable{pt}
 	}
 	return updatePlan
 }
