@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"flag"
+	"fmt"
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
@@ -116,6 +117,18 @@ func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {
 	c.Assert(len(rows), Equals, 16)
 	tk.MustQuery("select count(*) from t tablesample regions();").Check(testkit.Rows("4"))
 	tk.MustExec("drop table t2;")
+}
+
+func (s *testTableSampleSuite) TestTableSamplePlan(c *C) {
+	tk := s.initSampleTest(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a varchar(30) collate utf8mb4_general_ci primary key);")
+	tk.MustQuery("split table t between ('a') and ('z') regions 100;").Check(testkit.Rows("99 1"))
+	tk.MustExec("insert into t values ('a'), ('b'), ('c'), ('d'), ('e');")
+	rows := tk.MustQuery("select a from t tablesample regions() limit 2;").Rows()
+	c.Assert(len(rows), Equals, 2)
+	tableSample := fmt.Sprintf("%v", rows[1])
+	c.Assert(tableSample, Matches, ".*TableSample.*")
 }
 
 func (s *testTableSampleSuite) TestTableSampleSchema(c *C) {
