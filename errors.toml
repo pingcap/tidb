@@ -261,6 +261,11 @@ error = '''
 Duplicate partition name %-.192s
 '''
 
+["ddl:1563"]
+error = '''
+Partition constant is out of partition function domain
+'''
+
 ["ddl:1564"]
 error = '''
 This partition function is not allowed
@@ -534,6 +539,16 @@ Transaction characteristics can't be changed while a transaction is in progress
 ["executor:1827"]
 error = '''
 The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.
+'''
+
+["executor:3619"]
+error = '''
+Illegal privilege level specified for %s
+'''
+
+["executor:3929"]
+error = '''
+Dynamic privilege '%s' is not registered with the server.
 '''
 
 ["executor:8003"]
