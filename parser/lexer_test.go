@@ -216,7 +216,7 @@ func (s *testLexerSuite) TestscanString(c *C) {
 		{`'disappearing\ backslash'`, "disappearing backslash"},
 		{"'한국의中文UTF8およびテキストトラック'", "한국의中文UTF8およびテキストトラック"},
 		{"'\\a\x90'", "a\x90"},
-		{`"\aèàø»"`, `aèàø»`},
+		{"'\\a\x18èàø»\x05'", "a\x18èàø»\x05"},
 	}
 
 	for _, v := range table {
@@ -279,16 +279,16 @@ func (s *testLexerSuite) TestFeatureIDsComment(c *C) {
 	c.Assert(tok, Equals, identifier)
 	c.Assert(lit, Equals, "auto_random")
 	c.Assert(pos, Equals, Pos{0, 16, 16})
-	tok, pos, lit = l.scan()
+	tok, pos, _ = l.scan()
 	c.Assert(tok, Equals, int('('))
-	tok, pos, lit = l.scan()
+	_, pos, lit = l.scan()
 	c.Assert(lit, Equals, "5")
 	c.Assert(pos, Equals, Pos{0, 28, 28})
-	tok, pos, lit = l.scan()
+	tok, pos, _ = l.scan()
 	c.Assert(tok, Equals, int(')'))
 
 	l = NewScanner("/*T![unsupported_feature] unsupported(123) */")
-	tok, pos, lit = l.scan()
+	tok, pos, _ = l.scan()
 	c.Assert(tok, Equals, 0)
 }
 
