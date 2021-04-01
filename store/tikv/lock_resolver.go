@@ -41,6 +41,7 @@ const ResolvedCacheSize = 2048
 // bigTxnThreshold : transaction involves keys exceed this threshold can be treated as `big transaction`.
 const bigTxnThreshold = 16
 
+// Lock represents a lock from tikv server.
 type Lock = kv.Lock
 
 // NewLock creates a new *Lock.
