@@ -8584,6 +8584,18 @@ func (s *testIntegrationSerialSuite) TestIssue20128(c *C) {
 	tk.MustQuery("select * from t where t.b < t.c;").Check(testkit.Rows("z 26.18040000000000000000"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue23759(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(10) collate utf8mb4_general_ci)")
+	tk.MustExec("insert into t values ('a')")
+	tk.MustQuery("select collation(concat(a, 0x80)) from t").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select concat(a, 0x80) from t").Check(testkit.Rows("a\x80"))
+}
+
 func (s *testIntegrationSuite) TestIssue21677(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
