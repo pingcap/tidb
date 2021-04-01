@@ -132,25 +132,6 @@ func convertRuneUnicodeCI(r rune) (first, second uint64) {
 	return mapTable[r], 0
 }
 
-func getWeight(an, as uint64, a string) (uint64, uint64, string) {
-	if an == 0 {
-		if as == 0 {
-			for an == 0 && len(a) > 0 {
-				ar, ai := utf8.DecodeRuneInString(a)
-				if ar == utf8.RuneError && ai == 1 {
-					return utf8.RuneError, 1, a
-				}
-				a = a[ai:]
-				an, as = convertRuneUnicodeCI(ar)
-			}
-		} else {
-			return as, 0, a
-		}
-	}
-
-	return an, as, a
-}
-
 // Pattern implements Collator interface.
 func (uc *unicodeCICollator) Pattern() WildcardPattern {
 	return &unicodePattern{}
