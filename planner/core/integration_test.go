@@ -3147,5 +3147,5 @@ func (s *testIntegrationSuite) TestIssue23736(c *C) {
 	tk.MustQuery("select /*+ stream_agg() */ count(1) from t1 where c > 10 and b < 2;").Check(testkit.Rows("1"))
 	tk.MustExec("delete from t0")
 	tk.MustExec("insert into t0(a, b) values (5, 1);")
-	tk.MustQuery("select /*+ stream_agg() */ count(1) from t1 where c > 10 and b < 2;").Check(testkit.Rows("0"))
+	tk.MustQuery("select /*+ nth_plan(3) */ count(1) from t0 where c > 10 and b < 2;").Check(testkit.Rows("0"))
 }
