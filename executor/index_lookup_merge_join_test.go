@@ -10,7 +10,11 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
+<<<<<<< HEAD
 func (s *testSuite9) TestIndexLookupMergeJoinHang(c *C) {
+=======
+func (s *testSerialSuite) TestIndexLookupMergeJoinHang(c *C) {
+>>>>>>> 19919e3f3... tests: make TestIndexLookupMergeJoinHang and TestIssue18068 stable (#23741)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM"), IsNil)
@@ -28,7 +32,7 @@ func (s *testSuite9) TestIndexLookupMergeJoinHang(c *C) {
 	c.Assert(err.Error(), Equals, "OOM test index merge join doesn't hang here.")
 }
 
-func (s *testSuite9) TestIssue18068(c *C) {
+func (s *testSerialSuite) TestIssue18068(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIssue18068", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIssue18068"), IsNil)
