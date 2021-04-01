@@ -14,8 +14,9 @@
 package collate
 
 import (
-	"github.com/pingcap/tidb/util/stringutil"
 	"unicode/utf8"
+
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 const (
