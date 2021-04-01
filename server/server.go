@@ -482,7 +482,7 @@ func (s *Server) onConn(conn *clientConn) {
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		// Audit plugin may be disabled before a conn is created, leading no connectionInfo in sessionVars.
 		if sessionVars.ConnectionInfo == nil {
-			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+			sessionVars.ConnectionInfo = conn.connectInfo()
 		}
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
