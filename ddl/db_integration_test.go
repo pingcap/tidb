@@ -1527,6 +1527,18 @@ CREATE TABLE t (
   KEY c04 (c04)
 )`, errno.ErrTooLongKey)
 
+	// test create long clustered primary key.
+	tk.MustGetErrCode(`
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) NOT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02,c03,c04) clustered
+)`, errno.ErrTooLongKey)
+
 	// test create table with unique key
 	tk.MustExec(`
 CREATE TABLE t (
