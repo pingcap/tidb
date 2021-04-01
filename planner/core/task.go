@@ -960,7 +960,14 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		p.stats = t.tablePlan.statsInfo()
-		if needExtraProj {
+
+		aggPushedDown := false
+		switch p.tablePlan.(type) {
+		case *PhysicalHashAgg, *PhysicalStreamAgg:
+			aggPushedDown = true
+		}
+
+		if needExtraProj && !aggPushedDown {
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(prevSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
 			proj.SetSchema(prevSchema)
 			proj.SetChildren(p)
