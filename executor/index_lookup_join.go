@@ -530,10 +530,11 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
 			task.encodedLookUpKeys[chkIdx].AppendBytes(0, keyBuf)
 			if iw.hasPrefixCol {
-				for i := range iw.outerCtx.keyCols {
+				for i, outerOffset := range iw.outerCtx.keyCols {
 					// If it's a prefix column. Try to fix it.
-					if iw.colLens[iw.keyCols[i]] != types.UnspecifiedLength {
-						ranger.CutDatumByPrefixLen(&dLookUpKey[i], iw.colLens[iw.keyCols[i]], iw.rowTypes[iw.keyCols[i]])
+					joinKeyColPrefixLen := iw.colLens[outerOffset]
+					if joinKeyColPrefixLen != types.UnspecifiedLength {
+						ranger.CutDatumByPrefixLen(&dLookUpKey[i], joinKeyColPrefixLen, iw.rowTypes[iw.keyCols[i]])
 					}
 				}
 				// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
