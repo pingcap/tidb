@@ -65,7 +65,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*a
 			return nil, errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
 		}
 
-		if err := checkIndexColumn(col, ip.Length, ip.Column.Name); err != nil {
+		if err := checkIndexColumn(col, ip.Length); err != nil {
 			return nil, err
 		}
 
@@ -131,12 +131,12 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 	return nil
 }
 
-func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, indexColumnName model.CIStr) error {
+func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
 		if col.GeneratedExprString != "" {
 			return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
 		}
-		return errors.Trace(errWrongKeyColumn.GenWithStackByArgs(indexColumnName))
+		return errors.Trace(errWrongKeyColumn.GenWithStackByArgs(col.Name))
 	}
 
 	// JSON column cannot index.
