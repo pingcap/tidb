@@ -94,7 +94,6 @@ func newTester(name string) *tester {
 	t.enableQueryLog = true
 	t.ctx = mock.NewContext()
 	t.ctx.GetSessionVars().EnableWindowFunction = true
-
 	return t
 }
 

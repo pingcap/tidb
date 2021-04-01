@@ -64,7 +64,7 @@ type Index interface {
 	// Meta returns IndexInfo.
 	Meta() *model.IndexInfo
 	// Create supports insert into statement.
-	Create(ctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, opts ...CreateIdxOptFunc) (kv.Handle, error)
+	Create(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
 	// Delete supports delete from statement.
 	Delete(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) error
 	// Drop supports drop table, drop index statements.
@@ -73,8 +73,6 @@ type Index interface {
 	Exist(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
 	// GenIndexKey generates an index key.
 	GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error)
-	// GenIndexValue generates an index value.
-	GenIndexValue(sc *stmtctx.StatementContext, indexedValues []types.Datum, distinct bool, untouched bool, h kv.Handle) (val []byte, err error)
 	// Seek supports where clause.
 	Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues []types.Datum) (iter IndexIterator, hit bool, err error)
 	// SeekFirst supports aggregate min and ascend order by.

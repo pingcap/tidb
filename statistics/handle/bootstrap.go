@@ -324,17 +324,14 @@ func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
 	}
 	req := rs[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
-	for {
-		err := rs[0].Next(context.TODO(), req)
-		if err != nil {
-			return 0, err
-		}
-		if req.NumRows() == 0 {
-			break
-		}
-		return iter.Begin().GetMyDecimal(0).ToInt()
+	err = rs[0].Next(context.TODO(), req)
+	if err != nil {
+		return 0, err
 	}
-	return 0, nil
+	if req.NumRows() == 0 {
+		return 0, nil
+	}
+	return iter.Begin().GetMyDecimal(0).ToInt()
 }
 
 func (h *Handle) initStatsBuckets(cache *statsCache) error {

@@ -631,22 +631,28 @@ func (s *testChunkSuite) TestSwapColumn(c *check.C) {
 		c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
 	}
 
-	chk1.SwapColumn(0, chk2, 0)
+	err := chk1.SwapColumn(0, chk2, 0)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk1.SwapColumn(0, chk2, 1)
+	err = chk1.SwapColumn(0, chk2, 1)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(1, chk2, 0)
+	err = chk2.SwapColumn(1, chk2, 0)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(1, chk2, 1)
+	err = chk2.SwapColumn(1, chk2, 1)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(1, chk2, 2)
+	err = chk2.SwapColumn(1, chk2, 2)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(2, chk2, 0)
+	err = chk2.SwapColumn(2, chk2, 0)
+	c.Assert(err, check.IsNil)
 	checkRef()
 }
 
@@ -779,8 +785,10 @@ func (s *testChunkSuite) TestMakeRefTo(c *check.C) {
 	chk1.AppendFloat32(1, 3)
 
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
-	chk2.MakeRefTo(0, chk1, 1)
-	chk2.MakeRefTo(1, chk1, 0)
+	err := chk2.MakeRefTo(0, chk1, 1)
+	c.Assert(err, check.IsNil)
+	err = chk2.MakeRefTo(1, chk1, 0)
+	c.Assert(err, check.IsNil)
 
 	c.Assert(chk2.columns[0] == chk1.columns[1], check.IsTrue)
 	c.Assert(chk2.columns[1] == chk1.columns[0], check.IsTrue)

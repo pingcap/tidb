@@ -276,8 +276,8 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 		{
 			name:   "time 3",
 			input:  "select %?",
-			params: []interface{}{time.Unix(0, 888888888)},
-			output: "select '1970-01-01 08:00:00.888888'",
+			params: []interface{}{time.Unix(0, 888888888).UTC()},
+			output: "select '1970-01-01 00:00:00.888888'",
 			err:    "",
 		},
 		{

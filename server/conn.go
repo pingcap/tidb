@@ -52,6 +52,8 @@ import (
 	"time"
 	"unsafe"
 
+	goerr "errors"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -62,6 +64,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -72,7 +75,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
@@ -80,7 +83,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -682,13 +684,14 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, err := cc.PeerHost(hasPassword)
+	host, port, err := cc.PeerHost(hasPassword)
 	if err != nil {
 		return err
 	}
 	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
 		return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
+	cc.ctx.SetPort(port)
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
@@ -699,9 +702,9 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	return nil
 }
 
-func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
+func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
 	if len(cc.peerHost) > 0 {
-		return cc.peerHost, nil
+		return cc.peerHost, "", nil
 	}
 	host = variable.DefHostname
 	if cc.server.isUnixSocket() {
@@ -709,7 +712,6 @@ func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
 		return
 	}
 	addr := cc.bufReadConn.RemoteAddr().String()
-	var port string
 	host, port, err = net.SplitHostPort(addr)
 	if err != nil {
 		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
@@ -892,35 +894,39 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		sqlType = stmtType
 	}
 
+	cost := time.Since(startTime)
+	sessionVar := cc.ctx.GetSessionVars()
+	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, cc.ctx.AffectedRows(), sessionVar.InTxn())
+
 	switch sqlType {
 	case "Use":
-		queryDurationHistogramUse.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramUse.Observe(cost.Seconds())
 	case "Show":
-		queryDurationHistogramShow.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramShow.Observe(cost.Seconds())
 	case "Begin":
-		queryDurationHistogramBegin.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramBegin.Observe(cost.Seconds())
 	case "Commit":
-		queryDurationHistogramCommit.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramCommit.Observe(cost.Seconds())
 	case "Rollback":
-		queryDurationHistogramRollback.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramRollback.Observe(cost.Seconds())
 	case "Insert":
-		queryDurationHistogramInsert.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramInsert.Observe(cost.Seconds())
 	case "Replace":
-		queryDurationHistogramReplace.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramReplace.Observe(cost.Seconds())
 	case "Delete":
-		queryDurationHistogramDelete.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramDelete.Observe(cost.Seconds())
 	case "Update":
-		queryDurationHistogramUpdate.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramUpdate.Observe(cost.Seconds())
 	case "Select":
-		queryDurationHistogramSelect.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramSelect.Observe(cost.Seconds())
 	case "Execute":
-		queryDurationHistogramExecute.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramExecute.Observe(cost.Seconds())
 	case "Set":
-		queryDurationHistogramSet.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramSet.Observe(cost.Seconds())
 	case metrics.LblGeneral:
-		queryDurationHistogramGeneral.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramGeneral.Observe(cost.Seconds())
 	default:
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(cost.Seconds())
 	}
 }
 
@@ -940,7 +946,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}
 
 	span := opentracing.StartSpan("server.dispatch")
-	ctx = opentracing.ContextWithSpan(ctx, span)
+	cfg := config.GetGlobalConfig()
+	if cfg.OpenTracing.Enable {
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
 
 	var cancelFunc context.CancelFunc
 	ctx, cancelFunc = context.WithCancel(ctx)
@@ -1097,7 +1106,18 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 }
 
 func (cc *clientConn) flush(ctx context.Context) error {
-	defer trace.StartRegion(ctx, "FlushClientConn").End()
+	defer func() {
+		trace.StartRegion(ctx, "FlushClientConn").End()
+		if cc.ctx != nil && cc.ctx.WarningCount() > 0 {
+			for _, err := range cc.ctx.GetWarnings() {
+				var warn *errors.Error
+				if ok := goerr.As(err.Err, &warn); ok {
+					code := uint16(warn.Code())
+					errno.IncrementWarning(code, cc.user, cc.peerHost)
+				}
+			}
+		}
+	}()
 	failpoint.Inject("FakeClientConn", func() {
 		if cc.pkt == nil {
 			failpoint.Return(nil)
@@ -1159,6 +1179,7 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 	}
 
 	cc.lastCode = m.Code
+	defer errno.IncrementError(m.Code, cc.user, cc.peerHost)
 	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))
 	data = append(data, mysql.ErrHeader)
 	data = append(data, byte(m.Code), byte(m.Code>>8))
@@ -1481,7 +1502,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
-			if cc.ctx.GetSessionVars().EnableTiFlashFallbackTiKV && errors.ErrorEqual(err, tikv.ErrTiFlashServerTimeout) && retryable {
+			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+			if allowTiFlashFallback && errors.ErrorEqual(err, tikvstore.ErrTiFlashServerTimeout) && retryable {
 				// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 				// server and fallback to TiKV.
 				warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
@@ -1600,7 +1622,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	return pointPlans, nil
 }
 
-// The first return value indicates whether the call of handleStmt has no side effect and can be retried to correct error.
+// The first return value indicates whether the call of handleStmt has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
@@ -1778,6 +1800,16 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	}
 
 	for {
+		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
+			switch value.(string) {
+			case "firstNext":
+				failpoint.Return(firstNext, tikvstore.ErrTiFlashServerTimeout)
+			case "secondNext":
+				if !firstNext {
+					failpoint.Return(firstNext, tikvstore.ErrTiFlashServerTimeout)
+				}
+			}
+		})
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
 		if err != nil {
@@ -1895,30 +1927,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		cl.OnFetchReturned()
 	}
 	return cc.writeEOF(serverStatus)
-}
-
-func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {
-	for i, rs := range rss {
-		lastRs := i == len(rss)-1
-		if r, ok := rs.(*tidbResultSet).recordSet.(sqlexec.MultiQueryNoDelayResult); ok {
-			status := r.Status()
-			if !lastRs {
-				status |= mysql.ServerMoreResultsExists
-			}
-			if err := cc.writeOkWith(ctx, r.LastMessage(), r.AffectedRows(), r.LastInsertID(), status, r.WarnCount()); err != nil {
-				return err
-			}
-			continue
-		}
-		status := uint16(0)
-		if !lastRs {
-			status |= mysql.ServerMoreResultsExists
-		}
-		if _, err := cc.writeResultset(ctx, rs, binary, status, 0); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (cc *clientConn) setConn(conn net.Conn) {

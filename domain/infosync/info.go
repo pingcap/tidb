@@ -82,9 +82,6 @@ const (
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
 var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusAddrIsNotSet)
 
-// errPlacementRulesDisabled is exported for internal usage, indicating PD rejected the request due to disabled placement feature.
-var errPlacementRulesDisabled = errors.New("placement rules feature is disabled")
-
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	etcdCli         *clientv3.Client
@@ -317,11 +314,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			url = fmt.Sprintf("%s://%s%s", util2.InternalHTTPSchema(), addr, route)
 		}
 
-		if ctx != nil {
-			req, err = http.NewRequestWithContext(ctx, method, url, body)
-		} else {
-			req, err = http.NewRequest(method, url, body)
-		}
+		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
 			return nil, err
 		}
