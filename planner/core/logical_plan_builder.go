@@ -300,32 +300,12 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	return plan4Agg, aggIndexMap, nil
 }
 
-func (b *PlanBuilder) buildTableRefsWithCache(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
-	return b.buildTableRefs(ctx, from, true)
-}
-
-func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause, useCache bool) (p LogicalPlan, err error) {
+func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
 	if from == nil {
 		p = b.buildTableDual()
 		return
 	}
-	if !useCache {
-		return b.buildResultSetNode(ctx, from.TableRefs)
-	}
-	var ok bool
-	p, ok = b.cachedResultSetNodes[from.TableRefs]
-	if ok {
-		m := b.cachedHandleHelperMap[from.TableRefs]
-		b.handleHelper.pushMap(m)
-		return
-	}
-	p, err = b.buildResultSetNode(ctx, from.TableRefs)
-	if err != nil {
-		return nil, err
-	}
-	b.cachedResultSetNodes[from.TableRefs] = p
-	b.cachedHandleHelperMap[from.TableRefs] = b.handleHelper.tailMap()
-	return
+	return b.buildResultSetNode(ctx, from.TableRefs)
 }
 
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode) (p LogicalPlan, err error) {
@@ -2261,17 +2241,13 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 // Finally it restore the original SELECT stmt.
 func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err error) {
 	// collect correlated aggregate from sub-queries inside FROM clause.
-	useCache, err := r.collectFromTableRefs(r.ctx, sel.From)
+	_, err = r.collectFromTableRefs(r.ctx, sel.From)
 	if err != nil {
 		return err
 	}
-	// do not use cache when for update read
-	if isForUpdateReadSelectLock(sel.LockInfo) {
-		useCache = false
-	}
 	// we cannot use cache if there are correlated aggregates inside FROM clause,
 	// since the plan we are building now is not correct and need to be rebuild later.
-	p, err := r.b.buildTableRefs(r.ctx, sel.From, useCache)
+	p, err := r.b.buildTableRefs(r.ctx, sel.From)
 	if err != nil {
 		return err
 	}
@@ -2546,12 +2522,6 @@ func tblInfoFromCol(from ast.ResultSetNode, name *types.FieldName) *model.TableI
 	tableList = extractTableList(from, tableList, true)
 	for _, field := range tableList {
 		if field.Name.L == name.TblName.L {
-			return field.TableInfo
-		}
-		if field.Name.L != name.TblName.L {
-			continue
-		}
-		if field.Schema.L == name.DBName.L {
 			return field.TableInfo
 		}
 	}
@@ -3339,7 +3309,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
 	// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
 	// existing ResultSetNode from the cache.
-	p, err = b.buildTableRefsWithCache(ctx, sel.From)
+	p, err = b.buildTableRefs(ctx, sel.From)
 	if err != nil {
 		return nil, err
 	}
@@ -3535,8 +3505,10 @@ func (b *PlanBuilder) buildTableDual() *LogicalTableDual {
 }
 
 func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.Flag = mysql.NotNullFlag | mysql.PriKeyFlag
 	return &expression.Column{
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  tp,
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
@@ -4178,8 +4150,7 @@ type TblColPosInfo struct {
 	// Start and End represent the ordinal range [Start, End) of the consecutive columns.
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
-	HandleCols     HandleCols
-	IsCommonHandle bool // TODO: fix redesign update join table and remove me!
+	HandleCols HandleCols
 }
 
 // TblColPosInfoSlice attaches the methods of sort.Interface to []TblColPosInfos sorting in increasing order.
@@ -4200,8 +4171,8 @@ func (c TblColPosInfoSlice) Less(i, j int) bool {
 	return c[i].Start < c[j].Start
 }
 
-// FindHandle finds the ordinal of the corresponding handle column.
-func (c TblColPosInfoSlice) FindHandle(colOrdinal int) (int, bool) {
+// FindTblIdx finds the ordinal of the corresponding access column.
+func (c TblColPosInfoSlice) FindTblIdx(colOrdinal int) (int, bool) {
 	if len(c) == 0 {
 		return 0, false
 	}
@@ -4211,11 +4182,7 @@ func (c TblColPosInfoSlice) FindHandle(colOrdinal int) (int, bool) {
 	if rangeBehindOrdinal == 0 {
 		return 0, false
 	}
-	if c[rangeBehindOrdinal-1].IsCommonHandle {
-		// TODO: fix redesign update join table to fix me.
-		return 0, false
-	}
-	return c[rangeBehindOrdinal-1].HandleCols.GetCol(0).Index, true
+	return rangeBehindOrdinal - 1, true
 }
 
 // buildColumns2Handle builds columns to handle mapping.
@@ -4240,8 +4207,7 @@ func buildColumns2Handle(
 				return nil, err
 			}
 			end := offset + tblLen
-			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol, tbl.Meta().IsCommonHandle})
-			// TODO: fix me for cluster index
+			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol})
 		}
 	}
 	sort.Sort(cols2Handles)
@@ -4365,24 +4331,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
-	if err == nil {
-		err = checkUpdateList(b.ctx, tblID2table, updt)
-	}
 	updt.PartitionedTable = b.partitionedTable
+	updt.tblID2Table = tblID2table
 	return updt, err
-}
-
-// GetUpdateColumns gets the columns of updated lists.
-func GetUpdateColumns(ctx sessionctx.Context, orderedList []*expression.Assignment, schemaLen int) ([]bool, error) {
-	assignFlag := make([]bool, schemaLen)
-	for _, v := range orderedList {
-		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ID == model.ExtraHandleID {
-			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
-		}
-		idx := v.Col.Index
-		assignFlag[idx] = true
-	}
-	return assignFlag, nil
 }
 
 type tblUpdateInfo struct {
@@ -4390,21 +4341,18 @@ type tblUpdateInfo struct {
 	pkUpdated bool
 }
 
-func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, updt *Update) error {
-	assignFlags, err := GetUpdateColumns(ctx, updt.OrderedList, updt.SelectPlan.Schema().Len())
-	if err != nil {
-		return err
-	}
+// CheckUpdateList checks all related columns in updatable state.
+func CheckUpdateList(assignFlags []int, updt *Update) error {
 	updateFromOtherAlias := make(map[int64]tblUpdateInfo)
 	for _, content := range updt.TblColPosInfos {
-		tbl := tblID2table[content.TblID]
+		tbl := updt.tblID2Table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
 		var update, updatePK bool
 		for i, col := range tbl.WritableCols() {
-			if flags[i] && col.State != model.StatePublic {
+			if flags[i] >= 0 && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 			}
-			if flags[i] {
+			if flags[i] >= 0 {
 				update = true
 				if mysql.HasPriKeyFlag(col.Flag) {
 					updatePK = true
@@ -5487,6 +5435,21 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			} else {
 				input = append(input, s)
 			}
+		} else if s, ok := x.Source.(*ast.SelectStmt); ok {
+			if s.From != nil {
+				var innerList []*ast.TableName
+				innerList = extractTableList(s.From.TableRefs, innerList, asName)
+				if len(innerList) > 0 {
+					innerTableName := innerList[0]
+					if x.AsName.L != "" && asName {
+						newTableName := *innerList[0]
+						newTableName.Name = x.AsName
+						newTableName.Schema = model.NewCIStr("")
+						innerTableName = &newTableName
+					}
+					input = append(input, innerTableName)
+				}
+			}
 		}
 	}
 	return input
@@ -5531,6 +5494,15 @@ func extractTableSourceAsNames(node ast.ResultSetNode, input []string, onlySelec
 		input = append(input, x.AsName.L)
 	}
 	return input
+}
+
+func appendDynamicVisitInfo(vi []visitInfo, priv string, withGrant bool, err error) []visitInfo {
+	return append(vi, visitInfo{
+		privilege:        mysql.ExtendedPriv,
+		dynamicPriv:      priv,
+		dynamicWithGrant: withGrant,
+		err:              err,
+	})
 }
 
 func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col string, err error) []visitInfo {
