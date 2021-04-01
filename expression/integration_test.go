@@ -4543,7 +4543,17 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	r.Check(testkit.Rows("0 0 0 0"))
 
 	_, err = tk.Exec("set session transaction read only;")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("start transaction read only;")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("set tidb_enable_noop_functions=1")
 	c.Assert(err, IsNil)
+
+	tk.MustExec("set session transaction read only;")
+	tk.MustExec("start transaction read only;")
+
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("1 0 1 0"))
 	_, err = tk.Exec("set global transaction read only;")
@@ -4557,6 +4567,9 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err, IsNil)
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("0 0 0 0"))
+
+	_, err = tk.Exec("set tidb_enable_noop_functions=0")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("set @@global.max_user_connections='';")
 	c.Assert(err, NotNil)

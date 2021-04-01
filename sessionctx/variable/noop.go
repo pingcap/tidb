@@ -15,6 +15,11 @@ package variable
 
 import (
 	"math"
+
+	pmysql "github.com/pingcap/parser/mysql"
+	mysql "github.com/pingcap/tidb/errno"
+
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // The following sysVars are noops.
@@ -22,7 +27,44 @@ import (
 // for example query_cache_time. These are included for MySQL compatibility,
 // but changing them has no effect on behavior.
 
+// ErrFunctionsNoopImpl is an error to say the behavior is protected by the tidb_enable_noop_functions sysvar.
+// This is copied from expression.ErrFunctionsNoopImpl to prevent circular dependencies.
+var ErrFunctionsNoopImpl = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
+
 var noopSysVars = []*SysVar{
+	// It is unsafe to pretend that any variation of "read only" is enabled when the server
+	// does not support it. It is possible that these features will be supported in future,
+	// but until then...
+	{Scope: ScopeGlobal | ScopeSession, Name: TxReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if TiDBOptOn(normalizedValue) && !vars.EnableNoopFuncs {
+			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+		}
+		return normalizedValue, nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TransactionReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if TiDBOptOn(normalizedValue) && !vars.EnableNoopFuncs {
+			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+		}
+		return normalizedValue, nil
+	}},
+	{Scope: ScopeGlobal, Name: OfflineMode, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if TiDBOptOn(normalizedValue) && !vars.EnableNoopFuncs {
+			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+		}
+		return normalizedValue, nil
+	}},
+	{Scope: ScopeGlobal, Name: SuperReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if TiDBOptOn(normalizedValue) && !vars.EnableNoopFuncs {
+			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+		}
+		return normalizedValue, nil
+	}},
+	{Scope: ScopeGlobal, Name: serverReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if TiDBOptOn(normalizedValue) && !vars.EnableNoopFuncs {
+			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+		}
+		return normalizedValue, nil
+	}},
 	{Scope: ScopeGlobal, Name: ConnectTimeout, Value: "10", Type: TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheWlockInvalidate, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "sql_buffer_result", Value: BoolOff, IsHintUpdatable: true},
@@ -83,7 +125,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_ft_sort_pll_degree", Value: "2"},
 	{Scope: ScopeNone, Name: "thread_stack", Value: "262144"},
 	{Scope: ScopeGlobal, Name: "relay_log_info_repository", Value: "FILE"},
-	{Scope: ScopeGlobal, Name: SuperReadOnly, Value: "0", Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_delayed_threads", Value: "20"},
 	{Scope: ScopeNone, Name: "protocol_version", Value: "10"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "new", Value: BoolOff},
@@ -124,7 +165,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_file_format_max", Value: "Antelope"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "debug", Value: ""},
 	{Scope: ScopeGlobal, Name: "log_warnings", Value: "1"},
-	{Scope: ScopeGlobal, Name: OfflineMode, Value: "0", Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbStrictMode, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "innodb_rollback_segments", Value: "128"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "join_buffer_size", Value: "262144", IsHintUpdatable: true},
@@ -287,7 +327,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: LogBinTrustFunctionCreators, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "innodb_write_io_threads", Value: "4"},
 	{Scope: ScopeGlobal, Name: "mysql_native_password_proxy_users", Value: ""},
-	{Scope: ScopeGlobal, Name: serverReadOnly, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "large_page_size", Value: "0"},
 	{Scope: ScopeNone, Name: "table_open_cache_instances", Value: "1"},
 	{Scope: ScopeGlobal, Name: InnodbStatsPersistent, Value: BoolOn, Type: TypeBool, AutoConvertNegativeBool: true},

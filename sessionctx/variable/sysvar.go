@@ -563,8 +563,6 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CharsetDatabase, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterValid(normalizedValue, CharsetDatabase)
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TxReadOnly, Value: "0"},
-	{Scope: ScopeGlobal | ScopeSession, Name: TransactionReadOnly, Value: "0"},
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576, AutoConvertOutOfRange: true},
 	{Scope: ScopeNone, Name: DataDir, Value: "/usr/local/mysql/data/"},
 	{Scope: ScopeGlobal | ScopeSession, Name: WaitTimeout, Value: strconv.FormatInt(DefWaitTimeout, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear, AutoConvertOutOfRange: true},
@@ -809,7 +807,29 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBLowResolutionTSO, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBExpensiveQueryTimeThreshold, Value: strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold), Type: TypeUnsigned, MinValue: int64(MinExpensiveQueryTimeThreshold), MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
 	{Scope: ScopeSession, Name: TiDBMemoryUsageAlarmRatio, Value: strconv.FormatFloat(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNoopFuncs, Value: BoolToOnOff(DefTiDBEnableNoopFuncs), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNoopFuncs, Value: BoolToOnOff(DefTiDBEnableNoopFuncs), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+
+		// The behavior is very weird if someone can turn TiDBEnableNoopFuncs OFF, but keep any of the following on:
+		// TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, serverReadOnly
+		// To prevent this strange position, prevent setting to OFF when any of these sysVars are ON of the same scope.
+
+		if normalizedValue == BoolOff {
+			for _, potentialIncompatibleSysVar := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, serverReadOnly} {
+				val, _ := vars.GetSystemVar(potentialIncompatibleSysVar) // session scope
+				if scope == ScopeGlobal {                                // global scope
+					var err error
+					val, err = vars.GlobalVarsAccessor.GetGlobalSysVar(potentialIncompatibleSysVar)
+					if err != nil {
+						return originalValue, fmt.Errorf("could not check value of incompatible sysvar: %s", potentialIncompatibleSysVar)
+					}
+				}
+				if TiDBOptOn(val) {
+					return originalValue, fmt.Errorf("%s = OFF is not supported when %s = ON", TiDBEnableNoopFuncs, potentialIncompatibleSysVar)
+				}
+			}
+		}
+		return normalizedValue, nil
+	}},
 	{Scope: ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower"}},
 	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToOnOff(DefTiDBAllowRemoveAutoInc), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(config.GetGlobalConfig().StmtSummary.Enable), Type: TypeBool, AllowEmpty: true},

@@ -214,21 +214,26 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 
-	tk.MustExec("SET SESSION tx_read_only = 1")
+	_, err = tk.Exec("SET SESSION tx_read_only = 1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+
 	tk.MustExec("SET SESSION tx_read_only = 0")
 	tk.MustQuery("select @@session.tx_read_only").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.transaction_read_only").Check(testkit.Rows("0"))
 
-	tk.MustExec("SET GLOBAL tx_read_only = 1")
+	_, err = tk.Exec("SET GLOBAL tx_read_only = 1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
 	tk.MustExec("SET GLOBAL tx_read_only = 0")
 	tk.MustQuery("select @@global.tx_read_only").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.transaction_read_only").Check(testkit.Rows("0"))
 
-	tk.MustExec("SET SESSION transaction_read_only = 1")
+	_, err = tk.Exec("SET SESSION transaction_read_only = 1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
 	tk.MustExec("SET SESSION transaction_read_only = 0")
 	tk.MustQuery("select @@session.tx_read_only").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.transaction_read_only").Check(testkit.Rows("0"))
 
+	tk.MustExec("SET tidb_enable_noop_functions = 1")
 	tk.MustExec("SET SESSION transaction_read_only = 1")
 	tk.MustQuery("select @@session.tx_read_only").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@session.transaction_read_only").Check(testkit.Rows("1"))
@@ -241,6 +246,18 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec("SET GLOBAL transaction_read_only = 1")
 	tk.MustQuery("select @@global.tx_read_only").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@global.transaction_read_only").Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("SET tidb_enable_noop_functions = 0") // fails because transaction_read_only/tx_read_only = 1
+	c.Assert(err, NotNil)
+
+	tk.MustExec("SET transaction_read_only = 0")
+	tk.MustExec("SET tidb_enable_noop_functions = 0") // now works.
+
+	// setting session doesn't change global, which also fails because transaction_read_only/tx_read_only = 1
+	_, err = tk.Exec("SET GLOBAL tidb_enable_noop_functions = 0")
+	c.Assert(err, NotNil)
+	tk.MustExec("SET GLOBAL transaction_read_only = 0")
+	tk.MustExec("SET GLOBAL tidb_enable_noop_functions = 0") // now works.
 
 	// Even the transaction fail, set session variable would success.
 	tk.MustExec("BEGIN")
@@ -349,12 +366,14 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("0"))
 	tk.MustExec("set global read_only = off")
 	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("0"))
+	tk.MustExec("SET tidb_enable_noop_functions = 1")
 	tk.MustExec("set global read_only = 1")
 	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
 	tk.MustExec("set global read_only = on")
 	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
 	_, err = tk.Exec("set global read_only = abc")
 	c.Assert(err, NotNil)
+	tk.MustExec("SET tidb_enable_noop_functions = 0")
 
 	// test for tidb_wait_split_region_finish
 	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("1"))
