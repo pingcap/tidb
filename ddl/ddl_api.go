@@ -3956,13 +3956,6 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if skipCheckIfNotModify && !modified {
 			return
 		}
-		err = checkIndexInModifiableColumns(columns, indexInfo.Columns)
-		if err != nil {
-			return
-		}
-<<<<<<< HEAD
-		err := checkIndexPrefixLength(columns, indexInfo.Columns)
-=======
 		err = checkIndexPrefixLength(columns, indexInfo.Columns, pkLenAppendToKey)
 		return
 	}
@@ -3990,7 +3983,6 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		}
 
 		_, err = checkOneIndex(indexInfo, pkLenAppendToKey, !tbInfo.IsCommonHandle || !pkModified)
->>>>>>> 91bcb21b5... ddl: fix secondary index len check for clustered index (#23710)
 		if err != nil {
 			return err
 		}
