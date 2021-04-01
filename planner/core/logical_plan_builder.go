@@ -5513,6 +5513,15 @@ func extractTableSourceAsNames(node ast.ResultSetNode, input []string, onlySelec
 	return input
 }
 
+func appendDynamicVisitInfo(vi []visitInfo, priv string, withGrant bool, err error) []visitInfo {
+	return append(vi, visitInfo{
+		privilege:        mysql.ExtendedPriv,
+		dynamicPriv:      priv,
+		dynamicWithGrant: withGrant,
+		err:              err,
+	})
+}
+
 func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col string, err error) []visitInfo {
 	return append(vi, visitInfo{
 		privilege: priv,
