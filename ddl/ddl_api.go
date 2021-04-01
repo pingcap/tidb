@@ -1523,8 +1523,14 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
 func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption, isSingleIntPK bool) bool {
 	if opt == nil || opt.PrimaryKeyTp == model.PrimaryKeyTypeDefault {
-		return ctx.GetSessionVars().EnableClusteredIndex ||
-			(isSingleIntPK && ctx.GetSessionVars().IntPrimaryKeyDefaultAsClustered)
+		switch ctx.GetSessionVars().EnableClusteredIndex {
+		case variable.ClusteredIndexDefModeOn:
+			return true
+		case variable.ClusteredIndexDefModeIntOnly:
+			return !config.GetGlobalConfig().AlterPrimaryKey && isSingleIntPK
+		default:
+			return false
+		}
 	}
 	return opt.PrimaryKeyTp == model.PrimaryKeyTypeClustered
 }
@@ -3556,11 +3562,10 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
 	canReorg, changeColumnErrMsg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
-		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
 		if !canReorg {
 			return errors.Trace(err)
 		}
-
+		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
 		if !enableChangeColumnType {
 			msg := fmt.Sprintf("%s, and tidb_enable_change_column_type is false", changeColumnErrMsg)
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
@@ -3568,6 +3573,10 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
+	}
+	if types.IsTypeVarchar(origin.Tp) != types.IsTypeVarchar(to.Tp) {
+		unsupportedMsg := "column type conversion between 'varchar' and 'non-varchar' is currently unsupported yet"
+		return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
@@ -3790,6 +3799,14 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// Adjust the flen for blob types after the default flen is set.
 	adjustBlobTypesFlen(newCol)
 
+	// Copy index related options to the new spec.
+	indexFlags := col.FieldType.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
+	newCol.FieldType.Flag |= indexFlags
+	if mysql.HasPriKeyFlag(col.FieldType.Flag) {
+		newCol.FieldType.Flag |= mysql.NotNullFlag
+		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
+	}
+
 	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3813,14 +3830,6 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		} else if t.Meta().Partition != nil {
 			return nil, errUnsupportedModifyColumn.GenWithStackByArgs("tidb_enable_change_column_type is true, table is partition table")
 		}
-	}
-
-	// Copy index related options to the new spec.
-	indexFlags := col.FieldType.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
-	newCol.FieldType.Flag |= indexFlags
-	if mysql.HasPriKeyFlag(col.FieldType.Flag) {
-		newCol.FieldType.Flag |= mysql.NotNullFlag
-		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
@@ -4310,6 +4319,7 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 		return errors.New("Extended statistics on partitioned tables are not supported now")
 	}
 	colIDs := make([]int64, 0, 2)
+	colIDSet := make(map[int64]struct{}, 2)
 	// Check whether columns exist.
 	for _, colName := range stats.Columns {
 		col := table.FindCol(tbl.VisibleCols(), colName.Name.L)
@@ -4320,6 +4330,10 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("No need to create correlation statistics on the integer primary key column"))
 			return nil
 		}
+		if _, exist := colIDSet[col.ID]; exist {
+			return errors.Errorf("Cannot create extended statistics on duplicate column names '%s'", colName.Name.L)
+		}
+		colIDSet[col.ID] = struct{}{}
 		colIDs = append(colIDs, col.ID)
 	}
 	if len(colIDs) != 2 && (stats.StatsType == ast.StatsTypeCorrelation || stats.StatsType == ast.StatsTypeDependency) {

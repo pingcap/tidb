@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package unionstore
 
 import (
 	"context"
@@ -24,8 +24,15 @@ import (
 
 	. "github.com/pingcap/check"
 	leveldb "github.com/pingcap/goleveldb/leveldb/memdb"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/util/testleak"
 )
+
+type Key = tidbkv.Key
+type KeyFlags = kv.KeyFlags
+type StagingHandle = tidbkv.StagingHandle
+type Iterator = tidbkv.Iterator
 
 func init() {
 	testMode = true
@@ -44,7 +51,7 @@ var (
 type testMemDBSuite struct{}
 
 // DeleteKey is used in test to verify the `deleteNode` used in `vlog.revertToCheckpoint`.
-func (db *memdb) DeleteKey(key []byte) {
+func (db *MemDB) DeleteKey(key []byte) {
 	x := db.traverse(key, false)
 	if x.isNull() {
 		return
@@ -150,7 +157,7 @@ func (s *testMemDBSuite) TestDiscard(c *C) {
 		c.Assert(err, NotNil)
 	}
 	it1, _ := db.Iter(nil, nil)
-	it := it1.(*memdbIterator)
+	it := it1.(*MemdbIterator)
 	it.seekToFirst()
 	c.Assert(it.Valid(), IsFalse)
 	it.seekToLast()
@@ -356,7 +363,7 @@ func (s *testMemDBSuite) TestEmptyDB(c *C) {
 	_, err := db.Get(context.TODO(), []byte{0})
 	c.Assert(err, NotNil)
 	it1, _ := db.Iter(nil, nil)
-	it := it1.(*memdbIterator)
+	it := it1.(*MemdbIterator)
 	it.seekToFirst()
 	c.Assert(it.Valid(), IsFalse)
 	it.seekToLast()
@@ -371,7 +378,7 @@ func (s *testMemDBSuite) TestReset(c *C) {
 	_, err := db.Get(context.TODO(), []byte{0, 0, 0, 0})
 	c.Assert(err, NotNil)
 	it1, _ := db.Iter(nil, nil)
-	it := it1.(*memdbIterator)
+	it := it1.(*MemdbIterator)
 	it.seekToFirst()
 	c.Assert(it.Valid(), IsFalse)
 	it.seekToLast()
@@ -451,14 +458,14 @@ func (s *testMemDBSuite) TestDirty(c *C) {
 	// persistent flags will make memdb dirty.
 	db = newMemDB()
 	h = db.Staging()
-	db.SetWithFlags([]byte{1}, []byte{1}, SetKeyLocked)
+	db.SetWithFlags([]byte{1}, []byte{1}, kv.SetKeyLocked)
 	db.Cleanup(h)
 	c.Assert(db.Dirty(), IsTrue)
 
 	// non-persistent flags will not make memdb dirty.
 	db = newMemDB()
 	h = db.Staging()
-	db.SetWithFlags([]byte{1}, []byte{1}, SetPresumeKeyNotExists)
+	db.SetWithFlags([]byte{1}, []byte{1}, kv.SetPresumeKeyNotExists)
 	db.Cleanup(h)
 	c.Assert(db.Dirty(), IsFalse)
 }
@@ -471,9 +478,9 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 		var buf [4]byte
 		binary.BigEndian.PutUint32(buf[:], i)
 		if i%2 == 0 {
-			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists, SetKeyLocked)
+			db.SetWithFlags(buf[:], buf[:], kv.SetPresumeKeyNotExists, kv.SetKeyLocked)
 		} else {
-			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists)
+			db.SetWithFlags(buf[:], buf[:], kv.SetPresumeKeyNotExists)
 		}
 	}
 	db.Cleanup(h)
@@ -497,7 +504,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 	c.Assert(db.Size(), Equals, 20000)
 
 	it1, _ := db.Iter(nil, nil)
-	it := it1.(*memdbIterator)
+	it := it1.(*MemdbIterator)
 	c.Assert(it.Valid(), IsFalse)
 
 	it.includeFlags = true
@@ -511,7 +518,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 	for i := uint32(0); i < cnt; i++ {
 		var buf [4]byte
 		binary.BigEndian.PutUint32(buf[:], i)
-		db.UpdateFlags(buf[:], DelKeyLocked)
+		db.UpdateFlags(buf[:], kv.DelKeyLocked)
 	}
 	for i := uint32(0); i < cnt; i++ {
 		var buf [4]byte
@@ -526,7 +533,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 	}
 }
 
-func (s *testMemDBSuite) checkConsist(c *C, p1 *memdb, p2 *leveldb.DB) {
+func (s *testMemDBSuite) checkConsist(c *C, p1 *MemDB, p2 *leveldb.DB) {
 	c.Assert(p1.Len(), Equals, p2.Len())
 	c.Assert(p1.Size(), Equals, p2.Size())
 
@@ -565,14 +572,14 @@ func (s *testMemDBSuite) checkConsist(c *C, p1 *memdb, p2 *leveldb.DB) {
 	}
 }
 
-func (s *testMemDBSuite) fillDB(cnt int) *memdb {
+func (s *testMemDBSuite) fillDB(cnt int) *MemDB {
 	db := newMemDB()
 	h := s.deriveAndFill(0, cnt, 0, db)
 	db.Release(h)
 	return db
 }
 
-func (s *testMemDBSuite) deriveAndFill(start, end, valueBase int, db *memdb) StagingHandle {
+func (s *testMemDBSuite) deriveAndFill(start, end, valueBase int, db *MemDB) StagingHandle {
 	h := db.Staging()
 	var kbuf, vbuf [4]byte
 	for i := start; i < end; i++ {
@@ -590,11 +597,11 @@ const (
 )
 
 type testKVSuite struct {
-	bs []MemBuffer
+	bs []*MemDB
 }
 
 func (s *testKVSuite) SetUpSuite(c *C) {
-	s.bs = make([]MemBuffer, 1)
+	s.bs = make([]*MemDB, 1)
 	s.bs[0] = newMemDB()
 }
 
@@ -602,7 +609,7 @@ func (s *testKVSuite) ResetMembuffers() {
 	s.bs[0] = newMemDB()
 }
 
-func insertData(c *C, buffer MemBuffer) {
+func insertData(c *C, buffer *MemDB) {
 	for i := startIndex; i < testCount; i++ {
 		val := encodeInt(i * indexStep)
 		err := buffer.Set(val, val)
@@ -625,7 +632,7 @@ func valToStr(c *C, iter Iterator) string {
 	return string(val)
 }
 
-func checkNewIterator(c *C, buffer MemBuffer) {
+func checkNewIterator(c *C, buffer *MemDB) {
 	for i := startIndex; i < testCount; i++ {
 		val := encodeInt(i * indexStep)
 		iter, err := buffer.Iter(val, nil)
@@ -670,7 +677,7 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 	iter.Close()
 }
 
-func mustGet(c *C, buffer MemBuffer) {
+func mustGet(c *C, buffer *MemDB) {
 	for i := startIndex; i < testCount; i++ {
 		s := encodeInt(i * indexStep)
 		val, err := buffer.Get(context.TODO(), s)
@@ -710,7 +717,7 @@ func (s *testKVSuite) TestIterNextUntil(c *C) {
 	iter, err := buffer.Iter(nil, nil)
 	c.Assert(err, IsNil)
 
-	err = NextUntil(iter, func(k Key) bool {
+	err = tidbkv.NextUntil(iter, func(k Key) bool {
 		return false
 	})
 	c.Assert(err, IsNil)
@@ -829,7 +836,7 @@ func (s *testKVSuite) TestBufferBatchGetter(c *C) {
 	buffer.Set(ka, []byte("a2"))
 	buffer.Delete(kb)
 
-	batchGetter := NewBufferBatchGetter(buffer, middle, snap)
+	batchGetter := tidbkv.NewBufferBatchGetter(buffer, middle, snap)
 	result, err := batchGetter.BatchGet(context.Background(), []Key{ka, kb, kc, kd})
 	c.Assert(err, IsNil)
 	c.Assert(len(result), Equals, 3)

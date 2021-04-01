@@ -146,7 +146,7 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 		builder.Request.Data, builder.err = ana.Marshal()
 		builder.Request.NotFillCache = true
 		builder.Request.IsolationLevel = tikvstore.RC
-		builder.Request.Priority = kv.PriorityLow
+		builder.Request.Priority = tikvstore.PriorityLow
 	}
 
 	return builder
@@ -210,13 +210,13 @@ func (builder *RequestBuilder) getIsolationLevel() tikvstore.IsoLevel {
 func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 	switch sv.StmtCtx.Priority {
 	case mysql.NoPriority, mysql.DelayedPriority:
-		return kv.PriorityNormal
+		return tikvstore.PriorityNormal
 	case mysql.LowPriority:
-		return kv.PriorityLow
+		return tikvstore.PriorityLow
 	case mysql.HighPriority:
-		return kv.PriorityHigh
+		return tikvstore.PriorityHigh
 	}
-	return kv.PriorityNormal
+	return tikvstore.PriorityNormal
 }
 
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
