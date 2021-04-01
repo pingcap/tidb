@@ -2842,19 +2842,19 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		}
 		n.NewTable = node.(*TableName)
 	}
-	for _, col := range n.NewColumns {
+	for i, col := range n.NewColumns {
 		node, ok := col.Accept(v)
 		if !ok {
 			return n, false
 		}
-		col = node.(*ColumnDef)
+		n.NewColumns[i] = node.(*ColumnDef)
 	}
-	for _, constraint := range n.NewConstraints {
+	for i, constraint := range n.NewConstraints {
 		node, ok := constraint.Accept(v)
 		if !ok {
 			return n, false
 		}
-		constraint = node.(*Constraint)
+		n.NewConstraints[i] = node.(*Constraint)
 	}
 	if n.OldColumnName != nil {
 		node, ok := n.OldColumnName.Accept(v)

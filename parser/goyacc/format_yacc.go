@@ -486,7 +486,6 @@ func (s *SpecialActionValTransformer) restore(src string) string {
 
 type OutputFormatter struct {
 	file      *os.File
-	readBytes []byte
 	out       *bufio.Writer
 	formatter strutil.Formatter
 }

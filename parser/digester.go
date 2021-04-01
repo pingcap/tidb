@@ -175,10 +175,13 @@ func (d *sqlDigester) normalize(sql string) {
 			}
 		}
 	APPEND:
-		d.tokens = append(d.tokens, currTok)
+		d.tokens.pushBack(currTok)
 	}
 	d.lexer.reset("")
 	for i, token := range d.tokens {
+		if i > 0 {
+			d.buffer.WriteRune(' ')
+		}
 		if token.tok == singleAtIdentifier {
 			d.buffer.WriteString("@")
 			d.buffer.WriteString(token.lit)
@@ -191,11 +194,8 @@ func (d *sqlDigester) normalize(sql string) {
 		} else {
 			d.buffer.WriteString(token.lit)
 		}
-		if i != len(d.tokens)-1 {
-			d.buffer.WriteRune(' ')
-		}
 	}
-	d.tokens = d.tokens[:0]
+	d.tokens.reset()
 }
 
 func (d *sqlDigester) reduceOptimizerHint(tok *token) (reduced bool) {
@@ -271,7 +271,6 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 	// 2 => ?
 	currTok.tok = genericSymbol
 	currTok.lit = "?"
-	return
 }
 
 func (d *sqlDigester) isPrefixByUnary(currTok int) (isUnary bool) {
@@ -388,6 +387,10 @@ type token struct {
 }
 
 type tokenDeque []token
+
+func (s *tokenDeque) reset() {
+	*s = (*s)[:0]
+}
 
 func (s *tokenDeque) pushBack(t token) {
 	*s = append(*s, t)

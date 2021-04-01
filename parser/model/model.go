@@ -726,10 +726,10 @@ type PartitionType int
 // Partition types.
 const (
 	PartitionTypeRange      PartitionType = 1
-	PartitionTypeHash                     = 2
-	PartitionTypeList                     = 3
-	PartitionTypeKey                      = 4
-	PartitionTypeSystemTime               = 5
+	PartitionTypeHash       PartitionType = 2
+	PartitionTypeList       PartitionType = 3
+	PartitionTypeKey        PartitionType = 4
+	PartitionTypeSystemTime PartitionType = 5
 )
 
 func (p PartitionType) String() string {

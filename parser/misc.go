@@ -73,7 +73,6 @@ func initTokenFunc(str string, fn func(s *Scanner) (int, Pos, string)) {
 		}
 		ruleTable.childs[c].fn = fn
 	}
-	return
 }
 
 func init() {
