@@ -8937,3 +8937,29 @@ func (s *testIntegrationSuite) TestIssue23623(c *C) {
 	tk.MustExec("insert into t1 values(-2147483648), (-2147483648), (null);")
 	tk.MustQuery("select count(*) from t1 where c1 > (select sum(c1) from t1);").Check(testkit.Rows("2"))
 }
+<<<<<<< HEAD
+=======
+
+func (s *testIntegrationSuite) TestApproximatePercentile(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bit(10))")
+	tk.MustExec("insert into t values(b'1111')")
+	tk.MustQuery("select approx_percentile(a, 10) from t").Check(testkit.Rows("<nil>"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollationPrefixClusteredIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk.MustExec("create table t (k char(20), v int, primary key (k(4)) clustered, key (k)) collate utf8mb4_general_ci;")
+	tk.MustExec("insert into t values('01233', 1);")
+	tk.MustExec("create index idx on t(k(2))")
+	tk.MustQuery("select * from t use index(k_2);").Check(testkit.Rows("01233 1"))
+	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows("01233 1"))
+	tk.MustExec("admin check table t;")
+}
+>>>>>>> 9dfc786c4... *: fix a bug that wrong index data on prefixed clustered index  (#23742)
