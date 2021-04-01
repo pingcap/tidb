@@ -5484,7 +5484,7 @@ func (s *testSuiteP2) TestIssue23567(c *C) {
 	oriProbability := statistics.FeedbackProbability.Load()
 	statistics.FeedbackProbability.Store(1.0)
 	defer func() { statistics.FeedbackProbability.Store(oriProbability) }()
-	failpoint.Enable("github.com/pingcap/tidb/executor/feedbackNoNDVCollect", `return("")`)
+	failpoint.Enable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect", `return("")`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned, b int, primary key(a))")
