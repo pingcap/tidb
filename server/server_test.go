@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"go.uber.org/zap"
@@ -113,7 +112,7 @@ func (cli *testServerClient) getDSN(overriders ...configOverrider) string {
 	config.Net = "tcp"
 	config.Addr = fmt.Sprintf("127.0.0.1:%d", cli.port)
 	config.DBName = "test"
-	config.Params = map[string]string{variable.TiDBIntPrimaryKeyDefaultAsClustered: "true"}
+	config.Params = make(map[string]string)
 	for _, overrider := range overriders {
 		if overrider != nil {
 			overrider(config)
@@ -584,6 +583,63 @@ func (cli *testServerClient) runTestLoadDataAutoRandom(c *C) {
 		rows := dbt.mustQuery("select count(*) from t")
 		cli.checkRows(c, rows, "50000")
 		rows = dbt.mustQuery("select bit_xor(c2), bit_xor(c3) from t")
+		res := strconv.Itoa(cksum1)
+		res = res + " "
+		res = res + strconv.Itoa(cksum2)
+		cli.checkRows(c, rows, res)
+	})
+}
+
+func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(c *C) {
+	path := "/tmp/load_data_txn_error_term.csv"
+
+	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	defer func() {
+		_ = os.Remove(path)
+	}()
+
+	cksum1 := 0
+	cksum2 := 0
+	for i := 0; i < 50000; i++ {
+		n1 := rand.Intn(1000)
+		n2 := rand.Intn(1000)
+		str1 := strconv.Itoa(n1)
+		str2 := strconv.Itoa(n2)
+		row := "'" + str1 + "','" + str2 + "'"
+		_, err := fp.WriteString(row)
+		c.Assert(err, IsNil)
+		if i != 49999 {
+			_, err = fp.WriteString("|")
+		}
+		c.Assert(err, IsNil)
+
+		if i == 0 {
+			cksum1 = n1
+			cksum2 = n2
+		} else {
+			cksum1 = cksum1 ^ n1
+			cksum2 = cksum2 ^ n2
+		}
+	}
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "load_data_batch_dml", func(dbt *DBTest) {
+		// Set batch size, and check if load data got a invalid txn error.
+		dbt.mustExec("set @@session.tidb_dml_batch_size = 128")
+		dbt.mustExec("drop table if exists t1")
+		dbt.mustExec("create table t1(c1 bigint auto_random primary key, c2 bigint, c3 bigint)")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t1 fields terminated by ',' enclosed by '\\'' lines terminated by '|' (c2, c3)", path))
+		rows := dbt.mustQuery("select count(*) from t1")
+		cli.checkRows(c, rows, "50000")
+		rows = dbt.mustQuery("select bit_xor(c2), bit_xor(c3) from t1")
 		res := strconv.Itoa(cksum1)
 		res = res + " "
 		res = res + strconv.Itoa(cksum2)

@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -835,15 +834,14 @@ type indexJoinBuildHelper struct {
 	join      *LogicalJoin
 	innerPlan *DataSource
 
-	chosenIndexInfo *model.IndexInfo
-	usedColsLen     int
-	usedColsNDV     float64
-	chosenAccess    []expression.Expression
-	chosenRemained  []expression.Expression
-	idxOff2KeyOff   []int
-	lastColManager  *ColWithCmpFuncManager
-	chosenRanges    []*ranger.Range
-	chosenPath      *util.AccessPath
+	usedColsLen    int
+	usedColsNDV    float64
+	chosenAccess   []expression.Expression
+	chosenRemained []expression.Expression
+	idxOff2KeyOff  []int
+	lastColManager *ColWithCmpFuncManager
+	chosenRanges   []*ranger.Range
+	chosenPath     *util.AccessPath
 
 	curPossibleUsedKeys []*expression.Column
 	curNotUsedIndexCols []*expression.Column
@@ -1667,7 +1665,8 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		return nil, false
 	}
 	joins := make([]PhysicalPlan, 0, 8)
-	if p.ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() {
+	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
+	if p.ctx.GetSessionVars().AllowMPPExecution && canPushToTiFlash {
 		if p.shouldUseMPPBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			if (p.preferJoinType & preferBCJoin) > 0 {
@@ -1678,7 +1677,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 			mppJoins := p.tryToGetMppHashJoin(prop, false)
 			joins = append(joins, mppJoins...)
 		}
-	} else if p.ctx.GetSessionVars().AllowBCJ {
+	} else if p.ctx.GetSessionVars().AllowBCJ && canPushToTiFlash {
 		broadCastJoins := p.tryToGetBroadCastJoin(prop)
 		if (p.preferJoinType & preferBCJoin) > 0 {
 			return broadCastJoins, true
@@ -1818,6 +1817,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		Concurrency:      uint(p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor),
 		EqualConditions:  p.EqualConditions,
 		storeTp:          kv.TiFlash,
+		mppShuffleJoin:   !useBCJ,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenProps...)
 	return []PhysicalPlan{join}
 }
@@ -1956,13 +1956,9 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	return []PhysicalPlan{proj}, true
 }
 
-func (lt *LogicalTopN) canPushToCop() bool {
-	return lt.canChildPushDown()
-}
-
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
 	if lt.limitHints.preferLimitToCop {
-		if !lt.canPushToCop() {
+		if !lt.canPushToCop(kv.TiKV) {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -1993,7 +1989,7 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 	}
 
 	if lt.limitHints.preferLimitToCop {
-		if !lt.canPushToCop() {
+		if !lt.canPushToCop(kv.TiKV) {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -2115,25 +2111,36 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
-func (p *baseLogicalPlan) canChildPushDown() bool {
-	// At present for TiKV, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
-	// When we push task to coprocessor, convertToRootTask will close the cop task and create a root task in the current implementation.
-	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
-	// But for TiFlash, Projection, Join and DataSource can also be pushed down in most cases. Other operators will be
-	// supported in the future, such as Aggregation, Limit, TopN.
-	switch p.children[0].(type) {
-	case *DataSource:
-		return true
-	case *LogicalJoin, *LogicalProjection:
-		// TiFlash supports pushing down more operators
-		return p.SCtx().GetSessionVars().AllowBCJ || (p.SCtx().GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled())
-	default:
-		return false
+
+// canPushToCop checks if it can be pushed to some stores. For TiKV, it only checks datasource.
+// For TiFlash, it will check whether the operator is supported, but note that the check might be inaccrute.
+func (p *baseLogicalPlan) canPushToCop(storeTp kv.StoreType) bool {
+	ret := true
+	for _, ch := range p.children {
+		switch c := ch.(type) {
+		case *DataSource:
+			validDs := false
+			for _, path := range c.possibleAccessPaths {
+				if path.StoreType == storeTp {
+					validDs = true
+				}
+			}
+			ret = ret && validDs
+		case *LogicalAggregation, *LogicalProjection, *LogicalSelection, *LogicalJoin:
+			if storeTp == kv.TiFlash {
+				ret = ret && c.canPushToCop(storeTp)
+			} else {
+				return false
+			}
+		default:
+			return false
+		}
 	}
+	return ret
 }
 
-func (la *LogicalAggregation) canPushToCop() bool {
-	return la.canChildPushDown() && !la.noCopPushDown
+func (la *LogicalAggregation) canPushToCop(storeTp kv.StoreType) bool {
+	return la.baseLogicalPlan.canPushToCop(storeTp) && !la.noCopPushDown
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -2155,7 +2162,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	if la.HasDistinct() {
 		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-		if !la.canPushToCop() || !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+		if !la.canPushToCop(kv.TiKV) || !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
@@ -2235,7 +2242,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		} else if !la.aggHints.preferAggToCop {
 			taskTypes = append(taskTypes, property.RootTaskType)
 		}
-		if !la.canPushToCop() {
+		if !la.canPushToCop(kv.TiKV) {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 		for _, taskTp := range taskTypes {
@@ -2299,7 +2306,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		}
 		// TODO: permute various partition columns from group-by columns
 		// 1-phase agg
-		// If there are no available parititon cols, but still have group by items, that means group by items are all expressions or constants.
+		// If there are no available partition cols, but still have group by items, that means group by items are all expressions or constants.
 		// To avoid mess, we don't do any one-phase aggregation in this case.
 		if len(partitionCols) != 0 {
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
@@ -2314,11 +2321,12 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
+		agg.MppPartitionCols = partitionCols
 		hashAggs = append(hashAggs, agg)
 
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
-			childProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64}
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = MppTiDB
@@ -2339,9 +2347,6 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if !prop.IsEmpty() {
 		return nil
 	}
-	if prop.IsFlashProp() && !la.canPushToCop() {
-		return nil
-	}
 	if prop.TaskTp == property.MppTaskType && !la.checkCanPushDownToMPP() {
 		return nil
 	}
@@ -2350,23 +2355,27 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if la.ctx.GetSessionVars().AllowBCJ {
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
-	canPushDownToMPP := la.ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() && la.checkCanPushDownToMPP()
-	if canPushDownToMPP {
-		taskTypes = append(taskTypes, property.MppTaskType)
-	}
+	canPushDownToTiFlash := la.canPushToCop(kv.TiFlash)
+	canPushDownToMPP := la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP() && canPushDownToTiFlash
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
-		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown && !canPushDownToMPP {
+		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
+	if !la.canPushToCop(kv.TiKV) {
+		taskTypes = []property.TaskType{property.RootTaskType}
+		if canPushDownToTiFlash {
+			taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
+		}
+	}
+	if canPushDownToMPP {
+		taskTypes = append(taskTypes, property.MppTaskType)
+	}
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
-	}
-	if !la.canPushToCop() {
-		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	for _, taskTp := range taskTypes {
 		if taskTp == property.MppTaskType {
@@ -2400,7 +2409,7 @@ func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferSt
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if la.aggHints.preferAggToCop {
-		if !la.canPushToCop() {
+		if !la.canPushToCop(kv.TiKV) {
 			errMsg := "Optimizer Hint AGG_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -2439,17 +2448,13 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	return []PhysicalPlan{sel}, true
 }
 
-func (p *LogicalLimit) canPushToCop() bool {
-	return p.canChildPushDown()
-}
-
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if !prop.IsEmpty() {
 		return nil, true
 	}
 
 	if p.limitHints.preferLimitToCop {
-		if !p.canPushToCop() {
+		if !p.canPushToCop(kv.TiKV) {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)

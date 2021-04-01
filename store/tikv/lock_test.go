@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
@@ -155,7 +156,7 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 	s.putAlphabets(c)
 	s.prepareAlphabetLocks(c)
 
-	var keys []kv.Key
+	var keys []tidbkv.Key
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		keys = append(keys, []byte{ch})
 	}
@@ -210,7 +211,7 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
+	txn.Set(tidbkv.Key("key"), []byte("value"))
 	s.prewriteTxnWithTTL(c, txn, 1000)
 
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
@@ -250,7 +251,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
+	txn.Set(tidbkv.Key("key"), []byte("value"))
 	s.prewriteTxn(c, txn)
 
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
@@ -276,8 +277,8 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
-	txn.Set(kv.Key("second"), []byte("xxx"))
+	txn.Set(tidbkv.Key("key"), []byte("value"))
+	txn.Set(tidbkv.Key("second"), []byte("xxx"))
 	s.prewriteTxnWithTTL(c, txn, 1000)
 
 	o := s.store.GetOracle()
@@ -327,8 +328,8 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
-	txn.Set(kv.Key("second"), []byte("xxx"))
+	txn.Set(tidbkv.Key("key"), []byte("value"))
+	txn.Set(tidbkv.Key("second"), []byte("xxx"))
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	// Increase lock TTL to make CI more stable.
@@ -410,7 +411,7 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	})
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+	resp, err := s.store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	keyErr := resp.Resp.(*kvrpcpb.GetResponse).GetError()
@@ -434,7 +435,7 @@ func (s *testLockSuite) ttlEquals(c *C, x, y uint64) {
 func (s *testLockSuite) TestLockTTL(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
+	txn.Set(tidbkv.Key("key"), []byte("value"))
 	time.Sleep(time.Millisecond)
 	s.prewriteTxnWithTTL(c, txn, 3100)
 	l := s.mustGetLock(c, []byte("key"))
@@ -444,10 +445,10 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	txn, err = s.store.Begin()
 	start := time.Now()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
+	txn.Set(tidbkv.Key("key"), []byte("value"))
 	for i := 0; i < 2048; i++ {
 		k, v := randKV(1024, 1024)
-		txn.Set(kv.Key(k), []byte(v))
+		txn.Set(tidbkv.Key(k), []byte(v))
 	}
 	s.prewriteTxn(c, txn)
 	l = s.mustGetLock(c, []byte("key"))
@@ -458,7 +459,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond * 50)
-	txn.Set(kv.Key("key"), []byte("value"))
+	txn.Set(tidbkv.Key("key"), []byte("value"))
 	s.prewriteTxn(c, txn)
 	l = s.mustGetLock(c, []byte("key"))
 	s.ttlEquals(c, l.TTL, defaultLockTTL+uint64(time.Since(start)/time.Millisecond))
@@ -468,15 +469,15 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	// The first transaction is a normal transaction with a long TTL
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("k1"), []byte("v1"))
-	txn.Set(kv.Key("k2"), []byte("v2"))
+	txn.Set(tidbkv.Key("k1"), []byte("v1"))
+	txn.Set(tidbkv.Key("k2"), []byte("v2"))
 	s.prewriteTxnWithTTL(c, txn, 20000)
 
 	// The second transaction is an async commit transaction
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("k3"), []byte("v3"))
-	txn.Set(kv.Key("k4"), []byte("v4"))
+	txn.Set(tidbkv.Key("k3"), []byte("v3"))
+	txn.Set(tidbkv.Key("k4"), []byte("v4"))
 	tikvTxn := txn
 	committer, err := newTwoPhaseCommitterWithInit(tikvTxn, 0)
 	c.Assert(err, IsNil)
@@ -509,15 +510,15 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	// transaction 1 is rolled back
-	_, err = txn.Get(context.Background(), kv.Key("k1"))
-	c.Assert(err, Equals, kv.ErrNotExist)
-	_, err = txn.Get(context.Background(), kv.Key("k2"))
-	c.Assert(err, Equals, kv.ErrNotExist)
+	_, err = txn.Get(context.Background(), tidbkv.Key("k1"))
+	c.Assert(err, Equals, tidbkv.ErrNotExist)
+	_, err = txn.Get(context.Background(), tidbkv.Key("k2"))
+	c.Assert(err, Equals, tidbkv.ErrNotExist)
 	// transaction 2 is committed
-	v, err := txn.Get(context.Background(), kv.Key("k3"))
+	v, err := txn.Get(context.Background(), tidbkv.Key("k3"))
 	c.Assert(err, IsNil)
 	c.Assert(bytes.Equal(v, []byte("v3")), IsTrue)
-	v, err = txn.Get(context.Background(), kv.Key("k4"))
+	v, err = txn.Get(context.Background(), tidbkv.Key("k4"))
 	c.Assert(err, IsNil)
 	c.Assert(bytes.Equal(v, []byte("v4")), IsTrue)
 }
@@ -535,7 +536,7 @@ func init() {
 func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
+	txn.Set(tidbkv.Key("key"), []byte("value"))
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 
 	mockValue := fmt.Sprintf(`return(%d)`, txn.StartTS())
@@ -670,4 +671,20 @@ func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
 	errMsgMustContain(c, err, "key not exist")
 	_, err = t3.Get(context.Background(), []byte("fb2"))
 	errMsgMustContain(c, err, "key not exist")
+}
+
+func errMsgMustContain(c *C, err error, msg string) {
+	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
+}
+
+func randKV(keyLen, valLen int) (string, string) {
+	const letters = "abc"
+	k, v := make([]byte, keyLen), make([]byte, valLen)
+	for i := range k {
+		k[i] = letters[rand.Intn(len(letters))]
+	}
+	for i := range v {
+		v[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(k), string(v)
 }

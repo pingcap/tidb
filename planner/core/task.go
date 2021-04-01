@@ -16,6 +16,7 @@ package core
 import (
 	"math"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -557,11 +559,176 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	return task
 }
 
+// for different decimal scale and precision, tiflash uses different underlying type.
+// Here we check the scale and precision to decide whether conversion is a must.
+func needDecimalConvert(tp *types.FieldType, rtp *types.FieldType) bool {
+	if tp.Decimal != rtp.Decimal {
+		return true
+	}
+	if tp.Flen >= 0 && tp.Flen <= 9 && rtp.Flen >= 0 && rtp.Flen <= 9 {
+		return false
+	}
+	if tp.Flen > 9 && tp.Flen <= 18 && rtp.Flen > 9 && rtp.Flen <= 18 {
+		return false
+	}
+	if tp.Flen > 18 && tp.Flen <= 38 && rtp.Flen > 18 && rtp.Flen <= 38 {
+		return false
+	}
+	if tp.Flen > 38 && tp.Flen <= 65 && rtp.Flen > 38 && rtp.Flen <= 65 {
+		return false
+	}
+	return true
+}
+
+func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool, bool) {
+	lExtend := 0
+	rExtend := 0
+	cDec := rType.Decimal
+	if lType.Decimal < rType.Decimal {
+		lExtend = rType.Decimal - lType.Decimal
+	} else if lType.Decimal > rType.Decimal {
+		rExtend = lType.Decimal - rType.Decimal
+		cDec = lType.Decimal
+	}
+	lLen, rLen := lType.Flen+lExtend, rType.Flen+rExtend
+	cLen := mathutil.Max(lLen, rLen)
+	cLen = mathutil.Min(65, cLen)
+	cType := types.NewFieldType(mysql.TypeNewDecimal)
+	cType.Decimal = cDec
+	cType.Flen = cLen
+	return cType, needDecimalConvert(lType, cType), needDecimalConvert(rType, cType)
+}
+
+func getProj(ctx sessionctx.Context, p PhysicalPlan) *PhysicalProjection {
+	proj := PhysicalProjection{
+		Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
+	}.Init(ctx, p.statsInfo(), p.SelectBlockOffset())
+	for _, col := range p.Schema().Columns {
+		proj.Exprs = append(proj.Exprs, col)
+	}
+	proj.SetSchema(p.Schema().Clone())
+	proj.SetChildren(p)
+	return proj
+}
+
+func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.Column {
+	p.Exprs = append(p.Exprs, expr)
+
+	col := &expression.Column{
+		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  expr.GetType(),
+	}
+	col.SetCoercibility(expr.Coercibility())
+	p.schema.Append(col)
+	return col
+}
+
+// If the join key's type are decimal and needs conversion, we will add a projection below the join or exchanger if exists.
+func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppTask, *mppTask) {
+	lp := lTask.p
+	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
+		lp = lp.Children()[0].Children()[0]
+	}
+	rp := rTask.p
+	if _, ok := rp.(*PhysicalExchangeReceiver); ok {
+		rp = rp.Children()[0].Children()[0]
+	}
+	// to mark if any equal cond needs to convert
+	lMask := make([]bool, len(p.EqualConditions))
+	rMask := make([]bool, len(p.EqualConditions))
+	cTypes := make([]*types.FieldType, len(p.EqualConditions))
+	lChanged := false
+	rChanged := false
+	for i, eqFunc := range p.EqualConditions {
+		lKey := eqFunc.GetArgs()[0].(*expression.Column)
+		rKey := eqFunc.GetArgs()[1].(*expression.Column)
+		if lKey.RetType.Tp == mysql.TypeNewDecimal && rKey.RetType.Tp == mysql.TypeNewDecimal {
+			cType, lConvert, rConvert := negotiateCommonType(lKey.RetType, rKey.RetType)
+			if lConvert {
+				lMask[i] = true
+				cTypes[i] = cType
+				lChanged = true
+			}
+			if rConvert {
+				rMask[i] = true
+				cTypes[i] = cType
+				rChanged = true
+			}
+		}
+	}
+	if !lChanged && !rChanged {
+		return lTask, rTask
+	}
+	var lProj, rProj *PhysicalProjection
+	if lChanged {
+		lProj = getProj(p.ctx, lp)
+		lp = lProj
+	}
+	if rChanged {
+		rProj = getProj(p.ctx, rp)
+		rp = rProj
+	}
+	newEqCondition := make([]*expression.ScalarFunction, 0, len(p.EqualConditions))
+	newEqCondition = append(newEqCondition, p.EqualConditions...)
+	p.EqualConditions = newEqCondition
+	lKeys := make([]*expression.Column, 0, len(p.EqualConditions))
+	rKeys := make([]*expression.Column, 0, len(p.EqualConditions))
+	for i, eqFunc := range p.EqualConditions {
+		lKey := eqFunc.GetArgs()[0].(*expression.Column)
+		rKey := eqFunc.GetArgs()[1].(*expression.Column)
+		if lMask[i] {
+			cType := cTypes[i].Clone()
+			cType.Flag = lKey.RetType.Flag
+			lCast := expression.BuildCastFunction(p.ctx, lKey, cType)
+			lKey = appendExpr(lProj, lCast)
+		}
+		if rMask[i] {
+			cType := cTypes[i].Clone()
+			cType.Flag = rKey.RetType.Flag
+			rCast := expression.BuildCastFunction(p.ctx, rKey, cType)
+			rKey = appendExpr(rProj, rCast)
+		}
+		if lMask[i] || rMask[i] {
+			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+			p.EqualConditions[i] = eqCond.(*expression.ScalarFunction)
+		}
+		lKeys = append(lKeys, lKey)
+		rKeys = append(rKeys, rKey)
+	}
+	// if left or right child changes, we need to add enforcer.
+	if lChanged {
+		nlTask := lTask.copy().(*mppTask)
+		nlTask.p = lProj
+		nlTask = nlTask.enforceExchangerImpl(&property.PhysicalProperty{
+			TaskTp:        property.MppTaskType,
+			PartitionTp:   property.HashType,
+			PartitionCols: lKeys,
+		})
+		nlTask.cst = lTask.cst
+		lTask = nlTask
+	}
+	if rChanged {
+		nrTask := rTask.copy().(*mppTask)
+		nrTask.p = rProj
+		nrTask = nrTask.enforceExchangerImpl(&property.PhysicalProperty{
+			TaskTp:        property.MppTaskType,
+			PartitionTp:   property.HashType,
+			PartitionCols: rKeys,
+		})
+		nrTask.cst = rTask.cst
+		rTask = nrTask
+	}
+	return lTask, rTask
+}
+
 func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 	lTask, lok := tasks[0].(*mppTask)
 	rTask, rok := tasks[1].(*mppTask)
 	if !lok || !rok {
 		return invalidTask
+	}
+	if p.mppShuffleJoin {
+		lTask, rTask = p.convertDecimalKeyIfNeed(lTask, rTask)
 	}
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
@@ -569,16 +736,11 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 	rCost := rTask.cost()
 
 	outerTask := tasks[1-p.InnerChildIdx].(*mppTask)
-	receivers := make([]*PhysicalExchangeReceiver, 0)
-	receivers = append(receivers, lTask.receivers...)
-	receivers = append(receivers, rTask.receivers...)
 	task := &mppTask{
-		cst:       lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
-		p:         p,
-		partTp:    outerTask.partTp,
-		hashCols:  outerTask.hashCols,
-		ts:        outerTask.ts,
-		receivers: receivers,
+		cst:      lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
+		p:        p,
+		partTp:   outerTask.partTp,
+		hashCols: outerTask.hashCols,
 	}
 	return task
 }
@@ -1005,7 +1167,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 	topN := PhysicalTopN{
 		ByItems: newByItems,
 		Count:   newCount,
-	}.Init(p.ctx, stats, p.blockOffset)
+	}.Init(p.ctx, stats, p.blockOffset, p.GetChildReqProps(0))
 	topN.SetChildren(childPlan)
 	return topN
 }
@@ -1275,14 +1437,15 @@ func BuildFinalModeAggregation(
 				partialCursor++
 			}
 			if aggFunc.Name == ast.AggFuncAvg {
-				cntAgg := *aggFunc
+				cntAgg := aggFunc.Clone()
 				cntAgg.Name = ast.AggFuncCount
 				cntAgg.RetTp = partial.Schema.Columns[partialCursor-2].GetType()
 				cntAgg.RetTp.Flag = aggFunc.RetTp.Flag
-				sumAgg := *aggFunc
+				// we must call deep clone in this case, to avoid sharing the arguments.
+				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
 				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
-				partial.AggFuncs = append(partial.AggFuncs, &cntAgg, &sumAgg)
+				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
 				approxCountDistinctAgg := *aggFunc
 				approxCountDistinctAgg.Name = ast.AggFuncApproxCountDistinct
@@ -1320,9 +1483,9 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	for i, aggFunc := range p.AggFuncs {
 		if aggFunc.Name == ast.AggFuncAvg {
 			// inset a count(column)
-			avgCount := *aggFunc
+			avgCount := aggFunc.Clone()
 			avgCount.Name = ast.AggFuncCount
-			newAggFuncs = append(newAggFuncs, &avgCount)
+			newAggFuncs = append(newAggFuncs, avgCount)
 			avgCount.RetTp = ft
 			avgCountCol := &expression.Column{
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
@@ -1330,9 +1493,9 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			}
 			newSchema.Append(avgCountCol)
 			// insert a sum(column)
-			avgSum := *aggFunc
+			avgSum := aggFunc.Clone()
 			avgSum.Name = ast.AggFuncSum
-			newAggFuncs = append(newAggFuncs, &avgSum)
+			newAggFuncs = append(newAggFuncs, avgSum)
 			newSchema.Append(p.schema.Columns[i])
 			avgSumCol := p.schema.Columns[i]
 			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
@@ -1597,17 +1760,23 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			return invalidTask
 		}
 		attachPlan2Task(partialAgg, mpp)
-		items := finalAgg.(*PhysicalHashAgg).GroupByItems
-		partitionCols := make([]*expression.Column, 0, len(items))
-		for _, expr := range items {
-			col, ok := expr.(*expression.Column)
-			if !ok {
-				return invalidTask
+		partitionCols := p.MppPartitionCols
+		if len(partitionCols) == 0 {
+			items := finalAgg.(*PhysicalHashAgg).GroupByItems
+			partitionCols = make([]*expression.Column, 0, len(items))
+			for _, expr := range items {
+				col, ok := expr.(*expression.Column)
+				if !ok {
+					return invalidTask
+				}
+				partitionCols = append(partitionCols, col)
 			}
-			partitionCols = append(partitionCols, col)
 		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols}
 		newMpp := mpp.enforceExchangerImpl(prop)
+		if newMpp.invalid() {
+			return newMpp
+		}
 		attachPlan2Task(finalAgg, newMpp)
 		if proj != nil {
 			attachPlan2Task(proj, newMpp)
@@ -1727,9 +1896,6 @@ type mppTask struct {
 
 	partTp   property.PartitionType
 	hashCols []*expression.Column
-
-	ts        *PhysicalTableScan
-	receivers []*PhysicalExchangeReceiver
 }
 
 func (t *mppTask) count() float64 {
@@ -1766,7 +1932,6 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}.Init(ctx, t.p.statsInfo())
 	sender.SetChildren(t.p)
-	sender.Fragment = &Fragment{ExchangeReceivers: t.receivers, ExchangeSender: sender, TableScan: t.ts}
 
 	p := PhysicalTableReader{
 		tablePlan: sender,
@@ -1813,24 +1978,26 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 }
 
 func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask {
+	if collate.NewCollationEnabled() && prop.PartitionTp == property.HashType {
+		for _, col := range prop.PartitionCols {
+			if types.IsString(col.RetType.Tp) {
+				return &mppTask{cst: math.MaxFloat64}
+			}
+		}
+	}
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType(prop.PartitionTp),
 		HashCols:     prop.PartitionCols,
 	}.Init(ctx, t.p.statsInfo())
 	sender.SetChildren(t.p)
-	f := &Fragment{ExchangeSender: sender, TableScan: t.ts, ExchangeReceivers: t.receivers}
-	sender.Fragment = f
-	receiver := PhysicalExchangeReceiver{
-		ChildPf: f,
-	}.Init(ctx, t.p.statsInfo())
+	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
 	cst := t.cst + t.count()*ctx.GetSessionVars().NetworkFactor
 	return &mppTask{
-		p:         receiver,
-		cst:       cst,
-		partTp:    prop.PartitionTp,
-		hashCols:  prop.PartitionCols,
-		receivers: []*PhysicalExchangeReceiver{receiver},
+		p:        receiver,
+		cst:      cst,
+		partTp:   prop.PartitionTp,
+		hashCols: prop.PartitionCols,
 	}
 }

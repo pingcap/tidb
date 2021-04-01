@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,20 +11,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metrics
+package tikvrpc
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
+// EndpointType represents the type of a remote endpoint..
+type EndpointType uint8
+
+// EndpointType type enums.
+const (
+	TiKV EndpointType = iota
+	TiFlash
+	TiDB
 )
 
-// Metrics for the timestamp oracle.
-var (
-	TSFutureWaitDuration = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "pdclient",
-			Name:      "ts_future_wait_seconds",
-			Help:      "Bucketed histogram of seconds cost for waiting timestamp future.",
-			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 30), // 5us ~ 2560s
-		})
-)
+// Name returns the name of endpoint type.
+func (t EndpointType) Name() string {
+	switch t {
+	case TiKV:
+		return "tikv"
+	case TiFlash:
+		return "tiflash"
+	case TiDB:
+		return "tidb"
+	}
+	return "unspecified"
+}

@@ -449,15 +449,17 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 			return err
 		}
 	case *Update:
-		ok, err = IsPointUpdateByAutoCommit(sctx, p)
-		if err != nil {
-			return err
-		}
-		if ok {
-			// make constant expression store paramMarker
-			sctx.GetSessionVars().StmtCtx.PointExec = true
-			p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
-		}
+		// Temporarily turn off the cache for UPDATE to solve #21884.
+
+		//ok, err = IsPointUpdateByAutoCommit(sctx, p)
+		//if err != nil {
+		//	return err
+		//}
+		//if ok {
+		//	// make constant expression store paramMarker
+		//	sctx.GetSessionVars().StmtCtx.PointExec = true
+		//	p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+		//}
 	}
 	if ok {
 		// just cache point plan now
@@ -784,6 +786,8 @@ type Update struct {
 	// Used when partition sets are given.
 	// e.g. update t partition(p0) set a = 1;
 	PartitionedTable []table.PartitionedTable
+
+	tblID2Table map[int64]table.Table
 }
 
 // Delete represents a delete plan.

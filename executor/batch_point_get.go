@@ -110,17 +110,17 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
-		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		snapshot.SetOption(tikvstore.CollectRuntimeStats, snapshotStats)
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, tikvstore.ReplicaReadFollower)
+		snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
 	}
-	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	snapshot.SetOption(tikvstore.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
-	snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
+	snapshot.SetOption(tikvstore.IsStalenessReadOnly, isStaleness)
 	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != oracle.GlobalTxnScope {
-		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
+		snapshot.SetOption(tikvstore.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
 				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
@@ -146,7 +146,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(kv.CollectRuntimeStats)
+		e.snapshot.DelOption(tikvstore.CollectRuntimeStats)
 	}
 	e.inited = 0
 	e.index = 0
@@ -213,6 +213,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
+			}
+			if idxKey == nil {
+				continue
 			}
 			s := hack.String(idxKey)
 			if _, found := dedup[s]; found {
@@ -437,7 +440,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 }
 
 func getPhysID(tblInfo *model.TableInfo, intVal int64) int64 {
-	pi := tblInfo.Partition
+	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID
 	}
