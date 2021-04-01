@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -27,11 +28,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/store/tikv/kv"
 
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"google.golang.org/grpc"
 )
@@ -48,6 +48,7 @@ type testRegionRequestToSingleStoreSuite struct {
 }
 
 type testRegionRequestToThreeStoresSuite struct {
+	OneByOneSuite
 	cluster             *mocktikv.Cluster
 	storeIDs            []uint64
 	peerIDs             []uint64
@@ -113,22 +114,22 @@ func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContext(c *C) {
 	var regionID = RegionVerID{s.regionID, 0, 0}
 
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadLeader, &seed)
-	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(rpcCtx.Peer.Id, Equals, s.leaderPeer)
 
 	req.ReplicaReadType = kv.ReplicaReadFollower
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(rpcCtx.Peer.Id, Not(Equals), s.leaderPeer)
 
 	req.ReplicaReadType = kv.ReplicaReadMixed
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(rpcCtx.Peer.Id, Equals, s.leaderPeer)
 
 	seed = 1
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(rpcCtx.Peer.Id, Not(Equals), s.leaderPeer)
 }
@@ -159,7 +160,6 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnRegionError(c *C) {
 		c.Assert(err, NotNil)
 		c.Assert(resp, IsNil)
 	}()
-
 }
 
 func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
@@ -167,15 +167,15 @@ func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	oldStoreLimit := storeutil.StoreLimit.Load()
-	storeutil.StoreLimit.Store(500)
+	oldStoreLimit := kv.StoreLimit.Load()
+	kv.StoreLimit.Store(500)
 	s.cache.getStoreByStoreID(s.storeIDs[0]).tokenCount.Store(500)
 	// cause there is only one region in this cluster, regionID maps this leader.
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
 	c.Assert(err.Error(), Equals, "[tikv:9008]Store token is up to the limit, store id = 1")
-	storeutil.StoreLimit.Store(oldStoreLimit)
+	kv.StoreLimit.Store(oldStoreLimit)
 }
 
 func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithStoreRestart(c *C) {
@@ -250,12 +250,12 @@ func (s *testRegionRequestToSingleStoreSuite) TestSendReqCtx(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, kv.TiKV)
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	c.Assert(ctx, NotNil)
 	req.ReplicaRead = true
-	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, kv.TiKV)
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	c.Assert(ctx, NotNil)
@@ -568,4 +568,166 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnMaxTimestampNotSyncedError(c
 		c.Assert(err, IsNil)
 		c.Assert(resp, NotNil)
 	}()
+}
+
+func (s *testRegionRequestToThreeStoresSuite) TestSwitchPeerWhenNoLeader(c *C) {
+	var leaderAddr string
+	s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
+		if leaderAddr == "" {
+			leaderAddr = addr
+		}
+		// Returns OK when switches to a different peer.
+		if leaderAddr != addr {
+			return &tikvrpc.Response{Resp: &kvrpcpb.RawPutResponse{}}, nil
+		}
+		return &tikvrpc.Response{Resp: &kvrpcpb.RawPutResponse{
+			RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}},
+		}}, nil
+	}}
+
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("key"),
+		Value: []byte("value"),
+	})
+
+	bo := NewBackofferWithVars(context.Background(), 5, nil)
+	loc, err := s.cache.LocateKey(s.bo, []byte("key"))
+	c.Assert(err, IsNil)
+	resp, err := s.regionRequestSender.SendReq(bo, req, loc.Region, time.Second)
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+}
+
+func (s *testRegionRequestToThreeStoresSuite) loadAndGetLeaderStore(c *C) (*Store, string) {
+	region, err := s.regionRequestSender.regionCache.findRegionByKey(s.bo, []byte("a"), false)
+	c.Assert(err, IsNil)
+	leaderStore, leaderPeer, _, leaderStoreIdx := region.WorkStorePeer(region.getStore())
+	c.Assert(leaderPeer.Id, Equals, s.leaderPeer)
+	leaderAddr, err := s.regionRequestSender.regionCache.getStoreAddr(s.bo, region, leaderStore, leaderStoreIdx)
+	c.Assert(err, IsNil)
+	return leaderStore, leaderAddr
+}
+
+func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
+	s.regionRequestSender.regionCache.enableForwarding = true
+
+	// First get the leader's addr from region cache
+	leaderStore, leaderAddr := s.loadAndGetLeaderStore(c)
+
+	bo := NewBackoffer(context.Background(), 10000)
+
+	// Simulate that the leader is network-partitioned but can be accessed by forwarding via a follower
+	innerClient := s.regionRequestSender.client
+	s.regionRequestSender.client = &fnClient{fn: func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+		if addr == leaderAddr {
+			return nil, errors.New("simulated rpc error")
+		}
+		// MockTiKV doesn't support forwarding. Simulate forwarding here.
+		if len(req.ForwardedHost) != 0 {
+			addr = req.ForwardedHost
+		}
+		return innerClient.SendRequest(ctx, addr, req, timeout)
+	}}
+	var storeState uint32 = uint32(unreachable)
+	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+		return livenessState(atomic.LoadUint32(&storeState))
+	}
+
+	loc, err := s.regionRequestSender.regionCache.LocateKey(bo, []byte("k"))
+	c.Assert(err, IsNil)
+	c.Assert(loc.Region.GetID(), Equals, s.regionID)
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("k"),
+		Value: []byte("v1"),
+	})
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, tikvrpc.TiKV)
+	c.Assert(err, IsNil)
+	regionErr, err := resp.GetRegionError()
+	c.Assert(err, IsNil)
+	c.Assert(regionErr, IsNil)
+	c.Assert(resp.Resp.(*kvrpcpb.RawPutResponse).Error, Equals, "")
+	c.Assert(ctx.Addr, Equals, leaderAddr)
+	c.Assert(ctx.ProxyStore, NotNil)
+	c.Assert(ctx.ProxyAddr, Not(Equals), leaderAddr)
+	c.Assert(ctx.ProxyAccessIdx, Not(Equals), ctx.AccessIdx)
+	c.Assert(err, IsNil)
+
+	// Simulate recovering to normal
+	s.regionRequestSender.client = innerClient
+	atomic.StoreUint32(&storeState, uint32(reachable))
+	start := time.Now()
+	for {
+		if atomic.LoadInt32(&leaderStore.needForwarding) == 0 {
+			break
+		}
+		if time.Since(start) > 3*time.Second {
+			c.Fatal("store didn't recover to normal in time")
+		}
+		time.Sleep(time.Millisecond * 200)
+	}
+	atomic.StoreUint32(&storeState, uint32(unreachable))
+
+	req = tikvrpc.NewRequest(tikvrpc.CmdRawGet, &kvrpcpb.RawGetRequest{Key: []byte("k")})
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, tikvrpc.TiKV)
+	c.Assert(err, IsNil)
+	regionErr, err = resp.GetRegionError()
+	c.Assert(err, IsNil)
+	c.Assert(regionErr, IsNil)
+	c.Assert(resp.Resp.(*kvrpcpb.RawGetResponse).Value, BytesEquals, []byte("v1"))
+	c.Assert(ctx.ProxyStore, IsNil)
+
+	// Simulate server down
+	s.regionRequestSender.client = &fnClient{fn: func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+		if addr == leaderAddr || req.ForwardedHost == leaderAddr {
+			return nil, errors.New("simulated rpc error")
+		}
+
+		// MockTiKV doesn't support forwarding. Simulate forwarding here.
+		if len(req.ForwardedHost) != 0 {
+			addr = req.ForwardedHost
+		}
+		return innerClient.SendRequest(ctx, addr, req, timeout)
+	}}
+	// The leader is changed after a store is down.
+	newLeaderPeerID := s.peerIDs[0]
+	if newLeaderPeerID == s.leaderPeer {
+		newLeaderPeerID = s.peerIDs[1]
+	}
+
+	c.Assert(newLeaderPeerID, Not(Equals), s.leaderPeer)
+	s.cluster.ChangeLeader(s.regionID, newLeaderPeerID)
+
+	req = tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("k"),
+		Value: []byte("v2"),
+	})
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, tikvrpc.TiKV)
+	c.Assert(err, IsNil)
+	regionErr, err = resp.GetRegionError()
+	c.Assert(err, IsNil)
+	// After several retries, the region will be marked as needReload.
+	// Then SendReqCtx will throw a pseudo EpochNotMatch to tell the caller to reload the region.
+	c.Assert(regionErr.EpochNotMatch, NotNil)
+	c.Assert(ctx, IsNil)
+	c.Assert(len(s.regionRequestSender.failStoreIDs), Equals, 0)
+	c.Assert(len(s.regionRequestSender.failProxyStoreIDs), Equals, 0)
+	region := s.regionRequestSender.regionCache.getCachedRegionWithRLock(loc.Region)
+	c.Assert(region, NotNil)
+	c.Assert(region.checkNeedReload(), IsTrue)
+
+	loc, err = s.regionRequestSender.regionCache.LocateKey(bo, []byte("k"))
+	c.Assert(err, IsNil)
+	req = tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("k"),
+		Value: []byte("v2"),
+	})
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(bo, req, loc.Region, time.Second, tikvrpc.TiKV)
+	c.Assert(err, IsNil)
+	regionErr, err = resp.GetRegionError()
+	c.Assert(err, IsNil)
+	c.Assert(regionErr, IsNil)
+	c.Assert(resp.Resp.(*kvrpcpb.RawPutResponse).Error, Equals, "")
+	// Leader changed
+	c.Assert(ctx.Store.storeID, Not(Equals), leaderStore.storeID)
+	c.Assert(ctx.ProxyStore, IsNil)
 }

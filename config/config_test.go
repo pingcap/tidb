@@ -202,6 +202,7 @@ stores-refresh-interval = 30
 enable-forwarding = true
 [performance]
 txn-total-size-limit=2000
+tcp-no-delay = false
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -244,6 +245,7 @@ spilled-file-encryption-method = "plaintext"
 	// Test that the value will be overwritten by the config file.
 	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
 	c.Assert(conf.AlterPrimaryKey, Equals, true)
+	c.Assert(conf.Performance.TCPNoDelay, Equals, false)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.AsyncCommit.KeysLimit, Equals, uint(123))
@@ -587,4 +589,10 @@ func (s *testConfigSuite) TestSecurityValid(c *C) {
 		c1.Security.SpilledFileEncryptionMethod = tt.spilledFileEncryptionMethod
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
 	}
+}
+
+func (s *testConfigSuite) TestTcpNoDelay(c *C) {
+	c1 := NewConfig()
+	//check default value
+	c.Assert(c1.Performance.TCPNoDelay, Equals, true)
 }

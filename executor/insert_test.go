@@ -220,7 +220,7 @@ func (s *testSuite8) TestClusterIndexInsertOnDuplicateKey(c *C) {
 	tk.MustExec("drop database if exists cluster_index_duplicate_entry_error;")
 	tk.MustExec("create database cluster_index_duplicate_entry_error;")
 	tk.MustExec("use cluster_index_duplicate_entry_error;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t(a char(20), b int, primary key(a));")
 	tk.MustExec("insert into t values('aa', 1), ('bb', 1);")
@@ -237,7 +237,8 @@ func (s *testSuite8) TestClusterIndexInsertOnDuplicateKey(c *C) {
 func (s *testSuite10) TestPaddingCommonHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
 	tk.MustExec(`insert into t1 set c1 = 0.1`)
 	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
@@ -1126,20 +1127,17 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }
 
-var _ = SerialSuites(&testSuite9{&baseTestSuite{}})
+var _ = Suite(&testSuite9{&baseTestSuite{}})
 
 type testSuite9 struct {
 	*baseTestSuite
 }
 
 func (s *testSuite9) TestAutoRandomID(c *C) {
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key clustered auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null)`)
 	rs := tk.MustQuery(`select id from ar`)
@@ -1168,7 +1166,7 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 
 	tk.MustExec(`drop table ar`)
-	tk.MustExec(`create table ar (id bigint key auto_random(15), name char(10))`)
+	tk.MustExec(`create table ar (id bigint key clustered auto_random(15), name char(10))`)
 	overflowVal := 1 << (64 - 5)
 	errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, overflowVal, 1<<(64-16)-1)
 	_, err = tk.Exec(fmt.Sprintf("alter table ar auto_random_base = %d", overflowVal))
@@ -1177,13 +1175,10 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 }
 
 func (s *testSuite9) TestMultiAutoRandomID(c *C) {
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key clustered auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null),(null),(null)`)
 	rs := tk.MustQuery(`select id from ar order by id`)
@@ -1221,13 +1216,10 @@ func (s *testSuite9) TestMultiAutoRandomID(c *C) {
 }
 
 func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key clustered auto_random, name char(10))`)
 
 	rs := tk.MustQuery(`select @@session.sql_mode`)
 	sqlMode := rs.Rows()[0][0].(string)
@@ -1254,15 +1246,12 @@ func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
 }
 
 func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key clustered auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (1)`)
 	tk.MustQuery(`select id from ar`).Check(testkit.Rows("1"))
@@ -1307,7 +1296,7 @@ type testSuite10 struct {
 func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists t1pk`)
 	tk.MustExec(`create table t1pk(id varchar(200) primary key, v int)`)
@@ -1349,7 +1338,7 @@ func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 func (s *testSuite10) TestClusterPrimaryTableInsertIgnore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists it1pk`)
 	tk.MustExec(`create table it1pk(id varchar(200) primary key, v int)`)
@@ -1375,7 +1364,7 @@ func (s *testSuite10) TestClusterPrimaryTableInsertIgnore(c *C) {
 func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists dt1pi`)
 	tk.MustExec(`create table dt1pi(id varchar(200) primary key, v int)`)
@@ -1407,7 +1396,7 @@ func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
 func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("drop table if exists pkt1;")
 	tk.MustExec("CREATE TABLE pkt1 (a varchar(255), b int, index idx(b), primary key(a,b));")
@@ -1456,7 +1445,7 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	for _, enable := range []bool{true, false} {
+	for _, enable := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
 		tk.Se.GetSessionVars().EnableClusteredIndex = enable
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
