@@ -3914,8 +3914,28 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 				break
 			}
 		}
-		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+
+		err := checkIndexInModifiableColumns(columns, indexInfo.Columns)
 		if err != nil {
+			return err
+		}
+
+		err = checkIndexPrefixLength(columns, indexInfo.Columns)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
+	for _, ic := range idxColumns {
+		col := model.FindColumnInfo(columns, ic.Name.L)
+		if col == nil {
+			return errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
+		}
+
+		if err := checkIndexColumn(col, ic.Length); err != nil {
 			return err
 		}
 	}
