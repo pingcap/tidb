@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"go.uber.org/zap"
 )
 
@@ -44,7 +42,7 @@ var _ = SerialSuites(&testScanSuite{})
 func (s *testScanSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.store = NewTestStore(c)
-	s.recordPrefix = tablecodec.GenTableRecordPrefix(1)
+	s.recordPrefix = []byte("prefix")
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1, scanBatchSize*3)
 	// Avoid using async commit logic.
 	s.ctx = context.WithValue(context.Background(), util.SessionID, uint64(0))
@@ -74,11 +72,22 @@ func (s *testScanSuite) beginTxn(c *C) *tikv.KVTxn {
 	return txn
 }
 
+func (s *testScanSuite) makeKey(i int) tidbkv.Key {
+	var key []byte
+	key = append(key, s.recordPrefix...)
+	key = append(key, []byte(fmt.Sprintf("%10d", i))...)
+	return tidbkv.Key(key)
+}
+
+func (s *testScanSuite) makeValue(i int) []byte {
+	return []byte(fmt.Sprintf("%d", i))
+}
+
 func (s *testScanSuite) TestScan(c *C) {
 	check := func(c *C, scan tidbkv.Iterator, rowNum int, keyOnly bool) {
 		for i := 0; i < rowNum; i++ {
 			k := scan.Key()
-			expectedKey := tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(i))
+			expectedKey := s.makeKey(i)
 			if ok := bytes.Equal([]byte(k), []byte(expectedKey)); !ok {
 				logutil.BgLogger().Error("bytes equal check fail",
 					zap.Int("i", i),
@@ -91,7 +100,7 @@ func (s *testScanSuite) TestScan(c *C) {
 			c.Assert([]byte(k), BytesEquals, []byte(expectedKey))
 			if !keyOnly {
 				v := scan.Value()
-				c.Assert(v, BytesEquals, genValueBytes(i))
+				c.Assert(v, BytesEquals, s.makeValue(i))
 			}
 			// Because newScan return first item without calling scan.Next() just like go-hbase,
 			// for-loop count will decrease 1.
@@ -106,33 +115,33 @@ func (s *testScanSuite) TestScan(c *C) {
 	for _, rowNum := range s.rowNums {
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
-			err := txn.Set(tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(i)), genValueBytes(i))
+			err := txn.Set(s.makeKey(i), s.makeValue(i))
 			c.Assert(err, IsNil)
 		}
 		err := txn.Commit(s.ctx)
 		c.Assert(err, IsNil)
 		mockTableID := int64(999)
 		if rowNum > 123 {
-			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(123))}, false, &mockTableID)
+			_, err = s.store.SplitRegions(s.ctx, [][]byte{s.makeKey(123)}, false, &mockTableID)
 			c.Assert(err, IsNil)
 		}
 
 		if rowNum > 456 {
-			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(456))}, false, &mockTableID)
+			_, err = s.store.SplitRegions(s.ctx, [][]byte{s.makeKey(456)}, false, &mockTableID)
 			c.Assert(err, IsNil)
 		}
 
 		txn2 := s.beginTxn(c)
-		val, err := txn2.Get(context.TODO(), tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(0)))
+		val, err := txn2.Get(context.TODO(), s.makeKey(0))
 		c.Assert(err, IsNil)
-		c.Assert(val, BytesEquals, genValueBytes(0))
+		c.Assert(val, BytesEquals, s.makeValue(0))
 		// Test scan without upperBound
 		scan, err := txn2.Iter(s.recordPrefix, nil)
 		c.Assert(err, IsNil)
 		check(c, scan, rowNum, false)
 		// Test scan with upperBound
 		upperBound := rowNum / 2
-		scan, err = txn2.Iter(s.recordPrefix, tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(upperBound)))
+		scan, err = txn2.Iter(s.recordPrefix, s.makeKey(upperBound))
 		c.Assert(err, IsNil)
 		check(c, scan, upperBound, false)
 
@@ -143,7 +152,7 @@ func (s *testScanSuite) TestScan(c *C) {
 		c.Assert(err, IsNil)
 		check(c, scan, rowNum, true)
 		// test scan with upper bound
-		scan, err = txn3.Iter(s.recordPrefix, tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(upperBound)))
+		scan, err = txn3.Iter(s.recordPrefix, s.makeKey(upperBound))
 		c.Assert(err, IsNil)
 		check(c, scan, upperBound, true)
 
@@ -153,14 +162,8 @@ func (s *testScanSuite) TestScan(c *C) {
 		c.Assert(err, IsNil)
 		check(c, scan, rowNum, true)
 		// test scan with upper bound
-		scan, err = txn3.Iter(s.recordPrefix, tablecodec.EncodeRecordKey(s.recordPrefix, tidbkv.IntHandle(upperBound)))
+		scan, err = txn3.Iter(s.recordPrefix, s.makeKey(upperBound))
 		c.Assert(err, IsNil)
 		check(c, scan, upperBound, true)
 	}
-}
-
-func genValueBytes(i int) []byte {
-	var res = []byte{rowcodec.CodecVer}
-	res = append(res, []byte(fmt.Sprintf("%d", i))...)
-	return res
 }
