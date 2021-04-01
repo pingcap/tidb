@@ -868,6 +868,7 @@ import (
 	PurgeImportStmt        "PURGE IMPORT statement that removes a IMPORT task record"
 	SelectStmt             "SELECT statement"
 	RenameTableStmt        "rename table statement"
+	RenameUserStmt         "rename user statement"
 	ReplaceIntoStmt        "REPLACE INTO statement"
 	RecoverTableStmt       "recover table statement"
 	ResumeImportStmt       "RESUME IMPORT statement"
@@ -1159,6 +1160,8 @@ import (
 	UserSpec                               "Username and auth option"
 	UserSpecList                           "Username and auth option list"
 	UserVariableList                       "User defined variable name list"
+	UserToUser                             "rename user to user"
+	UserToUserList                         "rename user to user by list"
 	UsingRoles                             "UsingRoles is role option for SHOW GRANT"
 	Values                                 "values"
 	ValuesList                             "values list"
@@ -2324,6 +2327,40 @@ TableToTable:
 		$$ = &ast.TableToTable{
 			OldTable: $1.(*ast.TableName),
 			NewTable: $3.(*ast.TableName),
+		}
+	}
+
+/**************************************RenameUserStmt***************************************
+ * See https://dev.mysql.com/doc/refman/5.7/en/rename-user.html
+ *
+ * RENAME USER
+ *     old_user TO new_user
+ *     [, old_user2 TO new_user2] ...
+ *******************************************************************************************/
+RenameUserStmt:
+	"RENAME" "USER" UserToUserList
+	{
+		$$ = &ast.RenameUserStmt{
+			UserToUsers: $3.([]*ast.UserToUser),
+		}
+	}
+
+UserToUserList:
+	UserToUser
+	{
+		$$ = []*ast.UserToUser{$1.(*ast.UserToUser)}
+	}
+|	UserToUserList ',' UserToUser
+	{
+		$$ = append($1.([]*ast.UserToUser), $3.(*ast.UserToUser))
+	}
+
+UserToUser:
+	Username "TO" Username
+	{
+		$$ = &ast.UserToUser{
+			OldUser: $1.(*auth.UserIdentity),
+			NewUser: $3.(*auth.UserIdentity),
 		}
 	}
 
@@ -10319,6 +10356,7 @@ Statement:
 |	PurgeImportStmt
 |	RollbackStmt
 |	RenameTableStmt
+|	RenameUserStmt
 |	ReplaceIntoStmt
 |	RecoverTableStmt
 |	ResumeImportStmt
