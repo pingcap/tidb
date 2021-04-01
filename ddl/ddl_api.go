@@ -1513,7 +1513,7 @@ func buildTableInfo(
 			return
 		}
 		for _, idx := range tbInfo.Indices {
-			if idx.Primary || idx.Unique {
+			if idx.Unique {
 				// only need check for secondary and non-unique index
 				continue
 			}
