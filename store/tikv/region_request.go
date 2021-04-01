@@ -202,7 +202,7 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctxs []copTaskAndR
 
 	// Currently this function is only used in TiFlash batch cop.
 	// TODO: need code refactoring for these functions.
-	err = bo.Backoff(boTiFlashRPC, errors.Errorf("send tikv request error: %v, ctxs: %v, try next peer later", err, ctxs))
+	err = bo.Backoff(boTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctxs: %v, try next peer later", err, ctxs))
 	return errors.Trace(err)
 }
 
