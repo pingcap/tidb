@@ -603,13 +603,22 @@ var defaultSysVars = []*SysVar{
 		s.WindowingUseHighPrecision = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeNone, Name: "license", Value: "Apache License 2.0"},
+	{Scope: ScopeGlobal | ScopeSession, Name: BlockEncryptionMode, Value: "aes-128-ecb"},
+	{Scope: ScopeSession, Name: "last_insert_id", Value: ""},
+	{Scope: ScopeNone, Name: "have_ssl", Value: "DISABLED"},
+	{Scope: ScopeNone, Name: "have_openssl", Value: "DISABLED"},
+	{Scope: ScopeNone, Name: "ssl_ca", Value: ""},
+	{Scope: ScopeNone, Name: "ssl_cert", Value: ""},
+	{Scope: ScopeNone, Name: "ssl_key", Value: ""},
+
+	/* TiDB specific variables */
 	{Scope: ScopeSession, Name: TiDBTxnScope, Value: func() string {
 		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
 			return oracle.GlobalTxnScope
 		}
 		return oracle.LocalTxnScope
 	}()},
-	/* TiDB specific variables */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJThresholdCount, Value: strconv.Itoa(DefBroadcastJoinThresholdCount), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.BroadcastJoinThresholdCount = tidbOptInt64(val, DefBroadcastJoinThresholdCount)
