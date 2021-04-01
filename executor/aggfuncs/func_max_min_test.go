@@ -314,12 +314,6 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 	}
 }
 
-type dequeTestCase struct {
-	value int
-	//deque Deque
-	deque aggfuncs.Deque
-}
-
 func (s *testSuite) TestDequeReset(c *C) {
 	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
