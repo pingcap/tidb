@@ -19,7 +19,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -78,7 +79,7 @@ func (t *DeleteRangeTask) Execute(ctx context.Context) error {
 }
 
 // Execute performs the delete range operation.
-func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (RangeTaskStat, error) {
+func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r tidbkv.KeyRange) (RangeTaskStat, error) {
 	startKey, rangeEndKey := r.StartKey, r.EndKey
 	var stat RangeTaskStat
 	for {
@@ -127,7 +128,7 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (Ra
 			continue
 		}
 		if resp.Resp == nil {
-			return stat, errors.Trace(ErrBodyMissing)
+			return stat, errors.Trace(kv.ErrBodyMissing)
 		}
 		deleteRangeResp := resp.Resp.(*kvrpcpb.DeleteRangeResponse)
 		if err := deleteRangeResp.GetError(); err != "" {

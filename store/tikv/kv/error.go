@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package kv
 
 import (
 	"github.com/pingcap/errors"
@@ -28,8 +28,8 @@ var (
 	ErrTiDBShuttingDown = errors.New("tidb server shutting down")
 )
 
-// mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
-const mismatchClusterID = "mismatch cluster id"
+// MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
+const MismatchClusterID = "mismatch cluster id"
 
 // MySQL error instances.
 var (

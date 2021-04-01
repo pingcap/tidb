@@ -178,7 +178,7 @@ func (s *testDBSuite7) TestAddIndexWithPK(c *C) {
 	tk.MustExec("use " + s.schemaName)
 
 	testAddIndexWithPK(tk)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	testAddIndexWithPK(tk)
 }
 
@@ -1056,7 +1056,7 @@ func (s *testDBSuite6) TestAddMultiColumnsIndexClusterIndex(c *C) {
 	tk.MustExec("create database test_add_multi_col_index_clustered;")
 	tk.MustExec("use test_add_multi_col_index_clustered;")
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a int, b varchar(10), c int, primary key (a, b));")
 	tk.MustExec("insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);")
 	tk.MustExec("create index idx on t (a, c);")
@@ -1156,7 +1156,7 @@ func testAddIndex(c *C, store kv.Storage, lease time.Duration, tp testAddIndexTy
 	case testPartition:
 		tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	case testClusteredIndex:
-		tk.Se.GetSessionVars().EnableClusteredIndex = true
+		tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	}
 	tk.MustExec("drop table if exists test_add_index")
 	tk.MustExec(createTableSQL)
@@ -2340,6 +2340,14 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	c.Assert(hasNotNull, IsFalse)
 	// for enum
 	s.mustExec(tk, c, "alter table t3 add column en enum('a', 'b', 'c') not null default 'a'")
+	// https://github.com/pingcap/tidb/issues/23488
+	// if there is a prefix index on the varchar column, then we can change it to text
+	s.mustExec(tk, c, "drop table if exists t")
+	s.mustExec(tk, c, "create table t (k char(10), v int, INDEX(k(7)));")
+	s.mustExec(tk, c, "alter table t change column k k tinytext")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
 
 	// for failing tests
 	sql := "alter table t3 change aa a bigint default ''"
@@ -2360,6 +2368,18 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	s.mustExec(tk, c, "alter table t3 add column a bigint")
 	sql = "alter table t3 change aa a bigint"
 	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
+	// https://github.com/pingcap/tidb/issues/23488
+	s.mustExec(tk, c, "drop table if exists t5")
+	s.mustExec(tk, c, "create table t5 (k char(10) primary key, v int)")
+	sql = "alter table t5 change column k k tinytext;"
+	tk.MustGetErrCode(sql, mysql.ErrBlobKeyWithoutLength)
+	tk.MustExec("drop table t5")
+
+	s.mustExec(tk, c, "drop table if exists t5")
+	s.mustExec(tk, c, "create table t5 (k char(10), v int, INDEX(k))")
+	sql = "alter table t5 change column k k tinytext;"
+	tk.MustGetErrCode(sql, mysql.ErrBlobKeyWithoutLength)
+	tk.MustExec("drop table t5")
 
 	tk.MustExec("drop table t3")
 }
@@ -4078,11 +4098,9 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 	tk.MustExec("alter table tt change a a varchar(100);")
 
-	// varchar to char
-	tk.MustExec("alter table tt change a a char(10);")
-	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
-	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
-	c.Assert(c2.FieldType.Flen, Equals, 10)
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a char(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 
@@ -6569,6 +6587,17 @@ func (s *testDBSuite4) TestIssue22207(c *C) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "2", "3"))
 	c.Assert(len(tk.MustQuery("select * from t1").Rows()), Equals, 0)
 	tk.MustExec("set @@session.tidb_enable_exchange_partition = 0;")
+}
+
+func (s *testDBSuite5) TestIssue23473(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t_23473;")
+	tk.MustExec("create table t_23473 (k int primary key, v int)")
+	tk.MustExec("alter table t_23473 change column k k bigint")
+	t := testGetTableByName(c, tk.Se.(sessionctx.Context), "test", "t_23473")
+	col1Flag := t.Cols()[0].Flag
+	c.Assert(mysql.HasNoDefaultValueFlag(col1Flag), IsTrue)
 }
 
 func (s *testSerialDBSuite) TestIssue22819(c *C) {

@@ -11,20 +11,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package unionstore
 
-import "context"
+import (
+	"context"
 
-func (db *memdb) SnapshotGetter() Getter {
+	tidbkv "github.com/pingcap/tidb/kv"
+)
+
+// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
+func (db *MemDB) SnapshotGetter() tidbkv.Getter {
 	return &memdbSnapGetter{
 		db: db,
 		cp: db.getSnapshot(),
 	}
 }
 
-func (db *memdb) SnapshotIter(start, end Key) Iterator {
+// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+func (db *MemDB) SnapshotIter(start, end tidbkv.Key) tidbkv.Iterator {
 	it := &memdbSnapIter{
-		memdbIterator: &memdbIterator{
+		MemdbIterator: &MemdbIterator{
 			db:    db,
 			start: start,
 			end:   end,
@@ -35,7 +41,7 @@ func (db *memdb) SnapshotIter(start, end Key) Iterator {
 	return it
 }
 
-func (db *memdb) getSnapshot() memdbCheckpoint {
+func (db *MemDB) getSnapshot() memdbCheckpoint {
 	if len(db.stages) > 0 {
 		return db.stages[0]
 	}
@@ -43,28 +49,28 @@ func (db *memdb) getSnapshot() memdbCheckpoint {
 }
 
 type memdbSnapGetter struct {
-	db *memdb
+	db *MemDB
 	cp memdbCheckpoint
 }
 
-func (snap *memdbSnapGetter) Get(_ context.Context, key Key) ([]byte, error) {
+func (snap *memdbSnapGetter) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
 	x := snap.db.traverse(key, false)
 	if x.isNull() {
-		return nil, ErrNotExist
+		return nil, tidbkv.ErrNotExist
 	}
 	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
-		return nil, ErrNotExist
+		return nil, tidbkv.ErrNotExist
 	}
 	v, ok := snap.db.vlog.getSnapshotValue(x.vptr, &snap.cp)
 	if !ok {
-		return nil, ErrNotExist
+		return nil, tidbkv.ErrNotExist
 	}
 	return v, nil
 }
 
 type memdbSnapIter struct {
-	*memdbIterator
+	*MemdbIterator
 	value []byte
 	cp    memdbCheckpoint
 }
@@ -76,7 +82,7 @@ func (i *memdbSnapIter) Value() []byte {
 func (i *memdbSnapIter) Next() error {
 	i.value = nil
 	for i.Valid() {
-		if err := i.memdbIterator.Next(); err != nil {
+		if err := i.MemdbIterator.Next(); err != nil {
 			return err
 		}
 		if i.setValue() {

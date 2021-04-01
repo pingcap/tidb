@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -315,8 +316,8 @@ type GlobalStats struct {
 	Fms   []*statistics.FMSketch
 }
 
-// MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
+// MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -326,6 +327,11 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		return
 	}
 	globalTableInfo := globalTable.Meta()
+	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, idxID)
+}
+
+// MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
+func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	partitionIDs := make([]int64, 0, partitionNum)
 	for i := 0; i < partitionNum; i++ {
@@ -456,8 +462,10 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		} else {
 			// For the index stats, we get the final NDV by accumulating the NDV of each bucket in the index histogram.
 			globalStatsNDV := int64(0)
-			for _, bucket := range globalStats.Hg[i].Buckets {
-				globalStatsNDV += bucket.NDV
+			for j := range globalStats.Hg[i].Buckets {
+				globalStatsNDV += globalStats.Hg[i].Buckets[j].NDV
+				// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
+				globalStats.Hg[i].Buckets[j].NDV = 0
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 
@@ -1221,6 +1229,7 @@ const (
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
+	sort.Slice(colIDs, func(i, j int) bool { return colIDs[i] < colIDs[j] })
 	bytes, err := json.Marshal(colIDs)
 	if err != nil {
 		return errors.Trace(err)
@@ -1238,15 +1247,23 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 		err = finishTransaction(ctx, exec, err)
 	}()
 	// No need to use `exec.ExecuteInternal` since we have acquired the lock.
-	rows, _, err := h.execRestrictedSQL(ctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, StatsStatusInited, StatsStatusAnalyzed)
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)", tableID, StatsStatusInited, StatsStatusAnalyzed)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(rows) > 0 {
-		if ifNotExists {
-			return nil
+	for _, row := range rows {
+		currStatsName := row.GetString(0)
+		currTp := row.GetInt64(1)
+		currStrColIDs := row.GetString(2)
+		if currStatsName == statsName {
+			if ifNotExists {
+				return nil
+			}
+			return errors.Errorf("extended statistics '%s' for the specified table already exists", statsName)
 		}
-		return errors.New(fmt.Sprintf("extended statistics '%s' for the specified table already exists", statsName))
+		if tp == int(currTp) && currStrColIDs == strColIDs {
+			return errors.Errorf("extended statistics '%s' with same type on same columns already exists", statsName)
+		}
 	}
 	// Remove the existing 'deleted' records.
 	if _, err = exec.ExecuteInternal(ctx, "DELETE FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID); err != nil {
@@ -1423,14 +1440,15 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	}
 	// samplesX and samplesY are in order of handle, i.e, their SampleItem.Ordinals are in order.
 	samplesX := collectors[colOffsets[0]].Samples
-	if len(samplesX) == 0 {
-		return nil
-	}
 	// We would modify Ordinal of samplesY, so we make a deep copy.
 	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
-	sampleNum := len(samplesX)
+	sampleNum := mathutil.Min(len(samplesX), len(samplesY))
 	if sampleNum == 1 {
-		item.ScalarVals = float64(1)
+		item.ScalarVals = 1
+		return item
+	}
+	if sampleNum <= 0 {
+		item.ScalarVals = 0
 		return item
 	}
 	h.mu.Lock()
@@ -1441,18 +1459,21 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	if err != nil {
 		return nil
 	}
-	samplesYInXOrder := make([]*statistics.SampleItem, sampleNum)
+	samplesYInXOrder := make([]*statistics.SampleItem, 0, sampleNum)
 	for i, itemX := range samplesX {
+		if itemX.Ordinal >= len(samplesY) {
+			continue
+		}
 		itemY := samplesY[itemX.Ordinal]
 		itemY.Ordinal = i
-		samplesYInXOrder[i] = itemY
+		samplesYInXOrder = append(samplesYInXOrder, itemY)
 	}
 	samplesYInYOrder, err := statistics.SortSampleItems(sc, samplesYInXOrder)
 	if err != nil {
 		return nil
 	}
 	var corrXYSum float64
-	for i := 1; i < sampleNum; i++ {
+	for i := 1; i < len(samplesYInYOrder); i++ {
 		corrXYSum += float64(i) * float64(samplesYInYOrder[i].Ordinal)
 	}
 	// X means the ordinal of the item in original sequence, Y means the oridnal of the item in the

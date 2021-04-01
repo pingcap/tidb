@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -421,7 +422,7 @@ func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	core.SetPreparedPlanCache(orgEnable)
 
 	// cluster index
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t, t2")
 	tk.MustExec("create table t(a int, b int, c int, primary key(a, b))")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a, c))")
@@ -429,7 +430,7 @@ func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	sql = "select * from t where (select min(t2.b) from t2 where t2.a > t.a) > 0"
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	// partitioning table
 	tk.MustExec("drop table if exists t1, t2")

@@ -137,7 +137,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GCRegionTooManyLocksCounter)
 	prometheus.MustRegister(GCWorkerCounter)
 	prometheus.MustRegister(GCUnsafeDestroyRangeFailuresCounterVec)
-	prometheus.MustRegister(TSFutureWaitDuration)
 	prometheus.MustRegister(TotalQueryProcHistogram)
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
@@ -148,6 +147,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ServerInfo)
 	prometheus.MustRegister(TokenGauge)
 	prometheus.MustRegister(ConfigStatus)
+	prometheus.MustRegister(TiFlashQueryTotalCounter)
+	prometheus.MustRegister(SmallTxnWriteDuration)
+	prometheus.MustRegister(TxnWriteThroughput)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
