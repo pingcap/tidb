@@ -55,6 +55,7 @@ check-static: tools/bin/golangci-lint
 	  --enable=typecheck \
 	  --enable=varcheck \
 	  --enable=structcheck \
+	  --enable=deadcode \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec
