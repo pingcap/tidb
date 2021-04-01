@@ -187,14 +187,12 @@ func (s *testRawKVSuite) TestSimple(c *C) {
 	c.Assert(err, NotNil)
 }
 
-var rawBatchPutSize = tikv.ConfigProbe{}.GetRawBatchPutSize()
-
 func (s *testRawKVSuite) TestRawBatch(c *C) {
 	testNum := 0
 	size := 0
 	var testKeys [][]byte
 	var testValues [][]byte
-	for i := 0; size/rawBatchPutSize < 4; i++ {
+	for i := 0; size/(tikv.ConfigProbe{}.GetRawBatchPutSize()) < 4; i++ {
 		key := fmt.Sprint("key", i)
 		size += len(key)
 		testKeys = append(testKeys, []byte(key))
