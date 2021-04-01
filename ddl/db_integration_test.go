@@ -1586,7 +1586,7 @@ CREATE TABLE t (
 	tk.MustGetErrCode("alter table t change c10 c100 varchar(1024) default null", errno.ErrTooLongKey)
 	tk.MustGetErrCode("alter table t modify c10 varchar(600) default null", errno.ErrTooLongKey)
 	tk.MustExec("alter table t modify c06 varchar(600) default null")
-	tk.MustGetErrCode("alter table t modify c01 varchar(510) default null", errno.ErrTooLongKey)
+	tk.MustGetErrCode("alter table t modify c01 varchar(510)", errno.ErrTooLongKey)
 	tk.MustExec("create table t2 like t")
 }
 
