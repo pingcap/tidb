@@ -1709,7 +1709,8 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 	var datum types.Datum
 	rsData := make([]types.Datum, 0, 4)
 	pkCols := TryGetCommonPkColumns(t)
-	for _, col := range pkCols {
+	pkIdx := FindPrimaryIndex(t.Meta())
+	for i, col := range pkCols {
 		if !types.NeedRestoredData(&col.FieldType) {
 			continue
 		}
@@ -1727,18 +1728,12 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 				rsData = append(rsData, row[col.Offset])
 			}
 		}
-	}
-
-	// Try to truncate index values.
-	// Says that primary key(a (8)),
-	// For index t(a), don't truncate the value.
-	// For index t(a(9)), truncate to a(9).
-	// For index t(a(7)), truncate to a(8).
-	pkIdx := FindPrimaryIndex(t.Meta())
-	for i, pkCol := range pkIdx.Columns {
-		if !types.NeedRestoredData(&t.Meta().Columns[pkCol.Offset].FieldType) {
-			continue
-		}
+		pkCol := pkIdx.Columns[i]
+		// Try to truncate index values.
+		// Says that primary key(a (8)),
+		// For index t(a), don't truncate the value.
+		// For index t(a(9)), truncate to a(9).
+		// For index t(a(7)), truncate to a(8).
 		for _, idxCol := range idx.Columns {
 			if idxCol.Offset == pkCol.Offset {
 				if idxCol.Length == types.UnspecifiedLength || pkCol.Length == types.UnspecifiedLength {
@@ -1748,7 +1743,7 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 				if pkCol.Length > idxCol.Length {
 					useIdx = pkCol
 				}
-				tablecodec.TruncateIndexValue(&rsData[i], useIdx, t.Meta().Columns[idxCol.Offset])
+				tablecodec.TruncateIndexValue(&rsData[len(rsData)-1], useIdx, t.Meta().Columns[idxCol.Offset])
 			}
 		}
 	}
