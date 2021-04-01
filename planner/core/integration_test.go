@@ -3033,8 +3033,6 @@ func (s *testIntegrationSuite) TestIndexMergeTableFilter(c *C) {
 		"10 1 1 10",
 	))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite) TestIssue22850(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -3154,4 +3152,3 @@ func (s *testIntegrationSuite) TestIssue23736(c *C) {
 	// Should not use invisible index
 	c.Assert(tk.MustUseIndex("select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2", "c"), IsFalse)
 }
->>>>>>> 008b91b12... planner: fix "can't find column" when projection wrongly added above table reader after agg pushed down (#23804)
