@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -392,10 +392,12 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
+		_, err = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
+		c.Assert(err, IsNil)
 	}
 	p.messUpChunk(srcChk)
-	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
+	err = partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
+	c.Assert(err, IsNil)
 	dt := resultChk.GetRow(0).GetDatum(0, p.dataType)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
@@ -413,11 +415,13 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	iter.Begin()
 	iter.Next()
 	for row := iter.Next(); row != iter.End(); row = iter.Next() {
-		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
+		_, err = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
+		c.Assert(err, IsNil)
 	}
 	p.messUpChunk(srcChk)
 	resultChk.Reset()
-	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
+	err = partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
+	c.Assert(err, IsNil)
 	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
@@ -490,10 +494,12 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
+		// FIXME: cannot assert error since there are cases of error, e.g. JSON documents may not contain NULL member
+		_, _ = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
 	}
 	p.messUpChunk(srcChk)
-	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
+	err = partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
+	c.Assert(err, IsNil)
 	dt := resultChk.GetRow(0).GetDatum(0, p.retType)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
@@ -508,11 +514,13 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 	iter.Begin()
 	iter.Next()
 	for row := iter.Next(); row != iter.End(); row = iter.Next() {
-		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
+		// FIXME: cannot check error
+		_, _ = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
 	}
 	p.messUpChunk(srcChk)
 	resultChk.Reset()
-	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
+	err = partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
+	c.Assert(err, IsNil)
 	dt = resultChk.GetRow(0).GetDatum(0, p.retType)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
@@ -614,10 +622,12 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(err, IsNil)
 	}
 	p.messUpChunk(srcChk)
-	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	c.Assert(err, IsNil)
 	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
@@ -626,7 +636,8 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	// test the empty input
 	resultChk.Reset()
 	finalFunc.ResetPartialResult(finalPr)
-	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	c.Assert(err, IsNil)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
@@ -647,16 +658,19 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(err, IsNil)
 	}
 	p.messUpChunk(srcChk)
 	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(err, IsNil)
 	}
 	p.messUpChunk(srcChk)
-	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	c.Assert(err, IsNil)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
@@ -665,7 +679,8 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	// test the empty input
 	resultChk.Reset()
 	finalFunc.ResetPartialResult(finalPr)
-	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	c.Assert(err, IsNil)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
@@ -726,10 +741,12 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		// FIXME: cannot assert error since there are cases of error, e.g. rows were cut by GROUPCONCAT
+		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
 	p.messUpChunk(srcChk)
-	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	c.Assert(err, IsNil)
 	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
@@ -738,7 +755,8 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	// test the empty input
 	resultChk.Reset()
 	finalFunc.ResetPartialResult(finalPr)
-	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	c.Assert(err, IsNil)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
@@ -759,16 +777,19 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		// FIXME: cannot check error
+		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
 	p.messUpChunk(srcChk)
 	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		// FIXME: cannot check error
+		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
 	p.messUpChunk(srcChk)
-	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	c.Assert(err, IsNil)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
@@ -777,7 +798,8 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	// test the empty input
 	resultChk.Reset()
 	finalFunc.ResetPartialResult(finalPr)
-	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	c.Assert(err, IsNil)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
@@ -925,7 +947,10 @@ func (s *testSuite) baseBenchmarkAggFunc(b *testing.B,
 	output.Reset()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		finalFunc.UpdatePartialResult(s.ctx, input, finalPr)
+		_, err := finalFunc.UpdatePartialResult(s.ctx, input, finalPr)
+		if err != nil {
+			b.Fatal(err)
+		}
 		b.StopTimer()
 		output.Reset()
 		b.StartTimer()

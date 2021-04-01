@@ -56,10 +56,10 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 	}
 	// For redirection the cop task.
 	mocktikv.GRPCClientFactory = func() mocktikv.Client {
-		return tikv.NewTestRPCClient(config.Security)
+		return tikv.NewTestRPCClient(config.Security.ClusterSecurity())
 	}
 	unistore.GRPCClientFactory = func() unistore.Client {
-		return tikv.NewTestRPCClient(config.Security)
+		return tikv.NewTestRPCClient(config.Security.ClusterSecurity())
 	}
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
 	tikvpb.RegisterTikvServer(s, rpcSrv)

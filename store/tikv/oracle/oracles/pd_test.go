@@ -15,9 +15,7 @@ package oracles_test
 
 import (
 	"context"
-	"errors"
 	"math"
-	"regexp"
 	"testing"
 	"time"
 
@@ -30,75 +28,61 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func TestPDOracle_UntilExpired(t *testing.T) {
+var _ = Suite(&testPDSuite{})
+
+type testPDSuite struct{}
+
+func (s *testPDSuite) TestPDOracle_UntilExpired(c *C) {
 	lockAfter, lockExp := 10, 15
 	o := oracles.NewEmptyPDOracle()
 	start := time.Now()
 	oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
 	lockTs := oracle.ComposeTS(oracle.GetPhysical(start.Add(time.Duration(lockAfter)*time.Millisecond)), 1)
 	waitTs := o.UntilExpired(lockTs, uint64(lockExp), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	if waitTs != int64(lockAfter+lockExp) {
-		t.Errorf("waitTs shoulb be %d but got %d", int64(lockAfter+lockExp), waitTs)
-	}
+	c.Assert(waitTs, Equals, int64(lockAfter+lockExp), Commentf("waitTs shoulb be %d but got %d", int64(lockAfter+lockExp), waitTs))
 }
 
-func TestPdOracle_GetStaleTimestamp(t *testing.T) {
+func (s *testPDSuite) TestPdOracle_GetStaleTimestamp(c *C) {
 	o := oracles.NewEmptyPDOracle()
 	start := time.Now()
 	oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
 	ts, err := o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, 10)
-	if err != nil {
-		t.Errorf("%v\n", err)
-	}
+	c.Assert(err, IsNil)
 
 	duration := start.Sub(oracle.GetTimeFromTS(ts))
-	if duration > 12*time.Second || duration < 8*time.Second {
-		t.Errorf("stable TS have accuracy err, expect: %d +-2, obtain: %d", 10, duration)
-	}
+	c.Assert(duration <= 12*time.Second && duration >= 8*time.Second, IsTrue, Commentf("stable TS have accuracy err, expect: %d +-2, obtain: %d", 10, duration))
 
 	_, err = o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, 1e12)
-	if err == nil {
-		t.Errorf("expect exceed err but get nil")
-	}
+	c.Assert(err, NotNil, Commentf("expect exceed err but get nil"))
 
 	testcases := []struct {
 		name      string
 		preSec    uint64
-		expectErr error
+		expectErr string
 	}{
 		{
 			name:      "normal case",
 			preSec:    6,
-			expectErr: nil,
+			expectErr: "",
 		},
 		{
 			name:      "preSec too large",
 			preSec:    math.MaxUint64,
-			expectErr: errors.New(".*invalid prevSecond.*"),
+			expectErr: ".*invalid prevSecond.*",
 		},
 	}
 
 	for _, testcase := range testcases {
-		t.Log(testcase.name)
+		comment := Commentf("%s", testcase.name)
 		start = time.Now()
 		oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
 		ts, err = o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, testcase.preSec)
-		if testcase.expectErr == nil {
-			if err != nil {
-				t.Errorf("%v\n", err)
-			}
+		if testcase.expectErr == "" {
+			c.Assert(err, IsNil, comment)
 			duration = start.Sub(oracle.GetTimeFromTS(ts))
-			if duration > time.Duration(testcase.preSec+2)*time.Second || duration < time.Duration(testcase.preSec-2)*time.Second {
-				t.Errorf("stable TS have accuracy err, expect: %d +-2, obtain: %d", testcase.preSec, duration)
-			}
+			c.Assert(duration <= time.Duration(testcase.preSec+2)*time.Second && duration >= time.Duration(testcase.preSec-2)*time.Second, IsTrue, Commentf("%s: stable TS have accuracy err, expect: %d +-2, obtain: %d", comment.CheckCommentString(), testcase.preSec, duration))
 		} else {
-			r := regexp.MustCompile(testcase.expectErr.Error())
-			if err == nil {
-				t.Errorf("err should be returned")
-			}
-			if !r.MatchString(err.Error()) {
-				t.Errorf("err should be matched")
-			}
+			c.Assert(err, ErrorMatches, testcase.expectErr, comment)
 		}
 	}
 }

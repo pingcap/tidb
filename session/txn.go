@@ -24,14 +24,17 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
@@ -51,89 +54,100 @@ type TxnState struct {
 	initCnt       int
 	stagingHandle kv.StagingHandle
 	mutations     map[int64]*binlog.TableMutation
+	writeSLI      sli.TxnWriteThroughputSLI
 }
 
-func (st *TxnState) init() {
-	st.mutations = make(map[int64]*binlog.TableMutation)
+// GetTableInfo returns the cached index name.
+func (txn *TxnState) GetTableInfo(id int64) *model.TableInfo {
+	return txn.Transaction.GetTableInfo(id)
 }
 
-func (st *TxnState) initStmtBuf() {
-	if st.Transaction == nil {
+// CacheTableInfo caches the index name.
+func (txn *TxnState) CacheTableInfo(id int64, info *model.TableInfo) {
+	txn.Transaction.CacheTableInfo(id, info)
+}
+
+func (txn *TxnState) init() {
+	txn.mutations = make(map[int64]*binlog.TableMutation)
+}
+
+func (txn *TxnState) initStmtBuf() {
+	if txn.Transaction == nil {
 		return
 	}
-	buf := st.Transaction.GetMemBuffer()
-	st.initCnt = buf.Len()
-	st.stagingHandle = buf.Staging()
+	buf := txn.Transaction.GetMemBuffer()
+	txn.initCnt = buf.Len()
+	txn.stagingHandle = buf.Staging()
 }
 
 // countHint is estimated count of mutations.
-func (st *TxnState) countHint() int {
-	if st.stagingHandle == kv.InvalidStagingHandle {
+func (txn *TxnState) countHint() int {
+	if txn.stagingHandle == kv.InvalidStagingHandle {
 		return 0
 	}
-	return st.Transaction.GetMemBuffer().Len() - st.initCnt
+	return txn.Transaction.GetMemBuffer().Len() - txn.initCnt
 }
 
-func (st *TxnState) flushStmtBuf() {
-	if st.stagingHandle == kv.InvalidStagingHandle {
+func (txn *TxnState) flushStmtBuf() {
+	if txn.stagingHandle == kv.InvalidStagingHandle {
 		return
 	}
-	buf := st.Transaction.GetMemBuffer()
-	buf.Release(st.stagingHandle)
-	st.initCnt = buf.Len()
+	buf := txn.Transaction.GetMemBuffer()
+	buf.Release(txn.stagingHandle)
+	txn.initCnt = buf.Len()
 }
 
-func (st *TxnState) cleanupStmtBuf() {
-	if st.stagingHandle == kv.InvalidStagingHandle {
+func (txn *TxnState) cleanupStmtBuf() {
+	if txn.stagingHandle == kv.InvalidStagingHandle {
 		return
 	}
-	buf := st.Transaction.GetMemBuffer()
-	buf.Cleanup(st.stagingHandle)
-	st.initCnt = buf.Len()
+	buf := txn.Transaction.GetMemBuffer()
+	buf.Cleanup(txn.stagingHandle)
+	txn.initCnt = buf.Len()
 }
 
 // Size implements the MemBuffer interface.
-func (st *TxnState) Size() int {
-	if st.Transaction == nil {
+func (txn *TxnState) Size() int {
+	if txn.Transaction == nil {
 		return 0
 	}
-	return st.Transaction.Size()
+	return txn.Transaction.Size()
 }
 
 // Valid implements the kv.Transaction interface.
-func (st *TxnState) Valid() bool {
-	return st.Transaction != nil && st.Transaction.Valid()
+func (txn *TxnState) Valid() bool {
+	return txn.Transaction != nil && txn.Transaction.Valid()
 }
 
-func (st *TxnState) pending() bool {
-	return st.Transaction == nil && st.txnFuture != nil
+func (txn *TxnState) pending() bool {
+	return txn.Transaction == nil && txn.txnFuture != nil
 }
 
-func (st *TxnState) validOrPending() bool {
-	return st.txnFuture != nil || st.Valid()
+func (txn *TxnState) validOrPending() bool {
+	return txn.txnFuture != nil || txn.Valid()
 }
 
-func (st *TxnState) String() string {
-	if st.Transaction != nil {
-		return st.Transaction.String()
+func (txn *TxnState) String() string {
+	if txn.Transaction != nil {
+		return txn.Transaction.String()
 	}
-	if st.txnFuture != nil {
+	if txn.txnFuture != nil {
 		return "txnFuture"
 	}
 	return "invalid transaction"
 }
 
 // GoString implements the "%#v" format for fmt.Printf.
-func (st *TxnState) GoString() string {
+func (txn *TxnState) GoString() string {
 	var s strings.Builder
 	s.WriteString("Txn{")
-	if st.pending() {
+	if txn.pending() {
 		s.WriteString("state=pending")
-	} else if st.Valid() {
+	} else if txn.Valid() {
 		s.WriteString("state=valid")
-		fmt.Fprintf(&s, ", txnStartTS=%d", st.Transaction.StartTS())
-		if len(st.mutations) > 0 {
-			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(st.mutations), st.mutations)
+		fmt.Fprintf(&s, ", txnStartTS=%d", txn.Transaction.StartTS())
+		if len(txn.mutations) > 0 {
+			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(txn.mutations), txn.mutations)
 		}
 	} else {
 		s.WriteString("state=invalid")
@@ -143,43 +157,43 @@ func (st *TxnState) GoString() string {
 	return s.String()
 }
 
-func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
-	st.Transaction = txn
-	st.initStmtBuf()
-	st.txnFuture = nil
+func (txn *TxnState) changeInvalidToValid(kvTxn kv.Transaction) {
+	txn.Transaction = kvTxn
+	txn.initStmtBuf()
+	txn.txnFuture = nil
 }
 
-func (st *TxnState) changeInvalidToPending(future *txnFuture) {
-	st.Transaction = nil
-	st.txnFuture = future
+func (txn *TxnState) changeInvalidToPending(future *txnFuture) {
+	txn.Transaction = nil
+	txn.txnFuture = future
 }
 
-func (st *TxnState) changePendingToValid(ctx context.Context) error {
-	if st.txnFuture == nil {
+func (txn *TxnState) changePendingToValid(ctx context.Context) error {
+	if txn.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
 
-	future := st.txnFuture
-	st.txnFuture = nil
+	future := txn.txnFuture
+	txn.txnFuture = nil
 
 	defer trace.StartRegion(ctx, "WaitTsoFuture").End()
-	txn, err := future.wait()
+	t, err := future.wait()
 	if err != nil {
-		st.Transaction = nil
+		txn.Transaction = nil
 		return err
 	}
-	st.Transaction = txn
-	st.initStmtBuf()
+	txn.Transaction = t
+	txn.initStmtBuf()
 	return nil
 }
 
-func (st *TxnState) changeToInvalid() {
-	if st.stagingHandle != kv.InvalidStagingHandle {
-		st.Transaction.GetMemBuffer().Cleanup(st.stagingHandle)
+func (txn *TxnState) changeToInvalid() {
+	if txn.stagingHandle != kv.InvalidStagingHandle {
+		txn.Transaction.GetMemBuffer().Cleanup(txn.stagingHandle)
 	}
-	st.stagingHandle = kv.InvalidStagingHandle
-	st.Transaction = nil
-	st.txnFuture = nil
+	txn.stagingHandle = kv.InvalidStagingHandle
+	txn.Transaction = nil
+	txn.txnFuture = nil
 }
 
 var hasMockAutoIncIDRetry = int64(0)
@@ -209,12 +223,12 @@ func ResetMockAutoRandIDRetryCount(failTimes int64) {
 }
 
 // Commit overrides the Transaction interface.
-func (st *TxnState) Commit(ctx context.Context) error {
-	defer st.reset()
-	if len(st.mutations) != 0 || st.countHint() != 0 {
+func (txn *TxnState) Commit(ctx context.Context) error {
+	defer txn.reset()
+	if len(txn.mutations) != 0 || txn.countHint() != 0 {
 		logutil.BgLogger().Error("the code should never run here",
-			zap.String("TxnState", st.GoString()),
-			zap.Int("staging handler", int(st.stagingHandle)),
+			zap.String("TxnState", txn.GoString()),
+			zap.Int("staging handler", int(txn.stagingHandle)),
 			zap.Stack("something must be wrong"))
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
@@ -241,36 +255,36 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		}
 	})
 
-	return st.Transaction.Commit(ctx)
+	return txn.Transaction.Commit(ctx)
 }
 
 // Rollback overrides the Transaction interface.
-func (st *TxnState) Rollback() error {
-	defer st.reset()
-	return st.Transaction.Rollback()
+func (txn *TxnState) Rollback() error {
+	defer txn.reset()
+	return txn.Transaction.Rollback()
 }
 
-func (st *TxnState) reset() {
-	st.cleanup()
-	st.changeToInvalid()
+func (txn *TxnState) reset() {
+	txn.cleanup()
+	txn.changeToInvalid()
 }
 
-func (st *TxnState) cleanup() {
-	st.cleanupStmtBuf()
-	st.initStmtBuf()
-	for key := range st.mutations {
-		delete(st.mutations, key)
+func (txn *TxnState) cleanup() {
+	txn.cleanupStmtBuf()
+	txn.initStmtBuf()
+	for key := range txn.mutations {
+		delete(txn.mutations, key)
 	}
 }
 
 // KeysNeedToLock returns the keys need to be locked.
-func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
-	if st.stagingHandle == kv.InvalidStagingHandle {
+func (txn *TxnState) KeysNeedToLock() ([]kv.Key, error) {
+	if txn.stagingHandle == kv.InvalidStagingHandle {
 		return nil, nil
 	}
-	keys := make([]kv.Key, 0, st.countHint())
-	buf := st.Transaction.GetMemBuffer()
-	buf.InspectStage(st.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
+	keys := make([]kv.Key, 0, txn.countHint())
+	buf := txn.Transaction.GetMemBuffer()
+	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags tikvstore.KeyFlags, v []byte) {
 		if !keyNeedToLock(k, v, flags) {
 			return
 		}
@@ -279,7 +293,7 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	return keys, nil
 }
 
-func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
+func keyNeedToLock(k, v []byte, flags tikvstore.KeyFlags) bool {
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.
@@ -339,14 +353,14 @@ type txnFuture struct {
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
 	if err == nil {
-		return tf.store.BeginWithStartTS(tf.txnScope, startTS)
+		return tf.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(tf.txnScope).SetStartTs(startTS))
 	} else if config.GetGlobalConfig().Store == "unistore" {
 		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
-	return tf.store.BeginWithTxnScope(tf.txnScope)
+	return tf.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(tf.txnScope))
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {

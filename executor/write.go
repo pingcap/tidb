@@ -214,9 +214,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		if err != nil {
 			return false, err
 		}
-		if onDup {
-			sc.AddAffectedRows(1)
-		}
 	} else {
 		// Update record to new value and update index.
 		if err = t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
@@ -226,11 +223,11 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			return false, err
 		}
 
-		if onDup {
-			sc.AddAffectedRows(2)
-		} else {
-			sc.AddAffectedRows(1)
-		}
+	}
+	if onDup {
+		sc.AddAffectedRows(2)
+	} else {
+		sc.AddAffectedRows(1)
 	}
 	sc.AddUpdatedRows(1)
 	sc.AddCopiedRows(1)

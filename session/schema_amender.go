@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
@@ -406,6 +407,19 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 	return nil
 }
 
+func getCommonHandleDatum(tbl table.Table, row chunk.Row) []types.Datum {
+	if !tbl.Meta().IsCommonHandle {
+		return nil
+	}
+	datumBuf := make([]types.Datum, 0, 4)
+	for _, col := range tbl.Cols() {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			datumBuf = append(datumBuf, row.GetDatum(col.Offset, &col.FieldType))
+		}
+	}
+	return datumBuf
+}
+
 func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx sessionctx.Context, kvMap map[string][]byte,
 	key []byte, kvHandle kv.Handle, keyOnly bool) ([]byte, []byte, error) {
 	chk := a.chk
@@ -428,6 +442,8 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 		idxVals = append(idxVals, chk.GetRow(0).GetDatum(oldCol.Offset, &oldCol.FieldType))
 	}
 
+	rsData := tables.TryGetHandleRestoredDataWrapper(a.tblInfoAtCommit, getCommonHandleDatum(a.tblInfoAtCommit, chk.GetRow(0)), nil, a.indexInfoAtCommit.Meta())
+
 	// Generate index key buf.
 	newIdxKey, distinct, err := tablecodec.GenIndexKey(sctx.GetSessionVars().StmtCtx,
 		a.tblInfoAtCommit.Meta(), a.indexInfoAtCommit.Meta(), a.tblInfoAtCommit.Meta().ID, idxVals, kvHandle, nil)
@@ -440,9 +456,8 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 	}
 
 	// Generate index value buf.
-	containsNonBinaryString := tables.ContainsNonBinaryString(a.indexInfoAtCommit.Meta().Columns, a.tblInfoAtCommit.Meta().Columns)
-	newIdxVal, err := tablecodec.GenIndexValue(sctx.GetSessionVars().StmtCtx, a.tblInfoAtCommit.Meta(),
-		a.indexInfoAtCommit.Meta(), containsNonBinaryString, distinct, false, idxVals, kvHandle)
+	needRsData := tables.NeedRestoredData(a.indexInfoAtCommit.Meta().Columns, a.tblInfoAtCommit.Meta().Columns)
+	newIdxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, a.tblInfoAtCommit.Meta(), a.indexInfoAtCommit.Meta(), needRsData, distinct, false, idxVals, kvHandle, 0, rsData)
 	if err != nil {
 		logutil.Logger(ctx).Warn("amend generate index values failed", zap.Error(err))
 		return nil, nil, errors.Trace(err)
