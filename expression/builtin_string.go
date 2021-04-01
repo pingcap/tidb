@@ -275,10 +275,12 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
+	if bf.charset == charset.CharsetBin {
+		bf.tp.Flag |= mysql.BinaryFlag
+	}
 	bf.tp.Flen = 0
 	for i := range args {
 		argType := args[i].GetType()
-		SetBinFlagOrBinStr(argType, bf.tp)
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
@@ -348,11 +350,13 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
+	if bf.charset == charset.CharsetBin {
+		bf.tp.Flag |= mysql.BinaryFlag
+	}
 	bf.tp.Flen = 0
 
 	for i := range args {
 		argType := args[i].GetType()
-		SetBinFlagOrBinStr(argType, bf.tp)
 
 		// skip separator param
 		if i != 0 {
