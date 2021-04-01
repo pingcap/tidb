@@ -51,6 +51,7 @@ var (
 	_ StmtNode = &CreateBindingStmt{}
 	_ StmtNode = &DropBindingStmt{}
 	_ StmtNode = &ShutdownStmt{}
+	_ StmtNode = &RenameUserStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -2459,6 +2460,75 @@ func (n *ShutdownStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ShutdownStmt)
+	return v.Leave(n)
+}
+
+// RenameUserStmt is a statement to rename a user.
+// See http://dev.mysql.com/doc/refman/5.7/en/rename-user.html
+type RenameUserStmt struct {
+	stmtNode
+
+	UserToUsers []*UserToUser
+}
+
+// Restore implements Node interface.
+func (n *RenameUserStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RENAME USER ")
+	for index, user2user := range n.UserToUsers {
+		if index != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := user2user.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore RenameUserStmt.UserToUsers")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RenameUserStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RenameUserStmt)
+
+	for i, t := range n.UserToUsers {
+		node, ok := t.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.UserToUsers[i] = node.(*UserToUser)
+	}
+	return v.Leave(n)
+}
+
+// UserToUser represents renaming old user to new user used in RenameUserStmt.
+type UserToUser struct {
+	node
+	OldUser *auth.UserIdentity
+	NewUser *auth.UserIdentity
+}
+
+// Restore implements Node interface.
+func (n *UserToUser) Restore(ctx *format.RestoreCtx) error {
+	if err := n.OldUser.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore UserToUser.OldUser")
+	}
+	ctx.WriteKeyWord(" TO ")
+	if err := n.NewUser.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore UserToUser.NewUser")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *UserToUser) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*UserToUser)
 	return v.Leave(n)
 }
 
