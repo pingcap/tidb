@@ -123,6 +123,11 @@ func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
 	bf.tp = c.tp
+	if IsBinaryLiteral(args[0]) {
+		sig = &builtinCastIntAsIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
+		return sig, nil
+	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
@@ -1841,7 +1846,9 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().Tp == mysql.TypeEnum {
 		if col, ok := expr.(*Column); ok {
-			expr = col.Clone()
+			col = col.Clone().(*Column)
+			col.RetType = col.RetType.Clone()
+			expr = col
 		}
 		expr.GetType().Flag |= mysql.EnumSetAsIntFlag
 	}
