@@ -157,7 +157,6 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 
 func (s *testStoreSerialSuite) TestOracleChangeByFailpoint(c *C) {
 	defer func() {
-		// to fix: err not nil
 		_, err := failpoint.Status("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
 		if err == nil {
 			err = failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
