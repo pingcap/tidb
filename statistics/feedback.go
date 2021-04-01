@@ -21,10 +21,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/pingcap/failpoint"
-
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
