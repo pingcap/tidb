@@ -123,7 +123,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
 	bf.tp = c.tp
-	if IsBinaryLiteral(args[0]) {
+	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
 		return sig, nil
