@@ -8593,7 +8593,9 @@ func (s *testIntegrationSerialSuite) TestIssue23759(c *C) {
 	tk.MustExec("create table t(a char(10) collate utf8mb4_general_ci)")
 	tk.MustExec("insert into t values ('a')")
 	tk.MustQuery("select collation(concat(a, 0x80)) from t").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(concat_ws(',', a, 0x80)) from t").Check(testkit.Rows("utf8mb4_general_ci"))
 	tk.MustQuery("select concat(a, 0x80) from t").Check(testkit.Rows("a\x80"))
+	tk.MustQuery("select concat_ws(',', a, 0x80) from t").Check(testkit.Rows("a,\x80"))
 }
 
 func (s *testIntegrationSuite) TestIssue21677(c *C) {
