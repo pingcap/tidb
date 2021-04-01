@@ -1736,6 +1736,9 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 	// For index t(a(7)), truncate to a(8).
 	pkIdx := FindPrimaryIndex(t.Meta())
 	for i, pkCol := range pkIdx.Columns {
+		if !types.NeedRestoredData(&t.Meta().Columns[pkCol.Offset].FieldType) {
+			continue
+		}
 		for _, idxCol := range idx.Columns {
 			if idxCol.Offset == pkCol.Offset {
 				if idxCol.Length == types.UnspecifiedLength || pkCol.Length == types.UnspecifiedLength {
