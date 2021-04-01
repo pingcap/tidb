@@ -961,6 +961,12 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		p.PartitionInfo = t.partitionInfo
 		p.stats = t.tablePlan.statsInfo()
 
+		// If agg was pushed down, the partial agg was placed on the top of tablePlan, the final agg will be placed
+		// above the PhysicalTableReader, and the schema should have been set correctly for them, the schema of partial
+		// contains the columns needed by the final agg.
+		// If we add the projection here, the projection will be between the final agg and the partial agg, then the
+		// schema will be broken, the final agg will fail to find needed columns in ResolveIndices().
+		// Besides, the agg would only be pushed down if it doesn't contain virtual columns, so virtual column should not be affected.
 		aggPushedDown := false
 		switch p.tablePlan.(type) {
 		case *PhysicalHashAgg, *PhysicalStreamAgg:

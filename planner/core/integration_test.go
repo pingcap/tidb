@@ -3111,3 +3111,14 @@ func (s *testIntegrationSuite) TestGetVarExprWithBitLiteral(c *C) {
 	tk.MustExec("set @a = 0b11000100110101;")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 }
+
+func (s *testIntegrationSuite) TestIssue23736(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t0(a int, b int, c int as (a + b) virtual, unique index (c) invisible);")
+	tk.MustExec("create table t1(a int, b int, c int as (a + b) virtual);")
+	tk.MustExec("insert into t0(a, b) values (12, -1), (8, 7);")
+	tk.MustExec("insert into t1(a, b) values (12, -1), (8, 7);")
+	tk.MustQuery("select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2;").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ stream_agg() */ count(1) from t1 where c > 10 and b < 2;").Check(testkit.Rows("1"))
+}
