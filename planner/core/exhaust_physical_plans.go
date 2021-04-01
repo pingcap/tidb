@@ -479,16 +479,7 @@ func (p *LogicalJoin) constructIndexJoin(
 		IsNullEQ:        newIsNullEQ,
 		DefaultValues:   p.DefaultValues,
 	}
-	// Correct the collation used by hash.
-	for i := range outerHashKeys {
-		// Make compiler happy.
-		if len(innerHashKeys) == 0 {
-			return nil
-		}
-		chs, coll := expression.DeriveCollationFromExprs(nil, outerHashKeys[i], innerHashKeys[i])
-		outerHashKeys[i].GetType().Charset, outerHashKeys[i].GetType().Collate = chs, coll
-		innerHashKeys[i].GetType().Charset, innerHashKeys[i].GetType().Collate = chs, coll
-	}
+
 	join := PhysicalIndexJoin{
 		basePhysicalJoin: baseJoin,
 		innerTask:        innerTask,
