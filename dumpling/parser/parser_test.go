@@ -170,7 +170,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	for _, src := range srcs {
 		st, err = parser.ParseOneStmt(src, "", "")
 		c.Assert(err, IsNil)
-		ss, ok = st.(*ast.SelectStmt)
+		_, ok = st.(*ast.SelectStmt)
 		c.Assert(ok, IsTrue)
 	}
 
@@ -291,6 +291,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	sel, ok = st.(*ast.SelectStmt)
 	c.Assert(ok, IsTrue)
 	colExpr, ok := sel.Fields.Fields[0].Expr.(*ast.ColumnNameExpr)
+	c.Assert(ok, IsTrue)
 	c.Assert(colExpr.Name.Table.O, Equals, "t")
 	c.Assert(colExpr.Name.Name.O, Equals, "1e")
 	tName := sel.From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName)
@@ -3199,12 +3200,12 @@ func (s *testParserSuite) TestHintError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(warns), Equals, 1)
 	c.Assert(warns[0], ErrorMatches, `.*Optimizer hint syntax error at line 1 column 40 near "tidb_unknow\(T1,t2, 1\) \*/" `)
-	stmt, _, err = parser.Parse("select c1, c2 from /*+ tidb_unknow(T1,t2) */ t1, t2 where t1.c1 = t2.c1", "", "")
+	_, _, err = parser.Parse("select c1, c2 from /*+ tidb_unknow(T1,t2) */ t1, t2 where t1.c1 = t2.c1", "", "")
 	c.Assert(err, IsNil) // Hints are ignored after the "FROM" keyword!
-	stmt, _, err = parser.Parse("select1 /*+ TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	_, _, err = parser.Parse("select1 /*+ TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "line 1 column 7 near \"select1 /*+ TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1\" ")
-	stmt, _, err = parser.Parse("select /*+ TIDB_INLJ(t1, T2) */ c1, c2 fromt t1, t2 where t1.c1 = t2.c1", "", "")
+	_, _, err = parser.Parse("select /*+ TIDB_INLJ(t1, T2) */ c1, c2 fromt t1, t2 where t1.c1 = t2.c1", "", "")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "line 1 column 47 near \"t1, t2 where t1.c1 = t2.c1\" ")
 	_, _, err = parser.Parse("SELECT 1 FROM DUAL WHERE 1 IN (SELECT /*+ DEBUG_HINT3 */ 1)", "", "")
@@ -3217,12 +3218,12 @@ func (s *testParserSuite) TestHintError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(stmt[0].(*ast.InsertStmt).TableHints), Equals, 1)
 
-	stmt, warns, err = parser.Parse("SELECT id FROM tbl WHERE id = 0 FOR UPDATE /*+ xyz */", "", "")
+	_, warns, err = parser.Parse("SELECT id FROM tbl WHERE id = 0 FOR UPDATE /*+ xyz */", "", "")
 	c.Assert(err, IsNil)
 	c.Assert(len(warns), Equals, 1)
 	c.Assert(warns[0], ErrorMatches, `.*near '/\*\+' at line 1`)
 
-	stmt, warns, err = parser.Parse("create global binding for select /*+ max_execution_time(1) */ 1 using select /*+ max_execution_time(1) */ 1;\n", "", "")
+	_, warns, err = parser.Parse("create global binding for select /*+ max_execution_time(1) */ 1 using select /*+ max_execution_time(1) */ 1;\n", "", "")
 	c.Assert(err, IsNil)
 	c.Assert(len(warns), Equals, 0)
 }
@@ -3711,7 +3712,7 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	c.Assert(hints[1].HintName.L, Equals, "memory_quota")
 	c.Assert(hints[1].HintData.(int64), Equals, int64(1024*1024*1024))
 
-	stmt, _, err = parser.Parse("select /*+ MEMORY_QUOTA(18446744073709551612 MB), memory_quota(8689934592 GB) */ 1", "", "")
+	_, _, err = parser.Parse("select /*+ MEMORY_QUOTA(18446744073709551612 MB), memory_quota(8689934592 GB) */ 1", "", "")
 	c.Assert(err, IsNil)
 
 	// Test HASH_AGG
@@ -4766,7 +4767,7 @@ func (s *testParserSuite) TestDDLStatements(c *C) {
 		c_enum enum('1') collate utf8_bin,
 		c_set set('1') collate utf8_bin,
 		c_json json collate utf8_bin)`
-	stmts, _, err = parser.Parse(createTableStr, "", "")
+	_, _, err = parser.Parse(createTableStr, "", "")
 	c.Assert(err, IsNil)
 
 	createTableStr = `CREATE TABLE t (c_double double(10))`

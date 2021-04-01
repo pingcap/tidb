@@ -69,7 +69,6 @@ const (
 // Join represents table join.
 type Join struct {
 	node
-	resultSetNode
 
 	// Left table can be TableSource or JoinNode.
 	Left ResultSetNode
@@ -253,7 +252,6 @@ func (n *Join) Accept(v Visitor) (Node, bool) {
 // TableName represents a table name.
 type TableName struct {
 	node
-	resultSetNode
 
 	Schema model.CIStr
 	Name   model.CIStr
@@ -997,7 +995,6 @@ func (s *SelectStmtKind) String() string {
 // See https://dev.mysql.com/doc/refman/5.7/en/select.html
 type SelectStmt struct {
 	dmlNode
-	resultSetNode
 
 	// SelectStmtOpts wraps around select hints and switches.
 	*SelectStmtOpts
@@ -1380,7 +1377,6 @@ func (s *SetOprType) String() string {
 // See https://mariadb.com/kb/en/except/
 type SetOprStmt struct {
 	dmlNode
-	resultSetNode
 
 	SelectList *SetOprSelectList
 	OrderBy    *OrderByClause
@@ -2328,7 +2324,6 @@ const (
 // See https://dev.mysql.com/doc/refman/5.7/en/show.html
 type ShowStmt struct {
 	dmlNode
-	resultSetNode
 
 	Tp          ShowStmtType // Databases/Tables/Columns/....
 	DBName      string

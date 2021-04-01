@@ -223,7 +223,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	wordsInt := digitsToWords(digitsInt)
 	wordsFrac := digitsToWords(digitsFrac)
-	wordsInt, wordsFrac, err := fixWordCntError(wordsInt, wordsFrac)
+	wordsInt, _, err := fixWordCntError(wordsInt, wordsFrac)
 	if err != nil {
 		panic(panicInfo)
 	}

@@ -17,7 +17,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	. "github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 )
@@ -29,11 +28,11 @@ type testMiscSuite struct {
 
 type visitor struct{}
 
-func (v visitor) Enter(in Node) (Node, bool) {
+func (v visitor) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
-func (v visitor) Leave(in Node) (Node, bool) {
+func (v visitor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
@@ -41,44 +40,44 @@ type visitor1 struct {
 	visitor
 }
 
-func (visitor1) Enter(in Node) (Node, bool) {
+func (visitor1) Enter(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
 func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
-	valueExpr := NewValueExpr(42, mysql.DefaultCharset, mysql.DefaultCollationName)
-	stmts := []Node{
-		&AdminStmt{},
-		&AlterUserStmt{},
-		&BeginStmt{},
-		&BinlogStmt{},
-		&CommitStmt{},
-		&CreateUserStmt{},
-		&DeallocateStmt{},
-		&DoStmt{},
-		&ExecuteStmt{UsingVars: []ExprNode{valueExpr}},
-		&ExplainStmt{Stmt: &ShowStmt{}},
-		&GrantStmt{},
-		&PrepareStmt{SQLVar: &VariableExpr{Value: valueExpr}},
-		&RollbackStmt{},
-		&SetPwdStmt{},
-		&SetStmt{Variables: []*VariableAssignment{
+	valueExpr := ast.NewValueExpr(42, mysql.DefaultCharset, mysql.DefaultCollationName)
+	stmts := []ast.Node{
+		&ast.AdminStmt{},
+		&ast.AlterUserStmt{},
+		&ast.BeginStmt{},
+		&ast.BinlogStmt{},
+		&ast.CommitStmt{},
+		&ast.CreateUserStmt{},
+		&ast.DeallocateStmt{},
+		&ast.DoStmt{},
+		&ast.ExecuteStmt{UsingVars: []ast.ExprNode{valueExpr}},
+		&ast.ExplainStmt{Stmt: &ast.ShowStmt{}},
+		&ast.GrantStmt{},
+		&ast.PrepareStmt{SQLVar: &ast.VariableExpr{Value: valueExpr}},
+		&ast.RollbackStmt{},
+		&ast.SetPwdStmt{},
+		&ast.SetStmt{Variables: []*ast.VariableAssignment{
 			{
 				Value: valueExpr,
 			},
 		}},
-		&UseStmt{},
-		&AnalyzeTableStmt{
-			TableNames: []*TableName{
+		&ast.UseStmt{},
+		&ast.AnalyzeTableStmt{
+			TableNames: []*ast.TableName{
 				{},
 			},
 		},
-		&FlushStmt{},
-		&PrivElem{},
-		&VariableAssignment{Value: valueExpr},
-		&KillStmt{},
-		&DropStatsStmt{Table: &TableName{}},
-		&ShutdownStmt{},
+		&ast.FlushStmt{},
+		&ast.PrivElem{},
+		&ast.VariableAssignment{Value: valueExpr},
+		&ast.KillStmt{},
+		&ast.DropStatsStmt{Table: &ast.TableName{}},
+		&ast.ShutdownStmt{},
 	}
 
 	for _, v := range stmts {
@@ -147,43 +146,43 @@ shutdown;`
 }
 
 func (ts *testMiscSuite) TestSensitiveStatement(c *C) {
-	positive := []StmtNode{
-		&SetPwdStmt{},
-		&CreateUserStmt{},
-		&AlterUserStmt{},
-		&GrantStmt{},
+	positive := []ast.StmtNode{
+		&ast.SetPwdStmt{},
+		&ast.CreateUserStmt{},
+		&ast.AlterUserStmt{},
+		&ast.GrantStmt{},
 	}
 	for i, stmt := range positive {
-		_, ok := stmt.(SensitiveStmtNode)
+		_, ok := stmt.(ast.SensitiveStmtNode)
 		c.Assert(ok, IsTrue, Commentf("%d, %#v fail", i, stmt))
 	}
 
-	negative := []StmtNode{
-		&DropUserStmt{},
-		&RevokeStmt{},
-		&AlterTableStmt{},
-		&CreateDatabaseStmt{},
-		&CreateIndexStmt{},
-		&CreateTableStmt{},
-		&DropDatabaseStmt{},
-		&DropIndexStmt{},
-		&DropTableStmt{},
-		&RenameTableStmt{},
-		&TruncateTableStmt{},
+	negative := []ast.StmtNode{
+		&ast.DropUserStmt{},
+		&ast.RevokeStmt{},
+		&ast.AlterTableStmt{},
+		&ast.CreateDatabaseStmt{},
+		&ast.CreateIndexStmt{},
+		&ast.CreateTableStmt{},
+		&ast.DropDatabaseStmt{},
+		&ast.DropIndexStmt{},
+		&ast.DropTableStmt{},
+		&ast.RenameTableStmt{},
+		&ast.TruncateTableStmt{},
 	}
 	for _, stmt := range negative {
-		_, ok := stmt.(SensitiveStmtNode)
+		_, ok := stmt.(ast.SensitiveStmtNode)
 		c.Assert(ok, IsFalse)
 	}
 }
 
 func (ts *testMiscSuite) TestUserSpec(c *C) {
 	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
-	u := UserSpec{
+	u := ast.UserSpec{
 		User: &auth.UserIdentity{
 			Username: "test",
 		},
-		AuthOpt: &AuthOption{
+		AuthOpt: &ast.AuthOption{
 			ByAuthString: false,
 			AuthString:   "xxx",
 			HashString:   hashString,
@@ -194,7 +193,7 @@ func (ts *testMiscSuite) TestUserSpec(c *C) {
 	c.Assert(pwd, Equals, u.AuthOpt.HashString)
 
 	u.AuthOpt.HashString = "not-good-password-format"
-	pwd, ok = u.EncodedPassword()
+	_, ok = u.EncodedPassword()
 	c.Assert(ok, IsFalse)
 
 	u.AuthOpt.ByAuthString = true
@@ -271,8 +270,8 @@ func (ts *testMiscSuite) TestTableOptimizerHintRestore(c *C) {
 		{"READ_FROM_STORAGE(@sel TIFLASH[t1 partition(p0)])", "READ_FROM_STORAGE(@`sel` TIFLASH[`t1` PARTITION(`p0`)])"},
 		{"TIME_RANGE('2020-02-02 10:10:10','2020-02-02 11:10:10')", "TIME_RANGE('2020-02-02 10:10:10', '2020-02-02 11:10:10')"},
 	}
-	extractNodeFunc := func(node Node) Node {
-		return node.(*SelectStmt).TableHints[0]
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.SelectStmt).TableHints[0]
 	}
 	RunNodeRestoreTest(c, testCases, "select /*+ %s */ * from t1 join t2", extractNodeFunc)
 }
@@ -282,8 +281,8 @@ func (ts *testMiscSuite) TestChangeStmtRestore(c *C) {
 		{"CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
 		{"CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
 	}
-	extractNodeFunc := func(node Node) Node {
-		return node.(*ChangeStmt)
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.ChangeStmt)
 	}
 	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
 }

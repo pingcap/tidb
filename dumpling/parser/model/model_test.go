@@ -152,8 +152,7 @@ func (*testModelSuite) TestJobStartTime(c *C) {
 	}
 	t := time.Unix(0, 0)
 	c.Assert(t, Equals, TSConvert2Time(job.StartTS))
-	ret := fmt.Sprintf("%s", job)
-	c.Assert(job.String(), Equals, ret)
+	c.Assert(job.String(), Equals, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0", t))
 }
 
 func (*testModelSuite) TestJobCodec(c *C) {
@@ -324,6 +323,7 @@ func (testModelSuite) TestUnmarshalCIStr(c *C) {
 	c.Assert(ci.L, Equals, "aabb")
 
 	buf, err = json.Marshal(ci)
+	c.Assert(err, IsNil)
 	c.Assert(string(buf), Equals, `{"O":"aaBB","L":"aabb"}`)
 	ci.UnmarshalJSON(buf)
 	c.Assert(ci.O, Equals, str)
@@ -349,6 +349,7 @@ func (testModelSuite) TestDefaultValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(newPlainCol.GetDefaultValue(), Equals, 1)
 	err = newPlainCol.SetDefaultValue(randPlainStr)
+	c.Assert(err, IsNil)
 	c.Assert(newPlainCol.GetDefaultValue(), Equals, randPlainStr)
 
 	randBitStr := string([]byte{25, 185})
@@ -367,6 +368,7 @@ func (testModelSuite) TestDefaultValue(c *C) {
 	c.Assert(err, ErrorMatches, ".*Invalid default value.*")
 	c.Assert(newBitCol.GetDefaultValue(), Equals, 1)
 	err = newBitCol.SetDefaultValue(randBitStr)
+	c.Assert(err, IsNil)
 	c.Assert(newBitCol.GetDefaultValue(), Equals, randBitStr)
 
 	nullBitCol := srcCol.Clone()
