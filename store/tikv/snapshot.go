@@ -319,7 +319,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 		)
 		if keyErr := batchGetResp.GetError(); keyErr != nil {
 			// If a response-level error happens, skip reading pairs.
-			lock, err := extractLockFromKeyErr(keyErr)
+			lock, err := util.ExtractLockFromKeyErr(keyErr)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -332,7 +332,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 					collectF(pair.GetKey(), pair.GetValue())
 					continue
 				}
-				lock, err := extractLockFromKeyErr(keyErr)
+				lock, err := util.ExtractLockFromKeyErr(keyErr)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -479,7 +479,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k tidbkv.Key) ([]by
 		}
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
-			lock, err := extractLockFromKeyErr(keyErr)
+			lock, err := util.ExtractLockFromKeyErr(keyErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -612,46 +612,6 @@ func (s *KVSnapshot) SnapCacheSize() int {
 	s.mu.RLock()
 	defer s.mu.RLock()
 	return len(s.mu.cached)
-}
-
-func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
-	if locked := keyErr.GetLocked(); locked != nil {
-		return NewLock(locked), nil
-	}
-	return nil, extractKeyErr(keyErr)
-}
-
-func extractKeyErr(keyErr *pb.KeyError) error {
-	if val, err := util.MockRetryableErrorResp.Eval(); err == nil {
-		if val.(bool) {
-			keyErr.Conflict = nil
-			keyErr.Retryable = "mock retryable error"
-		}
-	}
-
-	if keyErr.Conflict != nil {
-		return &kv.ErrWriteConflict{WriteConflict: keyErr.GetConflict()}
-	}
-
-	if keyErr.Retryable != "" {
-		return &kv.ErrRetryable{Retryable: keyErr.Retryable}
-	}
-
-	if keyErr.Abort != "" {
-		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
-		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
-		return errors.Trace(err)
-	}
-	if keyErr.CommitTsTooLarge != nil {
-		err := errors.Errorf("commit TS %v is too large", keyErr.CommitTsTooLarge.CommitTs)
-		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
-		return errors.Trace(err)
-	}
-	if keyErr.TxnNotFound != nil {
-		err := errors.Errorf("txn %d not found", keyErr.TxnNotFound.StartTs)
-		return errors.Trace(err)
-	}
-	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }
 
 func (s *KVSnapshot) recordBackoffInfo(bo *Backoffer) {

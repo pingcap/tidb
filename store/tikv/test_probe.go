@@ -23,6 +23,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
+	"github.com/pingcap/tidb/store/tikv/util"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -363,7 +364,7 @@ type LockProbe struct {
 
 // ExtractLockFromKeyErr makes a Lock based on a key error.
 func (l LockProbe) ExtractLockFromKeyErr(err *pb.KeyError) (*Lock, error) {
-	return extractLockFromKeyErr(err)
+	return util.ExtractLockFromKeyErr(err)
 }
 
 // NewLockStatus returns a txn state that has been locked.

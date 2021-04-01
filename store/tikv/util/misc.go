@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
@@ -73,4 +75,46 @@ var SessionID = sessionIDCtxKey{}
 // SetSessionID sets session id into context
 func SetSessionID(ctx context.Context, sessionID uint64) context.Context {
 	return context.WithValue(ctx, SessionID, sessionID)
+}
+
+// ExtractLockFromKeyErr extracts lock from KeyError.
+func ExtractLockFromKeyErr(keyErr *pb.KeyError) (*kv.Lock, error) {
+	if locked := keyErr.GetLocked(); locked != nil {
+		return kv.NewLock(locked), nil
+	}
+	return nil, ExtractKeyErr(keyErr)
+}
+
+// ExtractKeyErr extracts KeyError.
+func ExtractKeyErr(keyErr *pb.KeyError) error {
+	if val, err := MockRetryableErrorResp.Eval(); err == nil {
+		if val.(bool) {
+			keyErr.Conflict = nil
+			keyErr.Retryable = "mock retryable error"
+		}
+	}
+
+	if keyErr.Conflict != nil {
+		return &kv.ErrWriteConflict{WriteConflict: keyErr.GetConflict()}
+	}
+
+	if keyErr.Retryable != "" {
+		return &kv.ErrRetryable{Retryable: keyErr.Retryable}
+	}
+
+	if keyErr.Abort != "" {
+		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
+		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	if keyErr.CommitTsTooLarge != nil {
+		err := errors.Errorf("commit TS %v is too large", keyErr.CommitTsTooLarge.CommitTs)
+		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	if keyErr.TxnNotFound != nil {
+		err := errors.Errorf("txn %d not found", keyErr.TxnNotFound.StartTs)
+		return errors.Trace(err)
+	}
+	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }

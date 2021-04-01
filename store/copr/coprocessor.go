@@ -867,7 +867,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *tikv.Backoffer, rpcCtx *t
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		logutil.BgLogger().Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
-		msBeforeExpired, err1 := worker.ResolveLocks(bo, worker.req.StartTs, []*tikv.Lock{tikv.NewLock(lockErr)})
+		msBeforeExpired, err1 := worker.ResolveLocks(bo, worker.req.StartTs, []*tikv.Lock{tikvstore.NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}

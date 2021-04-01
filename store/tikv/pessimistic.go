@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -156,7 +157,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			}
 
 			// Extract lock from key error
-			lock, err1 := extractLockFromKeyErr(keyErr)
+			lock, err1 := util.ExtractLockFromKeyErr(keyErr)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}

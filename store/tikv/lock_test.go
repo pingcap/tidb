@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 )
 
 type testLockSuite struct {
@@ -416,7 +417,7 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	c.Assert(resp.Resp, NotNil)
 	keyErr := resp.Resp.(*kvrpcpb.GetResponse).GetError()
 	c.Assert(keyErr, NotNil)
-	lock, err := extractLockFromKeyErr(keyErr)
+	lock, err := util.ExtractLockFromKeyErr(keyErr)
 	c.Assert(err, IsNil)
 	return lock
 }

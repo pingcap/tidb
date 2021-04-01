@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -115,7 +116,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 
 		c.mu.RLock()
 		defer c.mu.RUnlock()
-		err = extractKeyErr(keyErr)
+		err = util.ExtractKeyErr(keyErr)
 		if c.mu.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.

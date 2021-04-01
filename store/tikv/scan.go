@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"go.uber.org/zap"
 )
 
@@ -242,7 +243,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// When there is a response-level key error, the returned pairs are incomplete.
 		// We should resolve the lock first and then retry the same request.
 		if keyErr := cmdScanResp.GetError(); keyErr != nil {
-			lock, err := extractLockFromKeyErr(keyErr)
+			lock, err := util.ExtractLockFromKeyErr(keyErr)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -263,7 +264,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// Check if kvPair contains error, it should be a Lock.
 		for _, pair := range kvPairs {
 			if keyErr := pair.GetError(); keyErr != nil && len(pair.Key) == 0 {
-				lock, err := extractLockFromKeyErr(keyErr)
+				lock, err := util.ExtractLockFromKeyErr(keyErr)
 				if err != nil {
 					return errors.Trace(err)
 				}
