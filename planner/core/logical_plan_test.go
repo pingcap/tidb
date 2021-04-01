@@ -955,21 +955,21 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "delete from t order by a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false},
-				{mysql.SelectPriv, "test", "t", "", nil, false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
 			},
 		},
 		{
 			sql: "delete from t",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
 			},
 		},
 		/* Not currently supported. See https://github.com/pingcap/tidb/issues/23644
 		{
 			sql: "delete from t where 1=1",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
 			},
 		},
 		*/
