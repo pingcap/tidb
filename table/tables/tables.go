@@ -1721,9 +1721,7 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 		truncateTargetCol := pkIdxCol
 		for _, idxCol := range idx.Columns {
 			if idxCol.Offset == pkCol.Offset {
-				if idxCol.Length == types.UnspecifiedLength || idxCol.Length > truncateTargetCol.Length {
-					truncateTargetCol = idxCol
-				}
+				truncateTargetCol = maxIndexLen(pkIdxCol, idxCol)
 				break
 			}
 		}
@@ -1735,6 +1733,19 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 		}
 	}
 	return rsData
+}
+
+func maxIndexLen(idxA, idxB *model.IndexColumn) *model.IndexColumn {
+	if idxA.Length == types.UnspecifiedLength {
+		return idxA
+	}
+	if idxB.Length == types.UnspecifiedLength {
+		return idxB
+	}
+	if idxA.Length > idxB.Length {
+		return idxA
+	}
+	return idxB
 }
 
 func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
