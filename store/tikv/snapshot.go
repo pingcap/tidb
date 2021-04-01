@@ -420,7 +420,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k tidbkv.Key) ([]by
 	// Secondary locks or async commit locks cannot be ignored when getting using the max version.
 	// So we concurrently get a TS from PD and use it in retries to avoid unnecessary blocking.
 	var tsFuture oracle.Future
-	if s.version == maxTimestamp {
+	if s.version == maxTimestamp && false {
 		tsFuture = s.store.oracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.txnScope})
 	}
 	failpoint.Inject("snapshotGetTSAsync", nil)
@@ -488,7 +488,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k tidbkv.Key) ([]by
 			}
 
 			snapVer := s.version
-			if s.version == maxTimestamp {
+			if s.version == maxTimestamp && false {
 				newTS, err := tsFuture.Wait()
 				if err != nil {
 					return nil, errors.Trace(err)
