@@ -4,6 +4,7 @@ package export
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	tcontext "github.com/pingcap/dumpling/v4/context"
@@ -345,6 +346,63 @@ func (s *testSQLSuite) TestShowCreateView(c *C) {
 	c.Assert(createTableSQL, Equals, "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n")
 	c.Assert(createViewSQL, Equals, "DROP TABLE IF EXISTS `v`;\nDROP VIEW IF EXISTS `v`;\nSET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\nSET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;\nSET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;\nSET character_set_client = utf8;\nSET character_set_results = utf8;\nSET collation_connection = utf8_general_ci;\nCREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`;\nSET character_set_client = @PREV_CHARACTER_SET_CLIENT;\nSET character_set_results = @PREV_CHARACTER_SET_RESULTS;\nSET collation_connection = @PREV_COLLATION_CONNECTION;\n")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
+func (s *testSQLSuite) TestGetSuitableRows(c *C) {
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
+	const query = "select AVG_ROW_LENGTH from INFORMATION_SCHEMA.TABLES where table_schema=\\? and table_name=\\?;"
+	tctx, cancel := tcontext.Background().WithCancel()
+	defer cancel()
+	database := "foo"
+	table := "bar"
+
+	testCases := []struct {
+		avgRowLength uint64
+		expectedRows uint64
+		returnErr    error
+	}{
+		{
+			32,
+			200000,
+			sql.ErrNoRows,
+		},
+		{
+			0,
+			200000,
+			nil,
+		},
+		{
+			32,
+			1000000,
+			nil,
+		},
+		{
+			1024,
+			131072,
+			nil,
+		},
+		{
+			4096,
+			32768,
+			nil,
+		},
+	}
+	for _, testCase := range testCases {
+		if testCase.returnErr == nil {
+			mock.ExpectQuery(query).WithArgs(database, table).
+				WillReturnRows(sqlmock.NewRows([]string{"AVG_ROW_LENGTH"}).
+					AddRow(testCase.avgRowLength))
+		} else {
+			mock.ExpectQuery(query).WithArgs(database, table).
+				WillReturnError(testCase.returnErr)
+		}
+		rows := GetSuitableRows(tctx, conn, database, table)
+		c.Assert(rows, Equals, testCase.expectedRows)
+	}
 }
 
 func (s *testSQLSuite) TestBuildWhereClauses(c *C) {
