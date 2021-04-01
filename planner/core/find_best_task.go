@@ -1423,12 +1423,9 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		cost += rowCount * sessVars.NetworkFactor * rowSize
 	}
 	if isMatchProp {
-		if prop.Items[0].Desc {
-			ts.Desc = true
+		ts.Desc = prop.Items[0].Desc
+		if prop.Items[0].Desc && rowCount >= 10000 {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
-			if rowCount < 10000 {
-				cost = rowCount * rowSize * sessVars.ScanFactor
-			}
 		}
 		ts.KeepOrder = true
 	}
@@ -1475,12 +1472,9 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {
-		if prop.Items[0].Desc {
-			is.Desc = true
+		is.Desc = prop.Items[0].Desc
+		if prop.Items[0].Desc && rowCount >= 10000 {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
-			if rowCount < 10000 {
-				cost = rowCount * rowSize * sessVars.ScanFactor
-			}
 		}
 		is.KeepOrder = true
 	}
