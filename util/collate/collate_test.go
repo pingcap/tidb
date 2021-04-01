@@ -151,7 +151,7 @@ func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
 		{"a\t", "a", 1},
 		{"ß", "s", 1},
 		{"ß", "ss", 0},
-		{"\x80", "a", 1},
+		{"\x80", "a", -1},
 	}
 	keyTable := []keyTable{
 		{"a", []byte{0x0E, 0x33}},
