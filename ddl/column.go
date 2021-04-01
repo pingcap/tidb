@@ -797,8 +797,7 @@ func migrateAutoIDToAutoRandID(d *ddlCtx, t *meta.Meta, dbInfo *model.DBInfo, tb
 		if err != nil {
 			return errors.Trace(err)
 		}
-		newEnd := newBase - 1
-		err = alloc.Rebase(tblInfo.ID, newEnd, false)
+		err = alloc.Rebase(tblInfo.ID, newBase - 1, false)
 		if err != nil {
 			return errors.Trace(err)
 		}

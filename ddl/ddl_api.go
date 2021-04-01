@@ -3944,7 +3944,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
 	var oldRandBits uint64
-	if tableInfo.PKIsHandle && originCol.IsPKHandleColumn(tableInfo) {
+	if originCol.IsPKHandleColumn(tableInfo) {
 		oldRandBits = tableInfo.AutoRandomBits
 	}
 	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
@@ -3954,18 +3954,19 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 	switch {
 	case oldRandBits == newRandBits:
 		break
-	case newRandBits == 0:
-		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
-	case autoid.MaxAutoRandomBits < newRandBits:
-		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
-			autoid.MaxAutoRandomBits, newRandBits, specNewColumn.Name.Name.O)
-		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
-	case oldRandBits == 0:
-		isAutoIncPrimaryKey := mysql.HasAutoIncrementFlag(originCol.Flag) && originCol.IsPKHandleColumn(tableInfo)
-		if !isAutoIncPrimaryKey {
-			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterChangeFromAutoInc)
-		}
 	case oldRandBits < newRandBits:
+		addingAutoRandom := oldRandBits == 0
+		if addingAutoRandom {
+			convFromAutoInc := mysql.HasAutoIncrementFlag(originCol.Flag) && originCol.IsPKHandleColumn(tableInfo)
+			if !convFromAutoInc {
+				return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterChangeFromAutoInc)
+			}
+		}
+		if autoid.MaxAutoRandomBits < newRandBits {
+			errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
+				autoid.MaxAutoRandomBits, newRandBits, specNewColumn.Name.Name.O)
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+		}
 		break // Increasing auto_random shard bits is allowed.
 	case oldRandBits > newRandBits:
 		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomDecreaseBitErrMsg)

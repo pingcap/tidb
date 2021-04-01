@@ -1143,12 +1143,10 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 }
 
-func (s *testSerialSuite) TestAutoRandomChangeFromAutoInc(c *C) {
+func (s *testIntegrationSuite9) TestAutoRandomChangeFromAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@tidb_allow_remove_auto_inc = 1;")
-	ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	// Basic usages.
 	tk.MustExec("drop table if exists t;")
@@ -1195,6 +1193,10 @@ func (s *testSerialSuite) TestAutoRandomChangeFromAutoInc(c *C) {
 	tk.MustExec("insert into t values (1<<(64-5));")
 	// "max allowed auto_random shard bits is 4, but got 5 on column `a`"
 	tk.MustGetErrCode("alter table t modify column a bigint auto_random;", errno.ErrInvalidAutoRandom)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint auto_increment primary key);")
+	tk.MustExec("insert into t values (1<<(64-6));")
+	tk.MustExec("alter table t modify column a bigint auto_random;")
 }
 
 func (s *testIntegrationSuite9) TestAutoRandomExchangePartition(c *C) {
