@@ -109,24 +109,13 @@ func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 	return lastCol, nil
 }
 
-func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
-	// The sum of length of all index columns.
-	sumLength := 0
-	for _, ic := range idxColumns {
-		col := model.FindColumnInfo(columns, ic.Name.L)
-		if col == nil {
-			return errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
-		}
-
-		indexColumnLength, err := getIndexColumnLength(col, ic.Length)
-		if err != nil {
-			return err
-		}
-		sumLength += indexColumnLength
-		// The sum of all lengths must be shorter than the max length for prefix.
-		if sumLength > config.GetGlobalConfig().MaxIndexLength {
-			return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
-		}
+func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, pkLenAppendToKey int) error {
+	idxLen, err := indexColumnsLen(columns, idxColumns)
+	if err != nil {
+		return err
+	}
+	if idxLen+pkLenAppendToKey > config.GetGlobalConfig().MaxIndexLength {
+		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
 }
@@ -489,7 +478,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.Global = global
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
-
 		if err = checkTooManyIndexes(tblInfo.Indices); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
