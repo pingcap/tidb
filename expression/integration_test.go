@@ -6310,6 +6310,15 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustQuery("select c from t where c = 'A';").Check(testkit.Rows("A"))
 	tk.MustQuery("select c from t where c = 'b';").Check(testkit.Rows("B"))
 	tk.MustQuery("select c from t where c = 'B';").Check(testkit.Rows("B"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t1` (" +
+		"  `COL1` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL," +
+		"  PRIMARY KEY (`COL1`(5)) clustered" +
+		")")
+	tk.MustExec("INSERT INTO `t1` VALUES ('Ȇ');")
+	tk.MustQuery("select * from t1 where col1 not in (0xc484, 0xe5a4bc, 0xc3b3);").Check(testkit.Rows("Ȇ"))
+	tk.MustQuery("select * from t1 where col1 >= 0xc484 and col1 <= 0xc3b3;").Check(testkit.Rows("Ȇ"))
 }
 
 func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
@@ -8945,4 +8954,36 @@ func (s *testIntegrationSerialSuite) TestCollationForBinaryLiteral(c *C) {
 	tk.MustExec("insert into t values(0x1E,0xEC,6966939640596047133);")
 	tk.MustQuery("select * from t where col1 not in (0x1B,0x20) order by col1").Check(testkit.Rows("\x1e \xec 6966939640596047133"))
 	tk.MustExec("drop table t")
+}
+
+func (s *testIntegrationSuite) TestIssue23623(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("insert into t1 values(-2147483648), (-2147483648), (null);")
+	tk.MustQuery("select count(*) from t1 where c1 > (select sum(c1) from t1);").Check(testkit.Rows("2"))
+}
+
+func (s *testIntegrationSuite) TestApproximatePercentile(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bit(10))")
+	tk.MustExec("insert into t values(b'1111')")
+	tk.MustQuery("select approx_percentile(a, 10) from t").Check(testkit.Rows("<nil>"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollationPrefixClusteredIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk.MustExec("create table t (k char(20), v int, primary key (k(4)) clustered, key (k)) collate utf8mb4_general_ci;")
+	tk.MustExec("insert into t values('01233', 1);")
+	tk.MustExec("create index idx on t(k(2))")
+	tk.MustQuery("select * from t use index(k_2);").Check(testkit.Rows("01233 1"))
+	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows("01233 1"))
+	tk.MustExec("admin check table t;")
 }
