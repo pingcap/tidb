@@ -9006,6 +9006,7 @@ func (s *testIntegrationSerialSuite) TestCollationPrefixClusteredIndex(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (k char(20), v int, primary key (k(4)) clustered, key (k)) collate utf8mb4_general_ci;")
 	tk.MustExec("insert into t values('01233', 1);")
 	tk.MustExec("create index idx on t(k(2))")
