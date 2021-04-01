@@ -4078,11 +4078,9 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 	tk.MustExec("alter table tt change a a varchar(100);")
 
-	// varchar to char
-	tk.MustExec("alter table tt change a a char(10);")
-	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
-	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
-	c.Assert(c2.FieldType.Flen, Equals, 10)
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a char(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 
@@ -6569,6 +6567,17 @@ func (s *testDBSuite4) TestIssue22207(c *C) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "2", "3"))
 	c.Assert(len(tk.MustQuery("select * from t1").Rows()), Equals, 0)
 	tk.MustExec("set @@session.tidb_enable_exchange_partition = 0;")
+}
+
+func (s *testDBSuite5) TestIssue23473(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t_23473;")
+	tk.MustExec("create table t_23473 (k int primary key, v int)")
+	tk.MustExec("alter table t_23473 change column k k bigint")
+	t := testGetTableByName(c, tk.Se.(sessionctx.Context), "test", "t_23473")
+	col1Flag := t.Cols()[0].Flag
+	c.Assert(mysql.HasNoDefaultValueFlag(col1Flag), IsTrue)
 }
 
 func (s *testSerialDBSuite) TestIssue22819(c *C) {
