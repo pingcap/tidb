@@ -635,7 +635,10 @@ func (rm *StandAloneRegionManager) runSplitWorker() {
 		}
 		rm.mu.RUnlock()
 		for _, ri := range regionsToCheck {
-			_ = rm.splitCheckRegion(ri)
+			err := rm.splitCheckRegion(ri)
+			if err != nil {
+				log.Error("split region failed", zap.Error(err))
+			}
 		}
 
 		regionsToSave = regionsToSave[:0]

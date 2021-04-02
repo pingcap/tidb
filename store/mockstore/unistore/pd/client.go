@@ -378,7 +378,10 @@ func (c *client) Close() {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 	for _, cc := range c.connMu.clientConns {
-		_ = cc.Close()
+		err := cc.Close()
+		if err != nil {
+			log.Error("[pd] close failed", zap.Error(err))
+		}
 	}
 }
 
