@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -34,7 +34,6 @@ type testUpdateSuite struct {
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
-	ctx *mock.Context
 }
 
 func (s *testUpdateSuite) SetUpSuite(c *C) {
@@ -336,8 +335,8 @@ type testSuite11 struct {
 
 func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
 	tk.MustExec(`use test`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
@@ -388,8 +387,8 @@ func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 
 func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
 	tk.MustExec(`use test`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
@@ -423,8 +422,8 @@ func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 
 func (s *testSuite11) TestReplaceClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
 	tk.MustExec(`use test`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists rt1pk`)
 	tk.MustExec(`create table rt1pk(id varchar(200) primary key, v int)`)
@@ -450,12 +449,13 @@ func (s *testSuite11) TestReplaceClusterIndex(c *C) {
 
 func (s *testSuite11) TestPessimisticUpdatePKLazyCheck(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	s.testUpdatePKLazyCheck(c, tk, true)
-	s.testUpdatePKLazyCheck(c, tk, false)
+	s.testUpdatePKLazyCheck(c, tk, variable.ClusteredIndexDefModeOn)
+	s.testUpdatePKLazyCheck(c, tk, variable.ClusteredIndexDefModeOff)
+	s.testUpdatePKLazyCheck(c, tk, variable.ClusteredIndexDefModeIntOnly)
 }
 
-func (s *testSuite11) testUpdatePKLazyCheck(c *C, tk *testkit.TestKit, clusteredIndex bool) {
-	tk.MustExec(fmt.Sprintf(`set @@tidb_enable_clustered_index=%v`, clusteredIndex))
+func (s *testSuite11) testUpdatePKLazyCheck(c *C, tk *testkit.TestKit, clusteredIndex variable.ClusteredIndexDefMode) {
+	tk.Se.GetSessionVars().EnableClusteredIndex = clusteredIndex
 	tk.MustExec(`drop table if exists upk`)
 	tk.MustExec(`create table upk (a int, b int, c int, primary key (a, b))`)
 	tk.MustExec(`insert upk values (1, 1, 1), (2, 2, 2), (3, 3, 3)`)
@@ -518,4 +518,13 @@ func (s *testPointGetSuite) TestIssue21447(c *C) {
 	tk1.MustQuery("select * from t1 where id in (1, 2)").Check(testkit.Rows("1 abc"))
 	tk1.MustQuery("select * from t1 where id in (1, 2) for update").Check(testkit.Rows("1 xyz"))
 	tk1.MustExec("commit")
+}
+
+func (s *testSuite11) TestIssue23553(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists tt`)
+	tk.MustExec(`create table tt (m0 varchar(64), status tinyint not null)`)
+	tk.MustExec(`insert into tt values('1',0),('1',0),('1',0)`)
+	tk.MustExec(`update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1`)
 }

@@ -46,6 +46,139 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Role:        ast.PlacementRoleVoter,
 				Tp:          ast.PlacementAdd,
 				Replicas:    3,
+				Constraints: `["+zone=sh", "+zone=sh"]`,
+			}},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+					},
+				},
+			},
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `["+zone=sh", "+engine=tiflash"]`,
+			}},
+			err: ".*unsupported label constraint.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `["+zone=sh", "+engine=TiFlash"]`,
+			}},
+			err: ".*unsupported label constraint.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: "",
+			}},
+			output: []*placement.Rule{{
+				Role:             placement.Voter,
+				Count:            3,
+				LabelConstraints: []placement.LabelConstraint{},
+			}},
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `["+zone=sh", "-zone=sh"]`,
+			}},
+			err: ".*conflicting constraints.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `["+zone=sh", "+zone=bj"]`,
+			}},
+			err: ".*conflicting constraints.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Constraints: `{"+zone=sh,+zone=sh": 2, "+zone=sh": 1}`,
+			}},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 1,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+					},
+				},
+				{
+					Role:  placement.Voter,
+					Count: 2,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+					},
+				},
+			},
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Constraints: `{"+zone=sh,-zone=sh": 2, "+zone=sh": 1}`,
+			}},
+			err: ".*conflicting constraints.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Constraints: `{"+zone=sh,+zone=bj": 2, "+zone=sh": 1}`,
+			}},
+			err: ".*conflicting constraints.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `["-  zone=sh", "-zone = bj"]`,
+			}},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
+						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
+					},
+				},
+			},
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
 				Constraints: `["+  zone=sh", "-zone = bj"]`,
 			}},
 			output: []*placement.Rule{
@@ -177,6 +310,25 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					Role: ast.PlacementRoleLearner,
 					Tp:   ast.PlacementDrop,
 				},
+			},
+			bundle: &placement.Bundle{Rules: []*placement.Rule{
+				{Role: placement.Learner},
+				{Role: placement.Voter},
+				{Role: placement.Learner},
+				{Role: placement.Voter},
+			}},
+			output: []*placement.Rule{
+				{Role: placement.Voter},
+				{Role: placement.Voter},
+			},
+		},
+
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role: ast.PlacementRoleLearner,
+					Tp:   ast.PlacementDrop,
+				},
 				{
 					Role: ast.PlacementRoleVoter,
 					Tp:   ast.PlacementDrop,
@@ -194,19 +346,23 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 		{
 			input: []*ast.PlacementSpec{
 				{
-					Role:        ast.PlacementRoleLearner,
-					Tp:          ast.PlacementAdd,
-					Replicas:    3,
-					Constraints: `["+  zone=sh", "-zone = bj"]`,
-				},
-				{
-					Role: ast.PlacementRoleVoter,
+					Role: ast.PlacementRoleLearner,
 					Tp:   ast.PlacementDrop,
 				},
 			},
+			err: ".*no rule of role 'learner' to drop.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `['+  zone=sh', '-zone = bj']`,
+			}},
 			output: []*placement.Rule{
 				{
-					Role:  placement.Learner,
+					Role:  placement.Voter,
 					Count: 3,
 					LabelConstraints: []placement.LabelConstraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
@@ -224,12 +380,14 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			bundle = t.bundle
 		}
 		out, err := buildPlacementSpecs(bundle, t.input)
-		if err == nil {
+		if t.err == "" {
+			c.Assert(err, IsNil)
 			expected, err := json.Marshal(t.output)
 			c.Assert(err, IsNil)
 			got, err := json.Marshal(out.Rules)
 			c.Assert(err, IsNil)
-			c.Assert(len(t.output), Equals, len(out.Rules))
+			comment := Commentf("%d test\nexpected %s\nbut got %s", i, expected, got)
+			c.Assert(len(t.output), Equals, len(out.Rules), comment)
 			for _, r1 := range t.output {
 				found := false
 				for _, r2 := range out.Rules {
@@ -238,10 +396,10 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 						break
 					}
 				}
-				c.Assert(found, IsTrue, Commentf("%d test\nexpected %s\nbut got %s", i, expected, got))
+				c.Assert(found, IsTrue, comment)
 			}
 		} else {
-			c.Assert(err.Error(), ErrorMatches, t.err)
+			c.Assert(err, ErrorMatches, t.err)
 		}
 	}
 }
@@ -282,8 +440,8 @@ func (s *testPlacementSuite) TestPlacementBuildTruncate(c *C) {
 				ID: placement.GroupID(1),
 				Rules: []*placement.Rule{{
 					GroupID:     placement.GroupID(1),
-					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(1))),
-					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2))),
+					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1))),
+					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2))),
 				}},
 			},
 		},
@@ -293,8 +451,8 @@ func (s *testPlacementSuite) TestPlacementBuildTruncate(c *C) {
 				ID: placement.GroupID(2),
 				Rules: []*placement.Rule{{
 					GroupID:     placement.GroupID(2),
-					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2))),
-					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3))),
+					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2))),
+					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(3))),
 				}},
 			},
 		},

@@ -39,7 +39,8 @@ type GlobalVariableCache struct {
 	SingleFight singleflight.Group
 }
 
-const globalVariableCacheExpiry = 2 * time.Second
+// GlobalVariableCacheExpiry is the global variable cache TTL.
+const GlobalVariableCacheExpiry = 2 * time.Second
 
 // Update updates the global variable cache.
 func (gvc *GlobalVariableCache) Update(rows []chunk.Row, fields []*ast.ResultField) {
@@ -56,7 +57,7 @@ func (gvc *GlobalVariableCache) Update(rows []chunk.Row, fields []*ast.ResultFie
 func (gvc *GlobalVariableCache) Get() (succ bool, rows []chunk.Row, fields []*ast.ResultField) {
 	gvc.RLock()
 	defer gvc.RUnlock()
-	if time.Since(gvc.lastModify) < globalVariableCacheExpiry {
+	if time.Since(gvc.lastModify) < GlobalVariableCacheExpiry {
 		succ, rows, fields = !gvc.disable, gvc.rows, gvc.fields
 		return
 	}

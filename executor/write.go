@@ -18,9 +18,12 @@ import (
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -189,9 +192,12 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	if handleChanged {
 		if sc.DupKeyAsWarning {
 			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
-			// If the new handle exists, this will avoid to remove the record.
-			err = tables.CheckHandleExists(ctx, sctx, t, newHandle, newData)
+			// If the new handle or unique index exists, this will avoid to remove the record.
+			err = tables.CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx, sctx, t, newHandle, newData)
 			if err != nil {
+				if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+					return false, nil
+				}
 				return false, err
 			}
 		}
@@ -204,23 +210,23 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		} else {
 			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
 		}
-
 		if err != nil {
 			return false, err
-		}
-		if onDup {
-			sc.AddAffectedRows(1)
 		}
 	} else {
 		// Update record to new value and update index.
 		if err = t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
+			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				return false, nil
+			}
 			return false, err
 		}
-		if onDup {
-			sc.AddAffectedRows(2)
-		} else {
-			sc.AddAffectedRows(1)
-		}
+
+	}
+	if onDup {
+		sc.AddAffectedRows(2)
+	} else {
+		sc.AddAffectedRows(1)
 	}
 	sc.AddUpdatedRows(1)
 	sc.AddCopiedRows(1)
@@ -240,7 +246,7 @@ func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *type
 	if recordID < 0 {
 		return nil
 	}
-	layout := autoid.NewAutoRandomIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
+	layout := autoid.NewShardIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
 	// Set bits except incremental_bits to zero.
 	recordID = recordID & (1<<layout.IncrementalBits - 1)
 	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)

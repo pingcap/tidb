@@ -14,11 +14,11 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
 	"runtime/trace"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -42,7 +42,8 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -55,6 +56,16 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+)
+
+// metrics option
+var (
+	totalQueryProcHistogramGeneral  = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)
+	totalCopProcHistogramGeneral    = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral)
+	totalCopWaitHistogramGeneral    = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblGeneral)
+	totalQueryProcHistogramInternal = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblInternal)
+	totalCopProcHistogramInternal   = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblInternal)
+	totalCopWaitHistogramInternal   = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -201,7 +212,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 	if err != nil {
 		return nil, err
 	}
-	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
+	a.Ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityHigh
 
 	// try to reuse point get executor
 	if a.PsStmt.Executor != nil {
@@ -286,7 +297,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
+		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceed) {
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)
@@ -294,7 +305,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}()
 
 	sctx := a.Ctx
-	ctx = sessionctx.SetCommitCtx(ctx, sctx)
+	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
@@ -614,7 +625,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 		newForUpdateTS = version.Ver
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
-	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
+	txn.SetOption(tikvstore.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
 	return nil
 }
 
@@ -626,7 +637,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	}
 	txnCtx := sessVars.TxnCtx
 	var newForUpdateTS uint64
-	if deadlock, ok := errors.Cause(err).(*tikv.ErrDeadlock); ok {
+	if deadlock, ok := errors.Cause(err).(*tikvstore.ErrDeadlock); ok {
 		if !deadlock.IsRetryable {
 			return nil, ErrDeadlock
 		}
@@ -687,24 +698,6 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	return e, nil
 }
 
-func extractConflictCommitTS(errStr string) uint64 {
-	strs := strings.Split(errStr, "conflictCommitTS=")
-	if len(strs) != 2 {
-		return 0
-	}
-	tsPart := strs[1]
-	length := strings.IndexByte(tsPart, ',')
-	if length < 0 {
-		return 0
-	}
-	tsStr := tsPart[:length]
-	ts, err := strconv.ParseUint(tsStr, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return ts
-}
-
 type pessimisticTxn interface {
 	kv.Transaction
 	// KeysNeedToLock returns the keys need to be locked.
@@ -716,35 +709,35 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	ctx := a.Ctx
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
-		// Do not sync transaction for Execute statement, because the real optimization work is done in
-		// "ExecuteExec.Build".
-		useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
-		if err != nil {
-			return nil, err
-		}
-		if useMaxTS {
-			logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
-			err = ctx.InitTxnWithStartTS(math.MaxUint64)
-		} else if ctx.GetSessionVars().SnapshotTS != 0 {
-			if _, ok := a.Plan.(*plannercore.CheckTable); ok {
-				err = ctx.InitTxnWithStartTS(ctx.GetSessionVars().SnapshotTS)
+		if snapshotTS := ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+			if err := ctx.InitTxnWithStartTS(snapshotTS); err != nil {
+				return nil, err
 			}
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
-			switch {
-			case useMaxTS:
-				stmtCtx.Priority = kv.PriorityHigh
-			case a.LowerPriority:
-				stmtCtx.Priority = kv.PriorityLow
+		} else {
+			// Do not sync transaction for Execute statement, because the real optimization work is done in
+			// "ExecuteExec.Build".
+			useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+			if err != nil {
+				return nil, err
+			}
+			if useMaxTS {
+				logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
+				if err := ctx.InitTxnWithStartTS(math.MaxUint64); err != nil {
+					return nil, err
+				}
+			}
+			if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
+				switch {
+				case useMaxTS:
+					stmtCtx.Priority = tikvstore.PriorityHigh
+				case a.LowerPriority:
+					stmtCtx.Priority = tikvstore.PriorityLow
+				}
 			}
 		}
 	}
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
-		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+		ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityLow
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema)
@@ -764,7 +757,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		if executorExec.lowerPriority {
-			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+			ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityLow
 		}
 		e = executorExec.stmtExec
 	}
@@ -809,6 +802,8 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 var (
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
+	totalTiFlashQueryFailCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.LblError)
+	totalTiFlashQuerySuccCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.LblOK)
 )
 
 // FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
@@ -827,9 +822,24 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 		}
 		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
 	}
+	// Record related SLI metrics.
+	if execDetail.CommitDetail != nil && execDetail.CommitDetail.WriteSize > 0 {
+		a.Ctx.GetTxnWriteThroughputSLI().AddTxnWriteSize(execDetail.CommitDetail.WriteSize, execDetail.CommitDetail.WriteKeys)
+	}
+	if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys > 0 && sessVars.StmtCtx.AffectedRows() > 0 {
+		// Only record the read keys in write statement which affect row more than 0.
+		a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(execDetail.ScanDetail.ProcessedKeys)
+	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
+	if sessVars.StmtCtx.IsTiFlash.Load() {
+		if succ {
+			totalTiFlashQuerySuccCounter.Inc()
+		} else {
+			totalTiFlashQueryFailCounter.Inc()
+		}
+	}
 	prevStmt := a.GetTextToLog()
 	if sessVars.EnableRedactLog {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
@@ -884,12 +894,25 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		sql = FormatSQL(a.Text, sessVars.PreparedParams)
 	}
 
-	var tableIDs, indexNames string
-	if len(sessVars.StmtCtx.TableIDs) > 0 {
-		tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
-	}
+	var indexNames string
 	if len(sessVars.StmtCtx.IndexNames) > 0 {
-		indexNames = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.IndexNames), " ", ",", -1)
+		// remove duplicate index.
+		idxMap := make(map[string]struct{})
+		buf := bytes.NewBuffer(make([]byte, 0, 4))
+		buf.WriteByte('[')
+		for _, idx := range sessVars.StmtCtx.IndexNames {
+			_, ok := idxMap[idx]
+			if ok {
+				continue
+			}
+			idxMap[idx] = struct{}{}
+			if buf.Len() > 1 {
+				buf.WriteByte(',')
+			}
+			buf.WriteString(idx)
+		}
+		buf.WriteByte(']')
+		indexNames = buf.String()
 	}
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
@@ -944,12 +967,22 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
 	} else {
 		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
-		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
-		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
-		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
+		if sessVars.InRestrictedSQL {
+			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
+			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+		} else {
+			totalQueryProcHistogramGeneral.Observe(costTime.Seconds())
+			totalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+		}
 		var userString string
 		if sessVars.User != nil {
 			userString = sessVars.User.String()
+		}
+		var tableIDs string
+		if len(sessVars.StmtCtx.TableIDs) > 0 {
+			tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql.String(),
@@ -995,13 +1028,16 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
 func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n ast.StmtNode) (encodedPlan, hintStr string) {
+	var hintSet bool
 	encodedPlan = sctx.GetSessionVars().StmtCtx.GetEncodedPlan()
-	hintStr = sctx.GetSessionVars().StmtCtx.GetPlanHint()
-	if len(encodedPlan) > 0 {
+	hintStr, hintSet = sctx.GetSessionVars().StmtCtx.GetPlanHint()
+	if len(encodedPlan) > 0 && (!genHint || hintSet) {
 		return
 	}
-	encodedPlan = plannercore.EncodePlan(p)
-	sctx.GetSessionVars().StmtCtx.SetEncodedPlan(encodedPlan)
+	if len(encodedPlan) == 0 {
+		encodedPlan = plannercore.EncodePlan(p)
+		sctx.GetSessionVars().StmtCtx.SetEncodedPlan(encodedPlan)
+	}
 	if genHint {
 		hints := plannercore.GenHintsFromPhysicalPlan(p)
 		if n != nil {

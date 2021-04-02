@@ -52,8 +52,6 @@ const (
 	TypeLimit = "Limit"
 	// TypeHashJoin is the type of hash join.
 	TypeHashJoin = "HashJoin"
-	// TypeBroadcastJoin is the type of broad cast join.
-	TypeBroadcastJoin = "BroadcastJoin"
 	// TypeExchangeSender is the type of mpp exchanger sender.
 	TypeExchangeSender = "ExchangeSender"
 	// TypeExchangeReceiver is the type of mpp exchanger receiver.
@@ -174,6 +172,8 @@ const (
 	typeTableRowIDScan        int = 45
 	typeIndexFullScan         int = 46
 	typeIndexRangeScan        int = 47
+	typeExchangeReceiver      int = 48
+	typeExchangeSender        int = 49
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -273,6 +273,10 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeIndexFullScan
 	case TypeIndexRangeScan:
 		return typeIndexRangeScan
+	case TypeExchangeReceiver:
+		return typeExchangeReceiver
+	case TypeExchangeSender:
+		return typeExchangeSender
 	}
 	// Should never reach here.
 	return 0
@@ -371,6 +375,10 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeIndexFullScan
 	case typeIndexRangeScan:
 		return TypeIndexRangeScan
+	case typeExchangeReceiver:
+		return TypeExchangeReceiver
+	case typeExchangeSender:
+		return TypeExchangeSender
 	}
 
 	// Should never reach here.

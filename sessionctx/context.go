@@ -17,12 +17,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
@@ -71,6 +73,9 @@ type Context interface {
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
 
+	// NewTxnWithStalenessOption initializes a transaction with StalenessTxnOption
+	NewTxnWithStalenessOption(ctx context.Context, option StalenessTxnOption) error
+
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
@@ -109,6 +114,8 @@ type Context interface {
 	PrepareTSFuture(ctx context.Context)
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
+	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
+	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
 }
 
 type basicCtxType int
@@ -135,12 +142,9 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
-type connIDCtxKeyType struct{}
-
-// ConnID is the key in context.
-var ConnID = connIDCtxKeyType{}
-
-// SetCommitCtx sets connection id into context
-func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
-	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
+// StalenessTxnOption represents available options for the InitTxnWithStaleness
+type StalenessTxnOption struct {
+	Mode    ast.TimestampBoundMode
+	PrevSec uint64
+	StartTS uint64
 }

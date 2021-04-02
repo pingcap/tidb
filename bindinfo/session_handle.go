@@ -88,7 +88,7 @@ func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindRecord {
 	hash := parser.DigestNormalized(normdOrigSQL)
 	bindRecords := h.ch[hash]
 	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
+		if bindRecord.OriginalSQL == normdOrigSQL {
 			return bindRecord
 		}
 	}

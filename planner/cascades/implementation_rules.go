@@ -272,7 +272,7 @@ func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	logicalSel := expr.ExprNode.(*plannercore.LogicalSelection)
 	physicalSel := plannercore.PhysicalSelection{
 		Conditions: logicalSel.Conditions,
-	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.SelectBlockOffset(), reqProp.Clone())
+	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.SelectBlockOffset(), reqProp.CloneEssentialFields())
 	switch expr.Group.EngineType {
 	case memo.EngineTiDB:
 		return []memo.Implementation{impl.NewTiDBSelectionImpl(physicalSel)}, nil

@@ -73,4 +73,4 @@ This operation requires writing the corresponding column data in the table to th
 To reduce the impact on other read and write operations, its default priority is low.
 
 ## Compatibility
-About specific compatibility, you can view [MySQL’s compatibility](https://github.com/pingcap/docs/blob/master/sql/mysql-compatibility.md#ddl).
+About specific compatibility, you can view [MySQL’s compatibility](https://github.com/pingcap/docs/blob/master/mysql-compatibility.md#ddl).
