@@ -688,7 +688,7 @@ func (h *Handle) FlushStats() {
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
-		logutil.BgLogger().Error("[stats] dump stats delta fail", zap.Error(err))
+		logutil.BgLogger().Error("[stats] dump stats all fail", zap.Error(err))
 	}
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
 		logutil.BgLogger().Error("[stats] dump stats feedback fail", zap.Error(err))
