@@ -24,7 +24,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -128,8 +127,23 @@ func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 	return nil
 }
 
-// ValidateFromType provides automatic validation based on the SysVar's type
-func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
+// Validate checks if system variable satisfies specific restriction.
+func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
+	// Normalize the value and apply validation based on type.
+	// i.e. TypeBool converts 1/on/ON to ON.
+	normalizedValue, err := sv.validateFromType(vars, value, scope)
+	if err != nil {
+		return normalizedValue, err
+	}
+	// If type validation was successful, call the (optional) validation function
+	if sv.Validation != nil {
+		return sv.Validation(vars, normalizedValue, value, scope)
+	}
+	return normalizedValue, nil
+}
+
+// validateFromType provides automatic validation based on the SysVar's type
+func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// Some sysvars are read-only. Attempting to set should always fail.
 	if sv.ReadOnly || sv.Scope == ScopeNone {
 		return value, ErrIncorrectScope.GenWithStackByArgs(sv.Name, "read only")
@@ -349,14 +363,6 @@ func (sv *SysVar) checkInt64SystemVarWithError(value string) (string, error) {
 	return value, nil
 }
 
-// ValidateFromHook calls the anonymous function on the sysvar if it exists.
-func (sv *SysVar) ValidateFromHook(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-	if sv.Validation != nil {
-		return sv.Validation(vars, normalizedValue, originalValue, scope)
-	}
-	return normalizedValue, nil
-}
-
 // GetNativeValType attempts to convert the val to the approx MySQL non-string type
 func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte, uint) {
 	switch sv.Type {
@@ -434,37 +440,29 @@ func init() {
 	initSynonymsSysVariables()
 }
 
-// BoolToOnOff returns the string representation of a bool, i.e. "ON/OFF"
-func BoolToOnOff(b bool) string {
-	if b {
-		return BoolOn
-	}
-	return BoolOff
-}
-
-func int32ToBoolStr(i int32) string {
-	if i == 1 {
-		return BoolOn
-	}
-	return BoolOff
-}
-
-func checkCharacterValid(normalizedValue string, argName string) (string, error) {
-	if normalizedValue == "" {
-		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
-	}
-	cht, _, err := charset.GetCharsetInfo(normalizedValue)
-	if err != nil {
-		return normalizedValue, errors.Trace(err)
-	}
-	return cht, nil
-}
-
 var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: MaxConnections, Value: "151", Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: DefaultWeekFormat, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 7, AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLModeVar, Value: mysql.DefaultSQLMode, IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLModeVar, Value: mysql.DefaultSQLMode, IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		// Ensure the SQL mode parses
+		normalizedValue = mysql.FormatSQLModeStr(normalizedValue)
+		if _, err := mysql.GetSQLMode(normalizedValue); err != nil {
+			return originalValue, err
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		val = mysql.FormatSQLModeStr(val)
+		// Modes is a list of different modes separated by commas.
+		sqlMode, err := mysql.GetSQLMode(val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.StrictSQLMode = sqlMode.HasStrictMode()
+		s.SQLMode = sqlMode
+		s.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: MaxExecutionTime, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true, IsHintUpdatable: true, SetSession: func(s *SessionVars, val string) error {
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
@@ -858,7 +856,15 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBFoundInBinding, Value: BoolToOnOff(DefTiDBFoundInBinding), Type: TypeBool, ReadOnly: true},
 	{Scope: ScopeSession, Name: TiDBEnableCollectExecutionInfo, Value: BoolToOnOff(DefTiDBEnableCollectExecutionInfo), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowAutoRandExplicitInsert, Value: BoolToOnOff(DefTiDBAllowAutoRandExplicitInsert), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: IntOnly, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly, "1", "0"}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: IntOnly, Type: TypeEnum, PossibleValues: []string{Off, On, IntOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if normalizedValue == IntOnly {
+			vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(normalizedValue, fmt.Sprintf("'%s' or '%s'", On, Off)))
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.EnableClusteredIndex = TiDBOptEnableClustered(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPartitionPruneMode, Value: string(Static), Type: TypeStr, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		mode := PartitionPruneMode(normalizedValue).Update()
 		if !mode.Valid() {
