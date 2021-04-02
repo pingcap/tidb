@@ -1699,57 +1699,52 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 	if !collate.NewCollationEnabled() || !t.Meta().IsCommonHandle || t.Meta().CommonHandleVersion == 0 {
 		return nil
 	}
-
-	useIDMap := false
-	if len(rowMap) > 0 {
-		useIDMap = true
-	}
-
-	var datum types.Datum
 	rsData := make([]types.Datum, 0, 4)
-	pkCols := TryGetCommonPkColumns(t)
-	for _, col := range pkCols {
-		if !types.NeedRestoredData(&col.FieldType) {
+	pkIdx := FindPrimaryIndex(t.Meta())
+	for _, pkIdxCol := range pkIdx.Columns {
+		pkCol := t.Meta().Columns[pkIdxCol.Offset]
+		if !types.NeedRestoredData(&pkCol.FieldType) {
 			continue
 		}
-		if collate.IsBinCollation(col.Collate) {
-			if useIDMap {
-				datum = rowMap[col.ID]
-			} else {
-				datum = row[col.Offset]
-			}
-			rsData = append(rsData, types.NewIntDatum(stringutil.GetTailSpaceCount(datum.GetString())))
+		var datum types.Datum
+		if len(rowMap) > 0 {
+			datum = rowMap[pkCol.ID]
 		} else {
-			if useIDMap {
-				rsData = append(rsData, rowMap[col.ID])
-			} else {
-				rsData = append(rsData, row[col.Offset])
-			}
+			datum = row[pkCol.Offset]
 		}
-	}
-
-	// Try to truncate index values.
-	// Says that primary key(a (8)),
-	// For index t(a), don't truncate the value.
-	// For index t(a(9)), truncate to a(9).
-	// For index t(a(7)), truncate to a(8).
-	pkIdx := FindPrimaryIndex(t.Meta())
-	for i, pkCol := range pkIdx.Columns {
+		// Try to truncate index values.
+		// Says that primary key(a (8)),
+		// For index t(a), don't truncate the value.
+		// For index t(a(9)), truncate to a(9).
+		// For index t(a(7)), truncate to a(8).
+		truncateTargetCol := pkIdxCol
 		for _, idxCol := range idx.Columns {
 			if idxCol.Offset == pkCol.Offset {
-				if idxCol.Length == types.UnspecifiedLength || pkCol.Length == types.UnspecifiedLength {
-					break
-				}
-				useIdx := idxCol
-				if pkCol.Length > idxCol.Length {
-					useIdx = pkCol
-				}
-				tablecodec.TruncateIndexValue(&rsData[i], useIdx, t.Meta().Columns[idxCol.Offset])
+				truncateTargetCol = maxIndexLen(pkIdxCol, idxCol)
+				break
 			}
 		}
+		tablecodec.TruncateIndexValue(&datum, truncateTargetCol, pkCol)
+		if collate.IsBinCollation(pkCol.Collate) {
+			rsData = append(rsData, types.NewIntDatum(stringutil.GetTailSpaceCount(datum.GetString())))
+		} else {
+			rsData = append(rsData, datum)
+		}
 	}
-
 	return rsData
+}
+
+func maxIndexLen(idxA, idxB *model.IndexColumn) *model.IndexColumn {
+	if idxA.Length == types.UnspecifiedLength {
+		return idxA
+	}
+	if idxB.Length == types.UnspecifiedLength {
+		return idxB
+	}
+	if idxA.Length > idxB.Length {
+		return idxA
+	}
+	return idxB
 }
 
 func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
