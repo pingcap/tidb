@@ -148,7 +148,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	}
 	d.SetHook(tc)
 	defaultValue := int64(3)
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
+	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue, mysql.TypeLong, 0)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
@@ -274,7 +274,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 		}
 	}
 	d.SetHook(tc)
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
+	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil, mysql.TypeLong, 0)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 }

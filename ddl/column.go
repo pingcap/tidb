@@ -1726,20 +1726,11 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 		}
 	}
 
-	timeFormat := types.TimeFormat
-	if col.Decimal != 0 {
-		pend := "."
-		for i := 0; i < col.Decimal; i++ {
-			pend += "9"
-		}
-		timeFormat = types.TimeFormat + pend
-	}
-
 	if odValue == strings.ToUpper(ast.CurrentTimestamp) {
 		if col.Tp == mysql.TypeTimestamp {
-			odValue = time.Now().UTC().Format(timeFormat)
+			odValue = time.Now().UTC().Format(types.TimeFSPFormat)
 		} else if col.Tp == mysql.TypeDatetime {
-			odValue = time.Now().Format(timeFormat)
+			odValue = time.Now().Format(types.TimeFSPFormat)
 		}
 	}
 	return odValue, nil

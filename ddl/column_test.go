@@ -64,7 +64,7 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 }
 
 func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string,
-	pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
+	pos *ast.ColumnPosition, defaultValue interface{}, mysqlType byte, decimal int) *model.Job {
 	col := &model.ColumnInfo{
 		Name:               model.NewCIStr(colName),
 		Offset:             len(tblInfo.Columns),
@@ -72,7 +72,12 @@ func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNam
 		OriginDefaultValue: defaultValue,
 	}
 	col.ID = allocateColumnID(tblInfo)
-	col.FieldType = *types.NewFieldType(mysql.TypeLong)
+	col.FieldType = *types.NewFieldType(mysqlType)
+	col.Decimal = decimal
+
+	originDefVal, _ := generateOriginDefaultValue(col)
+	_ = col.SetOriginDefaultValue(originDefVal)
+	_ = col.SetDefaultValue(originDefVal)
 
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
@@ -85,8 +90,8 @@ func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNam
 }
 
 func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
-	job := buildCreateColumnJob(dbInfo, tblInfo, colName, pos, defaultValue)
+	colName string, pos *ast.ColumnPosition, defaultValue interface{}, mysqlType byte, decimal int) *model.Job {
+	job := buildCreateColumnJob(dbInfo, tblInfo, colName, pos, defaultValue, mysqlType, decimal)
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
@@ -224,7 +229,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	c.Assert(table.FindCol(t.Cols(), "c4"), IsNil)
 
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c3")}}, 100)
+	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c3")}}, 100, mysql.TypeLong, 0)
 	testCheckJobDone(c, d, job, true)
 
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
@@ -238,6 +243,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 			c.Assert(data[1].GetInt64(), Equals, 10*i)
 			c.Assert(data[2].GetInt64(), Equals, 100*i)
 			c.Assert(data[3].GetInt64(), Equals, int64(100))
+
 			i++
 			return true, nil
 		})
@@ -264,7 +270,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(values, HasLen, 3)
 	c.Assert(values[2].GetInt64(), Equals, int64(13))
 
-	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 111)
+	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 111, mysql.TypeLong, 0)
 	testCheckJobDone(c, d, job, true)
 
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
@@ -274,7 +280,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(values, HasLen, 4)
 	c.Assert(values[3].GetInt64(), Equals, int64(111))
 
-	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c5", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 101)
+	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c5", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 101, mysql.TypeLong, 0)
 	testCheckJobDone(c, d, job, true)
 
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
@@ -284,7 +290,10 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(values, HasLen, 5)
 	c.Assert(values[4].GetInt64(), Equals, int64(101))
 
-	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c6", &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}, 202)
+	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c6", &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}, 202, mysql.TypeLong, 0)
+	testCheckJobDone(c, d, job, true)
+
+	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c7", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, ast.CurrentTimestamp, mysql.TypeTimestamp, 6)
 	testCheckJobDone(c, d, job, true)
 
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
@@ -302,13 +311,16 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(cols[4].Name.L, Equals, "c4")
 	c.Assert(cols[5].Offset, Equals, 5)
 	c.Assert(cols[5].Name.L, Equals, "c5")
+	c.Assert(cols[6].Offset, Equals, 6)
+	c.Assert(cols[6].Name.L, Equals, "c7")
 
 	values, err = tables.RowWithCols(t, ctx, h, cols)
 	c.Assert(err, IsNil)
 
-	c.Assert(values, HasLen, 6)
+	c.Assert(values, HasLen, 7)
 	c.Assert(values[0].GetInt64(), Equals, int64(202))
 	c.Assert(values[5].GetInt64(), Equals, int64(101))
+	c.Assert(values[6].GetMysqlTime().Microsecond(), Not(Equals), int(0))
 
 	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c2", false)
 	testCheckJobDone(c, d, job, false)
@@ -317,7 +329,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	values, err = tables.RowWithCols(t, ctx, h, t.Cols())
 	c.Assert(err, IsNil)
-	c.Assert(values, HasLen, 5)
+	c.Assert(values, HasLen, 6)
 	c.Assert(values[0].GetInt64(), Equals, int64(202))
 	c.Assert(values[4].GetInt64(), Equals, int64(101))
 
@@ -897,7 +909,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 	d.SetHook(tc)
 
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, newColName, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultColValue)
+	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, newColName, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultColValue, mysql.TypeLong, 0)
 
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
