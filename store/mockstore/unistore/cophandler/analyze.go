@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -83,9 +84,11 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	if analyzeReq.IdxReq.Version != nil {
 		statsVer = *analyzeReq.IdxReq.Version
 	}
+	sctx := flagsToStatementContext(analyzeReq.Flags)
 	processor := &analyzeIndexProcessor{
+		sctx:         sctx,
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
+		statsBuilder: statistics.NewSortedBuilder(sctx, analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
 		statsVer:     statsVer,
 	}
 	if analyzeReq.IdxReq.TopNSize != nil {
@@ -94,6 +97,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
+	processor.fms = statistics.NewFMSketch(int(analyzeReq.IdxReq.SketchSize))
 	for _, ran := range rans {
 		err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
 		if err != nil {
@@ -127,7 +131,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		}
 		cm = statistics.CMSketchToProto(processor.cms, &statistics.TopN{TopN: processor.topNValuePairs})
 	}
-	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
+	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm, Collector: &tipb.SampleCollector{FmSketch: statistics.FMSketchToProto(processor.fms)}})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -167,9 +171,11 @@ func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRang
 type analyzeIndexProcessor struct {
 	skipVal
 
+	sctx         *stmtctx.StatementContext
 	colLen       int
 	statsBuilder *statistics.SortedBuilder
 	cms          *statistics.CMSketch
+	fms          *statistics.FMSketch
 	rowBuf       []byte
 
 	statsVer         int32
@@ -184,6 +190,12 @@ func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
 		return err
 	}
 	p.rowBuf = p.rowBuf[:0]
+
+	if p.fms != nil {
+		if err := p.fms.InsertValue(p.sctx, types.NewBytesDatum(safeCopy(p.rowBuf))); err != nil {
+			return err
+		}
+	}
 
 	for _, val := range values {
 		p.rowBuf = append(p.rowBuf, val...)
@@ -428,10 +440,12 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	if err != nil {
 		return nil, err
 	}
+	sctx := flagsToStatementContext(analyzeReq.Flags)
 	e := &analyzeMixedExec{
+		sctx:               sctx,
 		analyzeColumnsExec: *colExec,
 		colLen:             int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder:       statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
+		statsBuilder:       statistics.NewSortedBuilder(sctx, analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
 		statsVer:           statsVer,
 	}
 	builder.RecordSet = e
@@ -441,6 +455,7 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		e.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
+	e.fms = statistics.NewFMSketch(int(analyzeReq.IdxReq.SketchSize))
 	collectors, _, err := builder.CollectColumnStats()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -478,7 +493,8 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		}
 		cm = statistics.CMSketchToProto(e.cms, &statistics.TopN{TopN: e.topNValuePairs})
 	}
-	commonHandleResp := &tipb.AnalyzeIndexResp{Hist: hg, Cms: cm}
+	fms := statistics.FMSketchToProto(e.fms)
+	commonHandleResp := &tipb.AnalyzeIndexResp{Hist: hg, Cms: cm, Collector: &tipb.SampleCollector{FmSketch: fms}}
 	resp := &tipb.AnalyzeMixedResp{
 		ColumnsResp: colResp,
 		IndexResp:   commonHandleResp,
@@ -493,8 +509,10 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 type analyzeMixedExec struct {
 	analyzeColumnsExec
 
+	sctx         *stmtctx.StatementContext
 	colLen       int
 	statsBuilder *statistics.SortedBuilder
+	fms          *statistics.FMSketch
 	cms          *statistics.CMSketch
 	rowBuf       []byte
 
@@ -517,6 +535,13 @@ func (e *analyzeMixedExec) Process(key, value []byte) error {
 			e.cms.InsertBytes(e.rowBuf)
 		}
 	}
+
+	if e.fms != nil {
+		if err := e.fms.InsertValue(e.sctx, types.NewBytesDatum(e.rowBuf)); err != nil {
+			return err
+		}
+	}
+
 	if e.statsVer == statistics.Version2 {
 		if bytes.Equal(e.topNCurValuePair.Encoded, e.rowBuf) {
 			e.topNCurValuePair.Count++
