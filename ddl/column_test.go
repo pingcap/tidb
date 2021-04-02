@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 
 	. "github.com/pingcap/check"
@@ -293,7 +294,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c6", &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}, 202, mysql.TypeLong, 0)
 	testCheckJobDone(c, d, job, true)
 
-	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c7", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, ast.CurrentTimestamp, mysql.TypeTimestamp, 6)
+	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c7", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, strings.ToUpper(ast.CurrentTimestamp), mysql.TypeTimestamp, 6)
 	testCheckJobDone(c, d, job, true)
 
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
