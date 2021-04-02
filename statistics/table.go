@@ -197,14 +197,14 @@ func (t *Table) ColumnByName(colName string) *Column {
 	return nil
 }
 
-// GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch and TopN.
-func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *TopN) {
+// GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
+func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSketch, *TopN, *FMSketch) {
 	if isIndex {
 		idxStatsInfo := t.Indices[ID]
-		return idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy()
+		return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), nil
 	}
 	colStatsInfo := t.Columns[ID]
-	return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy()
+	return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
 }
 
 type tableColumnID struct {
@@ -339,7 +339,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
-		result, err = idx.GetRowCount(sc, indexRanges, coll.ModifyCount)
+		result, err = idx.GetRowCount(sc, coll, indexRanges, coll.ModifyCount)
 	}
 	result *= idx.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
@@ -540,7 +540,7 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 				break
 			}
 			if col, ok := coll.Columns[colID]; ok {
-				ndv = mathutil.MaxInt64(ndv, col.NDV)
+				ndv = mathutil.MaxInt64(ndv, col.Histogram.NDV)
 			}
 		}
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
@@ -575,7 +575,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			count, err := idx.GetRowCount(sc, []*ranger.Range{ran}, coll.ModifyCount)
+			count, err := idx.GetRowCount(sc, nil, []*ranger.Range{ran}, coll.ModifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}

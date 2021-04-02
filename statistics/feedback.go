@@ -23,11 +23,13 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -143,6 +145,13 @@ var (
 	// FeedbackProbability is the probability to collect the feedback.
 	FeedbackProbability = atomic.NewFloat64(0)
 )
+
+func init() {
+	// This is for solving import cycle.
+	// We need to read the value of FeedbackProbability when setting the variable tidb_analyze_version in sessionctx/variable package
+	// but we have imported sessionctx/variable in statistics package here.
+	variable.FeedbackProbability = FeedbackProbability
+}
 
 // CalcErrorRate calculates the error rate the current QueryFeedback.
 func (q *QueryFeedback) CalcErrorRate() float64 {
@@ -260,6 +269,9 @@ func (q *QueryFeedback) Actual() int64 {
 // Update updates the query feedback. `startKey` is the start scan key of the partial result, used to find
 // the range for update. `counts` is the scan counts of each range, used to update the feedback count info.
 func (q *QueryFeedback) Update(startKey kv.Key, counts, ndvs []int64) {
+	failpoint.Inject("feedbackNoNDVCollect", func() {
+		ndvs = nil
+	})
 	// Older versions do not have the counts info.
 	if len(counts) == 0 {
 		q.Invalidate()
@@ -293,6 +305,9 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts, ndvs []int64) {
 		for i := 0; i < len(counts)/2; i++ {
 			j := len(counts) - i - 1
 			counts[i], counts[j] = counts[j], counts[i]
+		}
+		for i := 0; i < len(ndvs)/2; i++ {
+			j := len(ndvs) - i - 1
 			ndvs[i], ndvs[j] = ndvs[j], ndvs[i]
 		}
 	}
@@ -303,7 +318,9 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts, ndvs []int64) {
 			break
 		}
 		q.Feedback[i+idx].Count += count
-		q.Feedback[i+idx].Ndv += ndvs[i]
+	}
+	for i, ndv := range ndvs {
+		q.Feedback[i+idx].Ndv += ndv
 	}
 }
 

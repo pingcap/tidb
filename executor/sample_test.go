@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -35,7 +35,6 @@ type testTableSampleSuite struct {
 	cluster cluster.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
-	ctx     *mock.Context
 }
 
 func (s *testTableSampleSuite) SetUpSuite(c *C) {
@@ -72,7 +71,7 @@ func (s *testTableSampleSuite) initSampleTest(c *C) *testkit.TestKit {
 func (s *testTableSampleSuite) TestTableSampleBasic(c *C) {
 	tk := s.initSampleTest(c)
 	tk.MustExec("create table t (a int);")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
 
 	tk.MustExec("insert into t values (0), (1000), (2000);")
@@ -122,7 +121,7 @@ func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {
 
 func (s *testTableSampleSuite) TestTableSampleSchema(c *C) {
 	tk := s.initSampleTest(c)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	// Clustered index
 	tk.MustExec("create table t (a varchar(255) primary key, b bigint);")
 	tk.MustExec("insert into t values ('b', 100), ('y', 100);")

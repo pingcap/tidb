@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -87,6 +86,7 @@ func extendedStatsFromJSON(statsColl []*jsonExtendedStats) *statistics.ExtendedS
 type jsonColumn struct {
 	Histogram         *tipb.Histogram `json:"histogram"`
 	CMSketch          *tipb.CMSketch  `json:"cm_sketch"`
+	FMSketch          *tipb.FMSketch  `json:"fm_sketch"`
 	NullCount         int64           `json:"null_count"`
 	TotColSize        int64           `json:"tot_col_size"`
 	LastUpdateVersion uint64          `json:"last_update_version"`
@@ -95,7 +95,7 @@ type jsonColumn struct {
 	StatsVer *int64 `json:"stats_ver"`
 }
 
-func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn *statistics.TopN, statsVer *int64) *jsonColumn {
+func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn *statistics.TopN, FMSketch *statistics.FMSketch, statsVer *int64) *jsonColumn {
 	jsonCol := &jsonColumn{
 		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
@@ -106,6 +106,9 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn
 	}
 	if CMSketch != nil || topn != nil {
 		jsonCol.CMSketch = statistics.CMSketchToProto(CMSketch, topn)
+	}
+	if FMSketch != nil {
+		jsonCol.FMSketch = statistics.FMSketchToProto(FMSketch)
 	}
 	return jsonCol
 }
@@ -123,7 +126,7 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, hist
 // DumpStatsToJSONBySnapshot dumps statistic to json.
 func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64) (*JSONTable, error) {
 	pi := tableInfo.GetPartitionInfo()
-	if pi == nil || h.CurrentPruneMode() == variable.DynamicOnly {
+	if pi == nil {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
 	}
 	jsonTbl := &JSONTable{
@@ -140,6 +143,14 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 			continue
 		}
 		jsonTbl.Partitions[def.Name.L] = tbl
+	}
+	// dump its global-stats if existed
+	tbl, err := h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tbl != nil {
+		jsonTbl.Partitions["global"] = tbl
 	}
 	return jsonTbl, nil
 }
@@ -168,11 +179,11 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch, col.TopN, &col.StatsVer)
+		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
 	}
 
 	for _, idx := range tbl.Indices {
-		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, &idx.StatsVer)
+		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
 	}
 	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
 	return jsonTbl, nil
@@ -202,6 +213,12 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 				return errors.Trace(err)
 			}
 		}
+		// load global-stats if existed
+		if globalStats, ok := jsonTbl.Partitions["global"]; ok {
+			if err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, globalStats); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	return errors.Trace(h.Update(is))
 }
@@ -213,13 +230,13 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 	}
 
 	for _, col := range tbl.Columns {
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, col.TopN, col.FMSketch, int(col.StatsVer), 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, idx.TopN, nil, int(idx.StatsVer), 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -281,6 +298,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				return nil, errors.Trace(err)
 			}
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
+			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
 			// If the statistics is loaded from a JSON without stats version,
 			// we set it to 1.
@@ -293,6 +311,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				Histogram:  *hist,
 				CMSketch:   cm,
 				TopN:       topN,
+				FMSketch:   fms,
 				Info:       colInfo,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				StatsVer:   statsVer,

@@ -242,15 +242,6 @@ func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLock
 	return nil, nil
 }
 
-type rawEntry struct {
-	key   []byte
-	value []byte
-}
-
-func (e *rawEntry) Less(than btree.Item) bool {
-	return bytes.Compare(e.key, than.(*rawEntry).key) < 0
-}
-
 // MVCCStore is a mvcc key-value storage.
 type MVCCStore interface {
 	Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) ([]byte, error)

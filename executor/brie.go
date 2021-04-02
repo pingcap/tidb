@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -465,4 +466,8 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 	case "Size":
 		gs.info.archiveSize = value
 	}
+}
+
+func (gs *tidbGlueSession) GetVersion() string {
+	return "TiDB\n" + printer.GetTiDBInfo()
 }
