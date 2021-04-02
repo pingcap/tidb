@@ -98,6 +98,7 @@ func (l *MvccLock) MarshalBinary() []byte {
 	}
 	copy(buf[cursor:], l.Value)
 	cursor += len(l.Value)
+	_ = cursor
 	return buf
 }
 

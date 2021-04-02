@@ -101,7 +101,7 @@ func NewClient(pdAddrs []string, tag string) (Client, error) {
 	log.Info("[pd] client created", zap.String("tag", tag), zap.Strings("endpoints", urls))
 
 	c := &client{
-		urls: urls,
+		urls:                     urls,
 		receiveRegionHeartbeatCh: make(chan *pdpb.RegionHeartbeatResponse, 1),
 		checkLeaderCh:            make(chan struct{}, 1),
 		ctx:                      ctx,

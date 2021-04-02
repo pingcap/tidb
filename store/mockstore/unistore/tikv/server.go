@@ -795,6 +795,7 @@ func (svr *Server) EstablishMPPConnectionWithStoreId(req *mpp.EstablishMPPConnec
 		raw, err := res.Marshal()
 		if err != nil {
 			sendError = server.Send(&mpp.MPPDataPacket{Error: &mpp.Error{Msg: err.Error()}})
+			break
 		}
 		sendError = server.Send(&mpp.MPPDataPacket{Data: raw})
 	}

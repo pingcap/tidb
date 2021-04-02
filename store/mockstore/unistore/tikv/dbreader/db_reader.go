@@ -30,11 +30,11 @@ import (
 	"bytes"
 	"math"
 
-	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 )
 
 func NewDBReader(startKey, endKey []byte, txn *badger.Txn) *DBReader {

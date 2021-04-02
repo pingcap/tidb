@@ -423,6 +423,9 @@ func NewStandAloneRegionManager(bundle *mvcc.DBBundle, opts RegionOptions, pdc p
 		}
 		rm.pdc.ReportRegion(req)
 	})
+	if err != nil {
+		log.Fatal("StandAloneRegionManager.loadFromLocal", zap.Error(err))
+	}
 	if rm.storeMeta.Id == 0 {
 		err = rm.initStore(opts.StoreAddr)
 		if err != nil {

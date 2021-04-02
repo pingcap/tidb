@@ -510,7 +510,7 @@ func (s *testMvccSuite) TestBasicOptimistic(c *C) {
 	MustPrewriteOptimistic(key1, key1, val1, 1, ttl, 0, store)
 	MustCommitKeyPut(key1, val1, 1, 2, store)
 	// Read using smaller ts results in nothing
-	getVal, err := store.newReqCtx().getDBReader().Get(key1, 1)
+	getVal, _ := store.newReqCtx().getDBReader().Get(key1, 1)
 	c.Assert(getVal, IsNil)
 }
 
@@ -965,6 +965,7 @@ func (s *testMvccSuite) TestMvccTxnRead(c *C) {
 	MustGetNone(k1, 1, store)
 
 	v1 = []byte("v1lock")
+	_ = v1
 	MustPrewriteLock(k1, k1, 3, store)
 	MustCommit(k1, 3, 4, store)
 	// lock should left nothing
