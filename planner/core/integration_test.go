@@ -3134,3 +3134,14 @@ func (s *testIntegrationSuite) TestMultiColMaxOneRow(c *C) {
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+// https://github.com/pingcap/tidb/issues/23802
+func (s *testIntegrationSuite) TestPanicWhileQueryTableWithIsNull(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists NT_HP27193")
+	tk.MustExec("CREATE TABLE `NT_HP27193` (  `COL1` int(20) DEFAULT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL4` datetime DEFAULT NULL,  `COL3` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH ( `COL1`%`COL3` ) PARTITIONS 10;")
+	_, err := tk.Exec("select col1 from NT_HP27193 where col1 is null;")
+	c.Assert(err, IsNil)
+}
