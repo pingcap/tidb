@@ -2261,3 +2261,26 @@ func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), time.Duration(0)), IsNil)
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
 }
+
+func (s *testStatsSuite) TestIndexFMSketch(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c))")
+	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("analyze table t index ia")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
+	tk.MustExec("analyze table t index ibc")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("5"))
+
+	// for clustered index
+	tk.MustExec("set @@tidb_enable_clustered_index=ON")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a datetime, b bigint, primary key (a))")
+	tk.MustExec("insert into t1 values ('2000-01-01', 1)")
+	tk.MustExec("analyze table t1")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("7"))
+}
