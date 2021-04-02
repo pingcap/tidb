@@ -1007,6 +1007,10 @@ func (ts *tidbTestSuite) TestClientErrors(c *C) {
 	ts.runTestInfoschemaClientErrors(c)
 }
 
+func (ts *tidbTestSuite) TestInitConnect(c *C) {
+	ts.runTestInitConnect(c)
+}
+
 func (ts *tidbTestSuite) TestSumAvg(c *C) {
 	c.Parallel()
 	ts.runTestSumAvg(c)
