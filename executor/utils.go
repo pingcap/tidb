@@ -19,6 +19,7 @@ import (
 
 // SetFromString constructs a slice of strings from a comma separated string.
 // It is assumed that there is no duplicated entry. You could use addToSet to maintain this property.
+// It is exported for tests. I HOPE YOU KNOW WHAT YOU ARE DOING.
 func SetFromString(value string) []string {
 	if len(value) == 0 {
 		return nil
