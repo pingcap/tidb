@@ -243,8 +243,8 @@ func (c *client) getOrCreateConn(addr string) (*grpc.ClientConn, error) {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 	if old, ok := c.connMu.clientConns[addr]; ok {
-		cc.Close()
-		return old, nil
+		err = cc.Close()
+		return old, err
 	}
 	c.connMu.clientConns[addr] = cc
 	return cc, nil
@@ -378,7 +378,7 @@ func (c *client) Close() {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 	for _, cc := range c.connMu.clientConns {
-		cc.Close()
+		_ = cc.Close()
 	}
 }
 

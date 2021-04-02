@@ -99,7 +99,10 @@ func (dt *DetectorClient) rebuildStreamClient() error {
 		return err
 	}
 	if dt.streamConn != nil {
-		dt.streamConn.Close()
+		err = dt.streamConn.Close()
+		if err != nil {
+			return err
+		}
 	}
 	dt.streamConn = cc
 	ctx, cancel := context.WithCancel(context.Background())

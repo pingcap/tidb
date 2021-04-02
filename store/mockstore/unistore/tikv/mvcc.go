@@ -133,9 +133,18 @@ func (store *MVCCStore) dumpMemLocks() error {
 	for it.SeekToFirst(); it.Valid(); it.Next() {
 		hdr.keyLen = uint32(len(it.Key()))
 		hdr.valLen = uint32(len(it.Value()))
-		writer.Write(hdrBuf)
-		writer.Write(it.Key())
-		writer.Write(it.Value())
+		_, err = writer.Write(hdrBuf)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = writer.Write(it.Key())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = writer.Write(it.Value())
+		if err != nil {
+			return errors.Trace(err)
+		}
 		cnt++
 	}
 	err = writer.Flush()
@@ -146,7 +155,10 @@ func (store *MVCCStore) dumpMemLocks() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	f.Close()
+	err = f.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return os.Rename(tmpFileName, store.dir+"/lock_store")
 }
 

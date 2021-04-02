@@ -32,7 +32,9 @@ func (ls *MemStore) LoadFromFile(fileName string) (meta []byte, err error) {
 		}
 		return nil, errors.Trace(err)
 	}
-	defer f.Close()
+	defer func() {
+		err = f.Close()
+	}()
 	reader := bufio.NewReader(f)
 	meta, err = ls.readItem(reader, nil)
 	if err != nil {

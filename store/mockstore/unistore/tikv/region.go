@@ -424,7 +424,7 @@ func NewStandAloneRegionManager(bundle *mvcc.DBBundle, opts RegionOptions, pdc p
 		rm.pdc.ReportRegion(req)
 	})
 	if err != nil {
-		log.Fatal("StandAloneRegionManager.loadFromLocal", zap.Error(err))
+		log.Fatal("load from local failed", zap.Error(err))
 	}
 	if rm.storeMeta.Id == 0 {
 		err = rm.initStore(opts.StoreAddr)
@@ -433,7 +433,10 @@ func NewStandAloneRegionManager(bundle *mvcc.DBBundle, opts RegionOptions, pdc p
 		}
 	}
 	rm.storeMeta.Address = opts.StoreAddr
-	rm.pdc.PutStore(context.TODO(), rm.storeMeta)
+	err = rm.pdc.PutStore(context.TODO(), rm.storeMeta)
+	if err != nil {
+		log.Fatal("put store failed", zap.Error(err))
+	}
 	rm.wg.Add(2)
 	go rm.runSplitWorker()
 	go rm.storeHeartBeatLoop()
@@ -632,7 +635,7 @@ func (rm *StandAloneRegionManager) runSplitWorker() {
 		}
 		rm.mu.RUnlock()
 		for _, ri := range regionsToCheck {
-			rm.splitCheckRegion(ri)
+			_ = rm.splitCheckRegion(ri)
 		}
 
 		regionsToSave = regionsToSave[:0]
