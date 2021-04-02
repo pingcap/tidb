@@ -93,3 +93,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/zeroslope/parser v0.0.0-20210331160441-7e352d42682f
