@@ -617,6 +617,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return oracle.LocalTxnScope
 	}()},
+	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution), SetSession: func(s *SessionVars, val string) error {
 		s.AllowMPPExecution = TiDBOptOn(val)
