@@ -61,8 +61,8 @@ type RegionCtx interface {
 type regionCtx struct {
 	meta            *metapb.Region
 	regionEpoch     unsafe.Pointer // *metapb.RegionEpoch
-	startKey        []byte
-	endKey          []byte
+	rawStartKey     []byte
+	rawEndKey       []byte
 	approximateSize int64
 	diff            int64
 
@@ -133,11 +133,11 @@ func newRegionCtx(meta *metapb.Region, latches *latches, _ interface{}) *regionC
 		latches:     latches,
 		regionEpoch: unsafe.Pointer(meta.GetRegionEpoch()),
 	}
-	regCtx.startKey = regCtx.rawStartKey()
-	regCtx.endKey = regCtx.rawEndKey()
-	if len(regCtx.endKey) == 0 {
+	regCtx.rawStartKey = regCtx.decodeRawStartKey()
+	regCtx.rawEndKey = regCtx.decodeRawEndKey()
+	if len(regCtx.rawEndKey) == 0 {
 		// Avoid reading internal meta data.
-		regCtx.endKey = InternalKeyPrefix
+		regCtx.rawEndKey = InternalKeyPrefix
 	}
 	return regCtx
 }
@@ -151,11 +151,11 @@ func (ri *regionCtx) Diff() *int64 {
 }
 
 func (ri *regionCtx) RawStart() []byte {
-	return ri.rawStartKey()
+	return ri.rawStartKey
 }
 
 func (ri *regionCtx) RawEnd() []byte {
-	return ri.rawEndKey()
+	return ri.rawEndKey
 }
 
 func (ri *regionCtx) getRegionEpoch() *metapb.RegionEpoch {
@@ -166,7 +166,7 @@ func (ri *regionCtx) updateRegionEpoch(epoch *metapb.RegionEpoch) {
 	atomic.StorePointer(&ri.regionEpoch, (unsafe.Pointer)(epoch))
 }
 
-func (ri *regionCtx) rawStartKey() []byte {
+func (ri *regionCtx) decodeRawStartKey() []byte {
 	if len(ri.meta.StartKey) == 0 {
 		return nil
 	}
@@ -177,7 +177,7 @@ func (ri *regionCtx) rawStartKey() []byte {
 	return rawKey
 }
 
-func (ri *regionCtx) rawEndKey() []byte {
+func (ri *regionCtx) decodeRawEndKey() []byte {
 	if len(ri.meta.EndKey) == 0 {
 		return nil
 	}
@@ -189,15 +189,15 @@ func (ri *regionCtx) rawEndKey() []byte {
 }
 
 func (ri *regionCtx) lessThanStartKey(key []byte) bool {
-	return bytes.Compare(key, ri.startKey) < 0
+	return bytes.Compare(key, ri.rawStartKey) < 0
 }
 
 func (ri *regionCtx) greaterEqualEndKey(key []byte) bool {
-	return len(ri.endKey) > 0 && bytes.Compare(key, ri.endKey) >= 0
+	return len(ri.rawEndKey) > 0 && bytes.Compare(key, ri.rawEndKey) >= 0
 }
 
 func (ri *regionCtx) greaterThanEndKey(key []byte) bool {
-	return len(ri.endKey) > 0 && bytes.Compare(key, ri.endKey) > 0
+	return len(ri.rawEndKey) > 0 && bytes.Compare(key, ri.rawEndKey) > 0
 }
 
 func newPeerMeta(peerID, storeID uint64) *metapb.Peer {
@@ -228,8 +228,8 @@ func (ri *regionCtx) unmarshal(data []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ri.startKey = ri.rawStartKey()
-	ri.endKey = ri.rawEndKey()
+	ri.rawStartKey = ri.decodeRawStartKey()
+	ri.rawEndKey = ri.decodeRawEndKey()
 	ri.regionEpoch = unsafe.Pointer(ri.meta.RegionEpoch)
 	return nil
 }
@@ -677,7 +677,7 @@ func (rm *StandAloneRegionManager) splitCheckRegion(region *regionCtx) error {
 	err := rm.bundle.DB.View(func(txn *badger.Txn) error {
 		iter := txn.NewIterator(badger.IteratorOptions{})
 		defer iter.Close()
-		for iter.Seek(region.startKey); iter.Valid(); iter.Next() {
+		for iter.Seek(region.rawStartKey); iter.Valid(); iter.Next() {
 			item := iter.Item()
 			if region.greaterEqualEndKey(item.Key()) {
 				break

@@ -52,12 +52,12 @@ func (ts *TestStore) newReqCtx() *requestCtx {
 	return ts.newReqCtxWithKeys([]byte{'t'}, []byte{'u'})
 }
 
-func (ts *TestStore) newReqCtxWithKeys(startKey, endKey []byte) *requestCtx {
+func (ts *TestStore) newReqCtxWithKeys(rawStartKey, rawEndKey []byte) *requestCtx {
 	return &requestCtx{
 		regCtx: &regionCtx{
-			latches:  newLatches(),
-			startKey: startKey,
-			endKey:   endKey,
+			latches:     newLatches(),
+			rawStartKey: rawStartKey,
+			rawEndKey:   rawEndKey,
 		},
 		rpcCtx: &kvrpcpb.Context{
 			RegionId:    1,
