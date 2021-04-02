@@ -761,6 +761,20 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	testSQL = `select * from t;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1", "2 2"))
+
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t4(id int primary key, k int, v int, unique key uk1(k))")
+	tk.MustExec("insert into t4 values (1, 10, 100), (3, 30, 300)")
+	tk.MustExec("insert ignore into t4 (id, k, v) values(1, 0, 0) on duplicate key update id = 2, k = 30")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '30' for key 'uk1'"))
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 10 100", "3 30 300"))
+
+	tk.MustExec("drop table if exists t5")
+	tk.MustExec("create table t5(k2 int primary key, uk1 int, v int, unique key ukk1(uk1), unique key ukk2(v))")
+	tk.MustExec("insert into t5(k2, uk1, v) values(1, 1, '100'), (3, 2, '200')")
+	tk.MustExec("update ignore t5 set k2 = '2', uk1 = 2 where k2 = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '2' for key 'ukk1'"))
+	tk.MustQuery("select * from t5").Check(testkit.Rows("1 1 100", "3 2 200"))
 }
 
 func (s *testSuite4) TestInsertSetWithDefault(c *C) {
