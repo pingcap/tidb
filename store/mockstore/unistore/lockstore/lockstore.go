@@ -298,7 +298,7 @@ func (ls *MemStore) PutWithHint(key []byte, v []byte, hint *Hint) bool {
 	recomputeHeight := ls.calculateRecomputeHeight(key, hint, lsHeight)
 	var old *node
 	if recomputeHeight > 0 {
-		for i := int(recomputeHeight) - 1; i >= 0; i-- {
+		for i := recomputeHeight - 1; i >= 0; i-- {
 			// Use higher level to speed up for current level.
 			var exists bool
 			hint.prev[i], hint.next[i], exists = ls.findSpliceForLevel(arena, key, hint.prev[i+1], i)
@@ -318,7 +318,7 @@ func (ls *MemStore) PutWithHint(key []byte, v []byte, hint *Hint) bool {
 	}
 	height := ls.randomHeight()
 	x := ls.newNode(arena, key, v, height)
-	if height > int(lsHeight) {
+	if height > lsHeight {
 		ls.setHeight(height)
 	}
 
@@ -359,7 +359,7 @@ func (ls *MemStore) replace(key, v []byte, hint *Hint, old *node) {
 
 func (ls *MemStore) newNode(arena *arena, key []byte, v []byte, height int) *node {
 	// The base level is already allocated in the node struct.
-	nodeSize := int(nodeHeadrSize) + height*8 + len(key) + len(v)
+	nodeSize := nodeHeadrSize + height*8 + len(key) + len(v)
 	addr := arena.alloc(nodeSize)
 	if addr == nullArenaAddr {
 		arena = arena.grow()

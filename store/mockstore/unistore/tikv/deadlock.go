@@ -216,7 +216,7 @@ func convertErrToResp(errDeadlock *ErrDeadlock, txnTs, waitForTxnTs, keyHash uin
 
 // NewDetectorServer creates local detector used by RPC detection handler
 func NewDetectorServer() *DetectorServer {
-	entryTTL := time.Duration(3 * time.Second)
+	entryTTL := 3 * time.Second
 	urgentSize := uint64(100000)
 	exipreInterval := 3600 * time.Second
 	svr := &DetectorServer{

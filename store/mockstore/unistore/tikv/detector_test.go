@@ -42,8 +42,8 @@ var _ = Suite(&testDeadlockSuite{})
 type testDeadlockSuite struct{}
 
 func (s *testDeadlockSuite) TestDeadlock(c *C) {
-	ttl := time.Duration(50 * time.Millisecond)
-	expireInterval := time.Duration(100 * time.Millisecond)
+	ttl := 50 * time.Millisecond
+	expireInterval := 100 * time.Millisecond
 	urgentSize := uint64(1)
 	detector := NewDetector(ttl, urgentSize, expireInterval)
 	err := detector.Detect(1, 2, 100)

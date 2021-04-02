@@ -719,7 +719,7 @@ func (svr *Server) GetMPPTaskHandler(taskId int64, storeId uint64) (*cophandler.
 
 func (svr *Server) RemoveMPPTaskHandler(taskId int64, storeId uint64) error {
 	if mrm, ok := svr.regionManager.(*MockRegionManager); ok {
-		err := mrm.removeMPPTaskHandler(int64(taskId), storeId)
+		err := mrm.removeMPPTaskHandler(taskId, storeId)
 		return errors.Trace(err)
 	}
 	return errors.New("Only mock region mgr supports remove mpp task")

@@ -64,7 +64,7 @@ const (
 // Just like the tikv encoding form. See tikv/src/storage/mvcc/write.rs for more detail.
 func EncodeWriteCFValue(t WriteType, startTs uint64, shortVal []byte) []byte {
 	data := make([]byte, 1)
-	data[0] = byte(t)
+	data[0] = t
 	data = codec.EncodeUvarint(data, startTs)
 	if len(shortVal) != 0 {
 		data = append(data, byte(shortValuePrefix), byte(len(shortVal)))
