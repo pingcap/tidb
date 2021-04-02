@@ -1191,12 +1191,12 @@ func (s *testIntegrationSuite9) TestAutoRandomChangeFromAutoInc(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint auto_increment primary key);")
 	tk.MustExec("insert into t values (1<<(64-5));")
-	// "max allowed auto_random shard bits is 4, but got 5 on column `a`"
-	tk.MustGetErrCode("alter table t modify column a bigint auto_random;", errno.ErrInvalidAutoRandom)
+	// "max allowed auto_random shard bits is 3, but got 4 on column `a`"
+	tk.MustGetErrCode("alter table t modify column a bigint auto_random(4);", errno.ErrInvalidAutoRandom)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint auto_increment primary key);")
 	tk.MustExec("insert into t values (1<<(64-6));")
-	tk.MustExec("alter table t modify column a bigint auto_random;")
+	tk.MustExec("alter table t modify column a bigint auto_random(4);")
 }
 
 func (s *testIntegrationSuite9) TestAutoRandomExchangePartition(c *C) {

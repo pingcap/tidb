@@ -4042,6 +4042,9 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 		}
 		break // Increasing auto_random shard bits is allowed.
 	case oldRandBits > newRandBits:
+		if newRandBits == 0 {
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
+		}
 		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomDecreaseBitErrMsg)
 	}
 

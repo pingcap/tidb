@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -787,27 +786,6 @@ func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Ta
 	return dbInfo, tblInfo, oldCol, jobParam, errors.Trace(err)
 }
 
-func migrateAutoIDToAutoRandID(d *ddlCtx, t *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo) error {
-	tbl, err := getTable(d.store, dbInfo.ID, tblInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if alloc := tbl.Allocators(nil).Get(autoid.AutoRandomType); alloc != nil {
-		newBase, err := t.GetAutoTableID(dbInfo.ID, tblInfo.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = alloc.Rebase(tblInfo.ID, newBase-1, false)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if err := t.CleanAutoID(dbInfo.ID, tblInfo.ID); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
 func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, tblInfo, oldCol, jobParam, err := getModifyColumnInfo(t, job)
 	if err != nil {
@@ -840,14 +818,14 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 	})
 
-	if jobParam.updatedAutoRandomBits > 0 {
-		if err := checkAndApplyNewAutoRandomBits(job, t, tblInfo, jobParam.newCol, oldCol, jobParam.updatedAutoRandomBits); err != nil {
-			return ver, errors.Trace(err)
-		}
+	err = checkAndApplyAutoRandomBits(d, t, dbInfo, tblInfo, oldCol, jobParam.newCol, jobParam.updatedAutoRandomBits)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 
 	if !needChangeColumnData(oldCol, jobParam.newCol) {
-		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos, jobParam.updatedAutoRandomBits)
+		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
 	}
 
 	if jobParam.changingCol == nil {
@@ -1407,7 +1385,7 @@ func updateChangingInfo(changingCol *model.ColumnInfo, changingIdxs []*model.Ind
 // doModifyColumn updates the column information and reorders all columns. It does not support modifying column data.
 func (w *worker) doModifyColumn(
 	d *ddlCtx, t *meta.Meta, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition, updateAutoRandID uint64) (ver int64, _ error) {
+	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) (ver int64, _ error) {
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)
@@ -1434,13 +1412,6 @@ func (w *worker) doModifyColumn(
 
 	if err := adjustColumnInfoInModifyColumn(job, tblInfo, newCol, oldCol, pos, ""); err != nil {
 		return ver, errors.Trace(err)
-	}
-	convertedFromAutoInc := updateAutoRandID > 0 && mysql.HasAutoIncrementFlag(oldCol.Flag)
-	if convertedFromAutoInc {
-		err := migrateAutoIDToAutoRandID(d, t, dbInfo, tblInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-		}
 	}
 
 	ver, err := updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
@@ -1535,39 +1506,72 @@ func adjustColumnInfoInModifyColumn(
 	return nil
 }
 
-func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo,
-	newCol *model.ColumnInfo, oldCol *model.ColumnInfo, newAutoRandBits uint64) error {
-	schemaID := job.SchemaID
+func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	oldCol *model.ColumnInfo, newCol *model.ColumnInfo, newAutoRandBits uint64) error {
+	if newAutoRandBits == 0 {
+		return nil
+	}
+	err := checkNewAutoRandomBits(m, dbInfo.ID, tblInfo.ID, oldCol, newCol, newAutoRandBits)
+	if err != nil {
+		return err
+	}
+	return applyNewAutoRandomBits(d, m, dbInfo, tblInfo, oldCol, newAutoRandBits)
+}
+
+// checkNewAutoRandomBits checks whether the new auto_random bits will cause overflow.
+func checkNewAutoRandomBits(m *meta.Meta, schemaID, tblID int64,
+	oldCol *model.ColumnInfo, newCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
 
-	// GenAutoRandomID first to prevent concurrent update.
-	_, err := t.GenAutoRandomID(schemaID, tblInfo.ID, 1)
-	if err != nil {
-		return err
-	}
-	currentIncBitsVal, err := t.GetAutoRandomID(schemaID, tblInfo.ID)
-	if err != nil {
-		return err
-	}
+	allocTp := autoid.AutoRandomType
 	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.Flag)
 	if convertedFromAutoInc {
-		currentIncBitsVal, err = t.GetAutoTableID(schemaID, tblInfo.ID)
-		if err != nil {
-			return err
-		}
+		allocTp = autoid.AutoIncrementType
+	}
+	// GenerateAutoID first to prevent concurrent update in DML.
+	_, err := autoid.GenerateAutoID(m, schemaID, tblID, 1, allocTp)
+	if err != nil {
+		return err
+	}
+	currentIncBitsVal, err := autoid.GetAutoID(m, schemaID, tblID, allocTp)
+	if err != nil {
+		return err
 	}
 	// Find the max number of available shard bits by
 	// counting leading zeros in current inc part of auto_random ID.
-	availableBits := bits.LeadingZeros64(uint64(currentIncBitsVal))
-	isOccupyingIncBits := newLayout.TypeBitsLength-newLayout.IncrementalBits > uint64(availableBits)
-	if isOccupyingIncBits {
-		availableBits := mathutil.Min(autoid.MaxAutoRandomBits, availableBits)
-		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, availableBits, newAutoRandBits, oldCol.Name.O)
-		job.State = model.JobStateCancelled
+	usedBits := uint64(64 - bits.LeadingZeros64(uint64(currentIncBitsVal)))
+	if usedBits > newLayout.IncrementalBits {
+		overflowCnt := usedBits - newLayout.IncrementalBits
+		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, newAutoRandBits-overflowCnt, newAutoRandBits, oldCol.Name.O)
 		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
+	return nil
+}
 
+// applyNewAutoRandomBits set auto_random bits to TableInfo and
+// migrate auto_increment ID to auto_random ID if possible.
+func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo, oldCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	tblInfo.AutoRandomBits = newAutoRandBits
+	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.Flag)
+	if !convertedFromAutoInc {
+		alloc := autoid.NewAllocatorsFromTblInfo(d.store, dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
+		if alloc == nil {
+			errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
+			return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+		}
+		newBase, err := m.GetAutoTableID(dbInfo.ID, tblInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = alloc.Rebase(tblInfo.ID, newBase-1, false)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := m.CleanAutoID(dbInfo.ID, tblInfo.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
