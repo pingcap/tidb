@@ -293,8 +293,8 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c6", &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}, 202, mysql.TypeLong, 0)
 	testCheckJobDone(c, d, job, true)
 
-	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c7", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, ast.CurrentTimestamp, mysql.TypeTimestamp, 6)
-	testCheckJobDone(c, d, job, true)
+	//job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c7", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, ast.CurrentTimestamp, mysql.TypeTimestamp, 6)
+	//testCheckJobDone(c, d, job, true)
 
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	cols := t.Cols()
@@ -320,7 +320,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(values, HasLen, 7)
 	c.Assert(values[0].GetInt64(), Equals, int64(202))
 	c.Assert(values[5].GetInt64(), Equals, int64(101))
-	c.Assert(values[6].GetMysqlTime().Microsecond(), Not(Equals), int(0))
+	//c.Assert(values[6].GetMysqlTime().Microsecond(), Not(Equals), int(0))
 
 	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c2", false)
 	testCheckJobDone(c, d, job, false)
