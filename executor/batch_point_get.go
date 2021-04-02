@@ -214,6 +214,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
+			if idxKey == nil {
+				continue
+			}
 			s := hack.String(idxKey)
 			if _, found := dedup[s]; found {
 				continue

@@ -294,6 +294,7 @@ func (s *testPessimisticSuite) TestPointGetOverflow(c *C) {
 	tk.MustExec("create table t(k tinyint, v int, unique key(k))")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t set v = 100 where k = -200;")
+	tk.MustExec("update t set v = 100 where k in (-200, -400);")
 }
 
 func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {

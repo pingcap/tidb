@@ -899,6 +899,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFunctionalIndexDataIsTooLong:                          mysql.Message("Data too long for expression index '%s'", nil),
 	ErrFunctionalIndexNotApplicable:                          mysql.Message("Cannot use expression index '%s' due to type or collation conversion", nil),
 	ErrUnsupportedConstraintCheck:                            mysql.Message("%s is not supported", nil),
+	ErrDynamicPrivilegeNotRegistered:                         mysql.Message("Dynamic privilege '%s' is not registered with the server.", nil),
+	ErrIllegalPrivilegeLevel:                                 mysql.Message("Illegal privilege level specified for %s", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),
