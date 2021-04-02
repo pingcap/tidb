@@ -275,10 +275,10 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
+	SetBinFlagOrBinStr(bf.tp, bf.tp)
 	bf.tp.Flen = 0
 	for i := range args {
 		argType := args[i].GetType()
-		SetBinFlagOrBinStr(argType, bf.tp)
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
@@ -350,9 +350,9 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	bf.tp.Flen = 0
 
+	SetBinFlagOrBinStr(bf.tp, bf.tp)
 	for i := range args {
 		argType := args[i].GetType()
-		SetBinFlagOrBinStr(argType, bf.tp)
 
 		// skip separator param
 		if i != 0 {
@@ -2000,8 +2000,7 @@ func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
-	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
+	SetBinFlagOrBinStr(bf.tp, bf.tp)
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
@@ -2133,8 +2132,7 @@ func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
-	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
+	SetBinFlagOrBinStr(bf.tp, bf.tp)
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
@@ -2668,9 +2666,7 @@ func (c *makeSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	for i, length := 0, len(args); i < length; i++ {
-		SetBinFlagOrBinStr(args[i].GetType(), bf.tp)
-	}
+	SetBinFlagOrBinStr(bf.tp, bf.tp)
 	bf.tp.Flen = c.getFlen(bf.ctx, args)
 	if bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
@@ -3591,8 +3587,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	bf.tp.Flen = mysql.MaxBlobWidth
-	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	SetBinFlagOrBinStr(args[3].GetType(), bf.tp)
+	SetBinFlagOrBinStr(bf.tp, bf.tp)
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
