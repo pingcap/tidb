@@ -579,6 +579,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return oracle.LocalTxnScope
 	}()},
+	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJThresholdCount, Value: strconv.Itoa(DefBroadcastJoinThresholdCount), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
