@@ -3111,3 +3111,44 @@ func (s *testIntegrationSuite) TestGetVarExprWithBitLiteral(c *C) {
 	tk.MustExec("set @a = 0b11000100110101;")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 }
+
+func (s *testIntegrationSuite) TestMultiColMaxOneRow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a,b))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue23736(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("create table t0(a int, b int, c int as (a + b) virtual, unique index (c) invisible);")
+	tk.MustExec("create table t1(a int, b int, c int as (a + b) virtual);")
+	tk.MustExec("insert into t0(a, b) values (12, -1), (8, 7);")
+	tk.MustExec("insert into t1(a, b) values (12, -1), (8, 7);")
+	tk.MustQuery("select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2;").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ stream_agg() */ count(1) from t1 where c > 10 and b < 2;").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t0")
+	tk.MustExec("insert into t0(a, b) values (5, 1);")
+	tk.MustQuery("select /*+ nth_plan(3) */ count(1) from t0 where c > 10 and b < 2;").Check(testkit.Rows("0"))
+
+	// Should not use invisible index
+	c.Assert(tk.MustUseIndex("select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2", "c"), IsFalse)
+}

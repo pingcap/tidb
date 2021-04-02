@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -5479,6 +5480,22 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
 }
 
+func (s *testSuiteP2) TestIssue23567(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	oriProbability := statistics.FeedbackProbability.Load()
+	statistics.FeedbackProbability.Store(1.0)
+	defer func() { statistics.FeedbackProbability.Store(oriProbability) }()
+	failpoint.Enable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect", `return("")`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned, b int, primary key(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("analyze table t")
+	// The SQL should not panic.
+	tk.MustQuery("select count(distinct b) from t")
+	failpoint.Disable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect")
+}
+
 func (s *testSuite) TestSummaryFailedUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7847,7 +7864,7 @@ func (s *testSerialSuite) TestStaleReadKVRequest(c *C) {
 		c.Log(testcase.name)
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v")`, testcase.txnScope))
+		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`)
 		tk.MustQuery(testcase.sql)
@@ -7974,17 +7991,18 @@ func (s *testSuiteP1) TestIssue22941(c *C) {
 		PRIMARY KEY (mid),
 		KEY ind_bm_parent (ParentId,mid)
 	)`)
-
+	// mp should have more columns than m
 	tk.MustExec(`CREATE TABLE mp (
 		mpid bigint(20) unsigned NOT NULL DEFAULT '0',
 		mid varchar(50) DEFAULT NULL COMMENT '模块主键',
+		sid int,
 	PRIMARY KEY (mpid)
 	);`)
 
-	tk.MustExec(`insert into mp values("1","1");`)
+	tk.MustExec(`insert into mp values("1","1","0");`)
 	tk.MustExec(`insert into m values("0", "0");`)
-	rs := tk.MustQuery(`SELECT ( SELECT COUNT(1) FROM m WHERE ParentId = c.mid ) expand,  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
-	rs.Check(testkit.Rows("1 <nil> 1 0"))
+	rs := tk.MustQuery(`SELECT ( SELECT COUNT(1) FROM m WHERE ParentId = c.mid ) expand,  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL, sid FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
+	rs.Check(testkit.Rows("1 <nil> 1 0 <nil>"))
 
 	rs = tk.MustQuery(`SELECT  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
 	rs.Check(testkit.Rows("<nil> 1 0"))

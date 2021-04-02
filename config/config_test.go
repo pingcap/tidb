@@ -596,3 +596,17 @@ func (s *testConfigSuite) TestTcpNoDelay(c *C) {
 	//check default value
 	c.Assert(c1.Performance.TCPNoDelay, Equals, true)
 }
+
+func (s *testConfigSuite) TestConfigExample(c *C) {
+	conf := NewConfig()
+	_, localFile, _, _ := runtime.Caller(0)
+	configFile := filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	metaData, err := toml.DecodeFile(configFile, conf)
+	c.Assert(err, IsNil)
+	keys := metaData.Keys()
+	for _, key := range keys {
+		for _, s := range key {
+			c.Assert(ContainHiddenConfig(s), IsFalse)
+		}
+	}
+}
