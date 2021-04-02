@@ -1523,7 +1523,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	*/
 	job1 := buildCreateIdxJob(dbInfo1, tblInfo1, false, "db1_idx1", "c1")
 	addDDLJob(c, d, job1)
-	job2 := buildCreateColumnJob(dbInfo1, tblInfo1, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
+	job2 := buildCreateColumnJob(dbInfo1, tblInfo1, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil, mysql.TypeLong, 0)
 	addDDLJob(c, d, job2)
 	job3 := buildCreateIdxJob(dbInfo1, tblInfo1, false, "db1_idx2", "c3")
 	addDDLJob(c, d, job3)
