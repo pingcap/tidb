@@ -3157,7 +3157,7 @@ func (s *testIntegrationSuite) TestIssue23839(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists BB")
-	tk.MustQuery("CREATE TABLE `BB` (\n" +
+	tk.MustExec("CREATE TABLE `BB` (\n" +
 		"	`col_int` int(11) DEFAULT NULL,\n" +
 		"	`col_varchar_10` varchar(10) DEFAULT NULL,\n" +
 		"	`pk` int(11) NOT NULL AUTO_INCREMENT,\n" +
