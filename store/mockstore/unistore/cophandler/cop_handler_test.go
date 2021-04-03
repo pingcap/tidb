@@ -161,7 +161,7 @@ func convertToPrefixNext(key []byte) []byte {
 		if key[i] == 255 {
 			key[i] = 0
 		} else {
-			key[i] += 1
+			key[i]++
 			return key
 		}
 	}

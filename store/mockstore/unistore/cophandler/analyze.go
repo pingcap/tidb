@@ -401,7 +401,7 @@ func (e *analyzeColumnsExec) Process(key, value []byte) error {
 	e.chk.Reset()
 	if e.req.NumRows() == e.req.Capacity() {
 		e.seekKey = kv.Key(key).PrefixNext()
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	return nil
 }

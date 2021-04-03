@@ -19,6 +19,7 @@ const (
 	subPathKV   = "kv"
 )
 
+// NewMock returns a new *tikv.Server, a new *tikv.MockRegionManager and a new *tikv.MockPD.
 func NewMock(conf *config.Config, clusterID uint64) (*tikv.Server, *tikv.MockRegionManager, *tikv.MockPD, error) {
 	physical, logical := tikv.GetTS()
 	ts := uint64(physical)<<18 + uint64(logical)
@@ -50,6 +51,7 @@ func NewMock(conf *config.Config, clusterID uint64) (*tikv.Server, *tikv.MockReg
 	return svr, rm, pdClient, nil
 }
 
+// New returns a new *tikv.Server.
 func New(conf *config.Config, pdClient pd.Client) (*tikv.Server, error) {
 	physical, logical, err := pdClient.GetTS(context.Background())
 	if err != nil {
@@ -104,9 +106,8 @@ func createDB(subPath string, safePoint *tikv.SafePoint, conf *config.Engine) (*
 	if subPath == subPathRaft {
 		// Do not need to write blob for raft engine because it will be deleted soon.
 		return nil, errors.New("not support " + subPathRaft)
-	} else {
-		opts.ManagedTxns = true
 	}
+	opts.ManagedTxns = true
 	opts.ValueLogWriteOptions.WriteBufferSize = 4 * 1024 * 1024
 	opts.Dir = filepath.Join(conf.DBPath, subPath)
 	opts.ValueDir = opts.Dir

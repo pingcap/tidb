@@ -17,10 +17,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 )
 
+// PBError is a implementation of error.
 type PBError struct {
 	RequestErr *errorpb.Error
 }
 
+// Error implements the error.
 func (re *PBError) Error() string {
 	return re.RequestErr.String()
 }

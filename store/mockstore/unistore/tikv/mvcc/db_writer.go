@@ -30,11 +30,13 @@ type DBWriter interface {
 	NewWriteBatch(startTS, commitTS uint64, ctx *kvrpcpb.Context) WriteBatch
 }
 
+// LatchHandle is the interface for handling latches.
 type LatchHandle interface {
 	AcquireLatches(hashVals []uint64)
 	ReleaseLatches(hashVals []uint64)
 }
 
+// WriteBatch is the interface to batch write.
 type WriteBatch interface {
 	Prewrite(key []byte, lock *MvccLock)
 	Commit(key []byte, lock *MvccLock)
@@ -43,6 +45,7 @@ type WriteBatch interface {
 	PessimisticRollback(key []byte)
 }
 
+// DBBundle represents the db bundle.
 type DBBundle struct {
 	DB         *badger.DB
 	LockStore  *lockstore.MemStore
@@ -50,11 +53,13 @@ type DBBundle struct {
 	StateTS    uint64
 }
 
+// DBSnapshot represents the db snapshot.
 type DBSnapshot struct {
 	Txn       *badger.Txn
 	LockStore *lockstore.MemStore
 }
 
+// NewDBSnapshot returns a new db snapshot.
 func NewDBSnapshot(db *DBBundle) *DBSnapshot {
 	return &DBSnapshot{
 		Txn:       db.DB.NewTransaction(false),

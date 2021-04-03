@@ -263,7 +263,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if err != nil {
 		return nil, err
 	}
-	var regErr *errorpb.Error = nil
+	var regErr *errorpb.Error
 	if req.Type != tikvrpc.CmdBatchCop && req.Type != tikvrpc.CmdMPPConn && req.Type != tikvrpc.CmdMPPTask {
 		regErr, err = resp.GetRegionError()
 	}
@@ -458,7 +458,7 @@ func (mock *mockBatchCopClient) Recv() (*coprocessor.BatchResponse, error) {
 	if mock.idx < len(mock.batchResponses) {
 		ret := mock.batchResponses[mock.idx]
 		mock.idx++
-		var err error = nil
+		var err error
 		if len(ret.OtherError) > 0 {
 			err = errors.New(ret.OtherError)
 			ret = nil

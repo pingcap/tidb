@@ -110,6 +110,7 @@ func (n *node) getValue(a *arena) []byte {
 	return entryData[nodeLenKeyLen:]
 }
 
+// NewMemStore returns a new mem store.
 func NewMemStore(arenaBlockSize int) *MemStore {
 	ls := &MemStore{
 		height:   1,
@@ -136,6 +137,7 @@ func (ls *MemStore) setHeight(height int) {
 	atomic.StoreInt32(&ls.height, int32(height))
 }
 
+// Get gets a value with the key.
 func (ls *MemStore) Get(key, buf []byte) []byte {
 	e, match := ls.findGreater(key, true)
 	if !match {
@@ -284,11 +286,12 @@ func (ls *MemStore) getNode(arena *arena, addr arenaAddr) *node {
 	return (*node)(unsafe.Pointer(&data[0]))
 }
 
+// Put puts the key-value pair, returns true if the key doesn't exist.
 func (ls *MemStore) Put(key []byte, v []byte) bool {
 	return ls.PutWithHint(key, v, nil)
 }
 
-// Put puts the key-value pair, returns true if the key doesn't exist.
+// PutWithHint puts the key-value pair, returns true if the key doesn't exist.
 func (ls *MemStore) PutWithHint(key []byte, v []byte, hint *Hint) bool {
 	arena := ls.getArena()
 	lsHeight := ls.getHeight()
@@ -336,7 +339,7 @@ func (ls *MemStore) PutWithHint(key []byte, v []byte, hint *Hint) bool {
 		hint.prev[i].setNextAddr(i, x.addr)
 		hint.prev[i] = x
 	}
-	ls.length += 1
+	ls.length++
 	return true
 }
 
@@ -432,6 +435,7 @@ func (ls *MemStore) calculateRecomputeHeight(key []byte, hint *Hint, listHeight 
 	return recomputeHeight
 }
 
+// DeleteWithHint deletes a value with the key and hint.
 func (ls *MemStore) DeleteWithHint(key []byte, hint *Hint) bool {
 	listHeight := ls.getHeight()
 	if hint == nil {
@@ -468,18 +472,21 @@ func (ls *MemStore) DeleteWithHint(key []byte, hint *Hint) bool {
 		hint.prev[i].setNextAddr(i, keyNode.getNextAddr(i))
 	}
 	arena.free(keyNode.addr)
-	ls.length -= 1
+	ls.length--
 	return true
 }
 
+// Delete deletes a value with the key.
 func (ls *MemStore) Delete(key []byte) bool {
 	return ls.DeleteWithHint(key, nil)
 }
 
+// Len returns the length of a mem store.
 func (ls *MemStore) Len() int {
 	return ls.length
 }
 
+// Hint represents a hint.
 type Hint struct {
 	height int32
 	prev   [maxHeight + 1]*node

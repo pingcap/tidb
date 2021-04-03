@@ -132,7 +132,7 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 		ce.resultFieldType = outputFieldTypes
 		return nil
 	}
-	var err error = nil
+	var err error
 	if secondExec := executors[1]; secondExec.Tp == tipb.ExecType_TypeSelection {
 		ce.selectionCtx.conditions, err = convertToExprs(ce.sc, ce.fieldTps, secondExec.Selection.Conditions)
 		if err != nil {
@@ -741,7 +741,7 @@ type tableScanProcessor struct {
 
 func (e *tableScanProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	e.rowCount++
 	e.curNdv++
@@ -763,7 +763,7 @@ type mockReaderScanProcessor struct {
 
 func (e *mockReaderScanProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	e.rowCount++
 	err := e.mockReadScanProcessCore(key, value)
@@ -882,7 +882,7 @@ type indexScanProcessor struct {
 
 func (e *indexScanProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	e.rowCount++
 	err := e.indexScanProcessCore(key, value)
@@ -980,7 +980,7 @@ func (e *selectionProcessor) Process(key, value []byte) error {
 		e.selectionCtx.execDetail.update(begin, gotRow)
 	}(time.Now())
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	err := e.processCore(key, value)
 	if err != nil {

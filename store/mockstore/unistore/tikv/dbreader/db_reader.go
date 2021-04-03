@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 )
 
+// NewDBReader returns a new *DBReader.
 func NewDBReader(startKey, endKey []byte, txn *badger.Txn) *DBReader {
 	return &DBReader{
 		StartKey: startKey,
@@ -45,6 +46,7 @@ func NewDBReader(startKey, endKey []byte, txn *badger.Txn) *DBReader {
 	}
 }
 
+// NewIterator returns a new *badger.Iterator.
 func NewIterator(txn *badger.Txn, reverse bool, startKey, endKey []byte) *badger.Iterator {
 	opts := badger.DefaultIteratorOptions
 	opts.Reverse = reverse
@@ -98,6 +100,7 @@ func (r *DBReader) GetMvccInfoByKey(key []byte, isRowKey bool, mvccInfo *kvrpcpb
 	return nil
 }
 
+// Get gets a value with the key and start ts.
 func (r *DBReader) Get(key []byte, startTS uint64) ([]byte, error) {
 	r.txn.SetReadTS(startTS)
 	item, err := r.txn.Get(key)
@@ -110,6 +113,7 @@ func (r *DBReader) Get(key []byte, startTS uint64) ([]byte, error) {
 	return item.Value()
 }
 
+// GetIter returns the *badger.Iterator of a *DBReader.
 func (r *DBReader) GetIter() *badger.Iterator {
 	if r.iter == nil {
 		r.iter = NewIterator(r.txn, false, r.StartKey, r.EndKey)
@@ -117,6 +121,7 @@ func (r *DBReader) GetIter() *badger.Iterator {
 	return r.iter
 }
 
+// GetExtraIter returns the extra *badger.Iterator of a *DBReader.
 func (r *DBReader) GetExtraIter() *badger.Iterator {
 	if r.extraIter == nil {
 		rbStartKey := append([]byte{}, r.StartKey...)
@@ -139,8 +144,10 @@ func (r *DBReader) getReverseIter() *badger.Iterator {
 	return r.revIter
 }
 
+// BatchGetFunc defines a batch get function.
 type BatchGetFunc = func(key, value []byte, err error)
 
+// BatchGet batch gets keys.
 func (r *DBReader) BatchGet(keys [][]byte, startTS uint64, f BatchGetFunc) {
 	r.txn.SetReadTS(startTS)
 	items, err := r.txn.MultiGet(keys)
@@ -161,17 +168,17 @@ func (r *DBReader) BatchGet(keys [][]byte, startTS uint64, f BatchGetFunc) {
 	return
 }
 
-// ScanBreak is returnd by ScanFunc to break the scan loop.
-var ScanBreak = errors.New("scan break")
+// ErrScanBreak is returnd by ScanFunc to break the scan loop.
+var ErrScanBreak = errors.New("scan break error")
 
 // ScanFunc accepts key and value, should not keep reference to them.
-// Returns ScanBreak will break the scan loop.
+// Returns ErrScanBreak will break the scan loop.
 type ScanFunc = func(key, value []byte) error
 
 // ScanProcessor process the key/value pair.
 type ScanProcessor interface {
 	// Process accepts key and value, should not keep reference to them.
-	// Returns ScanBreak will break the scan loop.
+	// Returns ErrScanBreak will break the scan loop.
 	Process(key, value []byte) error
 	// SkipValue returns if we can skip the value.
 	SkipValue() bool
@@ -184,6 +191,7 @@ func exceedEndKey(current, endKey []byte) bool {
 	return bytes.Compare(current, endKey) >= 0
 }
 
+// Scan scans the key range with the given ScanProcessor.
 func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc ScanProcessor) error {
 	r.txn.SetReadTS(startTS)
 	skipValue := proc.SkipValue()
@@ -208,7 +216,7 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 		}
 		err = proc.Process(key, val)
 		if err != nil {
-			if err == ScanBreak {
+			if err == ErrScanBreak {
 				break
 			}
 			return errors.Trace(err)
@@ -221,6 +229,7 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 	return nil
 }
 
+// GetKeyByStartTs gets a key with the start ts.
 func (r *DBReader) GetKeyByStartTs(startKey, endKey []byte, startTs uint64) ([]byte, error) {
 	iter := r.GetIter()
 	iter.SetAllVersions(true)
@@ -266,7 +275,7 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 		}
 		err = proc.Process(key, val)
 		if err != nil {
-			if err == ScanBreak {
+			if err == ErrScanBreak {
 				break
 			}
 			return errors.Trace(err)
@@ -279,10 +288,12 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 	return nil
 }
 
+// GetTxn gets the *badger.Txn of the *DBReader.
 func (r *DBReader) GetTxn() *badger.Txn {
 	return r.txn
 }
 
+// Close closes the *DBReader.
 func (r *DBReader) Close() {
 	if r.iter != nil {
 		r.iter.Close()

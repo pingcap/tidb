@@ -25,6 +25,7 @@ const (
 	raft      = "raft"
 )
 
+// Unistore metrics.
 var (
 	RaftWriterWait = prometheus.NewHistogram(
 		prometheus.HistogramOpts{

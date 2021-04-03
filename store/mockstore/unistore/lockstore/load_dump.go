@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// LoadFromFile load a meta from a file.
 func (ls *MemStore) LoadFromFile(fileName string) (meta []byte, err error) {
 	f, err := os.Open(fileName)
 	if err != nil {
@@ -91,6 +92,7 @@ func (ls *MemStore) writeItem(writer *bufio.Writer, data []byte) error {
 	return err
 }
 
+// DumpToFile dumps the meta to a file
 func (ls *MemStore) DumpToFile(fileName string, meta []byte) error {
 	tmpFileName := fileName + ".tmp"
 	f, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)

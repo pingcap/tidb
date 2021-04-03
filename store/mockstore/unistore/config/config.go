@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/log"
 )
 
+// Config contains configuration options.
 type Config struct {
 	Server         Server         `toml:"server"`          // Unistore server options
 	Engine         Engine         `toml:"engine"`          // Engine options.
@@ -28,6 +29,7 @@ type Config struct {
 	PessimisticTxn PessimisticTxn `toml:"pessimistic-txn"` // Pessimistic txn related
 }
 
+// Server is the config for server.
 type Server struct {
 	PDAddr      string `toml:"pd-addr"`
 	StoreAddr   string `toml:"store-addr"`
@@ -39,6 +41,7 @@ type Server struct {
 	LogfilePath string `toml:"log-file"`    // Log file path for unistore server
 }
 
+// RaftStore is the config for raft store.
 type RaftStore struct {
 	PdHeartbeatTickInterval  string `toml:"pd-heartbeat-tick-interval"`  // pd-heartbeat-tick-interval in seconds
 	RaftStoreMaxLeaderLease  string `toml:"raft-store-max-leader-lease"` // raft-store-max-leader-lease in milliseconds
@@ -48,11 +51,13 @@ type RaftStore struct {
 	CustomRaftLog            bool   `toml:"custom-raft-log"`
 }
 
+// Coprocessor is the config for coprocessor.
 type Coprocessor struct {
 	RegionMaxKeys   int64 `toml:"region-max-keys"`
 	RegionSplitKeys int64 `toml:"region-split-keys"`
 }
 
+// Engine is the config for engine.
 type Engine struct {
 	DBPath           string `toml:"db-path"`            // Directory to store the data in. Should exist and be writable.
 	ValueThreshold   int    `toml:"value-threshold"`    // If value size >= this threshold, only store value offsets in tree.
@@ -79,6 +84,7 @@ type Engine struct {
 	CompactL0WhenClose bool `toml:"compact-l0-when-close"`
 }
 
+// PessimisticTxn is the config for pessimistic txn.
 type PessimisticTxn struct {
 	// The default and maximum delay in milliseconds before responding to TiDB when pessimistic
 	// transactions encounter locks
@@ -88,6 +94,7 @@ type PessimisticTxn struct {
 	WakeUpDelayDuration int64 `toml:"wake-up-delay-duration"`
 }
 
+// ParseCompression parses the string s and returns a compression type.
 func ParseCompression(s string) options.CompressionType {
 	switch s {
 	case "snappy":
@@ -99,8 +106,10 @@ func ParseCompression(s string) options.CompressionType {
 	}
 }
 
+// MB represents the MB size.
 const MB = 1024 * 1024
 
+// DefaultConf returns the default configuration.
 var DefaultConf = Config{
 	Server: Server{
 		PDAddr:      "127.0.0.1:2379",
@@ -147,7 +156,7 @@ var DefaultConf = Config{
 	},
 }
 
-// parseDuration parses duration argument string.
+// ParseDuration parses duration argument string.
 func ParseDuration(durationStr string) time.Duration {
 	dur, err := time.ParseDuration(durationStr)
 	if err != nil {

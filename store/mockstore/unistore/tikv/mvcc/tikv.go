@@ -20,8 +20,10 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
+// WriteType defines a write type.
 type WriteType = byte
 
+// WriteType
 const (
 	WriteTypeLock     WriteType = 'L'
 	WriteTypeRollback WriteType = 'R'
@@ -29,24 +31,26 @@ const (
 	WriteTypePut      WriteType = 'P'
 )
 
+// WriteCFValue represents a write CF value.
 type WriteCFValue struct {
 	Type     WriteType
 	StartTS  uint64
 	ShortVal []byte
 }
 
-var invalidWriteCFValue = errors.New("invalid write CF value")
+var errInvalidWriteCFValue = errors.New("invalid write CF value")
 
+// ParseWriteCFValue parses the []byte data and returns a WriteCFValue.
 func ParseWriteCFValue(data []byte) (wv WriteCFValue, err error) {
 	if len(data) == 0 {
-		err = invalidWriteCFValue
+		err = errInvalidWriteCFValue
 		return
 	}
 	wv.Type = data[0]
 	switch wv.Type {
 	case WriteTypePut, WriteTypeDelete, WriteTypeLock, WriteTypeRollback:
 	default:
-		err = invalidWriteCFValue
+		err = errInvalidWriteCFValue
 		return
 	}
 	wv.ShortVal, wv.StartTS, err = codec.DecodeUvarint(data[1:])
@@ -57,7 +61,9 @@ const (
 	shortValuePrefix  = 'v'
 	forUpdatePrefix   = 'f'
 	minCommitTsPrefix = 'm'
-	ShortValueMaxLen  = 64
+
+	//ShortValueMaxLen defines max length of short value.
+	ShortValueMaxLen = 64
 )
 
 // EncodeWriteCFValue accepts a write cf parameters and return the encoded bytes data.
@@ -110,8 +116,10 @@ func EncodeLockCFValue(lock *MvccLock) ([]byte, []byte) {
 	return data, longValue
 }
 
+// LockType defines a lock type.
 type LockType = byte
 
+// LockType
 const (
 	LockTypePut         LockType = 'P'
 	LockTypeDelete      LockType = 'D'
@@ -119,11 +127,12 @@ const (
 	LockTypePessimistic LockType = 'S'
 )
 
-var invalidLockCFValue = errors.New("invalid lock CF value")
+var errInvalidLockCFValue = errors.New("invalid lock CF value")
 
+// ParseLockCFValue parses the []byte data and returns a MvccLock.
 func ParseLockCFValue(data []byte) (lock MvccLock, err error) {
 	if len(data) == 0 {
-		err = invalidLockCFValue
+		err = errInvalidLockCFValue
 		return
 	}
 	switch data[0] {
@@ -136,7 +145,7 @@ func ParseLockCFValue(data []byte) (lock MvccLock, err error) {
 	case LockTypePessimistic:
 		lock.Op = byte(kvrpcpb.Op_PessimisticLock)
 	default:
-		err = invalidLockCFValue
+		err = errInvalidLockCFValue
 		return
 	}
 	data, lock.Primary, err = codec.DecodeCompactBytes(data[1:])
