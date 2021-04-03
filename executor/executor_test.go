@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -5479,6 +5480,22 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
 }
 
+func (s *testSuiteP2) TestIssue23567(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	oriProbability := statistics.FeedbackProbability.Load()
+	statistics.FeedbackProbability.Store(1.0)
+	defer func() { statistics.FeedbackProbability.Store(oriProbability) }()
+	failpoint.Enable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect", `return("")`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned, b int, primary key(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("analyze table t")
+	// The SQL should not panic.
+	tk.MustQuery("select count(distinct b) from t")
+	failpoint.Disable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect")
+}
+
 func (s *testSuite) TestSummaryFailedUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6748,7 +6765,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("drop table if exists t1,t2,t3,t4")
 	tk.MustExec(`create table t1(
 	a int(11),
 	b varchar(10) DEFAULT NULL,
@@ -6800,6 +6817,11 @@ func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 
 	tk.MustExec("update t2 partition(p0) set a = 3 where a = 2")
 	tk.MustExec("update t2 partition(p0, p3) set a = 33 where a = 1")
+
+	tk.MustExec("create table t4(a int primary key, b int) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t4(a, b) values(1, 1),(2, 2),(3, 3);")
+	err = tk.ExecToErr("update t4 partition(p0) set a = 5 where a = 2")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
 }
 
 func (s *testSuiteP2) TestApplyCache(c *C) {
@@ -7847,7 +7869,7 @@ func (s *testSerialSuite) TestStaleReadKVRequest(c *C) {
 		c.Log(testcase.name)
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v")`, testcase.txnScope))
+		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`)
 		tk.MustQuery(testcase.sql)
