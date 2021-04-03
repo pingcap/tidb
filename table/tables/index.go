@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -120,7 +121,7 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		prefix:   prefix,
 		phyTblID: physicalID,
 	}
-	index.needRestoredData = index.checkNeedRestoredData()
+	index.needRestoredData = NeedRestoredData(indexInfo.Columns, tblInfo.Columns)
 	return index
 }
 
@@ -207,7 +208,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
-			err = us.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+			err = us.GetMemBuffer().SetWithFlags(key, idxVal, tikvstore.SetPresumeKeyNotExists)
 		} else {
 			err = us.GetMemBuffer().Set(key, idxVal)
 		}
@@ -228,7 +229,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, us kv.UnionStore, indexedVa
 		return err
 	}
 	if distinct {
-		err = us.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+		err = us.GetMemBuffer().DeleteWithFlags(key, tikvstore.SetNeedLocked)
 	} else {
 		err = us.GetMemBuffer().Delete(key)
 	}

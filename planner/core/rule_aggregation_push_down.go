@@ -424,7 +424,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 						p = proj
 					}
 				}
-			} else if proj, ok1 := child.(*LogicalProjection); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
+			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
 				for i, gbyItem := range agg.GroupByItems {

@@ -529,6 +529,9 @@ const (
 	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
+
+	// TiDBEnableDynamicPrivileges enables MySQL 8.0 compatible dynamic privileges (experimental).
+	TiDBEnableDynamicPrivileges = "tidb_enable_dynamic_privileges"
 )
 
 // TiDB vars that have only global scope
@@ -609,7 +612,7 @@ const (
 	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
-	DefTiDBAllowMPPExecution           = false
+	DefTiDBAllowMPPExecution           = true
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -654,7 +657,7 @@ const (
 	DefTiDBFoundInBinding              = false
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
-	DefTiDBEnableClusteredIndex        = false
+	DefTiDBEnableClusteredIndex        = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                   = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
@@ -705,8 +708,11 @@ var FeatureSwitchVariables = []string{
 	TiDBEnableAsyncCommit,
 	TiDBEnable1PC,
 	TiDBGuaranteeLinearizability,
-	TiDBEnableClusteredIndex,
 	TiDBTrackAggregateMemoryUsage,
+	TiDBAnalyzeVersion,
+	TiDBPartitionPruneMode,
+	TiDBEnableExtendedStats,
+	TiDBEnableIndexMergeJoin,
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.

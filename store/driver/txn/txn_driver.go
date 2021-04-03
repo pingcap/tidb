@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -65,8 +67,16 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 	return txn.KVTxn.GetSnapshot()
 }
 
+func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
+	return txn.KVTxn.GetMemBuffer()
+}
+
+func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
+	return &tikvUnionStore{txn.KVTxn.GetUnionStore()}
+}
+
 func (txn *tikvTxn) extractKeyErr(err error) error {
-	if e, ok := errors.Cause(err).(*tikv.ErrKeyExist); ok {
+	if e, ok := errors.Cause(err).(*tikvstore.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())
 	}
 	return errors.Trace(err)
@@ -82,8 +92,7 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if tblInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
 	}
-
-	value, err := txn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}
@@ -192,4 +201,13 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		valueStr = append(valueStr, str)
 	}
 	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
+}
+
+//tikvUnionStore implements kv.UnionStore
+type tikvUnionStore struct {
+	*unionstore.KVUnionStore
+}
+
+func (u *tikvUnionStore) GetMemBuffer() kv.MemBuffer {
+	return u.KVUnionStore.GetMemBuffer()
 }
