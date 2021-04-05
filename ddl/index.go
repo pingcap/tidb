@@ -730,7 +730,7 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 }
 
 func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, indexInfos, err := checkDropIndexes(t, job)
+	tblInfo, indexInfos, _, err := checkDropIndexes(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -818,17 +818,17 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.IndexInfo, error) {
+func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.IndexInfo, []bool, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	var indexNames []model.CIStr
 	var ifExists []bool
 	if err = job.DecodeArgs(&indexNames, &ifExists); err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	indexInfos := make([]*model.IndexInfo, 0, len(indexNames))
@@ -840,24 +840,24 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 				continue
 			}
 			job.State = model.JobStateCancelled
-			return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+			return nil, nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		}
 
 		// Double check for drop index on auto_increment column.
 		err = checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return nil, nil, autoid.ErrWrongAutoKey
+			return nil, nil, nil, autoid.ErrWrongAutoKey
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
 
 	// Check that drop primary index will not cause invisible implicit primary index.
 	if err := checkNewIndexes(tblInfo, indexInfos, job); err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
-	return tblInfo, indexInfos, nil
+	return tblInfo, indexInfos, ifExists, nil
 }
 
 func checkNewIndexes(tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, job *model.Job) error {
