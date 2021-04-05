@@ -103,6 +103,7 @@ func (store *MVCCStore) getLatestTS() uint64 {
 	return atomic.LoadUint64(&store.latestTS)
 }
 
+// Close closes the MVCCStore.
 func (store *MVCCStore) Close() error {
 	store.dbWriter.Close()
 	close(store.closeCh)
@@ -222,6 +223,7 @@ func sortKeys(keys [][]byte) [][]byte {
 	return keys
 }
 
+// PessimisticLock will add pessimistic lock on key
 func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.PessimisticLockRequest, resp *kvrpcpb.PessimisticLockResponse) (*lockwaiter.Waiter, error) {
 	mutations := req.Mutations
 	if !req.ReturnValues {
@@ -327,6 +329,7 @@ func (store *MVCCStore) checkExtraTxnStatus(reqCtx *requestCtx, key []byte, star
 	return extraTxnStatus{commitTS: userMeta.CommitTS()}
 }
 
+// PessimisticRollback implements the MVCCStore interface.
 func (store *MVCCStore) PessimisticRollback(reqCtx *requestCtx, req *kvrpcpb.PessimisticRollbackRequest) error {
 	keys := sortKeys(req.Keys)
 	hashVals := keysToHashVals(keys...)
@@ -356,6 +359,7 @@ func (store *MVCCStore) PessimisticRollback(reqCtx *requestCtx, req *kvrpcpb.Pes
 	return err
 }
 
+// TxnHeartBeat implements the MVCCStore interface.
 func (store *MVCCStore) TxnHeartBeat(reqCtx *requestCtx, req *kvrpcpb.TxnHeartBeatRequest) (lockTTL uint64, err error) {
 	hashVals := keysToHashVals(req.PrimaryLock)
 	regCtx := reqCtx.regCtx
@@ -387,6 +391,7 @@ type TxnStatus struct {
 	lockInfo *kvrpcpb.LockInfo
 }
 
+// CheckTxnStatus implements the MVCCStore interface.
 func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 	req *kvrpcpb.CheckTxnStatusRequest) (txnStatusRes TxnStatus, err error) {
 	hashVals := keysToHashVals(req.PrimaryKey)
@@ -479,6 +484,7 @@ type SecondaryLocksStatus struct {
 	commitTS uint64
 }
 
+// CheckSecondaryLocks implements the MVCCStore interface.
 func (store *MVCCStore) CheckSecondaryLocks(reqCtx *requestCtx, keys [][]byte, startTS uint64) (SecondaryLocksStatus, error) {
 	sortKeys(keys)
 	hashVals := keysToHashVals(keys...)
@@ -501,9 +507,8 @@ func (store *MVCCStore) CheckSecondaryLocks(reqCtx *requestCtx, keys [][]byte, s
 				store.lockWaiterManager.WakeUp(startTS, 0, []uint64{hashVals[i]})
 				store.DeadlockDetectCli.CleanUp(startTS)
 				return SecondaryLocksStatus{commitTS: 0}, nil
-			} else {
-				locks = append(locks, lock.ToLockInfo(key))
 			}
+			locks = append(locks, lock.ToLockInfo(key))
 		} else {
 			commitTS, err := store.checkCommitted(reqCtx.getDBReader(), key, startTS)
 			if err != nil {
@@ -581,6 +586,7 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 	return lock, nil
 }
 
+// Prewrite implements the MVCCStore interface.
 func (store *MVCCStore) Prewrite(reqCtx *requestCtx, req *kvrpcpb.PrewriteRequest) error {
 	mutations := sortPrewrite(req)
 	regCtx := reqCtx.regCtx
@@ -983,6 +989,7 @@ const (
 	rollbackStatusLocked  = 4
 )
 
+// Rollback implements the MVCCStore interface.
 func (store *MVCCStore) Rollback(reqCtx *requestCtx, keys [][]byte, startTS uint64) error {
 	sortKeys(keys)
 	hashVals := keysToHashVals(keys...)
@@ -1103,6 +1110,7 @@ func checkLock(lock mvcc.MvccLock, key []byte, startTS uint64, resolved []uint64
 	return nil
 }
 
+// CheckKeysLock implements the MVCCStore interface.
 func (store *MVCCStore) CheckKeysLock(startTS uint64, resolved []uint64, keys ...[]byte) error {
 	var buf []byte
 	for _, key := range keys {
@@ -1119,6 +1127,7 @@ func (store *MVCCStore) CheckKeysLock(startTS uint64, resolved []uint64, keys ..
 	return nil
 }
 
+// CheckRangeLock implements the MVCCStore interface.
 func (store *MVCCStore) CheckRangeLock(startTS uint64, startKey, endKey []byte, resolved []uint64) error {
 	it := store.lockStore.NewIterator()
 	for it.Seek(startKey); it.Valid(); it.Next() {
@@ -1134,6 +1143,7 @@ func (store *MVCCStore) CheckRangeLock(startTS uint64, startKey, endKey []byte, 
 	return nil
 }
 
+// Cleanup implements the MVCCStore interface.
 func (store *MVCCStore) Cleanup(reqCtx *requestCtx, key []byte, startTS, currentTs uint64) error {
 	hashVals := keysToHashVals(key)
 	regCtx := reqCtx.regCtx
@@ -1174,6 +1184,7 @@ func (store *MVCCStore) appendScannedLock(locks []*kvrpcpb.LockInfo, it *locksto
 	return locks
 }
 
+// ScanLock implements the MVCCStore interface.
 func (store *MVCCStore) ScanLock(reqCtx *requestCtx, maxTS uint64, limit int) ([]*kvrpcpb.LockInfo, error) {
 	var locks []*kvrpcpb.LockInfo
 	it := store.lockStore.NewIterator()
@@ -1189,6 +1200,7 @@ func (store *MVCCStore) ScanLock(reqCtx *requestCtx, maxTS uint64, limit int) ([
 	return locks, nil
 }
 
+// PhysicalScanLock implements the MVCCStore interface.
 func (store *MVCCStore) PhysicalScanLock(startKey []byte, maxTS uint64, limit int) []*kvrpcpb.LockInfo {
 	var locks []*kvrpcpb.LockInfo
 	it := store.lockStore.NewIterator()
@@ -1201,6 +1213,7 @@ func (store *MVCCStore) PhysicalScanLock(startKey []byte, maxTS uint64, limit in
 	return locks
 }
 
+// ResolveLock implements the MVCCStore interface.
 func (store *MVCCStore) ResolveLock(reqCtx *requestCtx, lockKeys [][]byte, startTS, commitTS uint64) error {
 	regCtx := reqCtx.regCtx
 	if len(lockKeys) == 0 {
@@ -1248,6 +1261,7 @@ func (store *MVCCStore) ResolveLock(reqCtx *requestCtx, lockKeys [][]byte, start
 	return err
 }
 
+// UpdateSafePoint implements the MVCCStore interface.
 func (store *MVCCStore) UpdateSafePoint(safePoint uint64) {
 	// We use the gcLock to make sure safePoint can only increase.
 	store.db.UpdateSafeTs(safePoint)
@@ -1259,6 +1273,7 @@ func tsToTime(ts uint64) time.Time {
 	return time.Unix(0, int64(ts>>18)*1000000)
 }
 
+// StartDeadlockDetection implements the MVCCStore interface.
 func (store *MVCCStore) StartDeadlockDetection(isRaft bool) {
 	if isRaft {
 		go store.DeadlockDetectCli.sendReqLoop()
@@ -1343,6 +1358,7 @@ func (store *MVCCStore) getExtraMvccInfo(rawkey []byte,
 	return nil
 }
 
+// MvccGetByStartTs implements the MVCCStore interface.
 func (store *MVCCStore) MvccGetByStartTs(reqCtx *requestCtx, startTs uint64) (*kvrpcpb.MvccInfo, []byte, error) {
 	reader := reqCtx.getDBReader()
 	startKey := reqCtx.regCtx.RawStart()
@@ -1361,6 +1377,7 @@ func (store *MVCCStore) MvccGetByStartTs(reqCtx *requestCtx, startTs uint64) (*k
 	return res, rawKey, nil
 }
 
+// DeleteFileInRange implements the MVCCStore interface.
 func (store *MVCCStore) DeleteFileInRange(start, end []byte) {
 	store.db.DeleteFilesInRange(start, end)
 	start[0]++
@@ -1368,6 +1385,7 @@ func (store *MVCCStore) DeleteFileInRange(start, end []byte) {
 	store.db.DeleteFilesInRange(start, end)
 }
 
+// BatchGet implements the MVCCStore interface.
 func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint64) []*kvrpcpb.KvPair {
 	pairs := make([]*kvrpcpb.KvPair, 0, len(keys))
 	remain := make([][]byte, 0, len(keys))
@@ -1445,6 +1463,7 @@ func (p *kvScanProcessor) SkipValue() bool {
 	return false
 }
 
+// Scan implements the MVCCStore interface.
 func (store *MVCCStore) Scan(reqCtx *requestCtx, req *kvrpcpb.ScanRequest) []*kvrpcpb.KvPair {
 	var startKey, endKey []byte
 	if req.Reverse {
@@ -1536,10 +1555,13 @@ func (store *MVCCStore) runUpdateSafePointLoop() {
 	}
 }
 
+// SafePoint represents a safe point.
 type SafePoint struct {
 	timestamp uint64
 }
 
+// UpdateTS is used to record the timestamp of updating the table's schema information.
+// These changing schema operations don't include 'truncate table' and 'rename table'.
 func (sp *SafePoint) UpdateTS(ts uint64) {
 	for {
 		old := atomic.LoadUint64(&sp.timestamp)
@@ -1605,6 +1627,9 @@ var (
 	tableExtraGuard = badger.Guard{Prefix: []byte{'u'}, MatchLen: 1, MinSize: 1}
 )
 
+// Guards implements the badger.CompactionFilter interface.
+// Guards returns specifications that may splits the SST files
+// A key is associated to a guard that has the longest matched Prefix.
 func (f *GCCompactionFilter) Guards() []badger.Guard {
 	if f.targetLevel < 4 {
 		// do not split index and row for top levels.

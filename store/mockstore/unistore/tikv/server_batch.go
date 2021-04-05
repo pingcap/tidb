@@ -44,6 +44,7 @@ const (
 	respChanSize = 1024
 )
 
+// BatchCommands implements the TiKVServer interface.
 func (svr *Server) BatchCommands(stream tikvpb.Tikv_BatchCommandsServer) error {
 	h := &batchRequestHandler{
 		respCh:  make(chan respIDPair, respChanSize),

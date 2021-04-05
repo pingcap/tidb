@@ -39,11 +39,13 @@ import (
 	"golang.org/x/net/context"
 )
 
+// MPPTaskHandlerMap is a map of *cophandler.MPPTaskHandler.
 type MPPTaskHandlerMap struct {
 	mu           sync.RWMutex
 	taskHandlers map[int64]*cophandler.MPPTaskHandler
 }
 
+// MockRegionManager implements RegionManager interface.
 type MockRegionManager struct {
 	regionManager
 
@@ -59,6 +61,7 @@ type MockRegionManager struct {
 	mppTaskSet map[uint64]*MPPTaskHandlerMap
 }
 
+// NewMockRegionManager returns a new MockRegionManager.
 func NewMockRegionManager(bundle *mvcc.DBBundle, clusterID uint64, opts RegionOptions) (*MockRegionManager, error) {
 	rm := &MockRegionManager{
 		bundle:        bundle,
@@ -95,15 +98,18 @@ func NewMockRegionManager(bundle *mvcc.DBBundle, clusterID uint64, opts RegionOp
 	return rm, err
 }
 
+// Close closes the MockRegionManager.
 func (rm *MockRegionManager) Close() error {
 	atomic.StoreUint32(&rm.closed, 1)
 	return nil
 }
 
+// AllocID allocs an id.
 func (rm *MockRegionManager) AllocID() uint64 {
 	return atomic.AddUint64(&rm.id, 1)
 }
 
+// AllocIDs allocs ids with the given number n.
 func (rm *MockRegionManager) AllocIDs(n int) []uint64 {
 	max := atomic.AddUint64(&rm.id, uint64(n))
 	ids := make([]uint64, n)
@@ -114,6 +120,7 @@ func (rm *MockRegionManager) AllocIDs(n int) []uint64 {
 	return ids
 }
 
+// GetStoreIDByAddr gets a store id by the store address.
 func (rm *MockRegionManager) GetStoreIDByAddr(addr string) (uint64, error) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
@@ -125,17 +132,19 @@ func (rm *MockRegionManager) GetStoreIDByAddr(addr string) (uint64, error) {
 	return 0, errors.New("Store not match")
 }
 
-func (rm *MockRegionManager) GetStoreAddrByStoreId(storeId uint64) (string, error) {
+// GetStoreAddrByStoreId gets a store address by the store id.
+func (rm *MockRegionManager) GetStoreAddrByStoreId(storeID uint64) (string, error) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 	for _, store := range rm.stores {
-		if store.Id == storeId {
+		if store.Id == storeID {
 			return store.Address, nil
 		}
 	}
 	return "", errors.New("Store not match")
 }
 
+// GetStoreInfoFromCtx gets the store info from the context.
 func (rm *MockRegionManager) GetStoreInfoFromCtx(ctx *kvrpcpb.Context) (string, uint64, *errorpb.Error) {
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil {
@@ -151,6 +160,7 @@ func (rm *MockRegionManager) GetStoreInfoFromCtx(ctx *kvrpcpb.Context) (string, 
 	return rm.storeMeta.Address, rm.storeMeta.Id, nil
 }
 
+// GetRegionFromCtx gets the region from the context.
 func (rm *MockRegionManager) GetRegionFromCtx(ctx *kvrpcpb.Context) (RegionCtx, *errorpb.Error) {
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil {
@@ -223,12 +233,14 @@ func (item *btreeItem) Less(o btree.Item) bool {
 	return bytes.Compare(item.key, other.key) < 0
 }
 
+// GetRegion gets a region by the id.
 func (rm *MockRegionManager) GetRegion(id uint64) *metapb.Region {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 	return proto.Clone(rm.regions[id].meta).(*metapb.Region)
 }
 
+// GetRegionByKey gets a region by the key.
 func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, peer *metapb.Peer) {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
@@ -246,6 +258,7 @@ func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, 
 	return proto.Clone(region).(*metapb.Region), proto.Clone(region.Peers[0]).(*metapb.Peer)
 }
 
+// GetRegionByEndKey gets a region by the end key.
 func (rm *MockRegionManager) GetRegionByEndKey(key []byte) (region *metapb.Region, peer *metapb.Peer) {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
@@ -269,6 +282,7 @@ func (rm *MockRegionManager) regionContainsKeyByEnd(r *metapb.Region, key []byte
 		(bytes.Compare(key, r.GetEndKey()) <= 0 || len(r.GetEndKey()) == 0)
 }
 
+// Bootstrap implements gRPC PDServer
 func (rm *MockRegionManager) Bootstrap(stores []*metapb.Store, region *metapb.Region) error {
 	bootstrapped, err := rm.IsBootstrapped()
 	if err != nil {
@@ -316,6 +330,7 @@ func (rm *MockRegionManager) Bootstrap(stores []*metapb.Store, region *metapb.Re
 	return err
 }
 
+// IsBootstrapped returns whether the MockRegionManager is bootstrapped or not.
 func (rm *MockRegionManager) IsBootstrapped() (bool, error) {
 	err := rm.bundle.DB.View(func(txn *badger.Txn) error {
 		_, err := txn.Get(InternalStoreMetaKey)
@@ -375,6 +390,7 @@ func (rm *MockRegionManager) SplitKeys(start, end kv.Key, count int) {
 	}
 }
 
+// SplitRegion implements the RegionManager interface.
 func (rm *MockRegionManager) SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.SplitRegionResponse {
 	if _, err := rm.GetRegionFromCtx(req.Context); err != nil {
 		return &kvrpcpb.SplitRegionResponse{RegionError: err}
@@ -570,6 +586,10 @@ func (rm *MockRegionManager) saveRegions(regions []*regionCtx) error {
 	})
 }
 
+// ScanRegions gets a list of regions, starts from the region that contains key.
+// Limit limits the maximum number of regions returned.
+// If a region has no leader, corresponding leader will be placed by a peer
+// with empty value (PeerID is 0).
 func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int) []*pdclient.Region {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
@@ -595,6 +615,9 @@ func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int) []*
 	return regions
 }
 
+// GetAllStores gets all stores from pd.
+// The store may expire later. Caller is responsible for caching and taking care
+// of store change.
 func (rm *MockRegionManager) GetAllStores() []*metapb.Store {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
@@ -634,6 +657,7 @@ func (rm *MockRegionManager) RemoveStore(storeID uint64) {
 	delete(rm.mppTaskSet, storeID)
 }
 
+// AddPeer adds a new Peer to the cluster.
 func (rm *MockRegionManager) AddPeer(regionID, storeID, peerID uint64) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
@@ -641,25 +665,30 @@ func (rm *MockRegionManager) AddPeer(regionID, storeID, peerID uint64) {
 	rm.regions[regionID].addPeer(peerID, storeID)
 }
 
+// MockPD implements gRPC PDServer.
 type MockPD struct {
 	rm          *MockRegionManager
 	gcSafePoint uint64
 }
 
+// NewMockPD returns a new MockPD.
 func NewMockPD(rm *MockRegionManager) *MockPD {
 	return &MockPD{
 		rm: rm,
 	}
 }
 
+// GetClusterID implements gRPC PDServer.
 func (pd *MockPD) GetClusterID(ctx context.Context) uint64 {
 	return pd.rm.clusterID
 }
 
+// AllocID implements gRPC PDServer.
 func (pd *MockPD) AllocID(ctx context.Context) (uint64, error) {
 	return pd.rm.AllocID(), nil
 }
 
+// Bootstrap implements gRPC PDServer.
 func (pd *MockPD) Bootstrap(ctx context.Context, store *metapb.Store, region *metapb.Region) (*pdpb.BootstrapResponse, error) {
 	if err := pd.rm.Bootstrap([]*metapb.Store{store}, region); err != nil {
 		return nil, err
@@ -669,10 +698,12 @@ func (pd *MockPD) Bootstrap(ctx context.Context, store *metapb.Store, region *me
 	}, nil
 }
 
+// IsBootstrapped implements gRPC PDServer.
 func (pd *MockPD) IsBootstrapped(ctx context.Context) (bool, error) {
 	return pd.rm.IsBootstrapped()
 }
 
+// PutStore implements gRPC PDServer.
 func (pd *MockPD) PutStore(ctx context.Context, store *metapb.Store) error {
 	pd.rm.mu.Lock()
 	defer pd.rm.mu.Unlock()
@@ -680,17 +711,20 @@ func (pd *MockPD) PutStore(ctx context.Context, store *metapb.Store) error {
 	return nil
 }
 
+// GetStore implements gRPC PDServer.
 func (pd *MockPD) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	pd.rm.mu.RLock()
 	defer pd.rm.mu.RUnlock()
 	return proto.Clone(pd.rm.stores[storeID]).(*metapb.Store), nil
 }
 
+// GetRegion implements gRPC PDServer.
 func (pd *MockPD) GetRegion(ctx context.Context, key []byte) (*pdclient.Region, error) {
 	r, p := pd.rm.GetRegionByKey(key)
 	return &pdclient.Region{Meta: r, Leader: p}, nil
 }
 
+// GetRegionByID implements gRPC PDServer.
 func (pd *MockPD) GetRegionByID(ctx context.Context, regionID uint64) (*pdclient.Region, error) {
 	pd.rm.mu.RLock()
 	defer pd.rm.mu.RUnlock()
@@ -702,28 +736,38 @@ func (pd *MockPD) GetRegionByID(ctx context.Context, regionID uint64) (*pdclient
 	return &pdclient.Region{Meta: proto.Clone(r.meta).(*metapb.Region), Leader: proto.Clone(r.meta.Peers[0]).(*metapb.Peer)}, nil
 }
 
+// ReportRegion implements gRPC PDServer.
 func (pd *MockPD) ReportRegion(*pdpb.RegionHeartbeatRequest) {}
 
+// AskSplit implements gRPC PDServer.
 func (pd *MockPD) AskSplit(ctx context.Context, region *metapb.Region) (*pdpb.AskSplitResponse, error) {
 	panic("unimplemented")
 }
 
+// AskBatchSplit implements gRPC PDServer.
 func (pd *MockPD) AskBatchSplit(ctx context.Context, region *metapb.Region, count int) (*pdpb.AskBatchSplitResponse, error) {
 	panic("unimplemented")
 }
 
+// ReportBatchSplit implements gRPC PDServer.
 func (pd *MockPD) ReportBatchSplit(ctx context.Context, regions []*metapb.Region) error {
 	panic("unimplemented")
 }
 
+// SetRegionHeartbeatResponseHandler sets the region heartbeat.
 func (pd *MockPD) SetRegionHeartbeatResponseHandler(h func(*pdpb.RegionHeartbeatResponse)) {
 	panic("unimplemented")
 }
 
+// GetGCSafePoint gets the gc safePoint
 func (pd *MockPD) GetGCSafePoint(ctx context.Context) (uint64, error) {
 	return atomic.LoadUint64(&pd.gcSafePoint), nil
 }
 
+// UpdateGCSafePoint implements gRPC PDServer.
+// TiKV will check it and do GC themselves if necessary.
+// If the given safePoint is less than the current one, it will not be updated.
+// Returns the new safePoint after updating.
 func (pd *MockPD) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
 	for {
 		old := atomic.LoadUint64(&pd.gcSafePoint)
@@ -736,6 +780,7 @@ func (pd *MockPD) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint
 	}
 }
 
+// StoreHeartbeat stores the heartbeat.
 func (pd *MockPD) StoreHeartbeat(ctx context.Context, stats *pdpb.StoreStats) error { return nil }
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
@@ -745,11 +790,13 @@ var tsMu = struct {
 	logicalTS  int64
 }{}
 
+// GetTS gets a timestamp from MockPD.
 func (pd *MockPD) GetTS(ctx context.Context) (int64, int64, error) {
 	p, l := GetTS()
 	return p, l, nil
 }
 
+// GetTS gets a timestamp.
 func GetTS() (int64, int64) {
 	tsMu.Lock()
 	defer tsMu.Unlock()
@@ -764,22 +811,34 @@ func GetTS() (int64, int64) {
 	return tsMu.physicalTS, tsMu.logicalTS
 }
 
+// GetPrevRegion gets the previous region and its leader Peer of the region where the key is located.
 func (pd *MockPD) GetPrevRegion(ctx context.Context, key []byte) (*pdclient.Region, error) {
 	r, p := pd.rm.GetRegionByEndKey(key)
 	return &pdclient.Region{Meta: r, Leader: p}, nil
 }
 
+// GetAllStores gets all stores from pd.
+// The store may expire later. Caller is responsible for caching and taking care
+// of store change.
 func (pd *MockPD) GetAllStores(ctx context.Context, opts ...pdclient.GetStoreOption) ([]*metapb.Store, error) {
 	return pd.rm.GetAllStores(), nil
 }
 
+// ScanRegions gets a list of regions, starts from the region that contains key.
+// Limit limits the maximum number of regions returned.
+// If a region has no leader, corresponding leader will be placed by a peer
+// with empty value (PeerID is 0).
 func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pdclient.Region, error) {
 	regions := pd.rm.ScanRegions(startKey, endKey, limit)
 	return regions, nil
 }
 
+// ScatterRegion scatters the specified region. Should use it for a batch of regions,
+// and the distribution of these regions will be dispersed.
+// NOTICE: This method is the old version of ScatterRegions, you should use the later one as your first choice.
 func (pd *MockPD) ScatterRegion(ctx context.Context, regionID uint64) error {
 	return nil
 }
 
+// Close closes the MockPD.
 func (pd *MockPD) Close() {}

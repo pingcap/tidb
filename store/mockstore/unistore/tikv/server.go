@@ -41,6 +41,7 @@ import (
 
 var _ tikvpb.TikvServer = new(Server)
 
+// Server implements the tikvpb.TikvServer interface.
 type Server struct {
 	mvccStore     *MVCCStore
 	regionManager RegionManager
@@ -51,6 +52,7 @@ type Server struct {
 	stopped       int32
 }
 
+// NewServer returns a new server.
 func NewServer(rm RegionManager, store *MVCCStore, innerServer InnerServer) *Server {
 	return &Server{
 		mvccStore:     store,
@@ -72,6 +74,7 @@ func (svr *Server) checkRequestSize(size int) *errorpb.Error {
 	return nil
 }
 
+// Stop stops the server.
 func (svr *Server) Stop() {
 	atomic.StoreInt32(&svr.stopped, 1)
 	for {
@@ -92,12 +95,14 @@ func (svr *Server) Stop() {
 	}
 }
 
+// GetStoreIdByAddr gets a store id by the store address.
 func (svr *Server) GetStoreIdByAddr(addr string) (uint64, error) {
 	return svr.regionManager.GetStoreIDByAddr(addr)
 }
 
-func (svr *Server) GetStoreAddrByStoreId(storeId uint64) (string, error) {
-	return svr.regionManager.GetStoreAddrByStoreId(storeId)
+// GetStoreAddrByStoreId gets a store address by the store id.
+func (svr *Server) GetStoreAddrByStoreId(storeID uint64) (string, error) {
+	return svr.regionManager.GetStoreAddrByStoreId(storeID)
 }
 
 type requestCtx struct {
@@ -128,9 +133,9 @@ func newRequestCtx(svr *Server, ctx *kvrpcpb.Context, method string) (*requestCt
 		rpcCtx:    ctx,
 	}
 	req.regCtx, req.regErr = svr.regionManager.GetRegionFromCtx(ctx)
-	storeAddr, storeId, regErr := svr.regionManager.GetStoreInfoFromCtx(ctx)
+	storeAddr, storeID, regErr := svr.regionManager.GetStoreInfoFromCtx(ctx)
 	req.storeAddr = storeAddr
-	req.storeId = storeId
+	req.storeId = storeID
 	if regErr != nil {
 		req.regErr = regErr
 	}
@@ -154,6 +159,7 @@ func (req *requestCtx) finish() {
 	}
 }
 
+// KvGet implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvGet(ctx context.Context, req *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvGet")
 	if err != nil {
@@ -180,6 +186,7 @@ func (svr *Server) KvGet(ctx context.Context, req *kvrpcpb.GetRequest) (*kvrpcpb
 	}, nil
 }
 
+// KvScan implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvScan(ctx context.Context, req *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvScan")
 	if err != nil {
@@ -195,6 +202,7 @@ func (svr *Server) KvScan(ctx context.Context, req *kvrpcpb.ScanRequest) (*kvrpc
 	}, nil
 }
 
+// KvPessimisticLock implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.PessimisticLockRequest) (*kvrpcpb.PessimisticLockResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "PessimisticLock")
 	if err != nil {
@@ -254,6 +262,7 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 	return resp, nil
 }
 
+// KVPessimisticRollback implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KVPessimisticRollback(ctx context.Context, req *kvrpcpb.PessimisticRollbackRequest) (*kvrpcpb.PessimisticRollbackResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "PessimisticRollback")
 	if err != nil {
@@ -269,6 +278,7 @@ func (svr *Server) KVPessimisticRollback(ctx context.Context, req *kvrpcpb.Pessi
 	return resp, nil
 }
 
+// KvTxnHeartBeat implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvTxnHeartBeat(ctx context.Context, req *kvrpcpb.TxnHeartBeatRequest) (*kvrpcpb.TxnHeartBeatResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "TxnHeartBeat")
 	if err != nil {
@@ -284,6 +294,7 @@ func (svr *Server) KvTxnHeartBeat(ctx context.Context, req *kvrpcpb.TxnHeartBeat
 	return resp, nil
 }
 
+// KvCheckTxnStatus implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvCheckTxnStatus(ctx context.Context, req *kvrpcpb.CheckTxnStatusRequest) (*kvrpcpb.CheckTxnStatusResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvCheckTxnStatus")
 	if err != nil {
@@ -308,6 +319,7 @@ func (svr *Server) KvCheckTxnStatus(ctx context.Context, req *kvrpcpb.CheckTxnSt
 	return resp, nil
 }
 
+// KvCheckSecondaryLocks implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvCheckSecondaryLocks(ctx context.Context, req *kvrpcpb.CheckSecondaryLocksRequest) (*kvrpcpb.CheckSecondaryLocksResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvCheckSecondaryLocks")
 	if err != nil {
@@ -328,6 +340,7 @@ func (svr *Server) KvCheckSecondaryLocks(ctx context.Context, req *kvrpcpb.Check
 	return resp, nil
 }
 
+// KvPrewrite implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvPrewrite(ctx context.Context, req *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvPrewrite")
 	if err != nil {
@@ -349,6 +362,7 @@ func (svr *Server) KvPrewrite(ctx context.Context, req *kvrpcpb.PrewriteRequest)
 	return resp, nil
 }
 
+// KvCommit implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvCommit(ctx context.Context, req *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvCommit")
 	if err != nil {
@@ -366,16 +380,19 @@ func (svr *Server) KvCommit(ctx context.Context, req *kvrpcpb.CommitRequest) (*k
 	return resp, nil
 }
 
+// RawGetKeyTTL implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RawGetKeyTTL(ctx context.Context, req *kvrpcpb.RawGetKeyTTLRequest) (*kvrpcpb.RawGetKeyTTLResponse, error) {
 	// TODO
 	return &kvrpcpb.RawGetKeyTTLResponse{}, nil
 }
 
+// KvImport implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvImport(context.Context, *kvrpcpb.ImportRequest) (*kvrpcpb.ImportResponse, error) {
 	// TODO
 	return &kvrpcpb.ImportResponse{}, nil
 }
 
+// KvCleanup implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvCleanup(ctx context.Context, req *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvCleanup")
 	if err != nil {
@@ -396,6 +413,7 @@ func (svr *Server) KvCleanup(ctx context.Context, req *kvrpcpb.CleanupRequest) (
 	return resp, nil
 }
 
+// KvBatchGet implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvBatchGet(ctx context.Context, req *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvBatchGet")
 	if err != nil {
@@ -411,6 +429,7 @@ func (svr *Server) KvBatchGet(ctx context.Context, req *kvrpcpb.BatchGetRequest)
 	}, nil
 }
 
+// KvBatchRollback implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvBatchRollback(ctx context.Context, req *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvBatchRollback")
 	if err != nil {
@@ -426,6 +445,7 @@ func (svr *Server) KvBatchRollback(ctx context.Context, req *kvrpcpb.BatchRollba
 	return resp, nil
 }
 
+// KvScanLock implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvScanLock(ctx context.Context, req *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvScanLock")
 	if err != nil {
@@ -440,6 +460,7 @@ func (svr *Server) KvScanLock(ctx context.Context, req *kvrpcpb.ScanLockRequest)
 	return &kvrpcpb.ScanLockResponse{Error: convertToKeyError(err), Locks: locks}, nil
 }
 
+// KvResolveLock implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvResolveLock(ctx context.Context, req *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvResolveLock")
 	if err != nil {
@@ -467,6 +488,7 @@ func (svr *Server) KvResolveLock(ctx context.Context, req *kvrpcpb.ResolveLockRe
 	return resp, nil
 }
 
+// KvGC implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvGC(ctx context.Context, req *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvGC")
 	if err != nil {
@@ -477,6 +499,7 @@ func (svr *Server) KvGC(ctx context.Context, req *kvrpcpb.GCRequest) (*kvrpcpb.G
 	return &kvrpcpb.GCResponse{}, nil
 }
 
+// KvDeleteRange implements implements the tikvpb.TikvServer interface.
 func (svr *Server) KvDeleteRange(ctx context.Context, req *kvrpcpb.DeleteRangeRequest) (*kvrpcpb.DeleteRangeResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "KvDeleteRange")
 	if err != nil {
@@ -494,43 +517,55 @@ func (svr *Server) KvDeleteRange(ctx context.Context, req *kvrpcpb.DeleteRangeRe
 }
 
 // RawKV commands.
+
+// RawGet implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RawGet(context.Context, *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
 	return &kvrpcpb.RawGetResponse{}, nil
 }
 
+// RawPut implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RawPut(context.Context, *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
 	return &kvrpcpb.RawPutResponse{}, nil
 }
 
+// RawDelete implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RawDelete(context.Context, *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
 	return &kvrpcpb.RawDeleteResponse{}, nil
 }
 
+// RawScan implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RawScan(context.Context, *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {
 	return &kvrpcpb.RawScanResponse{}, nil
 }
 
+// RawBatchDelete implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RawBatchDelete(context.Context, *kvrpcpb.RawBatchDeleteRequest) (*kvrpcpb.RawBatchDeleteResponse, error) {
 	return &kvrpcpb.RawBatchDeleteResponse{}, nil
 }
 
+// RawBatchGet implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RawBatchGet(context.Context, *kvrpcpb.RawBatchGetRequest) (*kvrpcpb.RawBatchGetResponse, error) {
 	return &kvrpcpb.RawBatchGetResponse{}, nil
 }
 
+// RawBatchPut implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RawBatchPut(context.Context, *kvrpcpb.RawBatchPutRequest) (*kvrpcpb.RawBatchPutResponse, error) {
 	return &kvrpcpb.RawBatchPutResponse{}, nil
 }
 
+// RawBatchScan implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RawBatchScan(context.Context, *kvrpcpb.RawBatchScanRequest) (*kvrpcpb.RawBatchScanResponse, error) {
 	return &kvrpcpb.RawBatchScanResponse{}, nil
 }
 
+// RawDeleteRange implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RawDeleteRange(context.Context, *kvrpcpb.RawDeleteRangeRequest) (*kvrpcpb.RawDeleteRangeResponse, error) {
 	return &kvrpcpb.RawDeleteRangeResponse{}, nil
 }
 
 // SQL push down commands.
+
+// Coprocessor implements implements the tikvpb.TikvServer interface.
 func (svr *Server) Coprocessor(_ context.Context, req *coprocessor.Request) (*coprocessor.Response, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "Coprocessor")
 	if err != nil {
@@ -543,19 +578,23 @@ func (svr *Server) Coprocessor(_ context.Context, req *coprocessor.Request) (*co
 	return cophandler.HandleCopRequest(reqCtx.getDBReader(), svr.mvccStore.lockStore, req), nil
 }
 
+// CoprocessorStream implements implements the tikvpb.TikvServer interface.
 func (svr *Server) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv_CoprocessorStreamServer) error {
 	// TODO
 	return nil
 }
 
+// RegionError represents a region error
 type RegionError struct {
 	err *errorpb.Error
 }
 
+// Error implements Error method.
 func (regionError *RegionError) Error() string {
 	return regionError.err.Message
 }
 
+// BatchCoprocessor implements implements the tikvpb.TikvServer interface.
 func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServer tikvpb.Tikv_BatchCoprocessorServer) error {
 	reqCtxs := make([]*requestCtx, 0, len(req.Regions))
 	defer func() {
@@ -592,8 +631,8 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 	return nil
 }
 
-func (mrm *MockRegionManager) getMPPTaskHandler(rpcClient client.Client, meta *mpp.TaskMeta, createdIfNotExist bool, storeId uint64) (*cophandler.MPPTaskHandler, bool, error) {
-	set := mrm.getMPPTaskSet(storeId)
+func (mrm *MockRegionManager) getMPPTaskHandler(rpcClient client.Client, meta *mpp.TaskMeta, createdIfNotExist bool, storeID uint64) (*cophandler.MPPTaskHandler, bool, error) {
+	set := mrm.getMPPTaskSet(storeID)
 	if set == nil {
 		return nil, false, errors.New("cannot find mpp task set for store")
 	}
@@ -610,30 +649,30 @@ func (mrm *MockRegionManager) getMPPTaskHandler(rpcClient client.Client, meta *m
 		}
 		set.taskHandlers[meta.TaskId] = handler
 		return handler, true, nil
-	} else {
-		return nil, false, nil
 	}
+	return nil, false, nil
 }
 
-func (mrm *MockRegionManager) removeMPPTaskHandler(taskId int64, storeId uint64) error {
-	set := mrm.getMPPTaskSet(storeId)
+func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64) error {
+	set := mrm.getMPPTaskSet(storeID)
 	if set == nil {
 		return errors.New("cannot find mpp task set for store")
 	}
 	set.mu.Lock()
 	defer set.mu.Unlock()
-	if _, ok := set.taskHandlers[taskId]; ok {
-		delete(set.taskHandlers, taskId)
+	if _, ok := set.taskHandlers[taskID]; ok {
+		delete(set.taskHandlers, taskID)
 		return nil
 	}
 	return errors.New("cannot find mpp task")
 }
 
+// DispatchMPPTask implements implements the tikvpb.TikvServer interface.
 func (svr *Server) DispatchMPPTask(_ context.Context, _ *mpp.DispatchTaskRequest) (*mpp.DispatchTaskResponse, error) {
 	panic("todo")
 }
 
-func (svr *Server) executeMPPDispatch(ctx context.Context, req *mpp.DispatchTaskRequest, storeAddr string, storeId uint64, handler *cophandler.MPPTaskHandler) error {
+func (svr *Server) executeMPPDispatch(ctx context.Context, req *mpp.DispatchTaskRequest, storeAddr string, storeID uint64, handler *cophandler.MPPTaskHandler) error {
 	var reqCtx *requestCtx
 	if len(req.Regions) > 0 {
 		kvContext := &kvrpcpb.Context{
@@ -641,7 +680,7 @@ func (svr *Server) executeMPPDispatch(ctx context.Context, req *mpp.DispatchTask
 			RegionEpoch: req.Regions[0].RegionEpoch,
 			// this is a hack to reuse task id in kvContext to pass mpp task id
 			TaskId: uint64(handler.Meta.TaskId),
-			Peer:   &metapb.Peer{StoreId: storeId},
+			Peer:   &metapb.Peer{StoreId: storeID},
 		}
 		var err error
 		reqCtx, err = newRequestCtx(svr, kvContext, "Mpp")
@@ -668,7 +707,7 @@ func (svr *Server) executeMPPDispatch(ctx context.Context, req *mpp.DispatchTask
 			TaskHandler: handler,
 			Ctx:         ctx,
 		})
-		handler.Err = svr.RemoveMPPTaskHandler(req.Meta.TaskId, storeId)
+		handler.Err = svr.RemoveMPPTaskHandler(req.Meta.TaskId, storeID)
 		if len(resp.OtherError) > 0 {
 			handler.Err = errors.New(resp.OtherError)
 		}
@@ -679,17 +718,17 @@ func (svr *Server) executeMPPDispatch(ctx context.Context, req *mpp.DispatchTask
 	return nil
 }
 
-// func DispatchMPPTask do not have enough information(lack of target store id)
-func (svr *Server) DispatchMPPTaskWithStoreId(ctx context.Context, req *mpp.DispatchTaskRequest, storeId uint64) (*mpp.DispatchTaskResponse, error) {
-	mppHandler, err := svr.CreateMPPTaskHandler(req.Meta, storeId)
+// DispatchMPPTaskWithStoreId implements implements the tikvpb.TikvServer interface.
+func (svr *Server) DispatchMPPTaskWithStoreId(ctx context.Context, req *mpp.DispatchTaskRequest, storeID uint64) (*mpp.DispatchTaskResponse, error) {
+	mppHandler, err := svr.CreateMPPTaskHandler(req.Meta, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	storeAddr, err := svr.GetStoreAddrByStoreId(storeId)
+	storeAddr, err := svr.GetStoreAddrByStoreId(storeID)
 	if err != nil {
 		return nil, err
 	}
-	err = svr.executeMPPDispatch(ctx, req, storeAddr, storeId, mppHandler)
+	err = svr.executeMPPDispatch(ctx, req, storeAddr, storeID, mppHandler)
 	resp := &mpp.DispatchTaskResponse{}
 	if err != nil {
 		resp.Error = &mpp.Error{Msg: err.Error()}
@@ -697,19 +736,21 @@ func (svr *Server) DispatchMPPTaskWithStoreId(ctx context.Context, req *mpp.Disp
 	return resp, nil
 }
 
+// CancelMPPTask implements implements the tikvpb.TikvServer interface.
 func (svr *Server) CancelMPPTask(_ context.Context, _ *mpp.CancelTaskRequest) (*mpp.CancelTaskResponse, error) {
 	panic("todo")
 }
 
-func (svr *Server) GetMPPTaskHandler(taskId int64, storeId uint64) (*cophandler.MPPTaskHandler, error) {
+// GetMPPTaskHandler implements implements the tikvpb.TikvServer interface.
+func (svr *Server) GetMPPTaskHandler(taskID int64, storeID uint64) (*cophandler.MPPTaskHandler, error) {
 	if mrm, ok := svr.regionManager.(*MockRegionManager); ok {
-		set := mrm.getMPPTaskSet(storeId)
+		set := mrm.getMPPTaskSet(storeID)
 		if set == nil {
 			return nil, errors.New("cannot find mpp task set for store")
 		}
 		set.mu.Lock()
 		defer set.mu.Unlock()
-		if handler, ok := set.taskHandlers[taskId]; ok {
+		if handler, ok := set.taskHandlers[taskID]; ok {
 			return handler, nil
 		}
 		return nil, nil
@@ -717,17 +758,19 @@ func (svr *Server) GetMPPTaskHandler(taskId int64, storeId uint64) (*cophandler.
 	return nil, errors.New("Only mock region mgr supports get mpp task")
 }
 
-func (svr *Server) RemoveMPPTaskHandler(taskId int64, storeId uint64) error {
+// RemoveMPPTaskHandler implements implements the tikvpb.TikvServer interface.
+func (svr *Server) RemoveMPPTaskHandler(taskID int64, storeID uint64) error {
 	if mrm, ok := svr.regionManager.(*MockRegionManager); ok {
-		err := mrm.removeMPPTaskHandler(taskId, storeId)
+		err := mrm.removeMPPTaskHandler(taskID, storeID)
 		return errors.Trace(err)
 	}
 	return errors.New("Only mock region mgr supports remove mpp task")
 }
 
-func (svr *Server) CreateMPPTaskHandler(meta *mpp.TaskMeta, storeId uint64) (*cophandler.MPPTaskHandler, error) {
+// CreateMPPTaskHandler implements implements the tikvpb.TikvServer interface.
+func (svr *Server) CreateMPPTaskHandler(meta *mpp.TaskMeta, storeID uint64) (*cophandler.MPPTaskHandler, error) {
 	if mrm, ok := svr.regionManager.(*MockRegionManager); ok {
-		set := mrm.getMPPTaskSet(storeId)
+		set := mrm.getMPPTaskSet(storeID)
 		if set == nil {
 			return nil, errors.New("cannot find mpp task set for store")
 		}
@@ -747,19 +790,20 @@ func (svr *Server) CreateMPPTaskHandler(meta *mpp.TaskMeta, storeId uint64) (*co
 	return nil, errors.New("Only mock region mgr supports get mpp task")
 }
 
+// EstablishMPPConnection implements implements the tikvpb.TikvServer interface.
 func (svr *Server) EstablishMPPConnection(*mpp.EstablishMPPConnectionRequest, tikvpb.Tikv_EstablishMPPConnectionServer) error {
 	panic("todo")
 }
 
-// func EstablishMPPConnection do not have enough information(lack of target store id)
-func (svr *Server) EstablishMPPConnectionWithStoreId(req *mpp.EstablishMPPConnectionRequest, server tikvpb.Tikv_EstablishMPPConnectionServer, storeId uint64) error {
+// EstablishMPPConnectionWithStoreId implements implements the tikvpb.TikvServer interface.
+func (svr *Server) EstablishMPPConnectionWithStoreId(req *mpp.EstablishMPPConnectionRequest, server tikvpb.Tikv_EstablishMPPConnectionServer, storeID uint64) error {
 	var (
 		mppHandler *cophandler.MPPTaskHandler
 		err        error
 	)
 	maxRetryTime := 5
 	for i := 0; i < maxRetryTime; i++ {
-		mppHandler, err = svr.GetMPPTaskHandler(req.SenderMeta.TaskId, storeId)
+		mppHandler, err = svr.GetMPPTaskHandler(req.SenderMeta.TaskId, storeID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -778,7 +822,7 @@ func (svr *Server) EstablishMPPConnectionWithStoreId(req *mpp.EstablishMPPConnec
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var sendError error = nil
+	var sendError error
 	for sendError == nil {
 		chunk, err := tunnel.RecvChunk()
 		if err != nil {
@@ -803,19 +847,25 @@ func (svr *Server) EstablishMPPConnectionWithStoreId(req *mpp.EstablishMPPConnec
 }
 
 // Raft commands (tikv <-> tikv).
+
+// Raft implements implements the tikvpb.TikvServer interface.
 func (svr *Server) Raft(stream tikvpb.Tikv_RaftServer) error {
 	return svr.innerServer.Raft(stream)
 }
 
+// Snapshot implements implements the tikvpb.TikvServer interface.
 func (svr *Server) Snapshot(stream tikvpb.Tikv_SnapshotServer) error {
 	return svr.innerServer.Snapshot(stream)
 }
 
+// BatchRaft implements implements the tikvpb.TikvServer interface.
 func (svr *Server) BatchRaft(stream tikvpb.Tikv_BatchRaftServer) error {
 	return svr.innerServer.BatchRaft(stream)
 }
 
 // Region commands.
+
+// SplitRegion implements implements the tikvpb.TikvServer interface.
 func (svr *Server) SplitRegion(ctx context.Context, req *kvrpcpb.SplitRegionRequest) (*kvrpcpb.SplitRegionResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "SplitRegion")
 	if err != nil {
@@ -825,12 +875,15 @@ func (svr *Server) SplitRegion(ctx context.Context, req *kvrpcpb.SplitRegionRequ
 	return svr.regionManager.SplitRegion(req), nil
 }
 
+// ReadIndex implements implements the tikvpb.TikvServer interface.
 func (svr *Server) ReadIndex(context.Context, *kvrpcpb.ReadIndexRequest) (*kvrpcpb.ReadIndexResponse, error) {
 	// TODO:
 	return &kvrpcpb.ReadIndexResponse{}, nil
 }
 
 // transaction debugger commands.
+
+// MvccGetByKey implements implements the tikvpb.TikvServer interface.
 func (svr *Server) MvccGetByKey(ctx context.Context, req *kvrpcpb.MvccGetByKeyRequest) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "MvccGetByKey")
 	if err != nil {
@@ -849,6 +902,7 @@ func (svr *Server) MvccGetByKey(ctx context.Context, req *kvrpcpb.MvccGetByKeyRe
 	return resp, nil
 }
 
+// MvccGetByStartTs implements implements the tikvpb.TikvServer interface.
 func (svr *Server) MvccGetByStartTs(ctx context.Context, req *kvrpcpb.MvccGetByStartTsRequest) (*kvrpcpb.MvccGetByStartTsResponse, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "MvccGetByStartTs")
 	if err != nil {
@@ -868,14 +922,15 @@ func (svr *Server) MvccGetByStartTs(ctx context.Context, req *kvrpcpb.MvccGetByS
 	return resp, nil
 }
 
+// UnsafeDestroyRange implements implements the tikvpb.TikvServer interface.
 func (svr *Server) UnsafeDestroyRange(ctx context.Context, req *kvrpcpb.UnsafeDestroyRangeRequest) (*kvrpcpb.UnsafeDestroyRangeResponse, error) {
 	start, end := req.GetStartKey(), req.GetEndKey()
 	svr.mvccStore.DeleteFileInRange(start, end)
 	return &kvrpcpb.UnsafeDestroyRangeResponse{}, nil
 }
 
-// deadlock detection related services
 // GetWaitForEntries tries to get the waitFor entries
+// deadlock detection related services
 func (svr *Server) GetWaitForEntries(ctx context.Context,
 	req *deadlockPb.WaitForEntriesRequest) (*deadlockPb.WaitForEntriesResponse, error) {
 	// TODO
@@ -907,51 +962,62 @@ func (svr *Server) Detect(stream deadlockPb.Deadlock_DetectServer) error {
 	return nil
 }
 
+// CheckLockObserver implements implements the tikvpb.TikvServer interface.
 func (svr *Server) CheckLockObserver(context.Context, *kvrpcpb.CheckLockObserverRequest) (*kvrpcpb.CheckLockObserverResponse, error) {
 	// TODO: implement Observer
 	return &kvrpcpb.CheckLockObserverResponse{IsClean: true}, nil
 }
 
+// PhysicalScanLock implements implements the tikvpb.TikvServer interface.
 func (svr *Server) PhysicalScanLock(ctx context.Context, req *kvrpcpb.PhysicalScanLockRequest) (*kvrpcpb.PhysicalScanLockResponse, error) {
 	resp := &kvrpcpb.PhysicalScanLockResponse{}
 	resp.Locks = svr.mvccStore.PhysicalScanLock(req.StartKey, req.MaxTs, int(req.Limit))
 	return resp, nil
 }
 
+// RegisterLockObserver implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RegisterLockObserver(context.Context, *kvrpcpb.RegisterLockObserverRequest) (*kvrpcpb.RegisterLockObserverResponse, error) {
 	// TODO: implement Observer
 	return &kvrpcpb.RegisterLockObserverResponse{}, nil
 }
 
+// RemoveLockObserver implements implements the tikvpb.TikvServer interface.
 func (svr *Server) RemoveLockObserver(context.Context, *kvrpcpb.RemoveLockObserverRequest) (*kvrpcpb.RemoveLockObserverResponse, error) {
 	// TODO: implement Observer
 	return &kvrpcpb.RemoveLockObserverResponse{}, nil
 }
 
+// VerGet implements implements the tikvpb.TikvServer interface.
 func (svr *Server) VerGet(context.Context, *kvrpcpb.VerGetRequest) (*kvrpcpb.VerGetResponse, error) {
 	panic("unimplemented")
 }
 
+// VerBatchGet implements implements the tikvpb.TikvServer interface.
 func (svr *Server) VerBatchGet(context.Context, *kvrpcpb.VerBatchGetRequest) (*kvrpcpb.VerBatchGetResponse, error) {
 	panic("unimplemented")
 }
 
+// VerMut implements implements the tikvpb.TikvServer interface.
 func (svr *Server) VerMut(context.Context, *kvrpcpb.VerMutRequest) (*kvrpcpb.VerMutResponse, error) {
 	panic("unimplemented")
 }
 
+// VerBatchMut implements implements the tikvpb.TikvServer interface.
 func (svr *Server) VerBatchMut(context.Context, *kvrpcpb.VerBatchMutRequest) (*kvrpcpb.VerBatchMutResponse, error) {
 	panic("unimplemented")
 }
 
+// VerScan implements implements the tikvpb.TikvServer interface.
 func (svr *Server) VerScan(context.Context, *kvrpcpb.VerScanRequest) (*kvrpcpb.VerScanResponse, error) {
 	panic("unimplemented")
 }
 
+// VerDeleteRange implements implements the tikvpb.TikvServer interface.
 func (svr *Server) VerDeleteRange(context.Context, *kvrpcpb.VerDeleteRangeRequest) (*kvrpcpb.VerDeleteRangeResponse, error) {
 	panic("unimplemented")
 }
 
+// CheckLeader implements implements the tikvpb.TikvServer interface.
 func (svr *Server) CheckLeader(context.Context, *kvrpcpb.CheckLeaderRequest) (*kvrpcpb.CheckLeaderResponse, error) {
 	panic("unimplemented")
 }

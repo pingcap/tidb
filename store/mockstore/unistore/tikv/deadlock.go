@@ -34,11 +34,13 @@ const (
 	Leader
 )
 
+// DetectorServer represents a detector server.
 type DetectorServer struct {
 	Detector *Detector
 	role     int32
 }
 
+// Detect detects deadlock.
 func (ds *DetectorServer) Detect(req *deadlockPb.DeadlockRequest) *deadlockPb.DeadlockResponse {
 	switch req.Tp {
 	case deadlockPb.DeadlockRequestType_Detect:
@@ -55,7 +57,7 @@ func (ds *DetectorServer) Detect(req *deadlockPb.DeadlockRequest) *deadlockPb.De
 	return nil
 }
 
-// DetectorClient is a util used for distributed deadlock detection
+// DetectorClient represents a detector client.
 type DetectorClient struct {
 	pdClient     pd.Client
 	sendCh       chan *deadlockPb.DeadlockRequest
@@ -118,7 +120,7 @@ func (dt *DetectorClient) rebuildStreamClient() error {
 	return nil
 }
 
-// NewDeadlockDetector will create a new detector util, entryTTL is used for
+// NewDetectorClient will create a new detector util, entryTTL is used for
 // recycling the lock wait edge in detector wait wap. chSize is the pending
 // detection sending task size(used on non leader node)
 func NewDetectorClient(waiterMgr *lockwaiter.Manager, pdClient pd.Client) *DetectorClient {
@@ -185,8 +187,8 @@ func (dt *DetectorClient) handleRemoteTask(requestType deadlockPb.DeadlockReques
 	dt.sendCh <- detectReq
 }
 
+// CleanUp processes cleaup task on local detector
 // user interfaces
-// Cleanup processes cleaup task on local detector
 func (dt *DetectorClient) CleanUp(startTs uint64) {
 	dt.handleRemoteTask(deadlockPb.DeadlockRequestType_CleanUp, startTs, 0, 0)
 }
@@ -196,7 +198,7 @@ func (dt *DetectorClient) CleanUpWaitFor(txnTs, waitForTxn, keyHash uint64) {
 	dt.handleRemoteTask(deadlockPb.DeadlockRequestType_CleanUpWaitFor, txnTs, waitForTxn, keyHash)
 }
 
-// DetectRemote post the detection request to local deadlock detector or remote first region leader,
+// Detect post the detection request to local deadlock detector or remote first region leader,
 // the caller should use `waiter.ch` to receive possible deadlock response
 func (dt *DetectorClient) Detect(txnTs uint64, waitForTxnTs uint64, keyHash uint64) {
 	dt.handleRemoteTask(deadlockPb.DeadlockRequestType_Detect, txnTs, waitForTxnTs, keyHash)
@@ -225,10 +227,12 @@ func NewDetectorServer() *DetectorServer {
 	return svr
 }
 
+// IsLeader returns whether the server is leader or not.
 func (ds *DetectorServer) IsLeader() bool {
 	return atomic.LoadInt32(&ds.role) == Leader
 }
 
+// ChangeRole changes the server role.
 func (ds *DetectorServer) ChangeRole(newRole int32) {
 	atomic.StoreInt32(&ds.role, newRole)
 }

@@ -182,6 +182,7 @@ type dbWriter struct {
 	latestTS uint64
 }
 
+// NewDBWriter returns a new DBWriter.
 func NewDBWriter(bundle *mvcc.DBBundle) mvcc.DBWriter {
 	return &dbWriter{
 		bundle:  bundle,

@@ -32,12 +32,14 @@ var (
 	LockNoWait     = int64(-1)
 )
 
+// Manager represents a waiters manager.
 type Manager struct {
 	mu                  sync.Mutex
 	waitingQueues       map[uint64]*queue
 	wakeUpDelayDuration int64
 }
 
+// NewManager returns a new manager.
 func NewManager(conf *config.Config) *Manager {
 	return &Manager{
 		waitingQueues:       map[uint64]*queue{},
@@ -49,8 +51,6 @@ type queue struct {
 	waiters []*Waiter
 }
 
-// getReadyWaiters returns the ready waiters array, and left waiter size in this queue,
-// it should be used under map lock protection
 func (q *queue) getOldestWaiter() (*Waiter, []*Waiter) {
 	// make the waiters in start ts order
 	sort.Slice(q.waiters, func(i, j int) bool {
@@ -74,6 +74,7 @@ func (q *queue) removeWaiter(w *Waiter) {
 	}
 }
 
+// Waiter represents a waiter.
 type Waiter struct {
 	deadlineTime        time.Time
 	timer               *time.Timer
@@ -89,6 +90,7 @@ type Waiter struct {
 // WakeupWaitTime is the implementation of variable "wake-up-delay-duration"
 type WakeupWaitTime int
 
+// WaitResult represents a wait result.
 type WaitResult struct {
 	// WakeupSleepTime, -1 means the wait is already timeout, 0 means the lock will be granted to this waiter
 	// others are the wake-up-delay-duration sleep time, in milliseconds
@@ -97,10 +99,14 @@ type WaitResult struct {
 	DeadlockResp    *deadlock.DeadlockResponse
 }
 
-const WaitTimeout WakeupWaitTime = -1
-const WakeUpThisWaiter WakeupWaitTime = 0
-const WakeupDelayTimeout WakeupWaitTime = 1
+// WakeupWaitTime
+const (
+	WaitTimeout        WakeupWaitTime = -1
+	WakeUpThisWaiter   WakeupWaitTime = 0
+	WakeupDelayTimeout WakeupWaitTime = 1
+)
 
+// Wait waits on a lock until waked by others or timeout.
 func (w *Waiter) Wait() WaitResult {
 	for {
 		select {
@@ -126,13 +132,14 @@ func (w *Waiter) Wait() WaitResult {
 	}
 }
 
+// DrainCh drains channel.
 func (w *Waiter) DrainCh() {
 	for len(w.ch) > 0 {
 		<-w.ch
 	}
 }
 
-// Wait waits on a lock until waked by others or timeout.
+// NewWaiter returns a new waiter.
 func (lw *Manager) NewWaiter(startTS, lockTS, keyHash uint64, timeout time.Duration) *Waiter {
 	// allocate memory before hold the lock.
 	q := new(queue)
@@ -211,7 +218,7 @@ func (lw *Manager) CleanUp(w *Waiter) {
 	w.DrainCh()
 }
 
-// WakeUpDetection wakes up waiters waiting for deadlock detection results
+// WakeUpForDeadlock wakes up waiters waiting for deadlock detection results
 func (lw *Manager) WakeUpForDeadlock(resp *deadlock.DeadlockResponse) {
 	var (
 		waiter         *Waiter

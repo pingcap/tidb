@@ -52,12 +52,14 @@ func (e ErrRetryable) Error() string {
 	return fmt.Sprintf("retryable: %s", string(e))
 }
 
+// ErrRetryable
 var (
 	ErrLockNotFound    = ErrRetryable("lock not found")
 	ErrAlreadyRollback = ErrRetryable("already rollback")
 	ErrReplaced        = ErrRetryable("replaced by another transaction")
 )
 
+// ErrInvalidOp is returned when an operation cannot be completed.
 type ErrInvalidOp struct {
 	op kvrpcpb.Op
 }
@@ -74,6 +76,7 @@ func (e ErrAlreadyCommitted) Error() string {
 	return "txn already committed"
 }
 
+// ErrKeyAlreadyExists is returned when a key already exists.
 type ErrKeyAlreadyExists struct {
 	Key []byte
 }
@@ -93,6 +96,7 @@ func (e ErrDeadlock) Error() string {
 	return "deadlock"
 }
 
+// ErrConflict is the error when the commit meets an write conflict error.
 type ErrConflict struct {
 	StartTS          uint64
 	ConflictTS       uint64

@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 )
 
+// InnerServer defines the inner server interface.
 type InnerServer interface {
 	Setup(pdClient pd.Client)
 	Start(pdClient pd.Client) error
@@ -28,34 +29,42 @@ type InnerServer interface {
 	Snapshot(stream tikvpb.Tikv_SnapshotServer) error
 }
 
+// StandAlongInnerServer implements the InnerServer interface.
 type StandAlongInnerServer struct {
 	bundle *mvcc.DBBundle
 }
 
+// NewStandAlongInnerServer returns a new StandAlongInnerServer.
 func NewStandAlongInnerServer(bundle *mvcc.DBBundle) *StandAlongInnerServer {
 	return &StandAlongInnerServer{
 		bundle: bundle,
 	}
 }
 
+// Raft implements the InnerServer Raft method.
 func (is *StandAlongInnerServer) Raft(stream tikvpb.Tikv_RaftServer) error {
 	return nil
 }
 
+// BatchRaft implements the InnerServer BatchRaft method.
 func (is *StandAlongInnerServer) BatchRaft(stream tikvpb.Tikv_BatchRaftServer) error {
 	return nil
 }
 
+// Snapshot implements the InnerServer Snapshot method.
 func (is *StandAlongInnerServer) Snapshot(stream tikvpb.Tikv_SnapshotServer) error {
 	return nil
 }
 
+// Setup implements the InnerServer Setup method.
 func (is *StandAlongInnerServer) Setup(pdClient pd.Client) {}
 
+// Start implements the InnerServer Start method.
 func (is *StandAlongInnerServer) Start(pdClient pd.Client) error {
 	return nil
 }
 
+// Stop implements the InnerServer Stop method.
 func (is *StandAlongInnerServer) Stop() error {
 	return is.bundle.DB.Close()
 }

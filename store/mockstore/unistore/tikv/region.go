@@ -38,6 +38,7 @@ import (
 	"golang.org/x/net/context"
 )
 
+// InternalKey
 var (
 	InternalKeyPrefix        = []byte{0xff}
 	InternalRegionMetaPrefix = append(InternalKeyPrefix, "region"...)
@@ -45,10 +46,12 @@ var (
 	InternalSafePointKey     = append(InternalKeyPrefix, "safepoint"...)
 )
 
-func InternalRegionMetaKey(regionId uint64) []byte {
-	return []byte(string(InternalRegionMetaPrefix) + strconv.FormatUint(regionId, 10))
+// InternalRegionMetaKey returns internal region meta key with the given region id.
+func InternalRegionMetaKey(regionID uint64) []byte {
+	return []byte(string(InternalRegionMetaPrefix) + strconv.FormatUint(regionID, 10))
 }
 
+// RegionCtx defines the region context interface.
 type RegionCtx interface {
 	Meta() *metapb.Region
 	Diff() *int64
@@ -260,18 +263,20 @@ func (ri *regionCtx) ReleaseLatches(hashVals []uint64) {
 	ri.latches.release(hashVals)
 }
 
+// RegionOptions represents the region options.
 type RegionOptions struct {
 	StoreAddr  string
 	PDAddr     string
 	RegionSize int64
 }
 
+// RegionManager defines the region manager interface.
 type RegionManager interface {
 	GetRegionFromCtx(ctx *kvrpcpb.Context) (RegionCtx, *errorpb.Error)
 	GetStoreInfoFromCtx(ctx *kvrpcpb.Context) (string, uint64, *errorpb.Error)
 	SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.SplitRegionResponse
 	GetStoreIDByAddr(addr string) (uint64, error)
-	GetStoreAddrByStoreId(storeId uint64) (string, error)
+	GetStoreAddrByStoreId(storeID uint64) (string, error)
 	Close() error
 }
 
@@ -289,8 +294,8 @@ func (rm *regionManager) GetStoreIDByAddr(addr string) (uint64, error) {
 	return rm.storeMeta.Id, nil
 }
 
-func (rm *regionManager) GetStoreAddrByStoreId(storeId uint64) (string, error) {
-	if rm.storeMeta.Id != storeId {
+func (rm *regionManager) GetStoreAddrByStoreId(storeID uint64) (string, error) {
+	if rm.storeMeta.Id != storeID {
 		return "", errors.New("store not match")
 	}
 	return rm.storeMeta.Address, nil
@@ -389,6 +394,7 @@ func (rm *regionManager) loadFromLocal(bundle *mvcc.DBBundle, f func(*regionCtx)
 	return err
 }
 
+// StandAloneRegionManager represents a standalone region manager.
 type StandAloneRegionManager struct {
 	regionManager
 	bundle     *mvcc.DBBundle
@@ -399,6 +405,7 @@ type StandAloneRegionManager struct {
 	wg         sync.WaitGroup
 }
 
+// NewStandAloneRegionManager returns a new standalone region manager.
 func NewStandAloneRegionManager(bundle *mvcc.DBBundle, opts RegionOptions, pdc pd.Client) *StandAloneRegionManager {
 	var err error
 	clusterID := pdc.GetClusterID(context.TODO())
@@ -779,10 +786,12 @@ func (rm *StandAloneRegionManager) splitRegion(oldRegionCtx *regionCtx, splitKey
 	return nil
 }
 
+// SplitRegion splits a region.
 func (rm *StandAloneRegionManager) SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.SplitRegionResponse {
 	return &kvrpcpb.SplitRegionResponse{}
 }
 
+// Close closes the standalone region manager.
 func (rm *StandAloneRegionManager) Close() error {
 	close(rm.closeCh)
 	rm.wg.Wait()
