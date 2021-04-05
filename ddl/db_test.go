@@ -5050,6 +5050,7 @@ func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
+	tk.MustExec("drop table if exists test_add_index_after_add_col")
 	tk.MustExec("create table test_add_index_after_add_col(a int, b int not null default '0');")
 	tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2);")
 	tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0';")
