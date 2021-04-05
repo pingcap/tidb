@@ -2809,7 +2809,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 		if field.Auxiliary {
 			continue
 		}
-		checkExprInGroupByOrIsSingleValue(p, getInnerFromParenthesesAndUnaryPlus(field.Expr), offset, ErrExprInSelect, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
+		checkExprInGroupByOrIsSingleValue(p, getInnerExpr(field.Expr), offset, ErrExprInSelect, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
 	}
 
 	if sel.OrderBy != nil {
@@ -5495,18 +5495,24 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 	})
 }
 
+func getInnerExpr(expr ast.ExprNode) ast.ExprNode {
+	expr = getInnerFromParenthesesAndUnaryPlus(expr)
+
+	if sqpr, ok := expr.(*ast.SubqueryExpr); ok && sqpr.Query != nil {
+		if selSt, ok := sqpr.Query.(*ast.SelectStmt); ok && selSt.From == nil &&
+			len(selSt.Fields.Fields) > 0 {
+			return getInnerExpr(selSt.Fields.Fields[0].Expr)
+		}
+	}
+	return expr
+}
+
 func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 	if pexpr, ok := expr.(*ast.ParenthesesExpr); ok {
 		return getInnerFromParenthesesAndUnaryPlus(pexpr.Expr)
 	}
 	if uexpr, ok := expr.(*ast.UnaryOperationExpr); ok && uexpr.Op == opcode.Plus {
 		return getInnerFromParenthesesAndUnaryPlus(uexpr.V)
-	}
-	if sqpr, ok := expr.(*ast.SubqueryExpr); ok && sqpr.Query != nil {
-		if selSt, ok := sqpr.Query.(*ast.SelectStmt); ok && selSt.From == nil &&
-			len(selSt.Fields.Fields) > 0 {
-			return getInnerFromParenthesesAndUnaryPlus(selSt.Fields.Fields[0].Expr)
-		}
 	}
 	return expr
 }
