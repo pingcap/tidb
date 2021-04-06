@@ -1586,18 +1586,21 @@ var (
 		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil))
 )
 
+// NeedCollectIndexUsage returns indexUsageSyncLease > 0.
 func (do *Domain) NeedCollectIndexUsage() bool {
 	do.idxUsageLock.Lock()
 	defer do.idxUsageLock.Unlock()
 	return do.indexUsageSyncLease > 0
 }
 
+// GetIdxUsageSyncLease returns indexUsageSyncLease.
 func (do *Domain) GetIdxUsageSyncLease() time.Duration {
 	do.idxUsageLock.Lock()
 	defer do.idxUsageLock.Unlock()
 	return do.indexUsageSyncLease
 }
 
+// SetIdxUsageSyncLease sets indexUsageSyncLease.
 func (do *Domain) SetIdxUsageSyncLease(lease time.Duration) {
 	do.idxUsageLock.Lock()
 	defer do.idxUsageLock.Unlock()
