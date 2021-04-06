@@ -637,7 +637,7 @@ func (txn *KVTxn) GetSnapshot() *KVSnapshot {
 	return txn.snapshot
 }
 
-// SetBindlogExecutor sets the method to perform binlong synchronization.
+// SetBinlogExecutor sets the method to perform binlong synchronization.
 func (txn *KVTxn) SetBinlogExecutor(binlog BinlogExecutor) {
 	txn.binlog = binlog
 }
