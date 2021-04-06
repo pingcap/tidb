@@ -5040,8 +5040,8 @@ func (s *testSerialDBSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
 }
 
-// Close issue #23321
-// https://github.com/pingcap/tidb/issues/23321
+// Close issue #23321.
+// See https://github.com/pingcap/tidb/issues/23321
 func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
