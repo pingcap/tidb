@@ -4231,3 +4231,10 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(sb.String(), Equals, "SELECT 3")
 }
+
+func (s *testSessionSerialSuite) TestNoIndexUsageCollector(c *C) {
+	do := s.dom
+	c.Assert(do.NeedCollectIndexUsage(), IsFalse)
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk.Se.ExistSessionIndexUsageCollector(), IsFalse)
+}

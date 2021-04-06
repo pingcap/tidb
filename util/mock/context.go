@@ -257,6 +257,11 @@ func (c *Context) StoreQueryFeedback(_ interface{}) {}
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
 
+// ExistSessionIndexUsageCollector returns whether SessionIndexUsageCollector exists.
+func (c *Context) ExistSessionIndexUsageCollector() bool {
+	return false
+}
+
 // GetTxnWriteThroughputSLI implements the sessionctx.Context interface.
 func (c *Context) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 	return &sli.TxnWriteThroughputSLI{}

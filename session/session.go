@@ -400,6 +400,11 @@ func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) 
 	s.idxUsageCollector.Update(tblID, idxID, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
 }
 
+// ExistSessionIndexUsageCollector returns whether SessionIndexUsageCollector exists.
+func (s *session) ExistSessionIndexUsageCollector() bool {
+	return s.idxUsageCollector != nil
+}
+
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	is := infoschema.GetInfoSchema(s)
@@ -2092,7 +2097,9 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
-		s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		if do.NeedCollectIndexUsage() {
+			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		}
 	}
 
 	return s, nil
