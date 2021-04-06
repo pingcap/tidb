@@ -315,6 +315,10 @@ func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction
 		txn, err = s.BeginWithStartTS(txnScope, *option.StartTS)
 	} else if option.PrevSec != nil {
 		txn, err = s.BeginWithExactStaleness(txnScope, *option.PrevSec)
+	} else if option.MaxPrevSec != nil {
+		txn, err = s.BeginWithMaxPrevSec(txnScope, *option.MaxPrevSec)
+	} else if option.MinStartTS != nil {
+		txn, err = s.BeginWithMinStartTS(txnScope, *option.MinStartTS)
 	} else {
 		txn, err = s.BeginWithTxnScope(txnScope)
 	}

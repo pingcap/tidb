@@ -35,7 +35,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.10 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20210310131351-7ad6a204de87
+	github.com/ngaut/unistore v0.0.0-20210406101133-e8d95fb4e4a4
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
@@ -90,10 +90,6 @@ require (
 	modernc.org/mathutil v1.2.2 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
-)
-
-replace (
-    github.com/ngaut/unistore => github.com/Yisaer/unistore v0.0.0-20210406090515-0e4060b749fd
 )
 
 go 1.13

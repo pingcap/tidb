@@ -422,6 +422,7 @@ func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
 }
 
+// StoreSafeTS returns StoreSafeTSRequest in request.
 func (req *Request) StoreSafeTS() *kvrpcpb.StoreSafeTSRequest {
 	return req.Req.(*kvrpcpb.StoreSafeTSRequest)
 }

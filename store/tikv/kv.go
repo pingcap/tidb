@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -206,6 +207,39 @@ func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVT
 	return txn, nil
 }
 
+// BeginWithMinStartTS begins transaction with the least startTS
+func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTxn, error) {
+	minSafeTS := uint64(0)
+	if txnScope == oracle.GlobalTxnScope {
+		minSafeTS = s.getGlobalMinSafeTS()
+	} else {
+		stores := s.regionCache.getStoresByLabels([]*metapb.StoreLabel{
+			{
+				Key:   "zone",
+				Value: txnScope,
+			},
+		})
+		minSafeTS = s.getMinSafeTSByStores(stores)
+	}
+	startTS := minStartTS
+	// If the safeTS is larger then then minStartTS, we will use safeTS as StartTS, otherwise we will use
+	// minStartTS directly.
+	if startTS < minSafeTS {
+		startTS = minSafeTS
+	}
+	return s.BeginWithStartTS(txnScope, startTS)
+}
+
+// BeginWithMaxPrevSec begins transaction with given max previous seconds for startTS
+func (s *KVStore) BeginWithMaxPrevSec(txnScope string, maxPrevSec uint64) (*KVTxn, error) {
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
+	minStartTS, err := s.getStalenessTimestamp(bo, txnScope, maxPrevSec)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return s.BeginWithMinStartTS(txnScope, minStartTS)
+}
+
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 // if ts is MaxVersion or > current max committed version, we will use current version for this snapshot.
 func (s *KVStore) GetSnapshot(ts uint64) *KVSnapshot {
@@ -356,12 +390,12 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
 }
 
-func (s *KVStore) getMinSafeTSByStores(storeIDs []uint64) uint64 {
+func (s *KVStore) getMinSafeTSByStores(stores []*Store) uint64 {
 	minSafeTS := uint64(math.MaxUint64)
 	s.safeTSMu.RLock()
 	defer s.safeTSMu.RUnlock()
-	for _, storeID := range storeIDs {
-		safeTS := s.safeTSMu.storeSafeTS[storeID]
+	for _, store := range stores {
+		safeTS := s.safeTSMu.storeSafeTS[store.storeID]
 		if safeTS < minSafeTS {
 			minSafeTS = safeTS
 		}
@@ -407,7 +441,7 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 		go func(ctx context.Context, wg *sync.WaitGroup, store *Store) {
 			defer wg.Done()
 			// TODO: add metrics for updateSafeTS
-			resp, err := tikvClient.SendRequest(ctx, store.addr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
+			resp, err := tikvClient.SendRequest(ctx, store.addr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, &kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
 				StartKey: []byte(""),
 				EndKey:   []byte(""),
 			}}), ReadTimeoutShort)

@@ -144,7 +144,9 @@ const (
 
 // StalenessTxnOption represents available options for the InitTxnWithStaleness
 type StalenessTxnOption struct {
-	Mode    ast.TimestampBoundMode
-	PrevSec uint64
-	StartTS uint64
+	Mode       ast.TimestampBoundMode
+	PrevSec    uint64
+	StartTS    uint64
+	MinStartTS uint64
+	MaxPrevSec uint64
 }
