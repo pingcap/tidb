@@ -25,11 +25,13 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	pmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	atomic2 "go.uber.org/atomic"
@@ -426,8 +428,16 @@ func GetSysVars() map[string]*SysVar {
 	return sysVars
 }
 
-// PluginVarNames is global plugin var names set.
-var PluginVarNames []string
+var (
+	// PluginVarNames is global plugin var names set.
+	PluginVarNames           []string
+	errUnknownSystemVariable = dbterror.ClassVariable.NewStd(mysql.ErrUnknownSystemVariable)
+	errValueNotSupportedWhen = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("%s = OFF is not supported when %s = ON", nil))
+	// ErrFunctionsNoopImpl is an error to say the behavior is protected by the tidb_enable_noop_functions sysvar.
+	// This is copied from expression.ErrFunctionsNoopImpl to prevent circular dependencies.
+	// It needs to be public for tests.
+	ErrFunctionsNoopImpl = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
+)
 
 func init() {
 	sysVars = make(map[string]*SysVar)
@@ -910,11 +920,11 @@ var defaultSysVars = []*SysVar{
 					var err error
 					val, err = vars.GlobalVarsAccessor.GetGlobalSysVar(potentialIncompatibleSysVar)
 					if err != nil {
-						return originalValue, fmt.Errorf("could not check value of incompatible sysvar: %s", potentialIncompatibleSysVar)
+						return originalValue, errUnknownSystemVariable.GenWithStackByArgs(potentialIncompatibleSysVar)
 					}
 				}
 				if TiDBOptOn(val) {
-					return originalValue, fmt.Errorf("%s = OFF is not supported when %s = ON", TiDBEnableNoopFuncs, potentialIncompatibleSysVar)
+					return originalValue, errValueNotSupportedWhen.GenWithStackByArgs(TiDBEnableNoopFuncs, potentialIncompatibleSysVar)
 				}
 			}
 		}

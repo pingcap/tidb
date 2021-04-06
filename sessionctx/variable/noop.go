@@ -15,21 +15,12 @@ package variable
 
 import (
 	"math"
-
-	pmysql "github.com/pingcap/parser/mysql"
-	mysql "github.com/pingcap/tidb/errno"
-
-	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // The following sysVars are noops.
 // Some applications will depend on certain variables to be present or settable,
 // for example query_cache_time. These are included for MySQL compatibility,
 // but changing them has no effect on behavior.
-
-// ErrFunctionsNoopImpl is an error to say the behavior is protected by the tidb_enable_noop_functions sysvar.
-// This is copied from expression.ErrFunctionsNoopImpl to prevent circular dependencies.
-var ErrFunctionsNoopImpl = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
 
 var noopSysVars = []*SysVar{
 	// It is unsafe to pretend that any variation of "read only" is enabled when the server
