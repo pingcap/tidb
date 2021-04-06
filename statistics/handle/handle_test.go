@@ -1993,10 +1993,23 @@ type statsSerialSuite struct {
 	testSuiteBase
 }
 
+func (s *statsSerialSuite) TestIndexUsageLease(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.ExistSessionIndexUsageCollector(), IsFalse)
+
+	session.SetIndexUsageSyncLease(1)
+	defer session.SetIndexUsageSyncLease(0)
+	se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.ExistSessionIndexUsageCollector(), IsTrue)
+}
+
 func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	s.do.SetIdxUsageSyncLease(1)
-	defer s.do.SetIdxUsageSyncLease(0)
+	session.SetIndexUsageSyncLease(1)
+	defer session.SetIndexUsageSyncLease(0)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_idx(a int, b int)")
@@ -2036,8 +2049,8 @@ func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {
 
 func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	s.do.SetIdxUsageSyncLease(1)
-	defer s.do.SetIdxUsageSyncLease(0)
+	session.SetIndexUsageSyncLease(1)
+	defer session.SetIndexUsageSyncLease(0)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_idx(a int, b int)")

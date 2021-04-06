@@ -86,7 +86,6 @@ type Domain struct {
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
-	idxUsageLock         sync.Mutex
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1128,10 +1127,9 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 		go do.loadStatsWorker()
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	idxUsageSyncLease := do.GetIdxUsageSyncLease()
-	if idxUsageSyncLease > 0 {
+	if do.indexUsageSyncLease > 0 {
 		do.wg.Add(1)
-		go do.syncIndexUsageWorker(owner, idxUsageSyncLease)
+		go do.syncIndexUsageWorker(owner)
 	}
 	if do.statsLease <= 0 {
 		return nil
@@ -1203,10 +1201,10 @@ func (do *Domain) loadStatsWorker() {
 	}
 }
 
-func (do *Domain) syncIndexUsageWorker(owner owner.Manager, lease time.Duration) {
+func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "syncIndexUsageWorker", nil, false)
-	idxUsageSyncTicker := time.NewTicker(lease)
-	gcStatsTicker := time.NewTicker(100 * lease)
+	idxUsageSyncTicker := time.NewTicker(do.indexUsageSyncLease)
+	gcStatsTicker := time.NewTicker(100 * do.indexUsageSyncLease)
 	handle := do.StatsHandle()
 	defer func() {
 		idxUsageSyncTicker.Stop()
@@ -1585,24 +1583,3 @@ var (
 	ErrInfoSchemaChanged = dbterror.ClassDomain.NewStdErr(errno.ErrInfoSchemaChanged,
 		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil))
 )
-
-// NeedCollectIndexUsage returns indexUsageSyncLease > 0.
-func (do *Domain) NeedCollectIndexUsage() bool {
-	do.idxUsageLock.Lock()
-	defer do.idxUsageLock.Unlock()
-	return do.indexUsageSyncLease > 0
-}
-
-// GetIdxUsageSyncLease returns indexUsageSyncLease.
-func (do *Domain) GetIdxUsageSyncLease() time.Duration {
-	do.idxUsageLock.Lock()
-	defer do.idxUsageLock.Unlock()
-	return do.indexUsageSyncLease
-}
-
-// SetIdxUsageSyncLease sets indexUsageSyncLease.
-func (do *Domain) SetIdxUsageSyncLease(lease time.Duration) {
-	do.idxUsageLock.Lock()
-	defer do.idxUsageLock.Unlock()
-	do.indexUsageSyncLease = lease
-}
