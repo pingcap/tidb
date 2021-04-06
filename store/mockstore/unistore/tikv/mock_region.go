@@ -132,8 +132,8 @@ func (rm *MockRegionManager) GetStoreIDByAddr(addr string) (uint64, error) {
 	return 0, errors.New("Store not match")
 }
 
-// GetStoreAddrByStoreId gets a store address by the store id.
-func (rm *MockRegionManager) GetStoreAddrByStoreId(storeID uint64) (string, error) {
+// GetStoreAddrByStoreID gets a store address by the store id.
+func (rm *MockRegionManager) GetStoreAddrByStoreID(storeID uint64) (string, error) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 	for _, store := range rm.stores {
@@ -148,7 +148,7 @@ func (rm *MockRegionManager) GetStoreAddrByStoreId(storeID uint64) (string, erro
 func (rm *MockRegionManager) GetStoreInfoFromCtx(ctx *kvrpcpb.Context) (string, uint64, *errorpb.Error) {
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil {
-		addr, err := rm.GetStoreAddrByStoreId(ctxPeer.GetStoreId())
+		addr, err := rm.GetStoreAddrByStoreID(ctxPeer.GetStoreId())
 		if err != nil {
 			return "", 0, &errorpb.Error{
 				Message:       "store not match",
@@ -164,7 +164,7 @@ func (rm *MockRegionManager) GetStoreInfoFromCtx(ctx *kvrpcpb.Context) (string, 
 func (rm *MockRegionManager) GetRegionFromCtx(ctx *kvrpcpb.Context) (RegionCtx, *errorpb.Error) {
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil {
-		_, err := rm.GetStoreAddrByStoreId(ctxPeer.GetStoreId())
+		_, err := rm.GetStoreAddrByStoreID(ctxPeer.GetStoreId())
 		if err != nil {
 			return nil, &errorpb.Error{
 				Message:       "store not match",

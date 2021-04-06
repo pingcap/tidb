@@ -80,7 +80,7 @@ func EncodeWriteCFValue(t WriteType, startTs uint64, shortVal []byte) []byte {
 }
 
 // EncodeLockCFValue encodes the mvcc lock and returns putLock value and putDefault value if exists.
-func EncodeLockCFValue(lock *MvccLock) ([]byte, []byte) {
+func EncodeLockCFValue(lock *Lock) ([]byte, []byte) {
 	data := make([]byte, 1)
 	switch lock.Op {
 	case byte(kvrpcpb.Op_Put):
@@ -130,7 +130,7 @@ const (
 var errInvalidLockCFValue = errors.New("invalid lock CF value")
 
 // ParseLockCFValue parses the []byte data and returns a MvccLock.
-func ParseLockCFValue(data []byte) (lock MvccLock, err error) {
+func ParseLockCFValue(data []byte) (lock Lock, err error) {
 	if len(data) == 0 {
 		err = errInvalidLockCFValue
 		return

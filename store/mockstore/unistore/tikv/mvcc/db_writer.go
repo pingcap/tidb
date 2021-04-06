@@ -38,10 +38,10 @@ type LatchHandle interface {
 
 // WriteBatch is the interface to batch write.
 type WriteBatch interface {
-	Prewrite(key []byte, lock *MvccLock)
-	Commit(key []byte, lock *MvccLock)
+	Prewrite(key []byte, lock *Lock)
+	Commit(key []byte, lock *Lock)
 	Rollback(key []byte, deleleLock bool)
-	PessimisticLock(key []byte, lock *MvccLock)
+	PessimisticLock(key []byte, lock *Lock)
 	PessimisticRollback(key []byte)
 }
 

@@ -276,7 +276,7 @@ type RegionManager interface {
 	GetStoreInfoFromCtx(ctx *kvrpcpb.Context) (string, uint64, *errorpb.Error)
 	SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.SplitRegionResponse
 	GetStoreIDByAddr(addr string) (uint64, error)
-	GetStoreAddrByStoreId(storeID uint64) (string, error)
+	GetStoreAddrByStoreID(storeID uint64) (string, error)
 	Close() error
 }
 
@@ -294,7 +294,7 @@ func (rm *regionManager) GetStoreIDByAddr(addr string) (uint64, error) {
 	return rm.storeMeta.Id, nil
 }
 
-func (rm *regionManager) GetStoreAddrByStoreId(storeID uint64) (string, error) {
+func (rm *regionManager) GetStoreAddrByStoreID(storeID uint64) (string, error) {
 	if rm.storeMeta.Id != storeID {
 		return "", errors.New("store not match")
 	}

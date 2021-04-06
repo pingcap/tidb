@@ -556,7 +556,7 @@ func (store *MVCCStore) handleCheckPessimisticErr(startTS uint64, err error, isF
 }
 
 func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.Item,
-	req *kvrpcpb.PessimisticLockRequest) (*mvcc.MvccLock, error) {
+	req *kvrpcpb.PessimisticLockRequest) (*mvcc.Lock, error) {
 	if item != nil {
 		userMeta := mvcc.DBUserMeta(item.UserMeta())
 		if !req.Force {
@@ -573,8 +573,8 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 			return nil, &ErrKeyAlreadyExists{Key: m.Key}
 		}
 	}
-	lock := &mvcc.MvccLock{
-		MvccLockHdr: mvcc.MvccLockHdr{
+	lock := &mvcc.Lock{
+		LockHdr: mvcc.LockHdr{
 			StartTS:     req.StartVersion,
 			ForUpdateTS: req.ForUpdateTs,
 			Op:          uint8(kvrpcpb.Op_PessimisticLock),
@@ -833,9 +833,9 @@ func encodeFromOldRow(oldRow, buf []byte) ([]byte, error) {
 }
 
 func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutation, item *badger.Item,
-	req *kvrpcpb.PrewriteRequest) (*mvcc.MvccLock, error) {
-	lock := &mvcc.MvccLock{
-		MvccLockHdr: mvcc.MvccLockHdr{
+	req *kvrpcpb.PrewriteRequest) (*mvcc.Lock, error) {
+	lock := &mvcc.Lock{
+		LockHdr: mvcc.LockHdr{
 			StartTS:        req.StartVersion,
 			TTL:            uint32(req.LockTtl),
 			PrimaryLen:     uint16(len(req.PrimaryLock)),
@@ -872,7 +872,7 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 	return lock, nil
 }
 
-func (store *MVCCStore) getLock(req *requestCtx, key []byte) *mvcc.MvccLock {
+func (store *MVCCStore) getLock(req *requestCtx, key []byte) *mvcc.Lock {
 	req.buf = store.lockStore.Get(key, req.buf)
 	if len(req.buf) == 0 {
 		return nil
@@ -882,7 +882,7 @@ func (store *MVCCStore) getLock(req *requestCtx, key []byte) *mvcc.MvccLock {
 }
 
 func (store *MVCCStore) checkConflictInLockStore(
-	req *requestCtx, mutation *kvrpcpb.Mutation, startTS uint64) (*mvcc.MvccLock, error) {
+	req *requestCtx, mutation *kvrpcpb.Mutation, startTS uint64) (*mvcc.Lock, error) {
 	req.buf = store.lockStore.Get(mutation.Key, req.buf)
 	if len(req.buf) == 0 {
 		return nil, nil
@@ -913,7 +913,7 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 	for _, key := range keys {
 		var lockErr error
 		var checkErr error
-		var lock mvcc.MvccLock
+		var lock mvcc.Lock
 		buf = store.lockStore.Get(key, buf)
 		if len(buf) == 0 {
 			// We never commit partial keys in Commit request, so if one lock is not found,
@@ -1097,7 +1097,7 @@ func isVisibleKey(key []byte, startTS uint64) bool {
 	return startTS >= ts
 }
 
-func checkLock(lock mvcc.MvccLock, key []byte, startTS uint64, resolved []uint64) error {
+func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
 	if isResolved(lock.StartTS, resolved) {
 		return nil
 	}

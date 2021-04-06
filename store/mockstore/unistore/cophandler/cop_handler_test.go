@@ -407,8 +407,8 @@ type testStore struct {
 
 func (ts *testStore) prewrite(req *kvrpcpb.PrewriteRequest) {
 	for _, m := range req.Mutations {
-		lock := &mvcc.MvccLock{
-			MvccLockHdr: mvcc.MvccLockHdr{
+		lock := &mvcc.Lock{
+			LockHdr: mvcc.LockHdr{
 				StartTS:     req.StartVersion,
 				ForUpdateTS: req.ForUpdateTs,
 				TTL:         uint32(req.LockTtl),

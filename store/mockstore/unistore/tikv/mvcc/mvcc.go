@@ -30,15 +30,15 @@ type DBUserMeta []byte
 const dbUserMetaLen = 16
 
 // DecodeLock decodes data to lock, the primary and value is copied, the secondaries are copied if async commit is enabled.
-func DecodeLock(data []byte) (l MvccLock) {
-	l.MvccLockHdr = *(*MvccLockHdr)(unsafe.Pointer(&data[0]))
+func DecodeLock(data []byte) (l Lock) {
+	l.LockHdr = *(*LockHdr)(unsafe.Pointer(&data[0]))
 	cursor := mvccLockHdrSize
 	lockBuf := append([]byte{}, data[cursor:]...)
 	l.Primary = lockBuf[:l.PrimaryLen]
 	cursor = int(l.PrimaryLen)
-	if l.MvccLockHdr.SecondaryNum > 0 {
-		l.Secondaries = make([][]byte, l.MvccLockHdr.SecondaryNum)
-		for i := uint32(0); i < l.MvccLockHdr.SecondaryNum; i++ {
+	if l.LockHdr.SecondaryNum > 0 {
+		l.Secondaries = make([][]byte, l.LockHdr.SecondaryNum)
+		for i := uint32(0); i < l.LockHdr.SecondaryNum; i++ {
 			keyLen := binary.LittleEndian.Uint16(lockBuf[cursor:])
 			cursor += 2
 			l.Secondaries[i] = lockBuf[cursor : cursor+int(keyLen)]
@@ -49,8 +49,8 @@ func DecodeLock(data []byte) (l MvccLock) {
 	return
 }
 
-// MvccLockHdr holds fixed size fields for MvccLock.
-type MvccLockHdr struct {
+// LockHdr holds fixed size fields for mvcc Lock.
+type LockHdr struct {
 	StartTS        uint64
 	ForUpdateTS    uint64
 	MinCommitTS    uint64
@@ -62,33 +62,33 @@ type MvccLockHdr struct {
 	SecondaryNum   uint32
 }
 
-const mvccLockHdrSize = int(unsafe.Sizeof(MvccLockHdr{}))
+const mvccLockHdrSize = int(unsafe.Sizeof(LockHdr{}))
 
-// MvccLock is the structure for MVCC lock.
-type MvccLock struct {
-	MvccLockHdr
+// Lock is the structure for MVCC lock.
+type Lock struct {
+	LockHdr
 	Primary     []byte
 	Value       []byte
 	Secondaries [][]byte
 }
 
 // MarshalBinary implements encoding.BinaryMarshaler interface.
-func (l *MvccLock) MarshalBinary() []byte {
+func (l *Lock) MarshalBinary() []byte {
 	lockLen := mvccLockHdrSize + len(l.Primary) + len(l.Value)
 	length := lockLen
-	if l.MvccLockHdr.SecondaryNum > 0 {
+	if l.LockHdr.SecondaryNum > 0 {
 		for _, secondaryKey := range l.Secondaries {
 			length += 2
 			length += len(secondaryKey)
 		}
 	}
 	buf := make([]byte, length)
-	hdr := (*MvccLockHdr)(unsafe.Pointer(&buf[0]))
-	*hdr = l.MvccLockHdr
+	hdr := (*LockHdr)(unsafe.Pointer(&buf[0]))
+	*hdr = l.LockHdr
 	cursor := mvccLockHdrSize
 	copy(buf[cursor:], l.Primary)
 	cursor += len(l.Primary)
-	if l.MvccLockHdr.SecondaryNum > 0 {
+	if l.LockHdr.SecondaryNum > 0 {
 		for _, secondaryKey := range l.Secondaries {
 			binary.LittleEndian.PutUint16(buf[cursor:], uint16(len(secondaryKey)))
 			cursor += 2
@@ -102,8 +102,8 @@ func (l *MvccLock) MarshalBinary() []byte {
 	return buf
 }
 
-// ToLockInfo converts an MvccLock to kvrpcpb.LockInfo
-func (l *MvccLock) ToLockInfo(key []byte) *kvrpcpb.LockInfo {
+// ToLockInfo converts an mvcc Lock to kvrpcpb.LockInfo
+func (l *Lock) ToLockInfo(key []byte) *kvrpcpb.LockInfo {
 	return &kvrpcpb.LockInfo{
 		PrimaryLock:     l.Primary,
 		LockVersion:     l.StartTS,

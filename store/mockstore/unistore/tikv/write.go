@@ -241,11 +241,11 @@ type writeBatch struct {
 	lockBatch writeLockBatch
 }
 
-func (wb *writeBatch) Prewrite(key []byte, lock *mvcc.MvccLock) {
+func (wb *writeBatch) Prewrite(key []byte, lock *mvcc.Lock) {
 	wb.lockBatch.set(key, lock.MarshalBinary())
 }
 
-func (wb *writeBatch) Commit(key []byte, lock *mvcc.MvccLock) {
+func (wb *writeBatch) Commit(key []byte, lock *mvcc.Lock) {
 	userMeta := mvcc.NewDBUserMeta(wb.startTS, wb.commitTS)
 	k := y.KeyWithTs(key, wb.commitTS)
 	if lock.Op != uint8(kvrpcpb.Op_Lock) {
@@ -266,7 +266,7 @@ func (wb *writeBatch) Rollback(key []byte, deleteLock bool) {
 	}
 }
 
-func (wb *writeBatch) PessimisticLock(key []byte, lock *mvcc.MvccLock) {
+func (wb *writeBatch) PessimisticLock(key []byte, lock *mvcc.Lock) {
 	wb.lockBatch.set(key, lock.MarshalBinary())
 }
 

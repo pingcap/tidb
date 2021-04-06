@@ -24,11 +24,11 @@ import (
 // backoff or cleanup the lock then retry.
 type ErrLocked struct {
 	Key  []byte
-	Lock *mvcc.MvccLock
+	Lock *mvcc.Lock
 }
 
 // BuildLockErr generates ErrKeyLocked objects
-func BuildLockErr(key []byte, lock *mvcc.MvccLock) *ErrLocked {
+func BuildLockErr(key []byte, lock *mvcc.Lock) *ErrLocked {
 	errLocked := &ErrLocked{
 		Key:  key,
 		Lock: lock,

@@ -82,7 +82,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, context.Canceled
 	}
 
-	storeID, err := c.usSvr.GetStoreIdByAddr(addr)
+	storeID, err := c.usSvr.GetStoreIDByAddr(addr)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +293,7 @@ func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Reques
 
 func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.EstablishMPPConnectionRequest, timeout time.Duration, storeID uint64) (*tikvrpc.MPPStreamResponse, error) {
 	mockServer := new(mockMPPConnectStreamServer)
-	err := c.usSvr.EstablishMPPConnectionWithStoreId(r, mockServer, storeID)
+	err := c.usSvr.EstablishMPPConnectionWithStoreID(r, mockServer, storeID)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +318,7 @@ func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.Est
 }
 
 func (c *RPCClient) handleDispatchMPPTask(ctx context.Context, r *mpp.DispatchTaskRequest, storeID uint64) (*mpp.DispatchTaskResponse, error) {
-	return c.usSvr.DispatchMPPTaskWithStoreId(ctx, r, storeID)
+	return c.usSvr.DispatchMPPTaskWithStoreID(ctx, r, storeID)
 }
 
 func (c *RPCClient) handleBatchCop(ctx context.Context, r *coprocessor.BatchRequest, timeout time.Duration) (*tikvrpc.BatchCopStreamResponse, error) {

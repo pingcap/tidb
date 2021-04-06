@@ -95,14 +95,14 @@ func (svr *Server) Stop() {
 	}
 }
 
-// GetStoreIdByAddr gets a store id by the store address.
-func (svr *Server) GetStoreIdByAddr(addr string) (uint64, error) {
+// GetStoreIDByAddr gets a store id by the store address.
+func (svr *Server) GetStoreIDByAddr(addr string) (uint64, error) {
 	return svr.regionManager.GetStoreIDByAddr(addr)
 }
 
-// GetStoreAddrByStoreId gets a store address by the store id.
-func (svr *Server) GetStoreAddrByStoreId(storeID uint64) (string, error) {
-	return svr.regionManager.GetStoreAddrByStoreId(storeID)
+// GetStoreAddrByStoreID gets a store address by the store id.
+func (svr *Server) GetStoreAddrByStoreID(storeID uint64) (string, error) {
+	return svr.regionManager.GetStoreAddrByStoreID(storeID)
 }
 
 type requestCtx struct {
@@ -115,7 +115,7 @@ type requestCtx struct {
 	startTime        time.Time
 	rpcCtx           *kvrpcpb.Context
 	storeAddr        string
-	storeId          uint64
+	storeID          uint64
 	asyncMinCommitTS uint64
 	onePCCommitTS    uint64
 }
@@ -135,7 +135,7 @@ func newRequestCtx(svr *Server, ctx *kvrpcpb.Context, method string) (*requestCt
 	req.regCtx, req.regErr = svr.regionManager.GetRegionFromCtx(ctx)
 	storeAddr, storeID, regErr := svr.regionManager.GetStoreInfoFromCtx(ctx)
 	req.storeAddr = storeAddr
-	req.storeId = storeID
+	req.storeID = storeID
 	if regErr != nil {
 		req.regErr = regErr
 	}
@@ -718,13 +718,13 @@ func (svr *Server) executeMPPDispatch(ctx context.Context, req *mpp.DispatchTask
 	return nil
 }
 
-// DispatchMPPTaskWithStoreId implements implements the tikvpb.TikvServer interface.
-func (svr *Server) DispatchMPPTaskWithStoreId(ctx context.Context, req *mpp.DispatchTaskRequest, storeID uint64) (*mpp.DispatchTaskResponse, error) {
+// DispatchMPPTaskWithStoreID implements implements the tikvpb.TikvServer interface.
+func (svr *Server) DispatchMPPTaskWithStoreID(ctx context.Context, req *mpp.DispatchTaskRequest, storeID uint64) (*mpp.DispatchTaskResponse, error) {
 	mppHandler, err := svr.CreateMPPTaskHandler(req.Meta, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	storeAddr, err := svr.GetStoreAddrByStoreId(storeID)
+	storeAddr, err := svr.GetStoreAddrByStoreID(storeID)
 	if err != nil {
 		return nil, err
 	}
@@ -795,8 +795,8 @@ func (svr *Server) EstablishMPPConnection(*mpp.EstablishMPPConnectionRequest, ti
 	panic("todo")
 }
 
-// EstablishMPPConnectionWithStoreId implements implements the tikvpb.TikvServer interface.
-func (svr *Server) EstablishMPPConnectionWithStoreId(req *mpp.EstablishMPPConnectionRequest, server tikvpb.Tikv_EstablishMPPConnectionServer, storeID uint64) error {
+// EstablishMPPConnectionWithStoreID implements implements the tikvpb.TikvServer interface.
+func (svr *Server) EstablishMPPConnectionWithStoreID(req *mpp.EstablishMPPConnectionRequest, server tikvpb.Tikv_EstablishMPPConnectionServer, storeID uint64) error {
 	var (
 		mppHandler *cophandler.MPPTaskHandler
 		err        error

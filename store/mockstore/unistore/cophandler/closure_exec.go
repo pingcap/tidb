@@ -1178,7 +1178,7 @@ func safeCopy(b []byte) []byte {
 	return append([]byte{}, b...)
 }
 
-func checkLock(lock mvcc.MvccLock, key []byte, startTS uint64, resolved []uint64) error {
+func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
 	if isResolved(startTS, resolved) {
 		return nil
 	}
