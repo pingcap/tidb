@@ -459,12 +459,8 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
 
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
-	if hasRowID {
-		alloc := NewAllocator(store, dbID, false, RowIDAllocType, idCacheOpt)
-		allocs = append(allocs, alloc)
-	}
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	if hasAutoIncID {
+	if hasRowID || hasAutoIncID {
 		alloc := NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt)
 		allocs = append(allocs, alloc)
 	}

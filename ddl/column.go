@@ -1518,7 +1518,7 @@ func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, 
 	return applyNewAutoRandomBits(d, m, dbInfo, tblInfo, oldCol, newAutoRandBits)
 }
 
-// checkNewAutoRandomBits checks whether the new auto_random bits will cause overflow.
+// checkNewAutoRandomBits checks whether the new auto_random bits number can cause overflow.
 func checkNewAutoRandomBits(m *meta.Meta, schemaID, tblID int64,
 	oldCol *model.ColumnInfo, newCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
@@ -1553,24 +1553,25 @@ func checkNewAutoRandomBits(m *meta.Meta, schemaID, tblID int64,
 func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 	tblInfo *model.TableInfo, oldCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	tblInfo.AutoRandomBits = newAutoRandBits
-	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.Flag)
-	if convertedFromAutoInc {
-		alloc := autoid.NewAllocatorsFromTblInfo(d.store, dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
-		if alloc == nil {
-			errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
-			return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
-		}
-		newBase, err := m.GetAutoTableID(dbInfo.ID, tblInfo.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = alloc.Rebase(tblInfo.ID, newBase, false)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if err := m.CleanAutoID(dbInfo.ID, tblInfo.ID); err != nil {
-			return errors.Trace(err)
-		}
+	needMigrateFromAutoIncToAutoRand := mysql.HasAutoIncrementFlag(oldCol.Flag)
+	if !needMigrateFromAutoIncToAutoRand {
+		return nil
+	}
+	autoRandAlloc := autoid.NewAllocatorsFromTblInfo(d.store, dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
+	if autoRandAlloc == nil {
+		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
+		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+	}
+	nextAutoIncID, err := m.GetAutoTableID(dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = autoRandAlloc.Rebase(tblInfo.ID, nextAutoIncID, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.CleanAutoID(dbInfo.ID, tblInfo.ID); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
