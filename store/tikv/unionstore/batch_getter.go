@@ -7,6 +7,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/kv"
 )
 
+// BatchBufferGetter is the interface for BatchGet.
 type BatchBufferGetter interface {
 	Len() int
 	Getter
