@@ -20,7 +20,7 @@ import (
 )
 
 // SnapshotGetter returns a Getter for a snapshot of MemBuffer.
-func (db *MemDB) SnapshotGetter() tidbkv.Getter {
+func (db *MemDB) SnapshotGetter() Getter {
 	return &memdbSnapGetter{
 		db: db,
 		cp: db.getSnapshot(),

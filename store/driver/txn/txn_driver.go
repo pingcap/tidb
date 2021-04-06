@@ -104,6 +104,11 @@ func (m *memBuffer) SnapshotIter(k, upperbound kv.Key) kv.Iterator {
 	return m.MemDB.SnapshotIter(k, upperbound)
 }
 
+// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
+func (m *memBuffer) SnapshotGetter() kv.Getter {
+	return m.MemDB.SnapshotGetter()
+}
+
 func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
 	return &tikvUnionStore{txn.KVTxn.GetUnionStore()}
 }
