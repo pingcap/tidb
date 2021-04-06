@@ -186,7 +186,7 @@ type dbWriter struct {
 func NewDBWriter(bundle *mvcc.DBBundle) mvcc.DBWriter {
 	return &dbWriter{
 		bundle:  bundle,
-		closeCh: make(chan struct{}, 0),
+		closeCh: make(chan struct{}),
 	}
 }
 

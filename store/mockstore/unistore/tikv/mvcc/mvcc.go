@@ -27,8 +27,6 @@ var defaultEndian = binary.LittleEndian
 // DBUserMeta is the user meta used in DB.
 type DBUserMeta []byte
 
-const dbUserMetaLen = 16
-
 // DecodeLock decodes data to lock, the primary and value is copied, the secondaries are copied if async commit is enabled.
 func DecodeLock(data []byte) (l Lock) {
 	l.LockHdr = *(*LockHdr)(unsafe.Pointer(&data[0]))

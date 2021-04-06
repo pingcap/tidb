@@ -168,7 +168,7 @@ func (r *DBReader) BatchGet(keys [][]byte, startTS uint64, f BatchGetFunc) {
 	return
 }
 
-// ErrScanBreak is returnd by ScanFunc to break the scan loop.
+// ErrScanBreak is returned by ScanFunc to break the scan loop.
 var ErrScanBreak = errors.New("scan break error")
 
 // ScanFunc accepts key and value, should not keep reference to them.

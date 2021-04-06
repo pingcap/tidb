@@ -36,7 +36,6 @@ import (
 var _ = Suite(&testMvccSuite{})
 var maxTs = uint64(math.MaxUint64)
 var lockTTL = uint64(50)
-var pessimisitcLockTTL = uint64(5000)
 
 type testMvccSuite struct{}
 

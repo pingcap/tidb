@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"sort"
-	"time"
 
 	"github.com/dgryski/go-farm"
 	"github.com/pingcap/badger/y"
@@ -28,17 +27,6 @@ func exceedEndKey(current, endKey []byte) bool {
 		return false
 	}
 	return bytes.Compare(current, endKey) >= 0
-}
-
-func extractPhysicalTime(ts uint64) time.Time {
-	t := int64(ts >> 18) // 18 is for the logical time.
-	return time.Unix(t/1e3, (t%1e3)*1e6)
-}
-
-func tsSub(tsA, tsB uint64) time.Duration {
-	tsAPhysical := int64(tsA >> 18)
-	tsBPhysical := int64(tsB >> 18)
-	return time.Duration(tsAPhysical-tsBPhysical) * time.Millisecond
 }
 
 // SortAndDedupHashVals will change hashVals into sort ascending order and remove duplicates

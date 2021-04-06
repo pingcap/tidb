@@ -16,7 +16,6 @@ package tikv
 import (
 	"context"
 	"io"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -47,7 +46,6 @@ type Server struct {
 	regionManager RegionManager
 	innerServer   InnerServer
 	RPCClient     client.Client
-	wg            sync.WaitGroup
 	refCount      int32
 	stopped       int32
 }

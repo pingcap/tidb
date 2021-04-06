@@ -53,15 +53,9 @@ type Client interface {
 }
 
 const (
-	pdTimeout             = time.Second
-	retryInterval         = time.Second
-	maxInitClusterRetries = 100
-	maxRetryCount         = 10
-)
-
-var (
-	// errFailInitClusterID is returned when failed to load clusterID from all supplied PD addresses.
-	errFailInitClusterID = errors.New("[pd] failed to get cluster id")
+	pdTimeout     = time.Second
+	retryInterval = time.Second
+	maxRetryCount = 10
 )
 
 type client struct {

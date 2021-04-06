@@ -37,7 +37,7 @@ type MemStore struct {
 
 const (
 	maxHeight     = 16
-	nodeHeadrSize = int(unsafe.Sizeof(nodeHeader{}))
+	nodeHeadrSize = int(unsafe.Sizeof(nodeHeader{addr: 0, height: 0, keyLen: 0, valLen: 0}))
 )
 
 type nodeHeader struct {

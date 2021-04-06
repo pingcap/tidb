@@ -17,7 +17,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"math"
 	"os"
@@ -1092,11 +1091,6 @@ func (store *MVCCStore) checkCommitted(reader *dbreader.DBReader, key []byte, st
 	return 0, nil
 }
 
-func isVisibleKey(key []byte, startTS uint64) bool {
-	ts := ^(binary.BigEndian.Uint64(key[len(key)-8:]))
-	return startTS >= ts
-}
-
 func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
 	if isResolved(lock.StartTS, resolved) {
 		return nil
@@ -1439,7 +1433,6 @@ func isResolved(startTS uint64, resolved []uint64) bool {
 }
 
 type kvScanProcessor struct {
-	buf        []byte
 	pairs      []*kvrpcpb.KvPair
 	sampleStep uint32
 	scanCnt    uint32
