@@ -27,34 +27,19 @@ var noopSysVars = []*SysVar{
 	// does not support it. It is possible that these features will be supported in future,
 	// but until then...
 	{Scope: ScopeGlobal | ScopeSession, Name: TxReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if TiDBOptOn(normalizedValue) && !vars.EnableNoopFuncs {
-			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
-		}
-		return normalizedValue, nil
+		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TransactionReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if TiDBOptOn(normalizedValue) && !vars.EnableNoopFuncs {
-			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
-		}
-		return normalizedValue, nil
+		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
 	{Scope: ScopeGlobal, Name: OfflineMode, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if TiDBOptOn(normalizedValue) && !vars.EnableNoopFuncs {
-			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
-		}
-		return normalizedValue, nil
+		return checkReadOnly(vars, normalizedValue, originalValue, scope, true)
 	}},
 	{Scope: ScopeGlobal, Name: SuperReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if TiDBOptOn(normalizedValue) && !vars.EnableNoopFuncs {
-			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
-		}
-		return normalizedValue, nil
+		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
 	{Scope: ScopeGlobal, Name: serverReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if TiDBOptOn(normalizedValue) && !vars.EnableNoopFuncs {
-			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
-		}
-		return normalizedValue, nil
+		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
 	{Scope: ScopeGlobal, Name: ConnectTimeout, Value: "10", Type: TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheWlockInvalidate, Value: BoolOff, Type: TypeBool},
