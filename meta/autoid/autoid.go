@@ -101,6 +101,9 @@ type CustomAutoIncCacheOption int64
 
 // ApplyOn is implement the AllocOption interface.
 func (step CustomAutoIncCacheOption) ApplyOn(alloc *allocator) {
+	if step == 0 {
+		return
+	}
 	alloc.step = int64(step)
 	alloc.customStep = true
 }
@@ -453,17 +456,22 @@ func NewSequenceAllocator(store kv.Storage, dbID int64, info *model.SequenceInfo
 func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
+	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
-	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	if hasRowID || hasAutoIncID {
-		if tblInfo.AutoIdCache > 0 {
-			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, CustomAutoIncCacheOption(tblInfo.AutoIdCache)))
-		} else {
-			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType))
-		}
+	if hasRowID {
+		alloc := NewAllocator(store, dbID, false, RowIDAllocType, idCacheOpt)
+		allocs = append(allocs, alloc)
 	}
-	if tblInfo.ContainsAutoRandomBits() {
-		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType))
+	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
+	if hasAutoIncID {
+		alloc := NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt)
+		allocs = append(allocs, alloc)
+	}
+	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
+	if hasAutoRandID {
+		alloc := NewAllocator(store, dbID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt)
+		allocs = append(allocs, alloc)
 	}
 	if tblInfo.IsSequence() {
 		allocs = append(allocs, NewSequenceAllocator(store, dbID, tblInfo.Sequence))

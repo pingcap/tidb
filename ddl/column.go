@@ -1554,7 +1554,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 	tblInfo *model.TableInfo, oldCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	tblInfo.AutoRandomBits = newAutoRandBits
 	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.Flag)
-	if !convertedFromAutoInc {
+	if convertedFromAutoInc {
 		alloc := autoid.NewAllocatorsFromTblInfo(d.store, dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
 		if alloc == nil {
 			errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
@@ -1564,7 +1564,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = alloc.Rebase(tblInfo.ID, newBase-1, false)
+		err = alloc.Rebase(tblInfo.ID, newBase, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
