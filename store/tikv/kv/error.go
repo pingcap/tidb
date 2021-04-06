@@ -102,7 +102,7 @@ func (k *ErrWriteConflict) Error() string {
 	return k.WriteConflict.String()
 }
 
-// IsWriteConflict returns true if it is ErrWriteConflict.
+// IsErrWriteConflict returns true if it is ErrWriteConflict.
 func IsErrWriteConflict(err error) bool {
 	_, ok := errors.Cause(err).(*ErrWriteConflict)
 	return ok
