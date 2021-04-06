@@ -170,9 +170,7 @@ func TestConcurrent(t *testing.T) {
 	}
 	close(closeCh)
 	time.Sleep(time.Millisecond * 100)
-	arena := ls.getArena()
-	fmt.Println("total insert", totalInsert, "total delete", totalDelete)
-	fmt.Println(len(arena.pendingBlocks), len(arena.writableQueue), len(arena.blocks))
+	ls.getArena()
 }
 
 func runReader(ls *MemStore, closeCh chan bool, i int) {
@@ -184,7 +182,6 @@ func runReader(ls *MemStore, closeCh chan bool, i int) {
 		if n%128 == 0 {
 			select {
 			case <-closeCh:
-				fmt.Println("read", n)
 				return
 			default:
 			}
