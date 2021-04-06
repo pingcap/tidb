@@ -630,6 +630,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "ssl_ca", Value: ""},
 	{Scope: ScopeNone, Name: "ssl_cert", Value: ""},
 	{Scope: ScopeNone, Name: "ssl_key", Value: ""},
+	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 
 	/* TiDB specific variables */
 	{Scope: ScopeSession, Name: TiDBTxnScope, Value: func() string {
@@ -648,7 +649,6 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	/* TiDB specific variables */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution), SetSession: func(s *SessionVars, val string) error {
 		s.AllowMPPExecution = TiDBOptOn(val)
 		return nil
