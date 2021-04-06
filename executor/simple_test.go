@@ -872,7 +872,8 @@ func (s *testSuite3) TestIssue17247(c *C) {
 	c.Assert(err, NotNil)
 }
 
-// https://github.com/pingcap/tidb/issues/23649
+// Close issue #23649.
+// See https://github.com/pingcap/tidb/issues/23649
 func (s *testSuite3) TestIssue23649(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("DROP USER IF EXISTS issue23649;")
