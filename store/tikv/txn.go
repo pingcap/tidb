@@ -69,6 +69,8 @@ type KVTxn struct {
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info tidbkv.TxnInfo, err error)
+
+	binlog BinlogExecutor
 }
 
 func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
@@ -633,4 +635,14 @@ func (txn *KVTxn) GetMemBuffer() *unionstore.MemDB {
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *KVTxn) GetSnapshot() *KVSnapshot {
 	return txn.snapshot
+}
+
+// SetBindlogExecutor sets the method to perform binlong synchronization.
+func (txn *KVTxn) SetBinlogExecutor(binlog BinlogExecutor) {
+	txn.binlog = binlog
+}
+
+// GetClusterID returns store's cluster id.
+func (txn *KVTxn) GetClusterID() uint64 {
+	return txn.store.clusterID
 }

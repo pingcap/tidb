@@ -40,6 +40,7 @@ type tikvTxn struct {
 
 // NewTiKVTxn returns a new Transaction.
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
+	txn.SetBinlogExecutor(&binlogExecutor{txn: txn})
 	return &tikvTxn{txn, make(map[int64]*model.TableInfo)}
 }
 
