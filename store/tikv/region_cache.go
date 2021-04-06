@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/ddl/placement"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -447,16 +446,11 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 	failpoint.Inject("assertStoreLabels", func(val failpoint.Value) {
 		if len(opts) > 0 {
-			value := val.(string)
-			v := ""
+			kv := strings.Split(val.(string), "_")
 			for _, label := range options.labels {
-				if label.Key == placement.DCLabelKey {
-					v = label.Value
-					break
+				if label.Key == kv[0] && label.Value != kv[1] {
+					panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", kv[0], kv[1]))
 				}
-			}
-			if v != value {
-				panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", v, value))
 			}
 		}
 	})
