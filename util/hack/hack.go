@@ -39,9 +39,19 @@ func String(b []byte) (s MutableString) {
 // Use at your own risk.
 func Slice(s string) (b []byte) {
 	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	pstring := *(*reflect.StringHeader)(unsafe.Pointer(&s))
+	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
 	pbytes.Data = pstring.Data
 	pbytes.Len = pstring.Len
 	pbytes.Cap = pstring.Len
 	return
 }
+
+// LoadFactor is the maximum average load of a bucket that triggers growth is 6.5 in Golang Map.
+// Represent as LoadFactorNum/LoadFactorDen, to allow integer math.
+// They are from the golang definition. ref: https://github.com/golang/go/blob/go1.13.15/src/runtime/map.go#L68-L71
+const (
+	// LoadFactorNum is the numerator of load factor
+	LoadFactorNum = 13
+	// LoadFactorDen is the denominator of load factor
+	LoadFactorDen = 2
+)

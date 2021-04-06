@@ -56,6 +56,10 @@ func checkLabelConstraint(label string) (LabelConstraint, error) {
 		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
 	}
 
+	if op == In && key == EngineLabelKey && strings.ToLower(val) == EngineLabelTiFlash {
+		return r, errors.Errorf("unsupported label constraint '%s'", label)
+	}
+
 	r.Key = key
 	r.Op = op
 	r.Values = []string{val}
@@ -152,8 +156,8 @@ func BuildPlacementDropBundle(partitionID int64) *Bundle {
 func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 	newBundle := oldBundle.Clone()
 	newBundle.ID = GroupID(newID)
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID+1)))
 	for _, rule := range newBundle.Rules {
 		rule.GroupID = newBundle.ID
 		rule.StartKeyHex = startKey
@@ -173,10 +177,11 @@ func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) (string, bool) {
 }
 
 func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
-	if rule.Role == Leader && rule.Count == 1 && len(rule.LabelConstraints) == 1 {
-		cons := rule.LabelConstraints[0]
-		if cons.Op == In && cons.Key == dcLabelKey && len(cons.Values) == 1 {
-			return true
+	if rule.Role == Leader && rule.Count == 1 {
+		for _, con := range rule.LabelConstraints {
+			if con.Op == In && con.Key == dcLabelKey && len(con.Values) == 1 {
+				return true
+			}
 		}
 	}
 	return false

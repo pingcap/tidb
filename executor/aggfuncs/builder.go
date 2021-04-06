@@ -92,7 +92,7 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 	case ast.WindowFuncNtile:
 		return buildNtile(windowFuncDesc, ordinal)
 	case ast.WindowFuncPercentRank:
-		return buildPercenRank(ordinal, orderByCols)
+		return buildPercentRank(ordinal, orderByCols)
 	case ast.WindowFuncLead:
 		return buildLead(ctx, windowFuncDesc, ordinal)
 	case ast.WindowFuncLag:
@@ -155,9 +155,13 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 
 	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
 
+	evalType := aggFuncDesc.Args[0].GetType().EvalType()
+	if aggFuncDesc.Args[0].GetType().Tp == mysql.TypeBit {
+		evalType = types.ETString // same as other aggregate function
+	}
 	switch aggFuncDesc.Mode {
 	case aggregation.CompleteMode, aggregation.Partial1Mode, aggregation.FinalMode:
-		switch aggFuncDesc.Args[0].GetType().EvalType() {
+		switch evalType {
 		case types.ETInt:
 			return &percentileOriginal4Int{base}
 		case types.ETReal:
@@ -685,7 +689,7 @@ func buildNtile(aggFuncDes *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return &ntile{baseAggFunc: base, n: n}
 }
 
-func buildPercenRank(ordinal int, orderByCols []*expression.Column) AggFunc {
+func buildPercentRank(ordinal int, orderByCols []*expression.Column) AggFunc {
 	base := baseAggFunc{
 		ordinal: ordinal,
 	}

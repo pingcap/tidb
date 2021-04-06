@@ -66,8 +66,8 @@ type PhysicalProperty struct {
 	// calculated when function "HashCode()" being called.
 	hashcode []byte
 
-	// whether need to enforce property.
-	Enforced bool
+	// indicates that whether we are allowed to add an enforcer.
+	CanAddEnforcer bool
 
 	// If the partition type is hash, the data should be reshuffled by partition cols.
 	PartitionCols []*expression.Column
@@ -79,10 +79,10 @@ type PhysicalProperty struct {
 // NewPhysicalProperty builds property from columns.
 func NewPhysicalProperty(taskTp TaskType, cols []*expression.Column, desc bool, expectCnt float64, enforced bool) *PhysicalProperty {
 	return &PhysicalProperty{
-		SortItems:   SortItemsFromCols(cols, desc),
-		TaskTp:      taskTp,
-		ExpectedCnt: expectCnt,
-		Enforced:    enforced,
+		SortItems:      SortItemsFromCols(cols, desc),
+		TaskTp:         taskTp,
+		ExpectedCnt:    expectCnt,
+		CanAddEnforcer: enforced,
 	}
 }
 
@@ -167,7 +167,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 	}
 	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8
 	p.hashcode = make([]byte, 0, hashcodeSize)
-	if p.Enforced {
+	if p.CanAddEnforcer {
 		p.hashcode = codec.EncodeInt(p.hashcode, 1)
 	} else {
 		p.hashcode = codec.EncodeInt(p.hashcode, 0)
@@ -196,16 +196,13 @@ func (p *PhysicalProperty) String() string {
 	return fmt.Sprintf("Prop{cols: %v, TaskTp: %s, expectedCount: %v}", p.SortItems, p.TaskTp, p.ExpectedCnt)
 }
 
-// Clone returns a copy of PhysicalProperty. Currently, this function is only used to build new
-// required property for children plan in `exhaustPhysicalPlans`, so we don't copy `Enforced` field
-// because if `Enforced` is true, the `SortItems` must be empty now, this makes `Enforced` meaningless
-// for children nodes.
-func (p *PhysicalProperty) Clone() *PhysicalProperty {
+// CloneEssentialFields returns a copy of PhysicalProperty. We only copy the essential fields that really indicate the
+// property, specifically, `CanAddEnforcer` should not be included.
+func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 	prop := &PhysicalProperty{
 		SortItems:     p.SortItems,
 		TaskTp:        p.TaskTp,
 		ExpectedCnt:   p.ExpectedCnt,
-		Enforced:      p.Enforced,
 		PartitionTp:   p.PartitionTp,
 		PartitionCols: p.PartitionCols,
 	}
