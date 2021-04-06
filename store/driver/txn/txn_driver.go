@@ -59,8 +59,49 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 	return &tikvSnapshot{txn.KVTxn.GetSnapshot()}
 }
 
+// Iter creates an Iterator positioned on the first entry that k <= entry's key.
+// If such entry is not found, it returns an invalid Iterator with no error.
+// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
+// The Iterator must be Closed after use.
+func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	return txn.KVTxn.Iter(k, upperBound)
+}
+
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+// The returned iterator will iterate from greater key to smaller key.
+// If k is nil, the returned iterator will be positioned at the last key.
+// TODO: Add lower bound limit
+func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
+	return txn.KVTxn.IterReverse(k)
+}
+
+type memBuffer struct {
+	*unionstore.MemDB
+}
+
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
-	return txn.KVTxn.GetMemBuffer()
+	return &memBuffer{txn.KVTxn.GetMemBuffer()}
+}
+
+// Iter creates an Iterator positioned on the first entry that k <= entry's key.
+// If such entry is not found, it returns an invalid Iterator with no error.
+// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
+// The Iterator must be Closed after use.
+func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	return m.MemDB.Iter(k, upperBound)
+}
+
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+// The returned iterator will iterate from greater key to smaller key.
+// If k is nil, the returned iterator will be positioned at the last key.
+// TODO: Add lower bound limit
+func (m *memBuffer) IterReverse(k kv.Key) (kv.Iterator, error) {
+	return m.MemDB.IterReverse(k)
+}
+
+// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+func (m *memBuffer) SnapshotIter(k, upperbound kv.Key) kv.Iterator {
+	return m.MemDB.SnapshotIter(k, upperbound)
 }
 
 func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
@@ -101,5 +142,17 @@ type tikvUnionStore struct {
 }
 
 func (u *tikvUnionStore) GetMemBuffer() kv.MemBuffer {
-	return u.KVUnionStore.GetMemBuffer()
+	return &memBuffer{u.KVUnionStore.GetMemBuffer()}
+}
+
+func (u *tikvUnionStore) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	return u.KVUnionStore.Iter(k, upperBound)
+}
+
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+// The returned iterator will iterate from greater key to smaller key.
+// If k is nil, the returned iterator will be positioned at the last key.
+// TODO: Add lower bound limit
+func (u *tikvUnionStore) IterReverse(k kv.Key) (kv.Iterator, error) {
+	return u.KVUnionStore.IterReverse(k)
 }

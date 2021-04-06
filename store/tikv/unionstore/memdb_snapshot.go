@@ -28,7 +28,7 @@ func (db *MemDB) SnapshotGetter() tidbkv.Getter {
 }
 
 // SnapshotIter returns a Iterator for a snapshot of MemBuffer.
-func (db *MemDB) SnapshotIter(start, end tidbkv.Key) tidbkv.Iterator {
+func (db *MemDB) SnapshotIter(start, end tidbkv.Key) Iterator {
 	it := &memdbSnapIter{
 		MemdbIterator: &MemdbIterator{
 			db:    db,
