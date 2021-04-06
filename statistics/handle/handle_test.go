@@ -1993,19 +1993,6 @@ type statsSerialSuite struct {
 	testSuiteBase
 }
 
-func (s *statsSerialSuite) TestIndexUsageLease(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se.ExistSessionIndexUsageCollector(), IsFalse)
-
-	session.SetIndexUsageSyncLease(1)
-	defer session.SetIndexUsageSyncLease(0)
-	se, err = session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se.ExistSessionIndexUsageCollector(), IsTrue)
-}
-
 func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	session.SetIndexUsageSyncLease(1)

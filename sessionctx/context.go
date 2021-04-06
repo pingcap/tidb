@@ -116,8 +116,6 @@ type Context interface {
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
 	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
-	// ExistSessionIndexUsageCollector returns whether SessionIndexUsageCollector exists.
-	ExistSessionIndexUsageCollector() bool
 }
 
 type basicCtxType int
