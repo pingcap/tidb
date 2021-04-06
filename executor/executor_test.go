@@ -3016,6 +3016,75 @@ func (s *testSuite) TestTiDBLastTxnInfo(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 }
 
+func (s *testSerialSuite) TestTiDBLastTxnInfoCommitMode(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
+	})
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"async_commit"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "false")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 1")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Assert(rows[0][0], Equals, `"1pc"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "false")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "false")
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+	})
+
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "true")
+	c.Assert(rows[0][2], Equals, "false")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 1")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "true")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	tk.MustExec("set @@tidb_enable_1pc = 1")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "true")
+	c.Assert(rows[0][2], Equals, "true")
+}
+
 func (s *testSuite) TestTiDBLastQueryInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
