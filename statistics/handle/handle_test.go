@@ -1984,7 +1984,7 @@ func (s *testStatsSuite) TestFMSWithAnalyzePartition(c *C) {
 		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
 		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
 	))
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
 }
 
 var _ = SerialSuites(&statsSerialSuite{})
