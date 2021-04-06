@@ -87,6 +87,12 @@ func (k *ErrKeyExist) Error() string {
 	return k.AlreadyExist.String()
 }
 
+// IsErrKeyExist returns true if it is ErrKeyExist.
+func IsErrKeyExist(err error) bool {
+	_, ok := errors.Cause(err).(*ErrKeyExist)
+	return ok
+}
+
 // ErrWriteConflict wraps *kvrpcpb.ErrWriteConflict to implement the error interface.
 type ErrWriteConflict struct {
 	*kvrpcpb.WriteConflict
@@ -94,6 +100,12 @@ type ErrWriteConflict struct {
 
 func (k *ErrWriteConflict) Error() string {
 	return k.WriteConflict.String()
+}
+
+// IsErrWriteConflict returns true if it is ErrWriteConflict.
+func IsErrWriteConflict(err error) bool {
+	_, ok := errors.Cause(err).(*ErrWriteConflict)
+	return ok
 }
 
 //NewErrWriteConfictWithArgs generates an ErrWriteConflict with args.
