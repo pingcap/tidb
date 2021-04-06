@@ -584,6 +584,8 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	ctx := testNewContext(d)
 	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
+	ctx.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
+	defer ctx.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
 	testCreateTable(c, ctx, d, dbInfo, partitionTblInfo)
 	tableAutoID := int64(100)
 	shardRowIDBits := uint64(5)

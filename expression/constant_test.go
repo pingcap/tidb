@@ -234,33 +234,6 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 	}
 }
 
-func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
-	nullConst := &Constant{
-		Value:        types.NewDatum(nil),
-		RetType:      types.NewFieldType(mysql.TypeTiny),
-		DeferredExpr: NewNull(),
-	}
-	tests := []struct {
-		condition Expression
-		deferred  string
-	}{
-		{
-			condition: newFunction(ast.LT, newColumn(0), nullConst),
-			deferred:  "lt(Column#0, <nil>)",
-		},
-	}
-	for _, tt := range tests {
-		comment := Commentf("different for expr %s", tt.condition)
-		sf, ok := tt.condition.(*ScalarFunction)
-		c.Assert(ok, IsTrue, comment)
-		sf.GetCtx().GetSessionVars().StmtCtx.InNullRejectCheck = true
-		newConds := FoldConstant(tt.condition)
-		newConst, ok := newConds.(*Constant)
-		c.Assert(ok, IsTrue, comment)
-		c.Assert(newConst.DeferredExpr.String(), Equals, tt.deferred, comment)
-	}
-}
-
 func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
 	ctx := mock.NewContext()
 	testTime := time.Now()
