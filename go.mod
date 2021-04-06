@@ -48,7 +48,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20210308063835-39b884695fb8
+	github.com/pingcap/kvproto v0.0.0-20210402093459-65aa336ccbbf
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
 	github.com/pingcap/parser v0.0.0-20210324190955-ab6d0f2c18ee
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
@@ -90,6 +90,10 @@ require (
 	modernc.org/mathutil v1.2.2 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
+)
+
+replace (
+    github.com/ngaut/unistore => github.com/Yisaer/unistore v0.0.0-20210406090515-0e4060b749fd
 )
 
 go 1.13

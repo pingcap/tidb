@@ -1058,6 +1058,18 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 	return newestRegion
 }
 
+func (c *RegionCache) getStoresByType(typ tikvrpc.EndpointType) []*Store {
+	c.storeMu.RLock()
+	defer c.storeMu.RUnlock()
+	stores := make([]*Store, 0)
+	for _, store := range c.storeMu.stores {
+		if store.storeType == typ {
+			stores = append(stores, store)
+		}
+	}
+	return stores
+}
+
 func filterUnavailablePeers(region *pd.Region) {
 	if len(region.DownPeers) == 0 {
 		return

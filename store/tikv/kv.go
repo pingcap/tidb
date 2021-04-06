@@ -16,6 +16,7 @@ package tikv
 import (
 	"context"
 	"crypto/tls"
+	"math"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -24,6 +25,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -75,6 +77,11 @@ type KVStore struct {
 	spTime    time.Time
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
 	closed    chan struct{} // this is used to nofity when the store is closed
+
+	safeTSMu struct {
+		sync.RWMutex
+		storeSafeTS map[uint64]uint64 // storeID -> safeTS
+	}
 
 	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
 }
@@ -130,6 +137,7 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 	store.lockResolver = newLockResolver(store)
 
 	go store.runSafePointChecker()
+	go store.safeTSUpdater()
 
 	return store, nil
 }
@@ -346,4 +354,71 @@ func (s *KVStore) SetTiKVClient(client Client) {
 // GetTiKVClient gets the client instance.
 func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
+}
+
+func (s *KVStore) getMinSafeTSByStores(storeIDs []uint64) uint64 {
+	minSafeTS := uint64(math.MaxUint64)
+	s.safeTSMu.RLock()
+	defer s.safeTSMu.RUnlock()
+	for _, storeID := range storeIDs {
+		safeTS := s.safeTSMu.storeSafeTS[storeID]
+		if safeTS < minSafeTS {
+			minSafeTS = safeTS
+		}
+	}
+	return minSafeTS
+}
+
+func (s *KVStore) getGlobalMinSafeTS() uint64 {
+	stores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	minSafeTS := uint64(math.MaxUint64)
+	s.safeTSMu.RLock()
+	defer s.safeTSMu.RUnlock()
+	for _, store := range stores {
+		safeTS := s.safeTSMu.storeSafeTS[store.storeID]
+		if safeTS < minSafeTS {
+			minSafeTS = safeTS
+		}
+	}
+	return minSafeTS
+}
+
+func (s *KVStore) safeTSUpdater() {
+	t := time.NewTicker(time.Second * 2)
+	defer t.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for {
+		select {
+		case <-s.Closed():
+			return
+		case <-t.C:
+			s.updateSafeTS(ctx)
+		}
+	}
+}
+
+func (s *KVStore) updateSafeTS(ctx context.Context) {
+	stores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	tikvClient := s.GetTiKVClient()
+	wg := &sync.WaitGroup{}
+	wg.Add(len(stores))
+	for _, store := range stores {
+		go func(ctx context.Context, wg *sync.WaitGroup, store *Store) {
+			defer wg.Done()
+			// TODO: add metrics for updateSafeTS
+			resp, err := tikvClient.SendRequest(ctx, store.addr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
+				StartKey: []byte(""),
+				EndKey:   []byte(""),
+			}}), ReadTimeoutShort)
+			if err != nil {
+				return
+			}
+			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
+			s.safeTSMu.Lock()
+			s.safeTSMu.storeSafeTS[store.storeID] = safeTSResp.GetSafeTs()
+			s.safeTSMu.Unlock()
+		}(ctx, wg, store)
+	}
+	wg.Wait()
 }
