@@ -136,6 +136,7 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		replicaReadSeed: rand.Uint32(),
 	}
 	store.lockResolver = newLockResolver(store)
+	store.safeTSMu.storeSafeTS = make(map[uint64]uint64)
 
 	go store.runSafePointChecker()
 	go store.safeTSUpdater()
@@ -224,7 +225,7 @@ func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTx
 	startTS := minStartTS
 	// If the safeTS is larger then then minStartTS, we will use safeTS as StartTS, otherwise we will use
 	// minStartTS directly.
-	if startTS < minSafeTS {
+	if oracle.CompareTS(startTS, minSafeTS) < 0 {
 		startTS = minSafeTS
 	}
 	return s.BeginWithStartTS(txnScope, startTS)
@@ -404,6 +405,10 @@ func (s *KVStore) getMinSafeTSByStores(stores []*Store) uint64 {
 }
 
 func (s *KVStore) getGlobalMinSafeTS() uint64 {
+	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
+		injectTS := val.(int)
+		failpoint.Return(uint64(injectTS))
+	})
 	stores := s.regionCache.getStoresByType(tikvrpc.TiKV)
 	minSafeTS := uint64(math.MaxUint64)
 	s.safeTSMu.RLock()
