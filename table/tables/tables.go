@@ -1487,10 +1487,10 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 			}
 			for _, c := range idx.Meta().Columns {
 				if modified[c.Offset] {
-					return true
+					return false
 				}
 			}
-			return false
+			return true
 		}
 
 		for _, idx := range t.Indices() {
