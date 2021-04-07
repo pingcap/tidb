@@ -191,18 +191,19 @@ func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
 	}
 	p.rowBuf = p.rowBuf[:0]
 
-	if p.fms != nil {
-		if err := p.fms.InsertValue(p.sctx, types.NewBytesDatum(safeCopy(p.rowBuf))); err != nil {
-			return err
-		}
-	}
-
 	for _, val := range values {
 		p.rowBuf = append(p.rowBuf, val...)
 		if p.cms != nil {
 			p.cms.InsertBytes(p.rowBuf)
 		}
 	}
+
+	if p.fms != nil {
+		if err := p.fms.InsertValue(p.sctx, types.NewBytesDatum(safeCopy(p.rowBuf))); err != nil {
+			return err
+		}
+	}
+
 	if p.statsVer == statistics.Version2 {
 		if bytes.Equal(p.topNCurValuePair.Encoded, p.rowBuf) {
 			p.topNCurValuePair.Count++
