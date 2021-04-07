@@ -4293,6 +4293,34 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 }
 
+func (s *testDBSuite3) TestIssue22307(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.mustExec(tk, c, "use test_db")
+	s.mustExec(tk, c, "drop table if exists t")
+	s.mustExec(tk, c, "create table t (a int, b int)")
+	s.mustExec(tk, c, "insert into t values(1, 1);")
+
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	var checkErr1, checkErr2 error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		_, checkErr1 = tk.Exec("update t set a = 3 where b = 1;")
+		_, checkErr2 = tk.Exec("update t set a = 3 order by b;")
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	// test transaction on add column.
+	go backgroundExec(s.store, "alter table t drop column b;", done)
+	err := <-done
+	c.Assert(err, IsNil)
+	c.Assert(checkErr1.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
+	c.Assert(checkErr2.Error(), Equals, "[planner:1054]Unknown column 'b' in 'order clause'")
+}
+
 func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.mustExec(tk, c, "use test_db")
