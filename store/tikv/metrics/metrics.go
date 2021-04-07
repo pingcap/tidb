@@ -13,7 +13,10 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+)
 
 // Client metrics.
 var (
@@ -38,7 +41,7 @@ var (
 	TiKVStatusCounter                      *prometheus.CounterVec
 	TiKVBatchWaitDuration                  prometheus.Histogram
 	TiKVBatchSendLatency                   prometheus.Histogram
-	TiKvBatchWaitOverLoad                  prometheus.Counter
+	TiKVBatchWaitOverLoad                  prometheus.Counter
 	TiKVBatchPendingRequests               *prometheus.HistogramVec
 	TiKVBatchRequests                      *prometheus.HistogramVec
 	TiKVBatchClientUnavailable             prometheus.Histogram
@@ -50,12 +53,14 @@ var (
 	TiKVPessimisticLockKeysDuration        prometheus.Histogram
 	TiKVTTLLifeTimeReachCounter            prometheus.Counter
 	TiKVNoAvailableConnectionCounter       prometheus.Counter
+	TiKVTwoPCTxnCounter                    *prometheus.CounterVec
 	TiKVAsyncCommitTxnCounter              *prometheus.CounterVec
 	TiKVOnePCTxnCounter                    *prometheus.CounterVec
 	TiKVStoreLimitErrorCounter             *prometheus.CounterVec
 	TiKVGRPCConnTransientFailureCounter    *prometheus.CounterVec
 	TiKVPanicCounter                       *prometheus.CounterVec
 	TiKVForwardRequestCounter              *prometheus.CounterVec
+	TiKVTSFutureWaitDuration               prometheus.Histogram
 )
 
 // Label constants.
@@ -250,6 +255,7 @@ func initMetrics(namespace, subsystem string) {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 34), // 1ns ~ 8s
 			Help:      "batch wait duration",
 		})
+
 	TiKVBatchSendLatency = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
@@ -258,13 +264,15 @@ func initMetrics(namespace, subsystem string) {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 34), // 1ns ~ 8s
 			Help:      "batch send latency",
 		})
-	TiKvBatchWaitOverLoad = prometheus.NewCounter(
+
+	TiKVBatchWaitOverLoad = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "batch_wait_overload",
 			Help:      "event of tikv transport layer overload",
 		})
+
 	TiKVBatchPendingRequests = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
@@ -273,6 +281,7 @@ func initMetrics(namespace, subsystem string) {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 8),
 			Help:      "number of requests pending in the batch channel",
 		}, []string{"store"})
+
 	TiKVBatchRequests = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
@@ -281,6 +290,7 @@ func initMetrics(namespace, subsystem string) {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 8),
 			Help:      "number of requests in one batch",
 		}, []string{"store"})
+
 	TiKVBatchClientUnavailable = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
@@ -289,6 +299,7 @@ func initMetrics(namespace, subsystem string) {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 			Help:      "batch client unavailable",
 		})
+
 	TiKVBatchClientWaitEstablish = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
@@ -314,6 +325,7 @@ func initMetrics(namespace, subsystem string) {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 			Help:      "duration to push sub tasks to range task workers",
 		}, []string{LblType})
+
 	TiKVTokenWaitDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
@@ -331,6 +343,7 @@ func initMetrics(namespace, subsystem string) {
 			Help:      "Bucketed histogram of the txn_heartbeat request duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType})
+
 	TiKVPessimisticLockKeysDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
@@ -355,6 +368,14 @@ func initMetrics(namespace, subsystem string) {
 			Name:      "batch_client_no_available_connection_total",
 			Help:      "Counter of no available batch client.",
 		})
+
+	TiKVTwoPCTxnCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "commit_txn_counter",
+			Help:      "Counter of 2PC transactions.",
+		}, []string{LblType})
 
 	TiKVAsyncCommitTxnCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -402,7 +423,16 @@ func initMetrics(namespace, subsystem string) {
 			Subsystem: subsystem,
 			Name:      "forward_request_counter",
 			Help:      "Counter of tikv request being forwarded through another node",
-		}, []string{LblFromStore, LblToStore, LblResult})
+		}, []string{LblFromStore, LblToStore, LblType, LblResult})
+
+	TiKVTSFutureWaitDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "ts_future_wait_seconds",
+			Help:      "Bucketed histogram of seconds cost for waiting timestamp future.",
+			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 30), // 5us ~ 2560s
+		})
 
 	initShortcuts()
 }
@@ -440,7 +470,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVStatusCounter)
 	prometheus.MustRegister(TiKVBatchWaitDuration)
 	prometheus.MustRegister(TiKVBatchSendLatency)
-	prometheus.MustRegister(TiKvBatchWaitOverLoad)
+	prometheus.MustRegister(TiKVBatchWaitOverLoad)
 	prometheus.MustRegister(TiKVBatchPendingRequests)
 	prometheus.MustRegister(TiKVBatchRequests)
 	prometheus.MustRegister(TiKVBatchClientUnavailable)
@@ -452,10 +482,51 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVPessimisticLockKeysDuration)
 	prometheus.MustRegister(TiKVTTLLifeTimeReachCounter)
 	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
+	prometheus.MustRegister(TiKVTwoPCTxnCounter)
 	prometheus.MustRegister(TiKVAsyncCommitTxnCounter)
 	prometheus.MustRegister(TiKVOnePCTxnCounter)
 	prometheus.MustRegister(TiKVStoreLimitErrorCounter)
 	prometheus.MustRegister(TiKVGRPCConnTransientFailureCounter)
 	prometheus.MustRegister(TiKVPanicCounter)
 	prometheus.MustRegister(TiKVForwardRequestCounter)
+	prometheus.MustRegister(TiKVTSFutureWaitDuration)
+}
+
+// readCounter reads the value of a prometheus.Counter.
+// Returns -1 when failing to read the value.
+func readCounter(m prometheus.Counter) int64 {
+	// Actually, it's not recommended to read the value of prometheus metric types directly:
+	// https://github.com/prometheus/client_golang/issues/486#issuecomment-433345239
+	pb := &dto.Metric{}
+	// It's impossible to return an error though.
+	if err := m.Write(pb); err != nil {
+		return -1
+	}
+	return int64(pb.GetCounter().GetValue())
+}
+
+// TxnCommitCounter is the counter of transactions committed with
+// different protocols, i.e. 2PC, async-commit, 1PC.
+type TxnCommitCounter struct {
+	TwoPC       int64 `json:"twoPC"`
+	AsyncCommit int64 `json:"asyncCommit"`
+	OnePC       int64 `json:"onePC"`
+}
+
+// Sub returns the difference of two counters.
+func (c TxnCommitCounter) Sub(rhs TxnCommitCounter) TxnCommitCounter {
+	new := TxnCommitCounter{}
+	new.TwoPC = c.TwoPC - rhs.TwoPC
+	new.AsyncCommit = c.AsyncCommit - rhs.AsyncCommit
+	new.OnePC = c.OnePC - rhs.OnePC
+	return new
+}
+
+// GetTxnCommitCounter gets the TxnCommitCounter.
+func GetTxnCommitCounter() TxnCommitCounter {
+	return TxnCommitCounter{
+		TwoPC:       readCounter(TwoPCTxnCounterOk),
+		AsyncCommit: readCounter(AsyncCommitTxnCounterOk),
+		OnePC:       readCounter(OnePCTxnCounterOk),
+	}
 }

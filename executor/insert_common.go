@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -436,6 +437,9 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
 	extraColsInSel := make([][]types.Datum, 0, chk.Capacity())
+	// In order to ensure the correctness of the `transaction write throughput` SLI statistics,
+	// just ignore the transaction which contain `insert|replace into ... select ... from ...` statement.
+	e.ctx.GetTxnWriteThroughputSLI().SetInvalid()
 	for {
 		err := Next(ctx, selectExec, chk)
 		if err != nil {
@@ -1045,8 +1049,8 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
-			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
-			defer snapshot.DelOption(kv.CollectRuntimeStats)
+			snapshot.SetOption(tikvstore.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(tikvstore.CollectRuntimeStats)
 		}
 	}
 	prefetchStart := time.Now()

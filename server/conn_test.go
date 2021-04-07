@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
@@ -698,7 +699,7 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se}
 	ctx := context.Background()
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustExec("begin optimistic")
@@ -769,6 +770,7 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	// test COM_STMT_EXECUTE
 	ctx := context.Background()
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
+	tk.MustExec("set @@tidb_allow_mpp=OFF")
 	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
@@ -801,11 +803,11 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	tk.MustExec("set @@tidb_allow_batch_cop=1; set @@tidb_allow_mpp=0;")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
-	testFallbackWork(c, tk, cc, "select sum(a) from t")
+	testFallbackWork(c, tk, cc, "select count(*) from t")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout", "return(true)"), IsNil)
-	testFallbackWork(c, tk, cc, "select sum(a) from t")
+	testFallbackWork(c, tk, cc, "select count(*) from t")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout"), IsNil)
 
 	// TiFlash MPP query (MPP + streaming)
@@ -818,6 +820,10 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout", "return(-1)"), IsNil)
 	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr", "return(true)"), IsNil)
+	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr"), IsNil)
 }
 
 func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
