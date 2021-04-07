@@ -25,6 +25,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 )
 
 // CloneConf deeply clones this config.
@@ -161,6 +162,13 @@ const (
 
 // GetTxnScopeFromConfig extracts @@txn_scope value from config
 func GetTxnScopeFromConfig() (bool, string) {
+	failpoint.Inject("injectTxnScope", func(val failpoint.Value) {
+		v := val.(string)
+		if len(v) > 0 {
+			failpoint.Return(false, v)
+		}
+		failpoint.Return(true, globalTxnScope)
+	})
 	v, ok := GetGlobalConfig().Labels["zone"]
 	if ok && len(v) > 0 {
 		return false, v
