@@ -222,6 +222,16 @@ func (s *testTableCodecSuite) TestUnflattenDatums(c *C) {
 	cmp, err := input[0].CompareDatum(sc, &output[0])
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)
+
+	input = []types.Datum{types.NewCollationStringDatum("aaa", "utf8mb4_unicode_ci", 0)}
+	tps = []*types.FieldType{types.NewFieldType(mysql.TypeBlob)}
+	tps[0].Collate = "utf8mb4_unicode_ci"
+	output, err = UnflattenDatums(input, tps, sc.TimeZone)
+	c.Assert(err, IsNil)
+	cmp, err = input[0].CompareDatum(sc, &output[0])
+	c.Assert(err, IsNil)
+	c.Assert(cmp, Equals, 0)
+	c.Assert(output[0].Collation(), Equals, "utf8mb4_unicode_ci")
 }
 
 func (s *testTableCodecSuite) TestTimeCodec(c *C) {
