@@ -1450,7 +1450,7 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 // CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore check whether recordID key or unique index key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
-func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, oldRow, newRow []types.Datum) error {
+func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, newRow []types.Datum, modified []bool) error {
 	physicalTableID := t.Meta().ID
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
@@ -1481,40 +1481,25 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 
 	// Check unique key exists.
 	{
-		idxValueChange := func(oldVals, newVals []types.Datum) (bool, error) {
-			for i := range newVals {
-				cmp, err := newVals[i].CompareDatum(sctx.GetSessionVars().StmtCtx, &oldVals[i])
-				if err != nil {
-					return false, err
-				}
-				if cmp != 0 {
-					return true, nil
+		needIgnoreCheck := func(idx table.Index) bool {
+			if !IsIndexWritable(idx) || !idx.Meta().Unique || (t.Meta().IsCommonHandle && idx.Meta().Primary) {
+				return true
+			}
+			for _, c := range idx.Meta().Columns {
+				if modified[c.Offset] {
+					return true
 				}
 			}
-			return false, nil
+			return false
 		}
 
 		for _, idx := range t.Indices() {
-			if !IsIndexWritable(idx) {
-				continue
-			}
-			if !idx.Meta().Unique || (t.Meta().IsCommonHandle && idx.Meta().Primary) {
+			if needIgnoreCheck(idx) {
 				continue
 			}
 			newVals, err := idx.FetchValues(newRow, nil)
 			if err != nil {
 				return err
-			}
-			oldVals, err := idx.FetchValues(oldRow, nil)
-			if err != nil {
-				return err
-			}
-			idxChanged, err := idxValueChange(newVals, oldVals)
-			if err != nil {
-				return err
-			}
-			if !idxChanged {
-				continue
 			}
 			key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, newVals, recordID, nil)
 			if err != nil {
