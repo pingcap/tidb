@@ -34,7 +34,7 @@ TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports 
 
 - __Cloud Native__
 
-    TiDB is designed to work in the cloud -- public, private, or hybrid -- making deployment, provisioning, operations, and maintenance simple.
+    TiDB is designed to work in the cloud - public, private, or hybrid - making deployment, provisioning, operations, and maintenance simple.
 
     The storage layer of TiDB, called TiKV, is a [Cloud Native Computing Foundation (CNCF) Graduated](https://www.cncf.io/announcements/2020/09/02/cloud-native-computing-foundation-announces-tikv-graduation/) project. The architecture of the TiDB platform also allows SQL processing and storage to be scaled independently of each other in a very cloud-friendly manner.
 
