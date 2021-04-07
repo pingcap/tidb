@@ -366,7 +366,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			if tblInfo.ContainsAutoRandomBits() && allocs.Get(autoid.AutoRandomType) == nil {
 				// Remove auto_increment allocator.
 				allocs = allocs.Filter(func(a autoid.Allocator) bool {
-					return a.GetType() != autoid.AutoIncrementType
+					return a.GetType() != autoid.AutoIncrementType && a.GetType() != autoid.RowIDAllocType
 				})
 				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
 				allocs = append(allocs, newAlloc)
