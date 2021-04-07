@@ -530,6 +530,7 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 	err = rs.Close()
 	c.Assert(err, IsNil)
 	c.Assert(len(rows), Equals, 1)
+	tk.MustExec("drop database UPPER_CASE")
 }
 
 func (s *testSuite5) TestShowSlow(c *C) {
