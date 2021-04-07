@@ -192,8 +192,8 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	if handleChanged {
 		if sc.DupKeyAsWarning {
 			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
-			// If the new handle exists, this will avoid to remove the record.
-			err = tables.CheckHandleExists(ctx, sctx, t, newHandle, newData)
+			// If the new handle or unique index exists, this will avoid to remove the record.
+			err = tables.CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx, sctx, t, newHandle, newData)
 			if err != nil {
 				if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
 					return false, nil
@@ -210,7 +210,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		} else {
 			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
 		}
-
 		if err != nil {
 			return false, err
 		}

@@ -15,8 +15,10 @@ package config
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -53,7 +55,7 @@ type Config struct {
 // DefaultConfig returns the default configuration.
 func DefaultConfig() Config {
 	return Config{
-		CommitterConcurrency:  16,
+		CommitterConcurrency:  128,
 		MaxTxnTTL:             60 * 60 * 1000, // 1hour
 		ServerMemoryQuota:     0,
 		TiKVClient:            DefaultTiKVClient(),
@@ -119,6 +121,18 @@ func StoreGlobalConfig(config *Config) {
 	globalConf.Store(config)
 }
 
+// UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
+func UpdateGlobal(f func(conf *Config)) func() {
+	g := GetGlobalConfig()
+	restore := func() {
+		StoreGlobalConfig(g)
+	}
+	newConf := *g
+	f(&newConf)
+	StoreGlobalConfig(&newConf)
+	return restore
+}
+
 // ParsePath parses this path.
 // Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
 func ParsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
@@ -143,4 +157,39 @@ func ParsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 	}
 	etcdAddrs = strings.Split(u.Host, ",")
 	return
+}
+
+var (
+	internalClientInit sync.Once
+	internalHTTPClient *http.Client
+	internalHTTPSchema string
+)
+
+// InternalHTTPClient is used by TiDB-Server to request other components.
+func InternalHTTPClient() *http.Client {
+	internalClientInit.Do(initInternalClient)
+	return internalHTTPClient
+}
+
+// InternalHTTPSchema specifies use http or https to request other components.
+func InternalHTTPSchema() string {
+	internalClientInit.Do(initInternalClient)
+	return internalHTTPSchema
+}
+
+func initInternalClient() {
+	clusterSecurity := GetGlobalConfig().Security
+	tlsCfg, err := clusterSecurity.ToTLSConfig()
+	if err != nil {
+		logutil.BgLogger().Fatal("could not load cluster ssl", zap.Error(err))
+	}
+	if tlsCfg == nil {
+		internalHTTPSchema = "http"
+		internalHTTPClient = http.DefaultClient
+		return
+	}
+	internalHTTPSchema = "https"
+	internalHTTPClient = &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}
 }

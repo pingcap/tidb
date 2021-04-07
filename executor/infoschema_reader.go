@@ -28,6 +28,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -457,7 +458,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			pkType := "NON-CLUSTERED"
+			pkType := "NONCLUSTERED"
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
@@ -1859,11 +1860,21 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 			continue
 		}
 		// Currently, only partitions have placement rules.
+		var tbName, dbName, ptName string
+		skip := true
 		tb, db, part := is.FindTableByPartitionID(id)
-		if tb == nil {
-			return errors.Errorf("Can't find partition by id %d", id)
+		if tb != nil && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv)) {
+			dbName = db.Name.L
+			tbName = tb.Meta().Name.L
+			ptName = part.Name.L
+			skip = false
 		}
-		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
+		failpoint.Inject("outputInvalidPlacementRules", func(val failpoint.Value) {
+			if val.(bool) {
+				skip = false
+			}
+		})
+		if skip {
 			continue
 		}
 		for _, rule := range bundle.Rules {
@@ -1875,9 +1886,9 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 				bundle.ID,
 				bundle.Index,
 				rule.ID,
-				db.Name.L,
-				tb.Meta().Name.L,
-				part.Name.L,
+				dbName,
+				tbName,
+				ptName,
 				nil,
 				string(rule.Role),
 				rule.Count,
