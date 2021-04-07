@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -492,12 +491,13 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
 	tk.MustExec("show table status;")
 	rs, err := tk.Exec("show table status;")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rs, NotNil)
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	err = rs.Close()
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
 
 	for i := range rows {
 		row := rows[i]
@@ -514,10 +514,22 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 		  partition p2 values less than (maxvalue)
   		);`)
 	rs, err = tk.Exec("show table status from test like 'tp';")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+
+	tk.MustExec("create database UPPER_CASE")
+	tk.MustExec("use UPPER_CASE")
+	tk.MustExec("create table t (i int)")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
 }
 
 func (s *testSuite5) TestShowSlow(c *C) {
