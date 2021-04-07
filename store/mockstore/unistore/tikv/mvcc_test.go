@@ -972,8 +972,6 @@ func (s *testMvccSuite) TestMvccTxnRead(c *C) {
 	// read results in nothing
 	MustGetNone(k1, 1, store)
 
-	v1 = []byte("v1lock")
-	_ = v1
 	MustPrewriteLock(k1, k1, 3, store)
 	MustCommit(k1, 3, 4, store)
 	// lock should left nothing

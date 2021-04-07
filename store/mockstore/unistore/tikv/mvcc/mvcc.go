@@ -95,8 +95,6 @@ func (l *Lock) MarshalBinary() []byte {
 		}
 	}
 	copy(buf[cursor:], l.Value)
-	cursor += len(l.Value)
-	_ = cursor
 	return buf
 }
 
