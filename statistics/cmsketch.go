@@ -668,7 +668,7 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, topNs []*TopN, n uin
 				if j == i {
 					continue
 				}
-				if topNs[j].findTopN(val.Encoded) == 0 {
+				if topNs[j].findTopN(val.Encoded) == -1 {
 					// Get the encodedVal from the hists[j]
 					datum, exists := datumMap[encodedVal]
 					if !exists {
@@ -689,21 +689,26 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, topNs []*TopN, n uin
 							if err != nil {
 								return nil, nil, nil, err
 							}
-							datumMap[encodedVal] = d
 						}
+						datumMap[encodedVal] = d
+						datum = d
 					}
 					// Get the row count which the value is equal to the encodedVal from histogram.
 					count := hists[j].equalRowCount(datum, isIndex)
-					counter[encodedVal] += count
-					// Remove the value corresponding to encodedVal from the histogram.
-					removeVals[j] = append(removeVals[j], TopNMeta{Encoded: val.Encoded, Count: uint64(count)})
+					if count != 0 {
+						counter[encodedVal] += count
+						// Remove the value corresponding to encodedVal from the histogram.
+						removeVals[j] = append(removeVals[j], TopNMeta{Encoded: val.Encoded, Count: uint64(count)})
+					}
 				}
 			}
 		}
 	}
 	// Remove the value from the Hists.
 	for i := 0; i < partNum; i++ {
-		hists[i].RemoveIdxVals(removeVals[i])
+		if len(removeVals[i]) > 0 {
+			hists[i].RemoveVals(removeVals[i])
+		}
 	}
 	numTop := len(counter)
 	if numTop == 0 {

@@ -455,7 +455,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		}
 	}
 	if needCMS && topn.TotalCount() > 0 {
-		hist.RemoveIdxVals(topn.TopN)
+		hist.RemoveVals(topn.TopN)
 	}
 	if needCMS && cms != nil {
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
@@ -763,7 +763,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	if handleHist != nil {
 		handleHist.ID = e.commonHandle.ID
 		if handleTopn != nil && handleTopn.TotalCount() > 0 {
-			handleHist.RemoveIdxVals(handleTopn.TopN)
+			handleHist.RemoveVals(handleTopn.TopN)
 		}
 		if handleCms != nil {
 			handleCms.CalcDefaultValForAnalyze(uint64(handleHist.NDV))
