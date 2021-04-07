@@ -765,4 +765,5 @@ func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			result.AppendString(str)
 		}
 	}
+	return nil
 }
