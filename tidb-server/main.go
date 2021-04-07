@@ -149,13 +149,6 @@ var (
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
 )
 
-var (
-	storage  kv.Storage
-	dom      *domain.Domain
-	svr      *server.Server
-	graceful bool
-)
-
 func main() {
 	flag.Parse()
 	if *version {
@@ -179,11 +172,18 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-	createStoreAndDomain()
-	createServer()
-	signal.SetupSignalHandler(serverShutdown)
-	runServer()
-	cleanup()
+
+	storage, dom := createStoreAndDomain()
+	svr := createServer(storage, dom)
+
+	exited := make(chan struct{})
+	signal.SetupSignalHandler(func(graceful bool) {
+		svr.Close()
+		cleanup(svr, storage, dom, graceful)
+		close(exited)
+	})
+	terror.MustNil(svr.Run())
+	<-exited
 	syncLog()
 }
 
@@ -258,15 +258,16 @@ func registerMetrics() {
 	metrics.RegisterMetrics()
 }
 
-func createStoreAndDomain() {
+func createStoreAndDomain() (kv.Storage, *domain.Domain) {
 	cfg := config.GetGlobalConfig()
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
-	storage, err = kvstore.New(fullPath)
+	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
-	dom, err = session.BootstrapSession(storage)
+	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
+	return storage, dom
 }
 
 func setupBinlogClient() {
@@ -595,24 +596,20 @@ func printInfo() {
 	log.SetLevel(level)
 }
 
-func createServer() {
+func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	cfg := config.GetGlobalConfig()
 	driver := server.NewTiDBDriver(storage)
-	var err error
-	svr, err = server.NewServer(cfg, driver)
+	svr, err := server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
-	terror.MustNil(err, closeDomainAndStorage)
+	if err != nil {
+		closeDomainAndStorage(storage, dom)
+		log.Fatal("failed to create the server", zap.Error(err), zap.Stack("stack"))
+	}
 	svr.SetDomain(dom)
 	svr.InitGlobalConnID(dom.ServerID)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
-}
-
-func serverShutdown(isgraceful bool) {
-	if isgraceful {
-		graceful = true
-	}
-	svr.Close()
+	return svr
 }
 
 func setupMetrics() {
@@ -647,26 +644,21 @@ func setupTracing() {
 	opentracing.SetGlobalTracer(tracer)
 }
 
-func runServer() {
-	err := svr.Run()
-	terror.MustNil(err)
-}
-
-func closeDomainAndStorage() {
+func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	atomic.StoreUint32(&tikv.ShuttingDown, 1)
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
 }
 
-func cleanup() {
+func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
 	if graceful {
 		svr.GracefulDown(context.Background(), nil)
 	} else {
 		svr.TryGracefulDown()
 	}
 	plugin.Shutdown(context.Background())
-	closeDomainAndStorage()
+	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()
 }
 

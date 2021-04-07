@@ -501,3 +501,33 @@ func (c ConfigProbe) StorePreSplitSizeThreshold(v uint32) {
 func (c ConfigProbe) SetOracleUpdateInterval(v int) {
 	oracleUpdateInterval = v
 }
+
+// GetRawBatchPutSize returns the raw batch put size config.
+func (c ConfigProbe) GetRawBatchPutSize() int {
+	return rawBatchPutSize
+}
+
+// RawKVClientProbe wraps RawKVClient and exposes internal states for testing purpose.
+type RawKVClientProbe struct {
+	*RawKVClient
+}
+
+// GetRegionCache returns the internal region cache container.
+func (c RawKVClientProbe) GetRegionCache() *RegionCache {
+	return c.regionCache
+}
+
+// SetRegionCache resets the internal region cache container.
+func (c RawKVClientProbe) SetRegionCache(regionCache *RegionCache) {
+	c.regionCache = regionCache
+}
+
+// SetPDClient resets the interval PD client.
+func (c RawKVClientProbe) SetPDClient(client pd.Client) {
+	c.pdClient = client
+}
+
+// SetRPCClient resets the internal RPC client.
+func (c RawKVClientProbe) SetRPCClient(client Client) {
+	c.rpcClient = client
+}
