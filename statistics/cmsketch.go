@@ -674,41 +674,39 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, topNs []*TopN, n uin
 			// 1. Check the topN first.
 			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 			for j := 0; j < partNum; j++ {
-				if j == i {
+				if j == i || topNs[j].findTopN(val.Encoded) != -1 {
 					continue
 				}
-				if topNs[j].findTopN(val.Encoded) == -1 {
-					// Get the encodedVal from the hists[j]
-					datum, exists := datumMap[encodedVal]
-					if !exists {
-						// If the datumMap does not have the encodedVal datum,
-						// we should generate the datum based on the encoded value.
-						// This part is copied from the function MergePartitionHist2GlobalHist.
-						var d types.Datum
-						if isIndex {
-							d.SetBytes(val.Encoded)
+				// Get the encodedVal from the hists[j]
+				datum, exists := datumMap[encodedVal]
+				if !exists {
+					// If the datumMap does not have the encodedVal datum,
+					// we should generate the datum based on the encoded value.
+					// This part is copied from the function MergePartitionHist2GlobalHist.
+					var d types.Datum
+					if isIndex {
+						d.SetBytes(val.Encoded)
+					} else {
+						var err error
+						if types.IsTypeTime(hists[0].Tp.Tp) {
+							// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
+							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.Tp, sc.TimeZone)
 						} else {
-							var err error
-							if types.IsTypeTime(hists[0].Tp.Tp) {
-								// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
-								_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.Tp, sc.TimeZone)
-							} else {
-								_, d, err = codec.DecodeOne(val.Encoded)
-							}
-							if err != nil {
-								return nil, nil, nil, err
-							}
+							_, d, err = codec.DecodeOne(val.Encoded)
 						}
-						datumMap[encodedVal] = d
-						datum = d
+						if err != nil {
+							return nil, nil, nil, err
+						}
 					}
-					// Get the row count which the value is equal to the encodedVal from histogram.
-					count := hists[j].equalRowCount(datum, isIndex)
-					if count != 0 {
-						counter[encodedVal] += count
-						// Remove the value corresponding to encodedVal from the histogram.
-						removeVals[j] = append(removeVals[j], TopNMeta{Encoded: val.Encoded, Count: uint64(count)})
-					}
+					datumMap[encodedVal] = d
+					datum = d
+				}
+				// Get the row count which the value is equal to the encodedVal from histogram.
+				count := hists[j].equalRowCount(datum, isIndex)
+				if count != 0 {
+					counter[encodedVal] += count
+					// Remove the value corresponding to encodedVal from the histogram.
+					removeVals[j] = append(removeVals[j], TopNMeta{Encoded: val.Encoded, Count: uint64(count)})
 				}
 			}
 		}
