@@ -35,7 +35,10 @@ const testCtxKey testCtxKeyType = 0
 
 func (s *testDDLSuite) TestReorg(c *C) {
 	store := testCreateStore(c, "test_reorg")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	d := testNewDDLAndStart(
 		context.Background(),
@@ -43,7 +46,10 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	time.Sleep(testLease)
 
@@ -93,7 +99,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		Job:         job,
 		currElement: e,
 	}
-	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: s.IsCommonHandle})
+	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: s.IsCommonHandle, CommonHandleVersion: 1})
 	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
 	c.Assert(err, NotNil)
 
@@ -164,7 +170,8 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	d.Stop()
+	err = d.Stop()
+	c.Assert(err, IsNil)
 	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, func() error {
 		time.Sleep(4 * testLease)
 		return nil
@@ -179,7 +186,10 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 func (s *testDDLSuite) TestReorgOwner(c *C) {
 	store := testCreateStore(c, "test_reorg_owner")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	d1 := testNewDDLAndStart(
 		context.Background(),
@@ -187,7 +197,10 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d1.Stop()
+	defer func() {
+		err := d1.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	ctx := testNewContext(d1)
 
@@ -199,7 +212,10 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d2.Stop()
+	defer func() {
+		err := d2.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	dbInfo := testSchemaInfo(c, d1, "test")
 	testCreateSchema(c, ctx, d1, dbInfo)
@@ -222,7 +238,8 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	tc := &TestDDLCallback{}
 	tc.onJobRunBefore = func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteReorganization {
-			d1.Stop()
+			err = d1.Stop()
+			c.Assert(err, IsNil)
 		}
 	}
 

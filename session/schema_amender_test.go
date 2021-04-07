@@ -196,8 +196,7 @@ func prepareTestData(se *session, mutations *tikv.PlainMutations, oldTblInfo tab
 			idxKey, _, err := tablecodec.GenIndexKey(se.sessionVars.StmtCtx, newTblInfo.Meta(),
 				info.indexInfoAtCommit.Meta(), newTblInfo.Meta().ID, indexDatums, kvHandle, nil)
 			c.Assert(err, IsNil)
-			idxVal, err = tablecodec.GenIndexValue(se.sessionVars.StmtCtx, newTblInfo.Meta(), info.indexInfoAtCommit.Meta(),
-				false, info.indexInfoAtCommit.Meta().Unique, false, indexDatums, kvHandle)
+			idxVal, err = tablecodec.GenIndexValuePortal(se.sessionVars.StmtCtx, newTblInfo.Meta(), info.indexInfoAtCommit.Meta(), false, info.indexInfoAtCommit.Meta().Unique, false, indexDatums, kvHandle, 0, nil)
 			c.Assert(err, IsNil)
 			return idxKey, idxVal
 		}

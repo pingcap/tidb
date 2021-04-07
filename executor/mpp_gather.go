@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -81,11 +82,12 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 			Timeout:   10,
 			SchemaVar: e.is.SchemaMetaVersion(),
 			StartTs:   e.startTS,
+			State:     kv.MppTaskReady,
 		}
 		e.mppReqs = append(e.mppReqs, req)
 	}
 	for _, r := range pf.ExchangeReceivers {
-		err = e.appendMPPDispatchReq(r.ChildPf, r.Tasks, false)
+		err = e.appendMPPDispatchReq(r.GetExchangeSender().Fragment, r.Tasks, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -107,7 +109,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
 	planIDs := collectPlanIDS(e.originalPlan, nil)
-	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.allocTaskID)
+	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.allocTaskID, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -115,6 +117,11 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.Inject("checkTotalMPPTasks", func(val failpoint.Value) {
+		if val.(int) != len(e.mppReqs) {
+			failpoint.Return(errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs)))
+		}
+	})
 	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id)
 	if err != nil {
 		return errors.Trace(err)
@@ -131,6 +138,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
+	e.mppReqs = nil
 	if e.respIter != nil {
 		return e.respIter.Close()
 	}

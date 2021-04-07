@@ -285,6 +285,9 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 		cur, curCnt = sampleBytes, 1
 	}
 
+	// Calc the correlation of the column between the handle column.
+	hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
+
 	// Handle the counting for the last value. Basically equal to the case 2 above.
 	// now topn is empty: append the "current" count directly
 	if len(topNList) == 0 {
@@ -340,6 +343,5 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 		}
 	}
 
-	hg.Correlation = calcCorrelation(int64(len(samples)), corrXYSum)
 	return hg, topn, nil
 }

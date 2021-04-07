@@ -31,21 +31,8 @@ import (
 // And in the same time, we do not want this interface becomes a general way to run sql statement.
 // We hope this could be used with some restrictions such as only allowing system tables as target,
 // do not allowing recursion call.
-// For more information please refer to the comments in session.ExecRestrictedSQL().
 // This is implemented in session.go.
 type RestrictedSQLExecutor interface {
-	// ExecRestrictedSQL run sql statement in ctx with some restriction.
-	ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error)
-	// ExecRestrictedSQLWithContext run sql statement in ctx with some restriction.
-	ExecRestrictedSQLWithContext(ctx context.Context, sql string, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
-	// ExecRestrictedSQLWithSnapshot run sql statement in ctx with some restriction and with snapshot.
-	// If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
-	// Otherwise, execute with the current transaction start timestamp if the transaction is valid.
-	ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast.ResultField, error)
-
-	// The above methods are all deprecated.
-	// After the refactor finish, they will be removed.
-
 	// ParseWithParams is the parameterized version of Parse: it will try to prevent injection under utf8mb4.
 	// It works like printf() in c, there are following format specifiers:
 	// 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
@@ -60,32 +47,32 @@ type RestrictedSQLExecutor interface {
 	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
 }
 
-// ExecOption is a struct defined for ExecRestrictedSQLWithContext option.
+// ExecOption is a struct defined for ExecRestrictedStmt option.
 type ExecOption struct {
 	IgnoreWarning bool
 	SnapshotTS    uint64
 	AnalyzeVer    int
 }
 
-// OptionFuncAlias is defined for the optional paramater of ExecRestrictedSQLWithContext.
+// OptionFuncAlias is defined for the optional paramater of ExecRestrictedStmt.
 type OptionFuncAlias = func(option *ExecOption)
 
-// ExecOptionIgnoreWarning tells ExecRestrictedSQLWithContext to ignore the warnings.
+// ExecOptionIgnoreWarning tells ExecRestrictedStmt to ignore the warnings.
 var ExecOptionIgnoreWarning OptionFuncAlias = func(option *ExecOption) {
 	option.IgnoreWarning = true
 }
 
-// ExecOptionAnalyzeVer1 tells ExecRestrictedSQLWithContext to collect statistics with version1.
+// ExecOptionAnalyzeVer1 tells ExecRestrictedStmt to collect statistics with version1.
 var ExecOptionAnalyzeVer1 OptionFuncAlias = func(option *ExecOption) {
 	option.AnalyzeVer = 1
 }
 
-// ExecOptionAnalyzeVer2 tells ExecRestrictedSQLWithContext to collect statistics with version2.
+// ExecOptionAnalyzeVer2 tells ExecRestrictedStmt to collect statistics with version2.
 var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
 	option.AnalyzeVer = 2
 }
 
-// ExecOptionWithSnapshot tells ExecRestrictedSQLWithContext to use a snapshot.
+// ExecOptionWithSnapshot tells ExecRestrictedStmt to use a snapshot.
 func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 	return func(option *ExecOption) {
 		option.SnapshotTS = snapshot

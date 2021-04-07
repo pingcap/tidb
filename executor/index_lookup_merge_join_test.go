@@ -10,7 +10,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite9) TestIndexLookupMergeJoinHang(c *C) {
+func (s *testSerialSuite) TestIndexLookupMergeJoinHang(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM"), IsNil)
@@ -28,7 +28,7 @@ func (s *testSuite9) TestIndexLookupMergeJoinHang(c *C) {
 	c.Assert(err.Error(), Equals, "OOM test index merge join doesn't hang here.")
 }
 
-func (s *testSuite9) TestIssue18068(c *C) {
+func (s *testSerialSuite) TestIssue18068(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIssue18068", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIssue18068"), IsNil)
@@ -109,7 +109,7 @@ func (s *testSuite9) TestIssue20137(c *C) {
 func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
 	// For issue 19145
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	for _, val := range []string{string(variable.StaticOnly), string(variable.DynamicOnly)} {
+	for _, val := range []string{string(variable.Static), string(variable.Dynamic)} {
 		tk.MustExec("set @@tidb_partition_prune_mode= '" + val + "'")
 		tk.MustExec("drop table if exists t1, t2")
 		tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
