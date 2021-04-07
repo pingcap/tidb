@@ -530,6 +530,17 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 	err = rs.Close()
 	c.Assert(err, IsNil)
 	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("use upper_case")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+
 	tk.MustExec("drop database UPPER_CASE")
 }
 
