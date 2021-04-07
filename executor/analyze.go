@@ -353,7 +353,6 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	if err != nil {
 		return err
 	}
-	result.Fetch(ctx)
 	if isNullRange {
 		e.countNullRes = result
 	} else {
@@ -620,7 +619,6 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
 	return result, nil
 }
 
