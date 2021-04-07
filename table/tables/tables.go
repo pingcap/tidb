@@ -1450,11 +1450,11 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 // CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore check whether recordID key or unique index key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
-func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, data []types.Datum) error {
+func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, oldRow, newRow []types.Datum) error {
 	physicalTableID := t.Meta().ID
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
-		pid, err := pt.locatePartition(sctx, info, data)
+		pid, err := pt.locatePartition(sctx, info, newRow)
 		if err != nil {
 			return err
 		}
@@ -1472,7 +1472,7 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 		recordKey := tablecodec.EncodeRecordKey(prefix, recordID)
 		_, err = txn.Get(ctx, recordKey)
 		if err == nil {
-			handleStr := getDuplicateErrorHandleString(t, recordID, data)
+			handleStr := getDuplicateErrorHandleString(t, recordID, newRow)
 			return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
 		} else if !kv.ErrNotExist.Equal(err) {
 			return err
@@ -1481,18 +1481,42 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 
 	// Check unique key exists.
 	{
+		idxValueChange := func(oldVals, newVals []types.Datum) (bool, error) {
+			for i := range newVals {
+				cmp, err := newVals[i].CompareDatum(sctx.GetSessionVars().StmtCtx, &oldVals[i])
+				if err != nil {
+					return false, err
+				}
+				if cmp != 0 {
+					return true, nil
+				}
+			}
+			return false, nil
+		}
+
 		for _, idx := range t.Indices() {
 			if !IsIndexWritable(idx) {
 				continue
 			}
-			if !idx.Meta().Unique {
+			if !idx.Meta().Unique || (t.Meta().IsCommonHandle && idx.Meta().Primary) {
 				continue
 			}
-			vals, err := idx.FetchValues(data, nil)
+			newVals, err := idx.FetchValues(newRow, nil)
 			if err != nil {
 				return err
 			}
-			key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, vals, recordID, nil)
+			oldVals, err := idx.FetchValues(oldRow, nil)
+			if err != nil {
+				return err
+			}
+			idxChanged, err := idxValueChange(newVals, oldVals)
+			if err != nil {
+				return err
+			}
+			if !idxChanged {
+				continue
+			}
+			key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, newVals, recordID, nil)
 			if err != nil {
 				return err
 			}
@@ -1503,7 +1527,7 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 			if err != nil {
 				return err
 			}
-			entryKey, err := genIndexKeyStr(vals)
+			entryKey, err := genIndexKeyStr(newVals)
 			if err != nil {
 				return err
 			}
