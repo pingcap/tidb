@@ -2092,7 +2092,9 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
-		s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		if GetIndexUsageSyncLease() > 0 {
+			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		}
 	}
 
 	return s, nil
