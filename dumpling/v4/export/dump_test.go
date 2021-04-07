@@ -25,7 +25,7 @@ func (s *testSQLSuite) TestDumpBlock(c *C) {
 		WillReturnRows(sqlmock.NewRows([]string{"Database", "Create Database"}).
 			AddRow("test", "CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 
-	tctx, cancel := tcontext.Background().WithCancel()
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	defer cancel()
 	conn, err := db.Conn(tctx)
 	c.Assert(err, IsNil)
