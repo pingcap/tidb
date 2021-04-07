@@ -148,7 +148,7 @@ func GoTimeToTS(t time.Time) uint64 {
 	return uint64(ts)
 }
 
-// CompareTimestamp is used to compare two timestamps.
+// CompareTS is used to compare two timestamps.
 // If tsoOne > tsoTwo, returns 1.
 // If tsoOne = tsoTwo, returns 0.
 // If tsoOne < tsoTwo, returns -1.
