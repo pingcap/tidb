@@ -162,7 +162,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			}
 			s.fieldBuf = s.fieldBuf[:0]
 			switch col.GetType().Tp {
-			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
+			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeYear:
 				s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
 			case mysql.TypeLonglong:
 				if mysql.HasUnsignedFlag(col.GetType().Flag) {
@@ -170,7 +170,9 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				} else {
 					s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
 				}
-			case mysql.TypeFloat, mysql.TypeDouble:
+			case mysql.TypeFloat:
+				s.realBuf, s.fieldBuf = DumpRealOutfile(s.realBuf, s.fieldBuf, float64(row.GetFloat32(j)), col.RetType)
+			case mysql.TypeDouble:
 				s.realBuf, s.fieldBuf = DumpRealOutfile(s.realBuf, s.fieldBuf, row.GetFloat64(j), col.RetType)
 			case mysql.TypeNewDecimal:
 				s.fieldBuf = append(s.fieldBuf, row.GetMyDecimal(j).String()...)
@@ -191,7 +193,13 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			case mysql.TypeJSON:
 				s.fieldBuf = append(s.fieldBuf, row.GetJSON(j).String()...)
 			}
-			s.lineBuf = append(s.lineBuf, s.escapeField(s.fieldBuf)...)
+
+			switch col.GetType().EvalType() {
+			case types.ETString, types.ETJson:
+				s.lineBuf = append(s.lineBuf, s.escapeField(s.fieldBuf)...)
+			default:
+				s.lineBuf = append(s.lineBuf, s.fieldBuf...)
+			}
 			if (encloseFlag && !encloseOpt) ||
 				(encloseFlag && encloseOpt && s.considerEncloseOpt(et)) {
 				s.lineBuf = append(s.lineBuf, encloseByte)

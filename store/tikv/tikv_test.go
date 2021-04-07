@@ -41,3 +41,16 @@ type testTiKVSuite struct {
 }
 
 var _ = Suite(&testTiKVSuite{})
+
+func (s *testTiKVSuite) TestBasicFunc(c *C) {
+	if IsMockCommitErrorEnable() {
+		defer MockCommitErrorEnable()
+	} else {
+		defer MockCommitErrorDisable()
+	}
+
+	MockCommitErrorEnable()
+	c.Assert(IsMockCommitErrorEnable(), IsTrue)
+	MockCommitErrorDisable()
+	c.Assert(IsMockCommitErrorEnable(), IsFalse)
+}

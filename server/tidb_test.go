@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -97,7 +98,10 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	ts.port = getPortFromTCPAddr(server.listener.Addr())
 	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
-	go ts.server.Run()
+	go func() {
+		err := ts.server.Run()
+		c.Assert(err, IsNil)
+	}()
 	ts.waitUntilServerOnline()
 }
 
@@ -139,12 +143,40 @@ func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {
 	ts.runTestPreparedTimestamp(c)
 }
 
+func (ts *tidbTestSerialSuite) TestConfigDefaultValue(c *C) {
+	ts.runTestsOnNewDB(c, nil, "config", func(dbt *DBTest) {
+		rows := dbt.mustQuery("select @@tidb_slow_log_threshold;")
+		ts.checkRows(c, rows, "300")
+	})
+}
+
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
 func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadData(c, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(c, ts.server)
 	ts.runTestLoadDataForSlowLog(c, ts.server)
+}
+
+func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
+	ts.runTestLoadDataForListPartition(c)
+	ts.runTestLoadDataForListPartition2(c)
+	ts.runTestLoadDataForListColumnPartition(c)
+	ts.runTestLoadDataForListColumnPartition2(c)
+}
+
+// Fix issue#22540. Change tidb_dml_batch_size,
+// then check if load data into table with auto random column works properly.
+func (ts *tidbTestSerialSuite) TestLoadDataAutoRandom(c *C) {
+	ts.runTestLoadDataAutoRandom(c)
+}
+
+func (ts *tidbTestSerialSuite) TestLoadDataAutoRandomWithSpecialTerm(c *C) {
+	ts.runTestLoadDataAutoRandomWithSpecialTerm(c)
+}
+
+func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
+	ts.runTestExplainForConn(c)
 }
 
 func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {
@@ -171,6 +203,7 @@ func (ts *tidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	ts.runTestIssue3662(c)
 	ts.runTestIssue3680(c)
+	ts.runTestIssue22646(c)
 }
 
 func (ts *tidbTestSuite) TestDBNameEscape(c *C) {
@@ -232,8 +265,12 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsFalse) // If listening on tcp-only, return FALSE
 
 	// https connection should work.
 	ts.runTestStatusAPI(c)
@@ -281,7 +318,10 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 
 	hc := newTLSHttpClient(c, caPath,
@@ -332,8 +372,12 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsFalse) // If listening on both, return FALSE
 	defer server.Close()
 
 	cli.runTestRegression(c, func(config *mysql.Config) {
@@ -355,11 +399,15 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsTrue) // If listening on socket-only, return TRUE
 	defer server.Close()
 
-	//a fake server client, config is override, just used to run tests
+	// a fake server client, config is override, just used to run tests
 	cli := newTestServerClient()
 	cli.runTestRegression(c, func(config *mysql.Config) {
 		config.User = "root"
@@ -423,15 +471,27 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	certOut.Close()
+	err = pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	err = certOut.Close()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 
 	keyOut, err := os.OpenFile(outKeyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
-	keyOut.Close()
+	err = pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	err = keyOut.Close()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 
 	return cert, privateKey, nil
 }
@@ -459,8 +519,7 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 		ServerName:         serverName,
 		InsecureSkipVerify: !verifyServer,
 	}
-	mysql.RegisterTLSConfig(configName, tlsConfig)
-	return nil
+	return mysql.RegisterTLSConfig(configName, tlsConfig)
 }
 
 func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
@@ -488,12 +547,18 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	c.Assert(err, IsNil)
 
 	defer func() {
-		os.Remove("/tmp/ca-key.pem")
-		os.Remove("/tmp/ca-cert.pem")
-		os.Remove("/tmp/server-key.pem")
-		os.Remove("/tmp/server-cert.pem")
-		os.Remove("/tmp/client-key.pem")
-		os.Remove("/tmp/client-cert.pem")
+		err := os.Remove("/tmp/ca-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/ca-cert.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/server-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/server-cert.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/client-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/client-cert.pem")
+		c.Assert(err, IsNil)
 	}()
 
 	// Start the server without TLS.
@@ -507,7 +572,10 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 	err = cli.runTestTLSConnection(c, connOverrider) // We should get ErrNoTLS.
 	c.Assert(err, NotNil)
@@ -529,7 +597,10 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 	err = cli.runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
 	c.Assert(err, IsNil)
@@ -556,7 +627,10 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 	// The client does not provide a certificate, the connection should succeed.
 	err = cli.runTestTLSConnection(c, nil)
@@ -615,7 +689,10 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 	// The client provides a valid certificate.
 	connOverrider := func(config *mysql.Config) {
@@ -634,8 +711,10 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 		c.NotAfter = time.Now().Add(1 * time.Hour).UTC()
 	})
 	c.Assert(err, IsNil)
-	os.Rename("/tmp/server-key-reload2.pem", "/tmp/server-key-reload.pem")
-	os.Rename("/tmp/server-cert-reload2.pem", "/tmp/server-cert-reload.pem")
+	err = os.Rename("/tmp/server-key-reload2.pem", "/tmp/server-key-reload.pem")
+	c.Assert(err, IsNil)
+	err = os.Rename("/tmp/server-cert-reload2.pem", "/tmp/server-cert-reload.pem")
+	c.Assert(err, IsNil)
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
 	}
@@ -659,8 +738,10 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 		c.NotAfter = c.NotBefore.Add(1 * time.Hour).UTC()
 	})
 	c.Assert(err, IsNil)
-	os.Rename("/tmp/server-key-reload3.pem", "/tmp/server-key-reload.pem")
-	os.Rename("/tmp/server-cert-reload3.pem", "/tmp/server-cert-reload.pem")
+	err = os.Rename("/tmp/server-key-reload3.pem", "/tmp/server-key-reload.pem")
+	c.Assert(err, IsNil)
+	err = os.Rename("/tmp/server-cert-reload3.pem", "/tmp/server-cert-reload.pem")
+	c.Assert(err, IsNil)
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
 	}
@@ -719,7 +800,10 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-cert-rollback-test"
@@ -919,6 +1003,14 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 	c.Assert(cols[0].Name, Equals, columnAsName)
 }
 
+func (ts *tidbTestSuite) TestClientErrors(c *C) {
+	ts.runTestInfoschemaClientErrors(c)
+}
+
+func (ts *tidbTestSuite) TestInitConnect(c *C) {
+	ts.runTestInitConnect(c)
+}
+
 func (ts *tidbTestSuite) TestSumAvg(c *C) {
 	c.Parallel()
 	ts.runTestSumAvg(c)
@@ -935,6 +1027,26 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	cols := rs.Columns()
 	c.Assert(len(cols), Equals, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+}
+
+func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
+	// issue #21465
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "drop table if exists t")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "create table t(c1 int key, c2 int);")
+	c.Assert(err, IsNil)
+	rs, err := Execute(ctx, qctx, "select c1 from t;")
+	c.Assert(err, IsNil)
+	cols := rs.Columns()
+	c.Assert(len(cols), Equals, 1)
+	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
 }
 
@@ -958,7 +1070,10 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	c.Assert(server, NotNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 
 	_, err = cli.fetchStatus("/status") // server is up
@@ -974,6 +1089,29 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 
 	_, err = cli.fetchStatus("/status") // status is gone
 	c.Assert(err, ErrorMatches, ".*connect: connection refused")
+}
+
+func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
+	// issue #21194
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	// 255 is the collation id of mysql client 8 default collation_connection
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
+	c.Assert(err, IsNil)
+	testCase := []struct {
+		variable string
+		except   string
+	}{
+		{"collation_connection", "utf8mb4_bin"},
+		{"character_set_connection", "utf8mb4"},
+		{"character_set_client", "utf8mb4"},
+	}
+
+	for _, t := range testCase {
+		sVars, b := qctx.GetSessionVars().GetSystemVar(t.variable)
+		c.Assert(b, IsTrue)
+		c.Assert(sVars, Equals, t.except)
+	}
 }
 
 func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {

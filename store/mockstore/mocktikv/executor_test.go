@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -47,7 +48,7 @@ func (s *testExecutorSuite) SetUpSuite(c *C) {
 	s.mvccStore = rpcClient.MvccStore
 	store, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-	s.store = store
+	s.store = mockstore.NewMockStorage(store)
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)

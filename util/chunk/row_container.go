@@ -28,6 +28,7 @@ import (
 )
 
 // RowContainer provides a place for many rows, so many that we might want to spill them into disk.
+// nolint:structcheck
 type RowContainer struct {
 	m struct {
 		// RWMutex guarantees spill and get operator for rowContainer is mutually exclusive.
@@ -259,11 +260,11 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 // the memory quota of a query is exceeded, SpillDiskAction.Action is
 // triggered.
 type SpillDiskAction struct {
-	c              *RowContainer
-	fallbackAction memory.ActionOnExceed
-	m              sync.Mutex
-	once           sync.Once
-	cond           spillStatusCond
+	memory.BaseOOMAction
+	c    *RowContainer
+	m    sync.Mutex
+	once sync.Once
+	cond spillStatusCond
 
 	// test function only used for test sync.
 	testSyncInputFunc  func()
@@ -333,8 +334,8 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	if !t.CheckExceed() {
 		return
 	}
-	if a.fallbackAction != nil {
-		a.fallbackAction.Action(t)
+	if fallback := a.GetFallback(); fallback != nil {
+		fallback.Action(t)
 	}
 }
 
@@ -346,13 +347,13 @@ func (a *SpillDiskAction) Reset() {
 	a.once = sync.Once{}
 }
 
-// SetFallback sets the fallback action.
-func (a *SpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
-	a.fallbackAction = fallback
-}
-
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
+
+// GetPriority get the priority of the Action.
+func (a *SpillDiskAction) GetPriority() int64 {
+	return memory.DefSpillPriority
+}
 
 // WaitForTest waits all goroutine have gone.
 func (a *SpillDiskAction) WaitForTest() {
@@ -528,14 +529,9 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	if !t.CheckExceed() {
 		return
 	}
-	if a.fallbackAction != nil {
-		a.fallbackAction.Action(t)
+	if fallback := a.GetFallback(); fallback != nil {
+		fallback.Action(t)
 	}
-}
-
-// SetFallback sets the fallback action.
-func (a *SortAndSpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
-	a.fallbackAction = fallback
 }
 
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.

@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
@@ -72,6 +74,16 @@ func GetDDLErrorCountLimit() int64 {
 	return atomic.LoadInt64(&ddlErrorCountlimit)
 }
 
+// SetDDLReorgRowFormat sets ddlReorgRowFormat version.
+func SetDDLReorgRowFormat(format int64) {
+	atomic.StoreInt64(&ddlReorgRowFormat, format)
+}
+
+// GetDDLReorgRowFormat gets ddlReorgRowFormat version.
+func GetDDLReorgRowFormat() int64 {
+	return atomic.LoadInt64(&ddlReorgRowFormat)
+}
+
 // SetMaxDeltaSchemaCount sets maxDeltaSchemaCount size.
 func SetMaxDeltaSchemaCount(cnt int64) {
 	atomic.StoreInt64(&maxDeltaSchemaCount, cnt)
@@ -80,6 +92,32 @@ func SetMaxDeltaSchemaCount(cnt int64) {
 // GetMaxDeltaSchemaCount gets maxDeltaSchemaCount size.
 func GetMaxDeltaSchemaCount() int64 {
 	return atomic.LoadInt64(&maxDeltaSchemaCount)
+}
+
+// BoolToOnOff returns the string representation of a bool, i.e. "ON/OFF"
+func BoolToOnOff(b bool) string {
+	if b {
+		return BoolOn
+	}
+	return BoolOff
+}
+
+func int32ToBoolStr(i int32) string {
+	if i == 1 {
+		return BoolOn
+	}
+	return BoolOff
+}
+
+func checkCharacterValid(normalizedValue string, argName string) (string, error) {
+	if normalizedValue == "" {
+		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
+	}
+	cht, _, err := charset.GetCharsetInfo(normalizedValue)
+	if err != nil {
+		return normalizedValue, errors.Trace(err)
+	}
+	return cht, nil
 }
 
 // GetSessionSystemVar gets a system variable.
@@ -116,6 +154,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 			return "", true, err
 		}
 		return string(info), true, nil
+	case TiDBLastQueryInfo:
+		info, err := json.Marshal(s.LastQueryInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
 		return BoolToOnOff(ProcessGeneralLog.Load()), true, nil
 	case TiDBPProfSQLCPU:
@@ -134,7 +178,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		if err != nil {
 			return "", false, err
 		}
-		return string(j), true, nil
+		return config.HideConfig(string(j)), true, nil
 	case TiDBForcePriority:
 		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
 	case TiDBDDLSlowOprThreshold:
@@ -157,8 +201,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
 		return BoolToOnOff(s.PrevFoundInPlanCache), true, nil
+	case TiDBFoundInBinding:
+		return BoolToOnOff(s.PrevFoundInBinding), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
+	case TiDBTxnScope:
+		return s.TxnScope.GetVarValue(), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
@@ -215,7 +263,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if err != nil {
 		return err
 	}
-	sVal, err = ValidateSetSystemVar(vars, name, sVal, ScopeSession)
+	sVal, err = sysVar.Validate(vars, sVal, ScopeSession)
 	if err != nil {
 		return err
 	}
@@ -230,7 +278,7 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	if sysVar == nil {
 		return ErrUnknownSystemVar
 	}
-	sVal, err := ValidateSetSystemVar(vars, name, value, ScopeSession)
+	sVal, err := sysVar.Validate(vars, value, ScopeSession)
 	if err != nil {
 		return err
 	}
@@ -269,35 +317,62 @@ func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
 	switch name {
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
 		TiDBHashJoinConcurrency, TiDBHashAggPartialConcurrency, TiDBHashAggFinalConcurrency,
-		TiDBProjectionConcurrency, TiDBWindowConcurrency, TiDBStreamAggConcurrency:
+		TiDBProjectionConcurrency, TiDBWindowConcurrency, TiDBMergeJoinConcurrency, TiDBStreamAggConcurrency:
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TIDBMemQuotaHashJoin, TIDBMemQuotaMergeJoin,
 		TIDBMemQuotaSort, TIDBMemQuotaTopn,
-		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin,
-		TIDBMemQuotaNestedLoopApply:
+		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin:
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	}
-}
-
-// ValidateSetSystemVar checks if system variable satisfies specific restriction.
-func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope ScopeFlag) (string, error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return value, ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	// Normalize the value and apply validation based on type.
-	// i.e. TypeBool converts 1/on/ON to ON.
-	normalizedValue, err := sv.ValidateFromType(vars, value, scope)
-	if err != nil {
-		return normalizedValue, err
-	}
-	// If type validation was successful, call the (optional) validation function
-	return sv.ValidateFromHook(vars, normalizedValue, value, scope)
 }
 
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
 func TiDBOptOn(opt string) bool {
 	return strings.EqualFold(opt, "ON") || opt == "1"
+}
+
+const (
+	// OffInt is used by TiDBMultiStatementMode
+	OffInt = 0
+	// OnInt is used TiDBMultiStatementMode
+	OnInt = 1
+	// WarnInt is used by TiDBMultiStatementMode
+	WarnInt = 2
+)
+
+// TiDBOptMultiStmt converts multi-stmt options to int.
+func TiDBOptMultiStmt(opt string) int {
+	switch opt {
+	case BoolOff:
+		return OffInt
+	case BoolOn:
+		return OnInt
+	}
+	return WarnInt
+}
+
+// ClusteredIndexDefMode controls the default clustered property for primary key.
+type ClusteredIndexDefMode int
+
+const (
+	// ClusteredIndexDefModeIntOnly indicates only single int primary key will default be clustered.
+	ClusteredIndexDefModeIntOnly ClusteredIndexDefMode = 0
+	// ClusteredIndexDefModeOn indicates primary key will default be clustered.
+	ClusteredIndexDefModeOn ClusteredIndexDefMode = 1
+	// ClusteredIndexDefModeOff indicates primary key will default be non-clustered.
+	ClusteredIndexDefModeOff ClusteredIndexDefMode = 2
+)
+
+// TiDBOptEnableClustered converts enable clustered options to ClusteredIndexDefMode.
+func TiDBOptEnableClustered(opt string) ClusteredIndexDefMode {
+	switch opt {
+	case On:
+		return ClusteredIndexDefModeOn
+	case Off:
+		return ClusteredIndexDefModeOff
+	default:
+		return ClusteredIndexDefModeIntOnly
+	}
 }
 
 func tidbOptPositiveInt32(opt string, defaultVal int) int {

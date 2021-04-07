@@ -21,8 +21,10 @@ import (
 
 // const strings for ErrWrongValue
 const (
-	DateTimeStr = "datetime"
-	TimeStr     = "time"
+	DateTimeStr  = "datetime"
+	DateStr      = "date"
+	TimeStr      = "time"
+	TimestampStr = "timestamp"
 )
 
 var (
@@ -81,4 +83,7 @@ var (
 	ErrWrongValue = dbterror.ClassTypes.NewStdErr(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
 	// ErrWrongValueForType is returned when the input value is in wrong format for function.
 	ErrWrongValueForType = dbterror.ClassTypes.NewStdErr(mysql.ErrWrongValueForType, mysql.MySQLErrName[mysql.ErrWrongValueForType])
+	// ErrPartitionStatsMissing is returned when the partition-level stats is missing and the build global-level stats fails.
+	// Put this error here is to prevent `import cycle not allowed`.
+	ErrPartitionStatsMissing = dbterror.ClassTypes.NewStd(mysql.ErrPartitionStatsMissing)
 )

@@ -105,7 +105,7 @@ func (ran *Range) IsPointNullable(sc *stmtctx.StatementContext) bool {
 	return !ran.LowExclude && !ran.HighExclude
 }
 
-//IsFullRange check if the range is full scan range
+// IsFullRange check if the range is full scan range
 func (ran *Range) IsFullRange() bool {
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
@@ -120,6 +120,16 @@ func (ran *Range) IsFullRange() bool {
 		}
 	}
 	return true
+}
+
+// HasFullRange checks if any range in the slice is a full range.
+func HasFullRange(ranges []*Range) bool {
+	for _, ran := range ranges {
+		if ran.IsFullRange() {
+			return true
+		}
+	}
+	return false
 }
 
 // String implements the Stringer interface.

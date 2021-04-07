@@ -76,17 +76,6 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 	}
 }
 
-// GetAll try to get all value.
-func (l *SimpleLRUCache) GetAll() []interface{} {
-	values := make([]interface{}, 0)
-	for _, v := range l.elements {
-		if nv, ok := v.Value.(*cacheEntry); ok {
-			values = append(values, nv.value)
-		}
-	}
-	return values
-}
-
 // Get tries to find the corresponding value according to the given key.
 func (l *SimpleLRUCache) Get(key Key) (value Value, ok bool) {
 	element, exists := l.elements[string(key.Hash())]
@@ -102,6 +91,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	hash := string(key.Hash())
 	element, exists := l.elements[hash]
 	if exists {
+		element.Value.(*cacheEntry).value = value
 		l.cache.MoveToFront(element)
 		return
 	}

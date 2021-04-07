@@ -17,9 +17,9 @@ import (
 	"io/ioutil"
 	"os"
 
-	usconf "github.com/ngaut/unistore/config"
-	ussvr "github.com/ngaut/unistore/server"
 	"github.com/pingcap/errors"
+	usconf "github.com/pingcap/tidb/store/mockstore/unistore/config"
+	ussvr "github.com/pingcap/tidb/store/mockstore/unistore/server"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -65,6 +65,7 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 		persistent: persistent,
 		rawHandler: newRawHandler(),
 	}
+	srv.RPCClient = client
 	pdClient := newPDClient(pd)
 
 	return client, pdClient, cluster, nil

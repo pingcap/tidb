@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -74,34 +74,37 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.hashAggPartialConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.hashAggFinalConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.windowConcurrency, Equals, ConcurrencyUnset)
+	c.Assert(vars.mergeJoinConcurrency, Equals, DefTiDBMergeJoinConcurrency)
 	c.Assert(vars.streamAggConcurrency, Equals, DefTiDBStreamAggConcurrency)
 	c.Assert(vars.distSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.ProjectionConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, DefTiDBMergeJoinConcurrency)
 	c.Assert(vars.StreamAggConcurrency(), Equals, DefTiDBStreamAggConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.ExecutorConcurrency, Equals, DefExecutorConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
 	c.Assert(vars.MemQuotaQuery, Equals, config.GetGlobalConfig().MemQuotaQuery)
-	c.Assert(vars.MemQuotaStatistics, Equals, config.GetGlobalConfig().MemQuotaStatistics)
 	c.Assert(vars.MemQuotaHashJoin, Equals, int64(DefTiDBMemQuotaHashJoin))
 	c.Assert(vars.MemQuotaMergeJoin, Equals, int64(DefTiDBMemQuotaMergeJoin))
 	c.Assert(vars.MemQuotaSort, Equals, int64(DefTiDBMemQuotaSort))
 	c.Assert(vars.MemQuotaTopn, Equals, int64(DefTiDBMemQuotaTopn))
 	c.Assert(vars.MemQuotaIndexLookupReader, Equals, int64(DefTiDBMemQuotaIndexLookupReader))
 	c.Assert(vars.MemQuotaIndexLookupJoin, Equals, int64(DefTiDBMemQuotaIndexLookupJoin))
-	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
+	c.Assert(vars.MemQuotaApplyCache, Equals, int64(DefTiDBMemQuotaApplyCache))
 	c.Assert(vars.EnableRadixJoin, Equals, DefTiDBUseRadixJoin)
 	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
 	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
 	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
 	c.Assert(vars.FoundInPlanCache, Equals, DefTiDBFoundInPlanCache)
+	c.Assert(vars.FoundInBinding, Equals, DefTiDBFoundInBinding)
 	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
+	c.Assert(vars.AnalyzeVersion, Equals, DefTiDBAnalyzeVersion)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -146,7 +149,8 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "STRICT_TRANS_TABLES")
 	c.Assert(v.StrictSQLMode, IsTrue)
-	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(""))
+	err = SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(""))
+	c.Assert(err, IsNil)
 	c.Assert(v.StrictSQLMode, IsFalse)
 
 	err = SetSessionSystemVar(v, "character_set_connection", types.NewStringDatum("utf8"))
@@ -169,8 +173,8 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	}{
 		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour, nil},
 		{"US/Eastern", "US/Eastern", true, 5 * time.Hour, nil},
-		//TODO: Check it out and reopen this case.
-		//{"SYSTEM", "Local", false, 0},
+		// TODO: Check it out and reopen this case.
+		// {"SYSTEM", "Local", false, 0},
 		{"+10:00", "", true, -10 * time.Hour, nil},
 		{"-6:00", "", true, 6 * time.Hour, nil},
 		{"+14:00", "", true, -14 * time.Hour, nil},
@@ -188,7 +192,8 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v.TimeZone.String(), Equals, tt.expect)
 		if tt.compareValue {
-			SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
+			err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
+			c.Assert(err, IsNil)
 			t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
 			c.Assert(t2.Sub(t1), Equals, tt.diff)
@@ -200,7 +205,8 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	// Test case for sql mode.
 	for str, mode := range mysql.Str2SQLMode {
-		SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(str))
+		err = SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(str))
+		c.Assert(err, IsNil)
 		if modeParts, exists := mysql.CombinationSQLMode[str]; exists {
 			for _, part := range modeParts {
 				mode |= mysql.Str2SQLMode[part]
@@ -221,17 +227,20 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
 	// Combined sql_mode
-	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"))
+	err = SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"))
+	c.Assert(err, IsNil)
 	c.Assert(v.SQLMode, Equals, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes)
 
 	// Test case for tidb_index_serial_scan_concurrency.
 	c.Assert(v.IndexSerialScanConcurrency(), Equals, DefIndexSerialScanConcurrency)
-	SetSessionSystemVar(v, TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
+	err = SetSessionSystemVar(v, TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
+	c.Assert(err, IsNil)
 	c.Assert(v.IndexSerialScanConcurrency(), Equals, 4)
 
 	// Test case for tidb_batch_insert.
 	c.Assert(v.BatchInsert, IsFalse)
-	SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"))
+	err = SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
 	c.Assert(v.BatchInsert, IsTrue)
 
 	c.Assert(v.InitChunkSize, Equals, 32)
@@ -243,32 +252,36 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	// Test case for TiDBConfig session variable.
 	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"))
-	c.Assert(terror.ErrorEqual(err, ErrReadOnly), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrIncorrectScope), IsTrue)
 	val, err = GetSessionSystemVar(v, TiDBConfig)
 	c.Assert(err, IsNil)
 	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, string(bVal))
+	c.Assert(val, Equals, config.HideConfig(string(bVal)))
 
-	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("1"))
+	err = SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBEnableStreaming)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "ON")
 	c.Assert(v.EnableStreaming, Equals, true)
-	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("0"))
+	err = SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBEnableStreaming)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "OFF")
 	c.Assert(v.EnableStreaming, Equals, false)
 
 	c.Assert(v.OptimizerSelectivityLevel, Equals, DefTiDBOptimizerSelectivityLevel)
-	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
+	err = SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
+	c.Assert(err, IsNil)
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
 
 	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
 	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(int64(maxDDLReorgWorkerCount)+1))
+	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(int64(maxDDLReorgWorkerCount)+1))
+	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
 	err = SetSessionSystemVar(v, TiDBRetryLimit, types.NewStringDatum("3"))
@@ -285,6 +298,14 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "ON")
 	c.Assert(v.EnableTablePartition, Equals, "ON")
+
+	c.Assert(v.EnableListTablePartition, Equals, false)
+	err = SetSessionSystemVar(v, TiDBEnableListTablePartition, types.NewStringDatum("on"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBEnableListTablePartition)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ON")
+	c.Assert(v.EnableListTablePartition, Equals, true)
 
 	c.Assert(v.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
 	err = SetSessionSystemVar(v, TiDBOptJoinReorderThreshold, types.NewIntDatum(5))
@@ -307,12 +328,14 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "OFF")
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 
-	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("1"))
+	err = SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "ON")
 	c.Assert(v.LowResolutionTSO, Equals, true)
-	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("0"))
+	err = SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "OFF")
@@ -406,21 +429,24 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "5.0")
 	c.Assert(v.ConcurrencyFactor, Equals, 5.0)
 
-	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("follower"))
+	err = SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("follower"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "follower")
-	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadFollower)
-	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader"))
+	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
+	err = SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader")
-	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadLeader)
-	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader-and-follower"))
+	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadLeader)
+	err = SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader-and-follower"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader-and-follower")
-	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadMixed)
+	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadMixed)
 
 	err = SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("ON"))
 	c.Assert(err, IsNil)
@@ -463,11 +489,10 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'")
 
 	err = SetSessionSystemVar(v, TiDBFoundInPlanCache, types.NewStringDatum("1"))
-	c.Assert(err, IsNil)
-	val, err = GetSessionSystemVar(v, TiDBFoundInPlanCache)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "OFF")
-	c.Assert(v.systems[TiDBFoundInPlanCache], Equals, "ON")
+	c.Assert(err, ErrorMatches, ".*]Variable 'last_plan_from_cache' is a read only variable")
+
+	err = SetSessionSystemVar(v, TiDBFoundInBinding, types.NewStringDatum("1"))
+	c.Assert(err, ErrorMatches, ".*]Variable 'last_plan_from_binding' is a read only variable")
 
 	err = SetSessionSystemVar(v, TiDBEnableChangeColumnType, types.NewStringDatum("ON"))
 	c.Assert(err, IsNil)
@@ -478,6 +503,9 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	err = SetSessionSystemVar(v, "UnknownVariable", types.NewStringDatum("on"))
 	c.Assert(err, ErrorMatches, ".*]Unknown system variable 'UnknownVariable'")
+
+	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, types.NewStringDatum("3"))
+	c.Assert(err, ErrorMatches, ".*Variable 'tidb_analyze_version' can't be set to the value of '3'")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
@@ -535,6 +563,9 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBEnableTablePartition, "OFF", false},
 		{TiDBEnableTablePartition, "AUTO", false},
 		{TiDBEnableTablePartition, "UN", true},
+		{TiDBEnableListTablePartition, "ON", false},
+		{TiDBEnableListTablePartition, "OFF", false},
+		{TiDBEnableListTablePartition, "list", true},
 		{TiDBOptCorrelationExpFactor, "a", true},
 		{TiDBOptCorrelationExpFactor, "-10", true},
 		{TiDBOptCorrelationThreshold, "a", true},
@@ -580,10 +611,16 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBEnableAmendPessimisticTxn, "0", false},
 		{TiDBEnableAmendPessimisticTxn, "1", false},
 		{TiDBEnableAmendPessimisticTxn, "256", true},
+		{TiDBAllowFallbackToTiKV, "", false},
+		{TiDBAllowFallbackToTiKV, "tiflash", false},
+		{TiDBAllowFallbackToTiKV, "  tiflash  ", false},
+		{TiDBAllowFallbackToTiKV, "tikv", true},
+		{TiDBAllowFallbackToTiKV, "tidb", true},
+		{TiDBAllowFallbackToTiKV, "tiflash,tikv,tidb", true},
 	}
 
 	for _, t := range tests {
-		_, err := ValidateSetSystemVar(v, t.key, t.value, ScopeGlobal)
+		_, err := GetSysVar(t.key).Validate(v, t.value, ScopeGlobal)
 		if t.error {
 			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
 		} else {
@@ -637,7 +674,7 @@ func (s *testVarsutilSuite) TestValidateStmtSummary(c *C) {
 	}
 
 	for _, t := range tests {
-		_, err := ValidateSetSystemVar(v, t.key, t.value, t.scope)
+		_, err := GetSysVar(t.key).Validate(v, t.value, t.scope)
 		if t.error {
 			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
 		} else {
@@ -659,6 +696,14 @@ func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
 	c.Assert(vars.windowConcurrency, Equals, wdConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, wdConcurrency)
 
+	mjConcurrency := 2
+	c.Assert(vars.mergeJoinConcurrency, Equals, DefTiDBMergeJoinConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, DefTiDBMergeJoinConcurrency)
+	err = SetSessionSystemVar(vars, TiDBMergeJoinConcurrency, types.NewIntDatum(int64(mjConcurrency)))
+	c.Assert(err, IsNil)
+	c.Assert(vars.mergeJoinConcurrency, Equals, mjConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, mjConcurrency)
+
 	saConcurrency := 2
 	c.Assert(vars.streamAggConcurrency, Equals, DefTiDBStreamAggConcurrency)
 	c.Assert(vars.StreamAggConcurrency(), Equals, DefTiDBStreamAggConcurrency)
@@ -675,6 +720,7 @@ func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
 	c.Assert(vars.indexLookupConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.IndexLookupConcurrency(), Equals, exeConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, wdConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, mjConcurrency)
 	c.Assert(vars.StreamAggConcurrency(), Equals, saConcurrency)
 
 }

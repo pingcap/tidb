@@ -19,12 +19,12 @@ import (
 	"errors"
 	"sort"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
@@ -39,8 +39,6 @@ type SortExec struct {
 	fetched bool
 	schema  *expression.Schema
 
-	keyExprs []expression.Expression
-	keyTypes []*types.FieldType
 	// keyColumns is the column index of the by items.
 	keyColumns []int
 	// keyCmpFuncs is used to compare each ByItem.
@@ -407,10 +405,14 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
-		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-		req.AppendRow(row)
-		e.Idx++
+	if !req.IsFull() {
+		numToAppend := mathutil.Min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
+		rows := make([]chunk.Row, numToAppend)
+		for index := 0; index < numToAppend; index++ {
+			rows[index] = e.rowChunks.GetRow(e.rowPtrs[e.Idx])
+			e.Idx++
+		}
+		req.AppendRows(rows)
 	}
 	return nil
 }

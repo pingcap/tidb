@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	_ "github.com/pingcap/tidb-lightning/lightning" // stub that update go.mod
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	pd "github.com/tikv/pd/client"
 
@@ -40,9 +39,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -165,7 +165,7 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return variable.GoTimeToTS(t1), nil
+	return oracle.GoTimeToTS(t1), nil
 }
 
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
@@ -404,6 +404,7 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 
 // Execute implements glue.Session
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
+	// FIXME: br relies on a deprecated API, it may be unsafe
 	_, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	return err
 }
@@ -465,4 +466,8 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 	case "Size":
 		gs.info.archiveSize = value
 	}
+}
+
+func (gs *tidbGlueSession) GetVersion() string {
+	return "TiDB\n" + printer.GetTiDBInfo()
 }

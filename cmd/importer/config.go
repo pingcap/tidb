@@ -69,7 +69,7 @@ func (c *DBConfig) String() string {
 	return fmt.Sprintf("DBConfig(%+v)", *c)
 }
 
-//DDLConfig is the configuration for ddl statements.
+// DDLConfig is the configuration for ddl statements.
 type DDLConfig struct {
 	TableSQL string `toml:"table-sql" json:"table-sql"`
 

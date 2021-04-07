@@ -48,9 +48,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	kvstore "github.com/pingcap/tidb/store"
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/signal"
-	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -150,13 +149,6 @@ var (
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
 )
 
-var (
-	storage  kv.Storage
-	dom      *domain.Domain
-	svr      *server.Server
-	graceful bool
-)
-
 func main() {
 	flag.Parse()
 	if *version {
@@ -165,7 +157,7 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
-	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
@@ -180,11 +172,18 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-	createStoreAndDomain()
-	createServer()
-	signal.SetupSignalHandler(serverShutdown)
-	runServer()
-	cleanup()
+
+	storage, dom := createStoreAndDomain()
+	svr := createServer(storage, dom)
+
+	exited := make(chan struct{})
+	signal.SetupSignalHandler(func(graceful bool) {
+		svr.Close()
+		cleanup(svr, storage, dom, graceful)
+		close(exited)
+	})
+	terror.MustNil(svr.Run())
+	<-exited
 	syncLog()
 }
 
@@ -247,9 +246,8 @@ func setHeapProfileTracker() {
 }
 
 func registerStores() {
-	err := kvstore.Register("tikv", tikv.Driver{})
+	err := kvstore.Register("tikv", driver.TiKVDriver{})
 	terror.MustNil(err)
-	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = kvstore.Register("mocktikv", mockstore.MockTiKVDriver{})
 	terror.MustNil(err)
 	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})
@@ -260,15 +258,16 @@ func registerMetrics() {
 	metrics.RegisterMetrics()
 }
 
-func createStoreAndDomain() {
+func createStoreAndDomain() (kv.Storage, *domain.Domain) {
 	cfg := config.GetGlobalConfig()
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
-	storage, err = kvstore.New(fullPath)
+	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
-	dom, err = session.BootstrapSession(storage)
+	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
+	return storage, dom
 }
 
 func setupBinlogClient() {
@@ -366,45 +365,6 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 	return flag.Bool(name, defaultVal, usage)
 }
 
-func reloadConfig(nc, c *config.Config) {
-	// Just a part of config items need to be reload explicitly.
-	// Some of them like OOMAction are always used by getting from global config directly
-	// like config.GetGlobalConfig().OOMAction.
-	// These config items will become available naturally after the global config pointer
-	// is updated in function ReloadGlobalConfig.
-	if nc.Performance.ServerMemoryQuota != c.Performance.ServerMemoryQuota {
-		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.ServerMemoryQuota)
-	}
-	if nc.Performance.CrossJoin != c.Performance.CrossJoin {
-		plannercore.AllowCartesianProduct.Store(nc.Performance.CrossJoin)
-	}
-	if nc.Performance.FeedbackProbability != c.Performance.FeedbackProbability {
-		statistics.FeedbackProbability.Store(nc.Performance.FeedbackProbability)
-	}
-	if nc.Performance.QueryFeedbackLimit != c.Performance.QueryFeedbackLimit {
-		statistics.MaxQueryFeedbackCount.Store(int64(nc.Performance.QueryFeedbackLimit))
-	}
-	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
-		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
-	}
-	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
-		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
-		metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
-	}
-	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
-		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
-	}
-
-	if nc.PreparedPlanCache.Enabled != c.PreparedPlanCache.Enabled {
-		plannercore.SetPreparedPlanCache(nc.PreparedPlanCache.Enabled)
-	}
-	if nc.Log.Level != c.Log.Level {
-		if err := logutil.SetLevel(nc.Log.Level); err != nil {
-			logutil.BgLogger().Error("update log level error", zap.Error(err))
-		}
-	}
-}
-
 // overrideConfig considers command arguments and overrides some config items in the Config.
 func overrideConfig(cfg *config.Config) {
 	actualFlags := make(map[string]bool)
@@ -417,6 +377,11 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Host = *host
 	}
 	if actualFlags[nmAdvertiseAddress] {
+		var err error
+		if len(strings.Split(*advertiseAddress, " ")) > 1 {
+			err = errors.Errorf("Only support one advertise-address")
+		}
+		terror.MustNil(err)
 		cfg.AdvertiseAddress = *advertiseAddress
 	}
 	if len(cfg.AdvertiseAddress) == 0 && cfg.Host == "0.0.0.0" {
@@ -558,7 +523,6 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
-	variable.SetSysVar(variable.TIDBMemQuotaStatistics, strconv.FormatInt(cfg.MemQuotaStatistics, 10))
 	variable.SetSysVar("lower_case_table_names", strconv.Itoa(cfg.LowerCaseTableNames))
 	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(config.GetGlobalConfig().Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
@@ -566,6 +530,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.DataDir, cfg.Path)
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ", "))
+	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
@@ -631,24 +596,20 @@ func printInfo() {
 	log.SetLevel(level)
 }
 
-func createServer() {
+func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	cfg := config.GetGlobalConfig()
 	driver := server.NewTiDBDriver(storage)
-	var err error
-	svr, err = server.NewServer(cfg, driver)
+	svr, err := server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
-	terror.MustNil(err, closeDomainAndStorage)
+	if err != nil {
+		closeDomainAndStorage(storage, dom)
+		log.Fatal("failed to create the server", zap.Error(err), zap.Stack("stack"))
+	}
 	svr.SetDomain(dom)
 	svr.InitGlobalConnID(dom.ServerID)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
-}
-
-func serverShutdown(isgraceful bool) {
-	if isgraceful {
-		graceful = true
-	}
-	svr.Close()
+	return svr
 }
 
 func setupMetrics() {
@@ -683,26 +644,21 @@ func setupTracing() {
 	opentracing.SetGlobalTracer(tracer)
 }
 
-func runServer() {
-	err := svr.Run()
-	terror.MustNil(err)
-}
-
-func closeDomainAndStorage() {
+func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	atomic.StoreUint32(&tikv.ShuttingDown, 1)
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
 }
 
-func cleanup() {
+func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
 	if graceful {
 		svr.GracefulDown(context.Background(), nil)
 	} else {
 		svr.TryGracefulDown()
 	}
 	plugin.Shutdown(context.Background())
-	closeDomainAndStorage()
+	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()
 }
 

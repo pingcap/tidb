@@ -143,7 +143,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	txnCtx.InfoSchema = is
 	txnCtx.SchemaVersion = is.SchemaMetaVersion()
 	// DDL will force commit old transaction, after DDL, in transaction status should be false.
-	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
+	e.ctx.GetSessionVars().SetInTxn(false)
 	return nil
 }
 
@@ -319,8 +319,12 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),
 			)
-			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
-			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+			exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+			stmt, err := exec.ParseWithParams(context.TODO(), "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+			if err != nil {
+				return err
+			}
+			_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
 			if err != nil {
 				return err
 			}
@@ -599,7 +603,7 @@ func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
 }
 
-func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
+func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 	if !config.TableLockEnabled() {
 		return nil
 	}

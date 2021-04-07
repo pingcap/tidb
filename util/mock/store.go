@@ -37,8 +37,10 @@ func (s *Store) GetOracle() oracle.Oracle { return nil }
 // Begin implements kv.Storage interface.
 func (s *Store) Begin() (kv.Transaction, error) { return nil, nil }
 
-// BeginWithStartTS implements kv.Storage interface.
-func (s *Store) BeginWithStartTS(startTS uint64) (kv.Transaction, error) { return s.Begin() }
+// BeginWithOption implements kv.Storage interface.
+func (s *Store) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+	return s.Begin()
+}
 
 // GetSnapshot implements kv.Storage interface.
 func (s *Store) GetSnapshot(ver kv.Version) kv.Snapshot { return nil }
@@ -50,7 +52,7 @@ func (s *Store) Close() error { return nil }
 func (s *Store) UUID() string { return "mock" }
 
 // CurrentVersion implements kv.Storage interface.
-func (s *Store) CurrentVersion() (kv.Version, error) { return kv.Version{}, nil }
+func (s *Store) CurrentVersion(txnScope string) (kv.Version, error) { return kv.Version{}, nil }
 
 // SupportDeleteRange implements kv.Storage interface.
 func (s *Store) SupportDeleteRange() bool { return false }

@@ -530,10 +530,11 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
 			task.encodedLookUpKeys[chkIdx].AppendBytes(0, keyBuf)
 			if iw.hasPrefixCol {
-				for i := range iw.outerCtx.keyCols {
+				for i, outerOffset := range iw.outerCtx.keyCols {
 					// If it's a prefix column. Try to fix it.
-					if iw.colLens[i] != types.UnspecifiedLength {
-						ranger.CutDatumByPrefixLen(&dLookUpKey[i], iw.colLens[i], iw.rowTypes[iw.keyCols[i]])
+					joinKeyColPrefixLen := iw.colLens[outerOffset]
+					if joinKeyColPrefixLen != types.UnspecifiedLength {
+						ranger.CutDatumByPrefixLen(&dLookUpKey[i], joinKeyColPrefixLen, iw.rowTypes[iw.keyCols[i]])
 					}
 				}
 				// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
@@ -742,7 +743,7 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if e.innerWorker.totalTime > 0 {
 		buf.WriteString("inner:{total:")
-		buf.WriteString(time.Duration(e.innerWorker.totalTime).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.totalTime)))
 		buf.WriteString(", concurrency:")
 		if e.concurrency > 0 {
 			buf.WriteString(strconv.Itoa(e.concurrency))
@@ -752,20 +753,20 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		buf.WriteString(", task:")
 		buf.WriteString(strconv.FormatInt(e.innerWorker.task, 10))
 		buf.WriteString(", construct:")
-		buf.WriteString(time.Duration(e.innerWorker.construct).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.construct)))
 		buf.WriteString(", fetch:")
-		buf.WriteString(time.Duration(e.innerWorker.fetch).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.fetch)))
 		buf.WriteString(", build:")
-		buf.WriteString(time.Duration(e.innerWorker.build).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.build)))
 		if e.innerWorker.join > 0 {
 			buf.WriteString(", join:")
-			buf.WriteString(time.Duration(e.innerWorker.join).String())
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.join)))
 		}
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {
 		buf.WriteString(", probe:")
-		buf.WriteString(time.Duration(e.probe).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
 	}
 	return buf.String()
 }
