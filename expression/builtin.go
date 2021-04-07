@@ -149,6 +149,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	}
 
 	for i := range args {
+		var allowYear bool
 		switch argTps[i] {
 		case types.ETInt:
 			args[i] = WrapWithCastAsInt(ctx, args[i])
@@ -159,13 +160,23 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
 		case types.ETDatetime:
+			if args[i].GetType().Tp == mysql.TypeYear && funcName != ast.EQ {
+				allowYear = true
+			}
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
+			if args[i].GetType().Tp == mysql.TypeYear && funcName != ast.EQ {
+				allowYear = true
+			}
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeTimestamp))
 		case types.ETDuration:
 			args[i] = WrapWithCastAsDuration(ctx, args[i])
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
+		}
+		if allowYear {
+			f := args[i].(*ScalarFunction).Function
+			f.(*builtinCastIntAsTimeSig).allowYear = true
 		}
 	}
 

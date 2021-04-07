@@ -383,7 +383,7 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 			continue
 		}
 
-		if b.args[0].GetType().Tp == mysql.TypeYear {
+		if b.args[0].GetType().Tp == mysql.TypeYear && b.allowYear {
 			tm, err = types.ParseTimeFromYear(stmt, i64s[i])
 		} else {
 			tm, err = types.ParseTimeFromNum(stmt, i64s[i], b.tp.Tp, fsp)

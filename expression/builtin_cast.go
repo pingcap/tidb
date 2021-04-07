@@ -334,7 +334,7 @@ func (c *castAsTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
-		sig = &builtinCastIntAsTimeSig{bf}
+		sig = &builtinCastIntAsTimeSig{bf, false}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsTime)
 	case types.ETReal:
 		sig = &builtinCastRealAsTimeSig{bf}
@@ -564,6 +564,8 @@ func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNul
 
 type builtinCastIntAsTimeSig struct {
 	baseBuiltinFunc
+
+	allowYear bool
 }
 
 func (b *builtinCastIntAsTimeSig) Clone() builtinFunc {
@@ -578,7 +580,7 @@ func (b *builtinCastIntAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNul
 		return res, isNull, err
 	}
 
-	if b.args[0].GetType().Tp == mysql.TypeYear {
+	if b.args[0].GetType().Tp == mysql.TypeYear && b.allowYear {
 		res, err = types.ParseTimeFromYear(b.ctx.GetSessionVars().StmtCtx, val)
 	} else {
 		res, err = types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Tp, int8(b.tp.Decimal))
