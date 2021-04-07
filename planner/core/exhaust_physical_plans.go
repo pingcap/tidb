@@ -1025,13 +1025,16 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 				if ts.schema.ColumnIndex(col) == -1 {
 					ts.Schema().Append(col)
 					ts.Columns = append(ts.Columns, col.ToInfo())
-					cop.doubleReadNeedProj = true
+					cop.needExtraProj = true
 				}
 			}
 		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
-			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
+			cop.extraHandleCol, cop.needExtraProj = ts.appendExtraHandleCol(ds)
+		}
+		if cop.needExtraProj {
+			cop.originSchema = ds.schema
 		}
 		cop.tablePlan = ts
 	}

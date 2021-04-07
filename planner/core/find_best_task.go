@@ -821,7 +821,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if prop.ExpectedCnt < ds.stats.RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.stats.RowCount
 	}
-	ts, partialCost, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
+	ts, partialCost, needExtraProj, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
 	if err != nil {
 		return nil, err
 	}
@@ -829,6 +829,10 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.cst = totalCost
+	cop.needExtraProj = needExtraProj
+	if needExtraProj {
+		cop.originSchema = ds.schema
+	}
 	task = cop.convertToRootTask(ds.ctx)
 	return task, nil
 }
@@ -887,8 +891,9 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	return tablePlan, partialCost
 }
 
-func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression, totalRowCount float64) (PhysicalPlan, float64, error) {
+func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression, totalRowCount float64) (PhysicalPlan, float64, bool, error) {
 	var partialCost float64
+	var needExtraProj bool
 	sessVars := ds.ctx.GetSessionVars()
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -907,10 +912,20 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		}
 		ts.HandleCols = NewIntHandleCols(handleCol)
 	}
+	if ds.tableInfo.IsCommonHandle {
+		commonHandle := ds.handleCols.(*CommonHandleCols)
+		for _, col := range commonHandle.columns {
+			if ts.schema.ColumnIndex(col) == -1 {
+				ts.Schema().Append(col)
+				ts.Columns = append(ts.Columns, col.ToInfo())
+				needExtraProj = true
+			}
+		}
+	}
 	var err error
 	ts.HandleCols, err = ts.HandleCols.ResolveIndices(ts.schema)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -934,9 +949,9 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		}
 		sel := PhysicalSelection{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
 		sel.SetChildren(ts)
-		return sel, partialCost, nil
+		return sel, partialCost, needExtraProj, nil
 	}
-	return ts, partialCost, nil
+	return ts, partialCost, needExtraProj, nil
 }
 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
@@ -1033,7 +1048,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 				ts := cop.tablePlan.(*PhysicalTableScan)
 				ts.Schema().Append(col)
 				ts.Columns = append(ts.Columns, col.ToInfo())
-				cop.doubleReadNeedProj = true
+				cop.needExtraProj = true
 			}
 		}
 	}
@@ -1041,13 +1056,16 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
 			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
 			cop.extraHandleCol = col
-			cop.doubleReadNeedProj = isNew
+			cop.needExtraProj = isNew
 		}
 		cop.keepOrder = true
 		// IndexScan on partition table can't keep order.
 		if ds.tableInfo.GetPartitionInfo() != nil {
 			return invalidTask, nil
 		}
+	}
+	if cop.needExtraProj {
+		cop.originSchema = ds.schema
 	}
 	// prop.IsEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
