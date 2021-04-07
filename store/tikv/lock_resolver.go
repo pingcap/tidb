@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"container/list"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"sync"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -169,9 +169,9 @@ type Lock struct {
 func (l *Lock) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	buf.WriteString("key: ")
-	prettyWriteKey(buf, l.Key)
+	buf.WriteString(hex.EncodeToString(l.Key))
 	buf.WriteString(", primary: ")
-	prettyWriteKey(buf, l.Primary)
+	buf.WriteString(hex.EncodeToString(l.Primary))
 	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, minCommitTs:%d, ttl: %d, type: %s, UseAsyncCommit: %t",
 		buf.String(), l.TxnID, l.LockForUpdateTS, l.MinCommitTS, l.TTL, l.LockType, l.UseAsyncCommit)
 }
@@ -403,7 +403,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				// This could avoids the deadlock scene of two large transaction.
 				if l.LockType != kvrpcpb.Op_PessimisticLock && l.TxnID > callerStartTS {
 					metrics.LockResolverCountWithWriteConflict.Inc()
-					return tidbkv.ErrWriteConflict.GenWithStackByArgs(callerStartTS, l.TxnID, status.commitTS, l.Key)
+					return kv.NewErrWriteConfictWithArgs(callerStartTS, l.TxnID, status.commitTS, l.Key)
 				}
 			} else {
 				if status.action != kvrpcpb.Action_MinCommitTSPushed {

@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -3015,6 +3016,75 @@ func (s *testSuite) TestTiDBLastTxnInfo(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 }
 
+func (s *testSerialSuite) TestTiDBLastTxnInfoCommitMode(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
+	})
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"async_commit"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "false")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 1")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Assert(rows[0][0], Equals, `"1pc"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "false")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "false")
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+	})
+
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "true")
+	c.Assert(rows[0][2], Equals, "false")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 1")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "true")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	tk.MustExec("set @@tidb_enable_1pc = 1")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "true")
+	c.Assert(rows[0][2], Equals, "true")
+}
+
 func (s *testSuite) TestTiDBLastQueryInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5479,6 +5549,22 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
 }
 
+func (s *testSuiteP2) TestIssue23567(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	oriProbability := statistics.FeedbackProbability.Load()
+	statistics.FeedbackProbability.Store(1.0)
+	defer func() { statistics.FeedbackProbability.Store(oriProbability) }()
+	failpoint.Enable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect", `return("")`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned, b int, primary key(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("analyze table t")
+	// The SQL should not panic.
+	tk.MustQuery("select count(distinct b) from t")
+	failpoint.Disable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect")
+}
+
 func (s *testSuite) TestSummaryFailedUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6748,7 +6834,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("drop table if exists t1,t2,t3,t4")
 	tk.MustExec(`create table t1(
 	a int(11),
 	b varchar(10) DEFAULT NULL,
@@ -6800,6 +6886,11 @@ func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 
 	tk.MustExec("update t2 partition(p0) set a = 3 where a = 2")
 	tk.MustExec("update t2 partition(p0, p3) set a = 33 where a = 1")
+
+	tk.MustExec("create table t4(a int primary key, b int) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t4(a, b) values(1, 1),(2, 2),(3, 3);")
+	err = tk.ExecToErr("update t4 partition(p0) set a = 5 where a = 2")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
 }
 
 func (s *testSuiteP2) TestApplyCache(c *C) {
@@ -7847,7 +7938,7 @@ func (s *testSerialSuite) TestStaleReadKVRequest(c *C) {
 		c.Log(testcase.name)
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v")`, testcase.txnScope))
+		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`)
 		tk.MustQuery(testcase.sql)
@@ -7974,17 +8065,18 @@ func (s *testSuiteP1) TestIssue22941(c *C) {
 		PRIMARY KEY (mid),
 		KEY ind_bm_parent (ParentId,mid)
 	)`)
-
+	// mp should have more columns than m
 	tk.MustExec(`CREATE TABLE mp (
 		mpid bigint(20) unsigned NOT NULL DEFAULT '0',
 		mid varchar(50) DEFAULT NULL COMMENT '模块主键',
+		sid int,
 	PRIMARY KEY (mpid)
 	);`)
 
-	tk.MustExec(`insert into mp values("1","1");`)
+	tk.MustExec(`insert into mp values("1","1","0");`)
 	tk.MustExec(`insert into m values("0", "0");`)
-	rs := tk.MustQuery(`SELECT ( SELECT COUNT(1) FROM m WHERE ParentId = c.mid ) expand,  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
-	rs.Check(testkit.Rows("1 <nil> 1 0"))
+	rs := tk.MustQuery(`SELECT ( SELECT COUNT(1) FROM m WHERE ParentId = c.mid ) expand,  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL, sid FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
+	rs.Check(testkit.Rows("1 <nil> 1 0 <nil>"))
 
 	rs = tk.MustQuery(`SELECT  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
 	rs.Check(testkit.Rows("<nil> 1 0"))
