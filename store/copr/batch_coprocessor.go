@@ -175,7 +175,8 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
 	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), tikv.NewKeyRanges(req.KeyRanges), req.StoreType)
+	ranges := toTiKVKeyRanges(req.KeyRanges)
+	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), ranges, req.StoreType)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -310,9 +311,9 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *tikv.Backoffer, t
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
-	var ranges []kv.KeyRange
+	var ranges []tikvstore.KeyRange
 	for _, taskCtx := range batchTask.copTasks {
-		taskCtx.task.ranges.Do(func(ran *kv.KeyRange) {
+		taskCtx.task.ranges.Do(func(ran *tikvstore.KeyRange) {
 			ranges = append(ranges, *ran)
 		})
 	}
@@ -435,4 +436,12 @@ func (b *batchCopIterator) sendToRespCh(resp *batchCopResponse) (exit bool) {
 		exit = true
 	}
 	return
+}
+
+func toTiKVKeyRanges(ranges []kv.KeyRange) *tikv.KeyRanges {
+	res := make([]tikvstore.KeyRange, len(ranges))
+	for id, r := range ranges {
+		res[id] = tikvstore.KeyRange{StartKey: tikvstore.Key(r.StartKey), EndKey: tikvstore.Key(r.EndKey)}
+	}
+	return tikv.NewKeyRanges(res)
 }

@@ -15,7 +15,6 @@ package unionstore
 
 import (
 	"bytes"
-	"context"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -153,8 +152,8 @@ func (db *MemDB) DiscardValues() {
 }
 
 // InspectStage used to inspect the value updates in the given stage.
-func (db *MemDB) InspectStage(handle tidbkv.StagingHandle, f func(tidbkv.Key, kv.KeyFlags, []byte)) {
-	idx := int(handle) - 1
+func (db *MemDB) InspectStage(handle int, f func(kv.Key, kv.KeyFlags, []byte)) {
+	idx := handle - 1
 	tail := db.vlog.checkpoint()
 	head := db.stages[idx]
 	db.vlog.inspectKVInLog(db, &head, &tail, f)
@@ -162,7 +161,7 @@ func (db *MemDB) InspectStage(handle tidbkv.StagingHandle, f func(tidbkv.Key, kv
 
 // Get gets the value for key k from kv store.
 // If corresponding kv pair does not exist, it returns nil and ErrNotExist.
-func (db *MemDB) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
+func (db *MemDB) Get(key []byte) ([]byte, error) {
 	if db.vlogInvalid {
 		// panic for easier debugging.
 		panic("vlog is resetted")
@@ -180,7 +179,7 @@ func (db *MemDB) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
 }
 
 // SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
-func (db *MemDB) SelectValueHistory(key tidbkv.Key, predicate func(value []byte) bool) ([]byte, error) {
+func (db *MemDB) SelectValueHistory(key []byte, predicate func(value []byte) bool) ([]byte, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
 		return nil, tidbkv.ErrNotExist
@@ -199,7 +198,7 @@ func (db *MemDB) SelectValueHistory(key tidbkv.Key, predicate func(value []byte)
 }
 
 // GetFlags returns the latest flags associated with key.
-func (db *MemDB) GetFlags(key tidbkv.Key) (kv.KeyFlags, error) {
+func (db *MemDB) GetFlags(key []byte) (kv.KeyFlags, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
 		return 0, tidbkv.ErrNotExist
@@ -208,14 +207,14 @@ func (db *MemDB) GetFlags(key tidbkv.Key) (kv.KeyFlags, error) {
 }
 
 // UpdateFlags update the flags associated with key.
-func (db *MemDB) UpdateFlags(key tidbkv.Key, ops ...kv.FlagsOp) {
+func (db *MemDB) UpdateFlags(key []byte, ops ...kv.FlagsOp) {
 	err := db.set(key, nil, ops...)
 	_ = err // set without value will never fail
 }
 
 // Set sets the value for key k as v into kv store.
 // v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
-func (db *MemDB) Set(key tidbkv.Key, value []byte) error {
+func (db *MemDB) Set(key []byte, value []byte) error {
 	if len(value) == 0 {
 		return tidbkv.ErrCannotSetNilValue
 	}
@@ -223,7 +222,7 @@ func (db *MemDB) Set(key tidbkv.Key, value []byte) error {
 }
 
 // SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
-func (db *MemDB) SetWithFlags(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) error {
+func (db *MemDB) SetWithFlags(key []byte, value []byte, ops ...kv.FlagsOp) error {
 	if len(value) == 0 {
 		return tidbkv.ErrCannotSetNilValue
 	}
@@ -231,12 +230,12 @@ func (db *MemDB) SetWithFlags(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) e
 }
 
 // Delete removes the entry for key k from kv store.
-func (db *MemDB) Delete(key tidbkv.Key) error {
+func (db *MemDB) Delete(key []byte) error {
 	return db.set(key, tombstone)
 }
 
 // DeleteWithFlags delete key with the given KeyFlags
-func (db *MemDB) DeleteWithFlags(key tidbkv.Key, ops ...kv.FlagsOp) error {
+func (db *MemDB) DeleteWithFlags(key []byte, ops ...kv.FlagsOp) error {
 	return db.set(key, tombstone, ops...)
 }
 
@@ -273,7 +272,7 @@ func (db *MemDB) Dirty() bool {
 	return db.dirty
 }
 
-func (db *MemDB) set(key tidbkv.Key, value []byte, ops ...kv.FlagsOp) error {
+func (db *MemDB) set(key kv.Key, value []byte, ops ...kv.FlagsOp) error {
 	if db.vlogInvalid {
 		// panic for easier debugging.
 		panic("vlog is resetted")
@@ -337,7 +336,7 @@ func (db *MemDB) setValue(x memdbNodeAddr, value []byte) {
 
 // traverse search for and if not found and insert is true, will add a new node in.
 // Returns a pointer to the new node, or the node found.
-func (db *MemDB) traverse(key tidbkv.Key, insert bool) memdbNodeAddr {
+func (db *MemDB) traverse(key kv.Key, insert bool) memdbNodeAddr {
 	x := db.getRoot()
 	y := memdbNodeAddr{nil, nullAddr}
 	found := false
@@ -735,7 +734,7 @@ func (db *MemDB) getRoot() memdbNodeAddr {
 	return db.getNode(db.root)
 }
 
-func (db *MemDB) allocNode(key tidbkv.Key) memdbNodeAddr {
+func (db *MemDB) allocNode(key kv.Key) memdbNodeAddr {
 	db.size += len(key)
 	db.count++
 	x, xn := db.allocator.allocNode(key)
@@ -788,7 +787,7 @@ func (n *memdbNode) setBlack() {
 	n.flags &= ^nodeColorBit
 }
 
-func (n *memdbNode) getKey() tidbkv.Key {
+func (n *memdbNode) getKey() kv.Key {
 	var ret []byte
 	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&ret))
 	hdr.Data = uintptr(unsafe.Pointer(&n.flags)) + 1

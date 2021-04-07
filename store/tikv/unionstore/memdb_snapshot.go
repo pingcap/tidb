@@ -14,8 +14,6 @@
 package unionstore
 
 import (
-	"context"
-
 	tidbkv "github.com/pingcap/tidb/kv"
 )
 
@@ -28,7 +26,7 @@ func (db *MemDB) SnapshotGetter() Getter {
 }
 
 // SnapshotIter returns a Iterator for a snapshot of MemBuffer.
-func (db *MemDB) SnapshotIter(start, end tidbkv.Key) Iterator {
+func (db *MemDB) SnapshotIter(start, end []byte) Iterator {
 	it := &memdbSnapIter{
 		MemdbIterator: &MemdbIterator{
 			db:    db,
@@ -53,7 +51,7 @@ type memdbSnapGetter struct {
 	cp memdbCheckpoint
 }
 
-func (snap *memdbSnapGetter) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
+func (snap *memdbSnapGetter) Get(key []byte) ([]byte, error) {
 	x := snap.db.traverse(key, false)
 	if x.isNull() {
 		return nil, tidbkv.ErrNotExist

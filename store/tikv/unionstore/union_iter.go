@@ -14,7 +14,7 @@
 package unionstore
 
 import (
-	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -162,7 +162,7 @@ func (iter *UnionIter) Value() []byte {
 }
 
 // Key implements the Iterator Key interface.
-func (iter *UnionIter) Key() tidbkv.Key {
+func (iter *UnionIter) Key() kv.Key {
 	if !iter.curIsDirty {
 		return iter.snapshotIt.Key()
 	}

@@ -32,11 +32,11 @@ type Scanner struct {
 	batchSize    int
 	cache        []*pb.KvPair
 	idx          int
-	nextStartKey tidbkv.Key
-	endKey       tidbkv.Key
+	nextStartKey kv.Key
+	endKey       kv.Key
 
 	// Use for reverse scan.
-	nextEndKey tidbkv.Key
+	nextEndKey kv.Key
 	reverse    bool
 
 	valid bool
@@ -70,7 +70,7 @@ func (s *Scanner) Valid() bool {
 }
 
 // Key return key.
-func (s *Scanner) Key() tidbkv.Key {
+func (s *Scanner) Key() kv.Key {
 	if s.valid {
 		return s.cache[s.idx].Key
 	}
@@ -110,8 +110,8 @@ func (s *Scanner) Next() error {
 		}
 
 		current := s.cache[s.idx]
-		if (!s.reverse && (len(s.endKey) > 0 && tidbkv.Key(current.Key).Cmp(s.endKey) >= 0)) ||
-			(s.reverse && len(s.nextStartKey) > 0 && tidbkv.Key(current.Key).Cmp(s.nextStartKey) < 0) {
+		if (!s.reverse && (len(s.endKey) > 0 && kv.Key(current.Key).Cmp(s.endKey) >= 0)) ||
+			(s.reverse && len(s.nextStartKey) > 0 && kv.Key(current.Key).Cmp(s.nextStartKey) < 0) {
 			s.eof = true
 			s.Close()
 			return nil
@@ -293,7 +293,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// more data.
 		lastKey := kvPairs[len(kvPairs)-1].GetKey()
 		if !s.reverse {
-			s.nextStartKey = tidbkv.Key(lastKey).Next()
+			s.nextStartKey = kv.Key(lastKey).Next()
 		} else {
 			s.nextEndKey = lastKey
 		}

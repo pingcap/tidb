@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -592,8 +591,13 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 // KeyLocation is the region and range that a key is located.
 type KeyLocation struct {
 	Region   RegionVerID
-	StartKey tidbkv.Key
-	EndKey   tidbkv.Key
+	StartKey kv.Key
+	EndKey   kv.Key
+}
+
+// NewKeyLocation creates a KeyLocation.
+func NewKeyLocation(region RegionVerID, start, end []byte) *KeyLocation {
+	return &KeyLocation{Region: region, StartKey: start, EndKey: end}
 }
 
 // Contains checks if key is in [StartKey, EndKey).

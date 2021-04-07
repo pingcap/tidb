@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -73,11 +72,11 @@ func (s *testScanSuite) beginTxn(c *C) *tikv.KVTxn {
 	return txn
 }
 
-func (s *testScanSuite) makeKey(i int) tidbkv.Key {
+func (s *testScanSuite) makeKey(i int) kv.Key {
 	var key []byte
 	key = append(key, s.recordPrefix...)
 	key = append(key, []byte(fmt.Sprintf("%10d", i))...)
-	return tidbkv.Key(key)
+	return kv.Key(key)
 }
 
 func (s *testScanSuite) makeValue(i int) []byte {
@@ -94,7 +93,7 @@ func (s *testScanSuite) TestScan(c *C) {
 					zap.Int("i", i),
 					zap.Int("rowNum", rowNum),
 					zap.Stringer("obtained key", k),
-					zap.Stringer("obtained val", tidbkv.Key(scan.Value())),
+					zap.Stringer("obtained val", kv.Key(scan.Value())),
 					zap.Stringer("expected", expectedKey),
 					zap.Bool("keyOnly", keyOnly))
 			}

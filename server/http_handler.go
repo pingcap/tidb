@@ -270,7 +270,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 		if len(curRegion.EndKey) == 0 {
 			return nil, nil
 		}
-		startKey = curRegion.EndKey
+		startKey = kv.Key(curRegion.EndKey)
 	}
 }
 

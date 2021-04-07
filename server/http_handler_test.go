@@ -111,11 +111,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(eTableID)
 	endKey := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 
-	region := &tikv.KeyLocation{
-		Region:   tikv.RegionVerID{},
-		StartKey: startKey,
-		EndKey:   endKey,
-	}
+	region := tikv.NewKeyLocation(tikv.RegionVerID{}, startKey, endKey)
 	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
 	c.Assert(r.First.IndexID, Equals, sIndex)
@@ -176,10 +172,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionCommonHandleRange(c *C) {
 
 	startKey := tablecodec.EncodeRowKey(sTableID, encodedValue)
 
-	region := &tikv.KeyLocation{
-		Region:   tikv.RegionVerID{},
-		StartKey: startKey,
-	}
+	region := tikv.NewKeyLocation(tikv.RegionVerID{}, startKey, nil)
 	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
 	c.Assert(r.First.IsRecord, IsTrue)
@@ -194,11 +187,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	sTableID := int64(15)
 	startKey := tablecodec.GenTableRecordPrefix(sTableID)
 	endKey := []byte("z_aaaaafdfd")
-	region := &tikv.KeyLocation{
-		Region:   tikv.RegionVerID{},
-		StartKey: startKey,
-		EndKey:   endKey,
-	}
+	region := tikv.NewKeyLocation(tikv.RegionVerID{}, startKey, endKey)
 	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
 	c.Assert(r.First.IsRecord, IsTrue)
@@ -211,11 +200,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
 	eTableID := int64(9)
 	startKey := []byte("m_aaaaafdfd")
 	endKey := tablecodec.GenTableRecordPrefix(eTableID)
-	region := &tikv.KeyLocation{
-		Region:   tikv.RegionVerID{},
-		StartKey: startKey,
-		EndKey:   endKey,
-	}
+	region := tikv.NewKeyLocation(tikv.RegionVerID{}, startKey, endKey)
 	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
 	c.Assert(r.First.IsRecord, IsFalse)

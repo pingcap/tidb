@@ -16,26 +16,27 @@ package unionstore
 import (
 	"context"
 
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type mockSnapshot struct {
 	store *MemDB
 }
 
-func (s *mockSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	return s.store.Get(ctx, k)
+func (s *mockSnapshot) Get(_ context.Context, k kv.Key) ([]byte, error) {
+	return s.store.Get(k)
 }
 
 func (s *mockSnapshot) SetPriority(priority int) {
 
 }
 
-func (s *mockSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (s *mockSnapshot) BatchGet(_ context.Context, keys []kv.Key) (map[string][]byte, error) {
 	m := make(map[string][]byte, len(keys))
 	for _, k := range keys {
-		v, err := s.store.Get(ctx, k)
-		if kv.IsErrNotFound(err) {
+		v, err := s.store.Get(k)
+		if tidbkv.IsErrNotFound(err) {
 			continue
 		}
 		if err != nil {

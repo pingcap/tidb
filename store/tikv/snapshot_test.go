@@ -70,7 +70,7 @@ func (s *testSnapshotSuite) beginTxn(c *C) *KVTxn {
 	return txn
 }
 
-func (s *testSnapshotSuite) checkAll(keys []tidbkv.Key, c *C) {
+func (s *testSnapshotSuite) checkAll(keys []kv.Key, c *C) {
 	txn := s.beginTxn(c)
 	snapshot := newTiKVSnapshot(s.store, txn.StartTS(), 0)
 	m, err := snapshot.BatchGet(context.Background(), keys)
@@ -93,7 +93,7 @@ func (s *testSnapshotSuite) checkAll(keys []tidbkv.Key, c *C) {
 	c.Assert(m, HasLen, cnt)
 }
 
-func (s *testSnapshotSuite) deleteKeys(keys []tidbkv.Key, c *C) {
+func (s *testSnapshotSuite) deleteKeys(keys []kv.Key, c *C) {
 	txn := s.beginTxn(c)
 	for _, k := range keys {
 		err := txn.Delete(k)
@@ -126,21 +126,21 @@ type contextKey string
 
 func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	txn := s.beginTxn(c)
-	c.Assert(txn.Set(tidbkv.Key("x"), []byte("x")), IsNil)
-	c.Assert(txn.Delete(tidbkv.Key("y")), IsNil) // store data is affected by other tests.
+	c.Assert(txn.Set(kv.Key("x"), []byte("x")), IsNil)
+	c.Assert(txn.Delete(kv.Key("y")), IsNil) // store data is affected by other tests.
 	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	txn = s.beginTxn(c)
 	snapshot := newTiKVSnapshot(s.store, txn.StartTS(), 0)
-	_, err := snapshot.BatchGet(context.Background(), []tidbkv.Key{tidbkv.Key("x"), tidbkv.Key("y")})
+	_, err := snapshot.BatchGet(context.Background(), []kv.Key{kv.Key("x"), kv.Key("y")})
 	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail", `return(true)`), IsNil)
 	ctx := context.WithValue(context.Background(), contextKey("TestSnapshotCache"), true)
-	_, err = snapshot.Get(ctx, tidbkv.Key("x"))
+	_, err = snapshot.Get(ctx, kv.Key("x"))
 	c.Assert(err, IsNil)
 
-	_, err = snapshot.Get(ctx, tidbkv.Key("y"))
+	_, err = snapshot.Get(ctx, kv.Key("y"))
 	c.Assert(tidbkv.IsErrNotFound(err), IsTrue)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail"), IsNil)
@@ -160,14 +160,14 @@ func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {
 		c.Assert(err, IsNil)
 
 		keys := makeKeys(rowNum, s.prefix)
-		keys = append(keys, tidbkv.Key("noSuchKey"))
+		keys = append(keys, kv.Key("noSuchKey"))
 		s.checkAll(keys, c)
 		s.deleteKeys(keys, c)
 	}
 }
 
-func makeKeys(rowNum int, prefix string) []tidbkv.Key {
-	keys := make([]tidbkv.Key, 0, rowNum)
+func makeKeys(rowNum int, prefix string) []kv.Key {
+	keys := make([]kv.Key, 0, rowNum)
 	for i := 0; i < rowNum; i++ {
 		k := encodeKey(prefix, s08d("key", i))
 		keys = append(keys, k)
@@ -176,8 +176,8 @@ func makeKeys(rowNum int, prefix string) []tidbkv.Key {
 }
 
 func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
-	x := tidbkv.Key("x_key_TestSkipLargeTxnLock")
-	y := tidbkv.Key("y_key_TestSkipLargeTxnLock")
+	x := kv.Key("x_key_TestSkipLargeTxnLock")
+	y := kv.Key("y_key_TestSkipLargeTxnLock")
 	txn := s.beginTxn(c)
 	c.Assert(txn.Set(x, []byte("x")), IsNil)
 	c.Assert(txn.Set(y, []byte("y")), IsNil)
@@ -193,7 +193,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	_, err = txn1.Get(ctx, x)
 	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)
 
-	res, err := txn1.BatchGet(ctx, []tidbkv.Key{x, y, tidbkv.Key("z")})
+	res, err := txn1.BatchGet(ctx, []kv.Key{x, y, kv.Key("z")})
 	c.Assert(err, IsNil)
 	c.Assert(res, HasLen, 0)
 
@@ -207,8 +207,8 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 }
 
 func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
-	x := tidbkv.Key("x_key_TestPointGetSkipTxnLock")
-	y := tidbkv.Key("y_key_TestPointGetSkipTxnLock")
+	x := kv.Key("x_key_TestPointGetSkipTxnLock")
+	y := kv.Key("y_key_TestPointGetSkipTxnLock")
 	txn := s.beginTxn(c)
 	c.Assert(txn.Set(x, []byte("x")), IsNil)
 	c.Assert(txn.Set(y, []byte("y")), IsNil)
@@ -242,7 +242,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 
 func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
 	txn := s.beginTxn(c)
-	key := tidbkv.Key("key_test_snapshot_threadsafe")
+	key := kv.Key("key_test_snapshot_threadsafe")
 	c.Assert(txn.Set(key, []byte("x")), IsNil)
 	ctx := context.Background()
 	err := txn.Commit(context.Background())
@@ -256,7 +256,7 @@ func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
 			for i := 0; i < 30; i++ {
 				_, err := snapshot.Get(ctx, key)
 				c.Assert(err, IsNil)
-				_, err = snapshot.BatchGet(ctx, []tidbkv.Key{key, tidbkv.Key("key_not_exist")})
+				_, err = snapshot.BatchGet(ctx, []kv.Key{key, kv.Key("key_not_exist")})
 				c.Assert(err, IsNil)
 			}
 			wg.Done()

@@ -116,12 +116,12 @@ func (s *KVSnapshot) setSnapshotTS(ts uint64) {
 
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
-func (s *KVSnapshot) BatchGet(ctx context.Context, keys []tidbkv.Key) (map[string][]byte, error) {
+func (s *KVSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	// Check the cached value first.
 	m := make(map[string][]byte)
 	s.mu.RLock()
 	if s.mu.cached != nil {
-		tmp := make([]tidbkv.Key, 0, len(keys))
+		tmp := make([]kv.Key, 0, len(keys))
 		for _, key := range keys {
 			if val, ok := s.mu.cached[string(key)]; ok {
 				atomic.AddInt64(&s.mu.hitCnt, 1)
@@ -140,7 +140,7 @@ func (s *KVSnapshot) BatchGet(ctx context.Context, keys []tidbkv.Key) (map[strin
 		return m, nil
 	}
 
-	// We want [][]byte instead of []tidbkv.Key, use some magic to save memory.
+	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
 	ctx = context.WithValue(ctx, TxnStartKey, s.version)
 	bo := NewBackofferWithVars(ctx, batchGetMaxBackoff, s.vars)
@@ -367,7 +367,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 }
 
 // Get gets the value for key k from snapshot.
-func (s *KVSnapshot) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
+func (s *KVSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 
 	defer func(start time.Time) {
 		metrics.TxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
@@ -391,7 +391,7 @@ func (s *KVSnapshot) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
 	return val, nil
 }
 
-func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k tidbkv.Key) ([]byte, error) {
+func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte, error) {
 	// Check the cached values first.
 	s.mu.RLock()
 	if s.mu.cached != nil {
@@ -535,13 +535,13 @@ func (s *KVSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
 }
 
 // Iter return a list of key-value pair after `k`.
-func (s *KVSnapshot) Iter(k tidbkv.Key, upperBound tidbkv.Key) (unionstore.Iterator, error) {
+func (s *KVSnapshot) Iter(k kv.Key, upperBound kv.Key) (unionstore.Iterator, error) {
 	scanner, err := newScanner(s, k, upperBound, scanBatchSize, false)
 	return scanner, errors.Trace(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (s *KVSnapshot) IterReverse(k tidbkv.Key) (unionstore.Iterator, error) {
+func (s *KVSnapshot) IterReverse(k kv.Key) (unionstore.Iterator, error) {
 	scanner, err := newScanner(s, nil, k, scanBatchSize, true)
 	return scanner, errors.Trace(err)
 }
