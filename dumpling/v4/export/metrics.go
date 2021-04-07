@@ -40,7 +40,7 @@ func InitMetricsVector(labels prometheus.Labels) {
 			Subsystem: "dump",
 			Name:      "estimate_total_rows",
 			Help:      "estimate total rows for dumpling tables",
-		}, []string{})
+		}, labelNames)
 	finishedRowsCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "dumpling",
