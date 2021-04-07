@@ -675,26 +675,14 @@ func buildCompareClause(buf *bytes.Buffer, quotaCols []string, bound []string, c
 	}
 }
 
-// Compare returns an integer comparing two string arrays lexicographically.
-// return (compare result, common prefix length)
-// return -1 if low < up
-// return  0 if low == up
-// return  1 if low > up
-func compareArrString(low []string, up []string) (compareRes, commonLength int) {
-	l := len(low)
-	c := -1
-	if u := len(up); u < l {
-		l = u
-		c = 1
-	} else if u == l {
-		c = 0
-	}
-	for i := 0; i < l; i++ {
-		if d := strings.Compare(low[i], up[i]); d != 0 {
-			return d, i
+// getCommonLength returns the common length of low and up
+func getCommonLength(low []string, up []string) int {
+	for i := range low {
+		if low[i] != up[i] {
+			return i
 		}
 	}
-	return c, l
+	return len(low)
 }
 
 // buildBetweenClause build clause in a specified table range.
@@ -713,13 +701,13 @@ func buildBetweenClause(buf *bytes.Buffer, quotaCols []string, low []string, up 
 		buf.WriteString(up[0])
 	}
 	// handle special cases with common prefix
-	compare, commonLen := compareArrString(low, up)
-	// unexpected case for low >= up, return empty result
-	if compare >= 0 {
-		buf.WriteString("false")
-		return
-	}
+	commonLen := getCommonLength(low, up)
 	if commonLen > 0 {
+		// unexpected case for low == up, return empty result
+		if commonLen == len(low) {
+			buf.WriteString("false")
+			return
+		}
 		for i := 0; i < commonLen; i++ {
 			if i > 0 {
 				buf.WriteString(" and ")
