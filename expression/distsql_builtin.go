@@ -66,6 +66,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinCastIntAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastIntAsTime:
 		f = &builtinCastIntAsTimeSig{base, false}
+	case tipb.ScalarFuncSig_CastIntAsTimeAllowYear:
+		f = &builtinCastIntAsTimeSig{base, true}
 	case tipb.ScalarFuncSig_CastIntAsDuration:
 		f = &builtinCastIntAsDurationSig{base}
 	case tipb.ScalarFuncSig_CastIntAsJson:

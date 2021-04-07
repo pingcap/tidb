@@ -8167,3 +8167,35 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 	tk.Se.GetTxnWriteThroughputSLI().Reset()
 	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s")
 }
+
+func (s *testSuite) TestIssue23869(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a year)")
+	tk.MustExec("insert into t values (2021)")
+	tk.MustQuery("select cast(a as datetime) from t").Check(testkit.Rows("<nil>"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	c.Assert(strings.Contains(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), "Incorrect time value:"), Equals, true)
+}
+
+func (s *testSuite) TestIssue23609(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE `t1` (\n  `a` timestamp NULL DEFAULT NULL,\n  `b` year(4) DEFAULT NULL,\n  KEY `a` (`a`),\n  KEY `b` (`b`)\n)")
+	tk.MustExec("insert into t1 values(\"2002-10-03 04:28:53\",2000), (\"2002-10-03 04:28:53\",2002), (NULL, 2002)")
+	tk.MustQuery("select /*+ inl_join (x,y) */ * from t1 x cross join t1 y on x.a=y.b").Check(testkit.Rows())
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(3))
+	c.Assert(strings.Contains(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), "Incorrect time value:"), Equals, true)
+	c.Assert(strings.Contains(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[1].Err.Error(), "Incorrect time value:"), Equals, true)
+	c.Assert(strings.Contains(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[2].Err.Error(), "Incorrect time value:"), Equals, true)
+	tk.MustQuery("select * from t1 x cross join t1 y on x.a>y.b order by x.a, x.b, y.a, y.b").Check(testkit.Rows("2002-10-03 04:28:53 2000 <nil> 2002", "2002-10-03 04:28:53 2000 2002-10-03 04:28:53 2000", "2002-10-03 04:28:53 2000 2002-10-03 04:28:53 2002", "2002-10-03 04:28:53 2002 <nil> 2002", "2002-10-03 04:28:53 2002 2002-10-03 04:28:53 2000", "2002-10-03 04:28:53 2002 2002-10-03 04:28:53 2002"))
+	tk.MustQuery("select * from t1 where a = b").Check(testkit.Rows())
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(3))
+	c.Assert(strings.Contains(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), "Incorrect time value:"), Equals, true)
+	c.Assert(strings.Contains(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[1].Err.Error(), "Incorrect time value:"), Equals, true)
+	c.Assert(strings.Contains(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[2].Err.Error(), "Incorrect time value:"), Equals, true)
+	tk.MustQuery("select * from t1 where a < b").Check(testkit.Rows())
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	tk.MustQuery("select * from t1 where a > b").Check(testkit.Rows("2002-10-03 04:28:53 2000", "2002-10-03 04:28:53 2002"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+}

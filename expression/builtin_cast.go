@@ -571,6 +571,7 @@ type builtinCastIntAsTimeSig struct {
 func (b *builtinCastIntAsTimeSig) Clone() builtinFunc {
 	newSig := &builtinCastIntAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.allowYear = b.allowYear
 	return newSig
 }
 

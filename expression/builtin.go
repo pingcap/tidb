@@ -177,6 +177,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		if allowYear {
 			f := args[i].(*ScalarFunction).Function
 			f.(*builtinCastIntAsTimeSig).allowYear = true
+			f.setPbCode(tipb.ScalarFuncSig_CastIntAsTimeAllowYear)
 		}
 	}
 
