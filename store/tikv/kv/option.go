@@ -59,6 +59,8 @@ const (
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
+	// The kv entries of the temporary table data should not be committed.
+	TemporaryTable
 )
 
 // Priority value for transaction priority.

@@ -1751,6 +1751,8 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
+	tbInfo.IsTemporary = s.IsTemporary
+
 	if err = setTableAutoRandomBits(ctx, tbInfo, colDefs); err != nil {
 		return nil, errors.Trace(err)
 	}

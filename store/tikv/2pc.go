@@ -108,6 +108,9 @@ type twoPhaseCommitter struct {
 	doingAmend bool
 
 	binlog BinlogExecutor
+
+	// Do not commit the temporary table data.
+	temporaryTable map[int64]struct{}
 }
 
 type memBufferMutations struct {
@@ -307,6 +310,7 @@ func newTwoPhaseCommitter(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, err
 		binlog: &binlogExecutor{
 			txn: txn,
 		},
+		temporaryTable: getTxnTemporaryTable(txn),
 	}, nil
 }
 
@@ -315,6 +319,14 @@ func (c *twoPhaseCommitter) extractKeyExistsErr(err *kv.ErrKeyExist) error {
 		return errors.Errorf("session %d, existErr for key:%s should not be nil", c.sessionID, err.GetKey())
 	}
 	return errors.Trace(err)
+}
+
+func temporaryTableKey(tids map[int64]struct{}, key tidbkv.Key) bool {
+	if tid := tablecodec.DecodeTableID(key); tid > 0 {
+		_, ok := tids[tid]
+		return ok
+	}
+	return false
 }
 
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
@@ -330,6 +342,10 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	for it := memBuf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
 		_ = err
 		key := it.Key()
+		// The temporary table data should never be committed.
+		if c.temporaryTable != nil && temporaryTableKey(c.temporaryTable, key) {
+			continue
+		}
 		flags := it.Flags()
 		var value []byte
 		var op pb.Op
@@ -1651,6 +1667,13 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	close(exitCh)
 	metrics.TiKVTokenWaitDuration.Observe(float64(batchExe.tokenWaitDuration.Nanoseconds()))
 	return err
+}
+
+func getTxnTemporaryTable(txn *KVTxn) map[int64]struct{} {
+	if pri := txn.us.GetOption(kv.TemporaryTable); pri != nil {
+		return pri.(map[int64]struct{})
+	}
+	return nil
 }
 
 func getTxnPriority(txn *KVTxn) pb.CommandPri {
