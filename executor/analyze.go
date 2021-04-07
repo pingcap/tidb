@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
 	"runtime"
@@ -121,7 +122,23 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	finishJobWithLogFn := func(ctx context.Context, job *statistics.AnalyzeJob, meetError bool) {
 		job.Finish(meetError)
 		if job != nil {
-			logutil.Logger(ctx).Info("analyze finished",
+			table, err := infoschema.GetInfoSchema(e.ctx).TableByName(model.NewCIStr(job.DBName), model.NewCIStr(job.TableName))
+			if err != nil {
+				logutil.Logger(ctx).Error("analyze table logging error", zap.String("reason", err.Error()))
+				return
+			}
+			colsName := make([]string, 0, len(table.Cols()))
+			for _, col := range table.Cols() {
+				colsName = append(colsName, col.Name.String())
+			}
+			idxsName := make([]string, 0, len(table.Indices()))
+			for _, idx := range table.Indices() {
+				idxsName = append(idxsName, idx.Meta().Name.String())
+			}
+			logutil.Logger(ctx).Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, job.State),
+				zap.String("partition", job.PartitionName),
+				zap.Strings("columns", colsName),
+				zap.Strings("indices", idxsName),
 				zap.Time("start time", job.StartTime),
 				zap.Time("end time", job.EndTime),
 				zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
