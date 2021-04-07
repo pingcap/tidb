@@ -4058,7 +4058,7 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(originCol.Tp)))
 		}
 		// Disallow changing from auto_random to auto_increment column.
-		if containsColumnOption(specNewColumn, ast.ColumnOptionAutoIncrement) && !mysql.HasAutoIncrementFlag(originCol.Flag) {
+		if containsColumnOption(specNewColumn, ast.ColumnOptionAutoIncrement) {
 			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 		}
 		// Disallow specifying a default value on auto_random column.

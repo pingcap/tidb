@@ -198,7 +198,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
 	var newAllocs autoid.Allocators
 	switch diff.Type {
-	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache, model.ActionModifyColumn:
+	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
 		// Only drop auto-increment allocator.
 		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
 			tp := a.GetType()
@@ -362,13 +362,11 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
 			allocs = append(allocs, newAlloc)
 		case model.ActionModifyColumn:
-			hasAutoIncCol, _ := HasAutoIncrementColumn(tblInfo)
-			foundAutoIncIDAlloc := allocs.Get(autoid.RowIDAllocType) != nil || allocs.Get(autoid.AutoIncrementType) != nil
-			foundAutoRandAlloc := allocs.Get(autoid.AutoRandomType) != nil
 			// Change column attribute from auto_increment to auto_random.
-			if !hasAutoIncCol && foundAutoIncIDAlloc && !foundAutoRandAlloc && tblInfo.PKIsHandle && tblInfo.AutoRandomBits > 0 {
+			if tblInfo.ContainsAutoRandomBits() && allocs.Get(autoid.AutoRandomType) == nil {
+				// Remove auto_increment allocator.
 				allocs = allocs.Filter(func(a autoid.Allocator) bool {
-					return a.GetType() != autoid.RowIDAllocType && a.GetType() != autoid.AutoIncrementType
+					return a.GetType() != autoid.AutoIncrementType
 				})
 				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
 				allocs = append(allocs, newAlloc)
