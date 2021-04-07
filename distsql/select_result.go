@@ -153,6 +153,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
 		}
 		r.partialCount++
+
 		hasStats, ok := resultSubset.(CopRuntimeStats)
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()

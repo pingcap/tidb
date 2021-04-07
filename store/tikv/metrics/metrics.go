@@ -213,7 +213,7 @@ func initMetrics(namespace, subsystem string) {
 			Subsystem: subsystem,
 			Name:      "tikv_small_read_duration",
 			Help:      "Read time of TiKV small read.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 262s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 74h
 		})
 
 	TiKVLargeReadThroughput = prometheus.NewHistogram(
@@ -222,7 +222,7 @@ func initMetrics(namespace, subsystem string) {
 			Subsystem: subsystem,
 			Name:      "tikv_large_read_throughput",
 			Help:      "Read throughput of TiKV large read.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 262s
+			Buckets:   prometheus.ExponentialBuckets(16, 4, 17), // 16Bytes/s ~ 64GB/s
 		})
 
 	TiKVStatusDuration = prometheus.NewHistogramVec(
