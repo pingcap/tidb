@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -441,24 +440,30 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		if job.Error == nil {
 			job.Error = toTError(err)
 		}
-		if !job.Error.Equal(errCancelledDDLJob) {
-			job.Error = terror.GetErrClass(job.Error).Synthesize(terror.ErrCode(job.Error.Code()),
-				fmt.Sprintf("DDL job rollback, error msg: %s", terror.ToSQLError(job.Error).Message))
-		}
 		job.ErrorCount++
 
-		// Once `convertJob2RollbackJob` meets error, the job state can't be set as `JobStateRollingback` since
-		// job state and args may not be correctly overwritten. The job will be fetched to run with the cancelling
-		// state again. So we should check the error count here.
-		if err1 := loadDDLVars(w); err1 != nil {
-			logutil.Logger(w.logCtx).Error("[ddl] load DDL global variable failed", zap.Error(err1))
-		}
-		errorCount := variable.GetDDLErrorCountLimit()
-		if job.ErrorCount > errorCount {
-			msg := fmt.Sprintf("job being converted to rollback job errors and error count beyond the limitation %d, cancelled", errorCount)
-			logutil.Logger(w.logCtx).Warn(msg)
-			job.Error = toTError(errors.New(msg))
-			job.State = model.JobStateCancelled
+		if errCancelledDDLJob.Equal(err) {
+			// job is normal cancelled.
+			if !job.Error.Equal(errCancelledDDLJob) {
+				job.Error = terror.GetErrClass(job.Error).Synthesize(terror.ErrCode(job.Error.Code()),
+					fmt.Sprintf("DDL job rollback, error msg: %s", terror.ToSQLError(job.Error).Message))
+			}
+		} else {
+			// job canceling meet other error.
+			//
+			// Once `convertJob2RollbackJob` meets error, the job state can't be set as `JobStateRollingback` since
+			// job state and args may not be correctly overwritten. The job will be fetched to run with the cancelling
+			// state again. So we should check the error count here.
+			if err1 := loadDDLVars(w); err1 != nil {
+				logutil.Logger(w.logCtx).Error("[ddl] load DDL global variable failed", zap.Error(err1))
+			}
+			errorCount := variable.GetDDLErrorCountLimit()
+			if job.ErrorCount > errorCount {
+				msg := fmt.Sprintf("job being converted to rollback job errors and error count beyond the limitation %d, cancelled", errorCount)
+				logutil.Logger(w.logCtx).Warn(msg)
+				job.Error = toTError(errors.New(msg))
+				job.State = model.JobStateCancelled
+			}
 		}
 
 		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
