@@ -15,6 +15,7 @@ package ddl_test
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	errors2 "github.com/pingcap/errors"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
-	"strconv"
 )
 
 var _ = SerialSuites(&testRollingBackSuite{&testDBSuite{}})

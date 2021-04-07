@@ -15,9 +15,9 @@ package ddl
 
 import (
 	"fmt"
-	"github.com/pingcap/failpoint"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -144,11 +144,6 @@ func rollingbackModifyColumn(t *meta.Meta, job *model.Job) (ver int64, err error
 }
 
 func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	failpoint.Inject("mockRollingbackAddColumnFail", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(0, errors.New("mockRollingbackAddColumnFail"))
-		}
-	})
 	tblInfo, columnInfo, col, _, _, err := checkAddColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
