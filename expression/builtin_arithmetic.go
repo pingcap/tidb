@@ -626,7 +626,7 @@ func (s *builtinArithmeticMultiplyIntSig) evalInt(row chunk.Row) (val int64, isN
 		return 0, isNull, err
 	}
 	result := a * b
-	if a != 0 && result/a != b {
+	if (a != 0 && result/a != b) || (result == math.MinInt64 && a == -1) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s * %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return result, false, nil
