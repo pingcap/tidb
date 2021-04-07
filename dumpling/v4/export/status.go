@@ -77,6 +77,6 @@ func (d *Dumper) getEstimateTotalRowsCount(tctx *tcontext.Context, conn *sql.Con
 			}
 		}
 	}
-	estimateTotalRowsCounter.With(conf.Labels).Add(float64(totalCount))
+	AddCounter(estimateTotalRowsCounter, conf.Labels, float64(totalCount))
 	return nil
 }
