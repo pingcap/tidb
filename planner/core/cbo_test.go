@@ -583,7 +583,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
 	dom.StatsHandle().Clear()
 	err = dom.StatsHandle().Update(dom.InfoSchema())
-  c.Assert(err, IsNil)
+	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
 		SQL  string
