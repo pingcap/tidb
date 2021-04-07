@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -153,11 +154,12 @@ func (ts testSuite) TestConcurrent(c *C) {
 		concurrentKeys[i] = numToKey(i)
 	}
 
+	lock := sync.RWMutex{}
 	ls := NewMemStore(1 << 20)
 	// Starts 10 readers and 1 writer.
 	closeCh := make(chan bool)
 	for i := 0; i < keyRange; i++ {
-		go runReader(ls, closeCh, i)
+		go runReader(ls, &lock, closeCh, i)
 	}
 	ran := rand.New(rand.NewSource(time.Now().Unix()))
 	start := time.Now()
@@ -169,14 +171,18 @@ func (ts testSuite) TestConcurrent(c *C) {
 		}
 		n := ran.Intn(keyRange)
 		key := concurrentKeys[n]
+		lock.Lock()
 		if ls.PutWithHint(key, key, hint) {
 			totalInsert++
 		}
+		lock.Unlock()
 		n = ran.Intn(keyRange)
 		key = concurrentKeys[n]
+		lock.Lock()
 		if ls.DeleteWithHint(key, hint) {
 			totalDelete++
 		}
+		lock.Unlock()
 	}
 	close(closeCh)
 	time.Sleep(time.Millisecond * 100)
@@ -185,7 +191,7 @@ func (ts testSuite) TestConcurrent(c *C) {
 	fmt.Println(len(arena.pendingBlocks), len(arena.writableQueue), len(arena.blocks))
 }
 
-func runReader(ls *MemStore, closeCh chan bool, i int) {
+func runReader(ls *MemStore, lock *sync.RWMutex, closeCh chan bool, i int) {
 	key := numToKey(i)
 	buf := make([]byte, 100)
 	var n int
@@ -199,7 +205,9 @@ func runReader(ls *MemStore, closeCh chan bool, i int) {
 			default:
 			}
 		}
+		lock.RLock()
 		result := ls.Get(key, buf)
+		lock.RUnlock()
 		if len(result) > 0 && !bytes.Equal(key, result) {
 			panic("data corruption")
 		}

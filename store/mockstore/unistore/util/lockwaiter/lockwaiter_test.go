@@ -91,6 +91,7 @@ func (t *testLockwaiter) TestLockwaiterConcurrent(c *C) {
 	commitTs := uint64(199)
 	deadlockKeyHash := uint64(299)
 	numbers := uint64(10)
+	lock := sync.RWMutex{}
 	for i := uint64(0); i < numbers; i++ {
 		wg.Add(1)
 		endWg.Add(1)
@@ -114,7 +115,9 @@ func (t *testLockwaiter) TestLockwaiterConcurrent(c *C) {
 				} else {
 					// odd woken up by deadlock
 					c.Assert(res.DeadlockResp, NotNil)
+					lock.RLock()
 					c.Assert(res.DeadlockResp.DeadlockKeyHash, Equals, deadlockKeyHash)
+					lock.RUnlock()
 				}
 			}
 		}(i)
@@ -129,7 +132,9 @@ func (t *testLockwaiter) TestLockwaiterConcurrent(c *C) {
 			mgr.WakeUp(waitForTxn, commitTs, append(keyHashes, i*10))
 		} else {
 			log.S().Infof("deadlock wakeup i=%v", i)
+			lock.Lock()
 			resp.DeadlockKeyHash = deadlockKeyHash
+			lock.Unlock()
 			resp.Entry.Txn = i
 			resp.Entry.WaitForTxn = waitForTxn
 			resp.Entry.KeyHash = i * 10
