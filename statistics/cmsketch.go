@@ -664,7 +664,12 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, topNs []*TopN, n uin
 		}
 		for _, val := range topN.TopN {
 			encodedVal := hack.String(val.Encoded)
+			_, exists := counter[encodedVal]
 			counter[encodedVal] += float64(val.Count)
+			if exists {
+				// We have already calculated the encodedVal from the histogram, so just continue to next topN value.
+				continue
+			}
 			// We need to check whether the value corresponding to encodedVal is contained in other partition-level stats.
 			// 1. Check the topN first.
 			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
