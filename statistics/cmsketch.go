@@ -647,6 +647,10 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, topNs []*TopN, n uin
 	topNsNum := make([]int, partNum)
 	removeVals := make([][]TopNMeta, partNum)
 	for i, topN := range topNs {
+		if topN == nil {
+			topNsNum[i] = 0
+			continue
+		}
 		topNsNum[i] = len(topN.TopN)
 	}
 	// Different TopN structures may hold the same value, we have to merge them.
