@@ -46,7 +46,12 @@ import (
 	"go.uber.org/zap"
 )
 
-var coprCacheHistogramEvict = tidbmetrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
+var (
+	coprCacheHistogramEvict               = tidbmetrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
+	TxnRegionsNumHistogramWithCoprocessor = metrics.TxnRegionsNumHistogramWithCoprocessor
+	tikvSmallReadDuration                 = metrics.TiKVSmallReadDuration
+	tikvLargeThroughput                   = metrics.TiKVLargeReadThroughput
+)
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
@@ -184,7 +189,7 @@ func buildCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tikv.Key
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
 	}
-	metrics.TxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
+	TxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
 	return tasks, nil
 }
 
@@ -751,6 +756,19 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 	if resp.Resp != nil {
 		switch r := resp.Resp.(type) {
 		case *coprocessor.Response:
+			selResp := &tipb.SelectResponse{}
+			proto.Unmarshal(r.Data, selResp)
+			if selResp != nil && len(selResp.GetExecutionSummaries()) > 0 {
+				readExecution := selResp.GetExecutionSummaries()[0]
+				affectRow := int(readExecution.GetNumProducedRows())
+				readTime := float64(readExecution.GetTimeProcessedNs()) / float64(time.Millisecond)
+				readByte := r.GetExecDetailsV2().GetScanDetailV2().GetReadBytes()
+				if affectRow < 20 && readByte < 1*1024*1024 {
+					metrics.TiKVSmallReadDuration.Observe(readTime)
+				} else {
+					metrics.TiKVLargeReadThroughput.Observe(float64(readByte) / readTime)
+				}
+			}
 			detailV2 = r.ExecDetailsV2
 			detail = r.ExecDetails
 		case *tikvrpc.CopStreamResponse:

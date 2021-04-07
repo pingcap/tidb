@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	tikvmetrics "github.com/pingcap/tidb/store/tikv/metrics"
 	"sort"
 	"strconv"
 	"sync/atomic"
@@ -52,8 +51,6 @@ var (
 var (
 	coprCacheHistogramHit  = metrics.DistSQLCoprCacheHistogram.WithLabelValues("hit")
 	coprCacheHistogramMiss = metrics.DistSQLCoprCacheHistogram.WithLabelValues("miss")
-	tikvSmallReadDuration  = tikvmetrics.TiKVSmallReadDuration
-	tikvLargeThroughput    = tikvmetrics.TiKVLargeReadThroughput
 )
 
 var (
@@ -156,14 +153,10 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
 		}
 		r.partialCount++
-		scanSummary := r.selectResp.GetExecutionSummaries()[0]
 		hasStats, ok := resultSubset.(CopRuntimeStats)
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()
 			if copStats != nil {
-				if *(scanSummary.NumProducedRows) > 20 {
-					tikvSmallReadDuration.Observe(float64(*scanSummary.TimeProcessedNs))
-				}
 				r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime())
 				copStats.CopTime = duration
 				sc.MergeExecDetails(&copStats.ExecDetails, nil)
