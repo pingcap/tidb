@@ -1026,16 +1026,16 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 	}()
 }
 
-// TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
+// TelemetryReportLoop create a goroutine that reports usage data in a loop, it should be called only once
 // in BootstrapSession.
-func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
+func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.wg.Add(1)
 	go func() {
 		defer func() {
 			do.wg.Done()
-			logutil.BgLogger().Info("handleTelemetryLoop exited.")
-			util.Recover(metrics.LabelDomain, "handleTelemetryLoop", nil, false)
+			logutil.BgLogger().Info("TelemetryReportLoop exited.")
+			util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
 		}()
 		owner := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
 		for {
@@ -1050,8 +1050,29 @@ func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
 				err := telemetry.ReportUsageData(ctx, do.GetEtcdClient())
 				if err != nil {
 					// Only status update errors will be printed out
-					logutil.BgLogger().Warn("handleTelemetryLoop status update failed", zap.Error(err))
+					logutil.BgLogger().Warn("TelemetryReportLoop status update failed", zap.Error(err))
 				}
+			}
+		}
+	}()
+}
+
+// TelemetryRotateSubWindowLoop create a goroutine that rotates the telemetry window regularly.
+func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("TelemetryRotateSubWindowLoop exited.")
+			util.Recover(metrics.LabelDomain, "TelemetryRotateSubWindowLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-time.After(telemetry.SubWindowSize):
+				telemetry.RotateSubWindow()
 			}
 		}
 	}()

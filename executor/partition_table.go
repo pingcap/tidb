@@ -47,11 +47,6 @@ type innerPartitionInfo struct {
 	nextRange       map[int64][]*ranger.Range
 }
 
-type innerNextPartition interface {
-	nextPartition
-	GetInnerPartitionInfo() *innerPartitionInfo
-}
-
 type nextPartitionForTableReader struct {
 	*innerPartitionInfo
 	rangeBuilders map[int64]kvRangeBuilder

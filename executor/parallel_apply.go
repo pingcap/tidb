@@ -46,12 +46,10 @@ type ParallelNestedLoopApplyExec struct {
 	baseExecutor
 
 	// outer-side fields
-	cursor        int
-	outerExec     Executor
-	outerFilter   expression.CNFExprs
-	outerList     *chunk.List
-	outerRowMutex sync.Mutex
-	outer         bool
+	outerExec   Executor
+	outerFilter expression.CNFExprs
+	outerList   *chunk.List
+	outer       bool
 
 	// inner-side fields
 	// use slices since the inner side is paralleled

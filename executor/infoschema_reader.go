@@ -458,7 +458,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			pkType := "NON-CLUSTERED"
+			pkType := "NONCLUSTERED"
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"

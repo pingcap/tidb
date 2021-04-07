@@ -848,12 +848,10 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	// Test for a table with auto_random primary key.
-	tk.MustExec("create table t3(id bigint primary key auto_random(5), c int)")
+	tk.MustExec("create table t3(id bigint primary key clustered auto_random(5), c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " t3 next_row_id")
 	r.Check(testkit.Rows("test1 t3 id 1 AUTO_RANDOM"))
@@ -1255,7 +1253,6 @@ func (s *seqTestSuite) TestShowForNewCollations(c *C) {
 		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
 		"utf8mb4_general_ci utf8mb4 45  Yes 1",
 		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
-		"utf8mb4_zh_pinyin_tidb_as_cs utf8mb4 2048  Yes 1",
 	)
 	tk.MustQuery("show collation").Check(expectRows)
 	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
@@ -1381,17 +1378,15 @@ func (s *seqTestSuite) TestInsertFromSelectConflictRetryAutoID(c *C) {
 func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("create database if not exists auto_random_retry")
 	tk.MustExec("use auto_random_retry")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id bigint auto_random(3) primary key)")
+	tk.MustExec("create table t (id bigint auto_random(3) primary key clustered)")
 
 	extractMaskedOrderedHandles := func() []int64 {
 		handles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "auto_random_retry", "t")
 		c.Assert(err, IsNil)
-		return testutil.ConfigTestUtils.MaskSortHandles(handles, 3, mysql.TypeLong)
+		return testutil.MaskSortHandles(handles, 3, mysql.TypeLong)
 	}
 
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
@@ -1425,8 +1420,6 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 
 func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover_auto_rand")
@@ -1462,14 +1455,14 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	defer autoid.SetStep(stp)
 
 	// Check rebase auto_random id.
-	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key);")
+	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key clustered);")
 	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
 	tk.MustExec("drop table t_recover_auto_rand")
 	tk.MustExec("recover table t_recover_auto_rand")
 	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
 	hs, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_recover", "t_recover_auto_rand")
 	c.Assert(err, IsNil)
-	ordered := testutil.ConfigTestUtils.MaskSortHandles(hs, 5, mysql.TypeLong)
+	ordered := testutil.MaskSortHandles(hs, 5, mysql.TypeLong)
 
 	c.Assert(ordered, DeepEquals, []int64{1, 2, 3, autoRandIDStep + 1, autoRandIDStep + 2, autoRandIDStep + 3})
 }

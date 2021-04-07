@@ -46,9 +46,12 @@ const (
 	opSucc   = "ok"
 	opFailed = "err"
 
+	TiDB         = "tidb"
 	LabelScope   = "scope"
 	ScopeGlobal  = "global"
 	ScopeSession = "session"
+	Server       = "server"
+	TiKVClient   = "tikvclient"
 )
 
 // RetLabel returns "ok" when err == nil and "err" when err != nil.
@@ -134,19 +137,21 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GCRegionTooManyLocksCounter)
 	prometheus.MustRegister(GCWorkerCounter)
 	prometheus.MustRegister(GCUnsafeDestroyRangeFailuresCounterVec)
-	prometheus.MustRegister(TSFutureWaitDuration)
 	prometheus.MustRegister(TotalQueryProcHistogram)
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
 	prometheus.MustRegister(HandleSchemaValidate)
-	prometheus.MustRegister(GRPCConnTransientFailureCounter)
 	prometheus.MustRegister(MaxProcs)
 	prometheus.MustRegister(GOGC)
 	prometheus.MustRegister(ConnIdleDurationHistogram)
 	prometheus.MustRegister(ServerInfo)
 	prometheus.MustRegister(TokenGauge)
 	prometheus.MustRegister(ConfigStatus)
+	prometheus.MustRegister(TiFlashQueryTotalCounter)
+	prometheus.MustRegister(SmallTxnWriteDuration)
+	prometheus.MustRegister(TxnWriteThroughput)
 
-	tikvmetrics.InitMetrics("tidb", "tikvclient")
+	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
+	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
 }

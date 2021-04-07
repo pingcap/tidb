@@ -65,8 +65,10 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -75,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -473,7 +476,7 @@ func (s *session) doCommit(ctx context.Context) error {
 				},
 				Client: s.sessionVars.BinlogClient,
 			}
-			s.txn.SetOption(kv.BinlogInfo, info)
+			s.txn.SetOption(tikvstore.BinlogInfo, info)
 		}
 	}
 
@@ -484,22 +487,22 @@ func (s *session) doCommit(ctx context.Context) error {
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
-	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
-	s.txn.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
+	s.txn.SetOption(tikvstore.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
+	s.txn.SetOption(tikvstore.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+	s.txn.SetOption(tikvstore.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
-		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+		s.txn.SetOption(tikvstore.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
-	s.txn.SetOption(kv.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
-	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
+	s.txn.SetOption(tikvstore.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
+	s.txn.SetOption(tikvstore.Enable1PC, s.GetSessionVars().Enable1PC)
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
-	if s.txn.GetOption(kv.GuaranteeLinearizability) == nil {
+	if s.txn.GetOption(tikvstore.GuaranteeLinearizability) == nil {
 		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
 		// because the property is naturally holds:
 		// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
 		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
 		// of any previously committed transactions.
-		s.txn.SetOption(kv.GuaranteeLinearizability,
+		s.txn.SetOption(tikvstore.GuaranteeLinearizability,
 			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
 
@@ -677,7 +680,7 @@ func (s *session) isTxnRetryableError(err error) bool {
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	var err error
 	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
-		err = tikv.ErrLockExpire
+		err = tikvstore.ErrLockExpire
 	} else {
 		return nil
 	}
@@ -963,15 +966,13 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if name == variable.TiDBSlowLogMasking {
 		name = variable.TiDBRedactLog
 	}
-	if name == variable.SQLModeVar {
-		value = mysql.FormatSQLModeStr(value)
-		if _, err := mysql.GetSQLMode(value); err != nil {
-			return err
-		}
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	var sVal string
 	var err error
-	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
+	sVal, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal)
 	if err != nil {
 		return err
 	}
@@ -1048,7 +1049,7 @@ func (s *session) getTiDBTableValue(name, val string) (string, error) {
 	// Run validation on the tblValue. This will return an error if it can't be validated,
 	// but will also make it more consistent: disTribuTeD -> DISTRIBUTED etc
 	tblValue = trueFalseToOnOff(tblValue)
-	validatedVal, err := variable.ValidateSetSystemVar(s.sessionVars, name, tblValue, variable.ScopeGlobal)
+	validatedVal, err := variable.GetSysVar(name).Validate(s.sessionVars, tblValue, variable.ScopeGlobal)
 	if err != nil {
 		logutil.Logger(context.Background()).Warn("restoring sysvar value since validating mysql.tidb value failed",
 			zap.Error(err),
@@ -1088,6 +1089,11 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	var curTxnStartTS uint64
 	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	}
+	// Set curTxnStartTS to SnapshotTS directly when the session is trying to historic read.
+	// It will avoid the session meet GC lifetime too short error.
+	if s.GetSessionVars().SnapshotTS != 0 {
+		curTxnStartTS = s.GetSessionVars().SnapshotTS
 	}
 	p := s.currentPlan
 	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
@@ -1431,6 +1437,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 		return nil, err
 	}
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
+	}
 	return recordSet, nil
 }
 
@@ -1604,9 +1620,18 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 
 func (s *session) preparedStmtExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
+	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
+	}
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
 	logQuery(st.OriginText(), s.sessionVars)
@@ -1618,7 +1643,12 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
-	is := infoschema.GetInfoSchema(s)
+	var is infoschema.InfoSchema
+	if prepareStmt.ForUpdateRead {
+		is = domain.GetDomain(s).InfoSchema()
+	} else {
+		is = infoschema.GetInfoSchema(s)
+	}
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
 		return nil, err
@@ -1649,6 +1679,17 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
 	logQuery(stmt.GetTextToLog(), s.sessionVars)
 
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
+	}
+
 	// run ExecStmt
 	var resultSet sqlexec.RecordSet
 	switch prepared.CachedPlan.(type) {
@@ -1657,11 +1698,18 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
 		s.PrepareTSFuture(ctx)
-		stmtCtx.Priority = kv.PriorityHigh
+		stmtCtx.Priority = tikvstore.PriorityHigh
+		resultSet, err = runStmt(ctx, s, stmt)
+	case nil:
+		// cache is invalid
+		if prepareStmt.ForUpdateRead {
+			s.PrepareTSFuture(ctx)
+		}
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
+		err = errors.Errorf("invalid cached plan type %T", prepared.CachedPlan)
 		prepared.CachedPlan = nil
-		return nil, errors.Errorf("invalid cached plan type")
+		return nil, err
 	}
 	return resultSet, err
 }
@@ -1763,7 +1811,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		}
 		s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 		if s.sessionVars.TxnCtx.IsPessimistic {
-			s.txn.SetOption(kv.Pessimistic, true)
+			s.txn.SetOption(tikvstore.Pessimistic, true)
 		}
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetInTxn(true)
@@ -1771,7 +1819,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 		s.txn.SetVars(s.sessionVars.KVVars)
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
-			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+			s.txn.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
 		}
 	}
 	return &s.txn, nil
@@ -1835,7 +1883,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	txn.SetVars(s.sessionVars.KVVars)
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		txn.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
 	}
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
@@ -2011,7 +2059,6 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
-		s.GetSessionVars().IntPrimaryKeyDefaultAsClustered = true
 	}
 	return s, err
 }
@@ -2218,7 +2265,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	dom.TelemetryLoop(se4)
+	dom.TelemetryReportLoop(se4)
+	dom.TelemetryRotateSubWindowLoop(se4)
 
 	se5, err := createSession(store)
 	if err != nil {
@@ -2498,6 +2546,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableExchangePartition,
 	variable.TiDBAllowFallbackToTiKV,
+	variable.TiDBEnableDynamicPrivileges,
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
@@ -2639,7 +2688,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
-		txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+		txnScope := s.txn.GetUnionStore().GetOption(tikvstore.TxnScope).(string)
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return err
@@ -2669,8 +2718,8 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 		return s.NewTxn(ctx)
 	}
 	txn.SetVars(s.sessionVars.KVVars)
-	txn.SetOption(kv.IsStalenessReadOnly, true)
-	txn.SetOption(kv.TxnScope, txnScope)
+	txn.SetOption(tikvstore.IsStalenessReadOnly, true)
+	txn.SetOption(tikvstore.TxnScope, txnScope)
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
@@ -2837,4 +2886,9 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 
 func (s *session) SetPort(port string) {
 	s.sessionVars.Port = port
+}
+
+// GetTxnWriteThroughputSLI implements the Context interface.
+func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return &s.txn.writeSLI
 }

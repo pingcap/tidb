@@ -55,7 +55,7 @@ type Config struct {
 // DefaultConfig returns the default configuration.
 func DefaultConfig() Config {
 	return Config{
-		CommitterConcurrency:  16,
+		CommitterConcurrency:  128,
 		MaxTxnTTL:             60 * 60 * 1000, // 1hour
 		ServerMemoryQuota:     0,
 		TiKVClient:            DefaultTiKVClient(),
@@ -119,6 +119,18 @@ func GetGlobalConfig() *Config {
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
 	globalConf.Store(config)
+}
+
+// UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
+func UpdateGlobal(f func(conf *Config)) func() {
+	g := GetGlobalConfig()
+	restore := func() {
+		StoreGlobalConfig(g)
+	}
+	newConf := *g
+	f(&newConf)
+	StoreGlobalConfig(&newConf)
+	return restore
 }
 
 // ParsePath parses this path.

@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -272,32 +273,40 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 	testCases := []struct {
 		args   []interface{}
-		expect interface{}
+		expect []interface{}
 		err    error
 	}{
 		{
 			args:   []interface{}{int64(11), int64(11)},
-			expect: int64(121),
+			expect: []interface{}{int64(121), nil},
+		},
+		{
+			args:   []interface{}{int64(-1), int64(math.MinInt64)},
+			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(-1 \\* -9223372036854775808\\)'"},
+		},
+		{
+			args:   []interface{}{int64(math.MinInt64), int64(-1)},
+			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(-9223372036854775808 \\* -1\\)'"},
 		},
 		{
 			args:   []interface{}{uint64(11), uint64(11)},
-			expect: int64(121),
+			expect: []interface{}{int64(121), nil},
 		},
 		{
 			args:   []interface{}{float64(11), float64(11)},
-			expect: float64(121),
+			expect: []interface{}{float64(121), nil},
 		},
 		{
 			args:   []interface{}{nil, float64(-0.11101)},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 		{
 			args:   []interface{}{float64(1.01), nil},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 		{
 			args:   []interface{}{nil, nil},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 	}
 
@@ -306,8 +315,12 @@ func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
+		if tc.expect[1] == nil {
+			c.Assert(err, IsNil)
+			c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect[0]))
+		} else {
+			c.Assert(err, ErrorMatches, tc.expect[1])
+		}
 	}
 }
 
@@ -501,6 +514,34 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 			expect: int64(2),
 		},
 		{
+			args:   []interface{}{int64(13), int64(11)},
+			expect: int64(2),
+		},
+		{
+			args:   []interface{}{int64(13), int64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{uint64(13), int64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{int64(13), uint64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{uint64(math.MaxInt64 + 1), int64(math.MinInt64)},
+			expect: int64(0),
+		},
+		{
+			args:   []interface{}{int64(-22), uint64(10)},
+			expect: int64(-2),
+		},
+		{
+			args:   []interface{}{int64(math.MinInt64), uint64(3)},
+			expect: int64(-2),
+		},
+		{
 			args:   []interface{}{int64(-13), int64(11)},
 			expect: int64(-2),
 		},
@@ -598,8 +639,14 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 		switch sig.(type) {
 		case *builtinArithmeticModRealSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModReal)
-		case *builtinArithmeticModIntSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModInt)
+		case *builtinArithmeticModIntUnsignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntUnsignedUnsigned)
+		case *builtinArithmeticModIntUnsignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntUnsignedSigned)
+		case *builtinArithmeticModIntSignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntSignedUnsigned)
+		case *builtinArithmeticModIntSignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntSignedSigned)
 		case *builtinArithmeticModDecimalSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModDecimal)
 		}
