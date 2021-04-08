@@ -21,7 +21,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/google/btree"
 	. "github.com/pingcap/check"
@@ -876,7 +875,7 @@ func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
 	c.Assert(lctx.Peer.Id, Equals, peer3)
 
 	// epoch-not-match on tiflash
-	ctxTiFlash, err := s.cache.GetTiFlashRPCContext(s.bo, loc1.Region)
+	ctxTiFlash, err := s.cache.GetTiFlashRPCContext(s.bo, loc1.Region, true)
 	c.Assert(err, IsNil)
 	c.Assert(ctxTiFlash.Peer.Id, Equals, s.peer1)
 	ctxTiFlash.Peer.Role = metapb.PeerRole_Learner
@@ -1317,44 +1316,6 @@ func (s *testRegionCacheSuite) TestPeersLenChange(c *C) {
 	s.cache.OnSendFail(NewNoopBackoff(context.Background()), ctx, false, errors.New("send fail"))
 }
 
-func (s *testRegionRequestToSingleStoreSuite) TestGetRegionByIDFromCache(c *C) {
-	region, err := s.cache.LocateRegionByID(s.bo, s.region)
-	c.Assert(err, IsNil)
-	c.Assert(region, NotNil)
-
-	// test kv epochNotMatch return empty regions
-	s.cache.OnRegionEpochNotMatch(s.bo, &RPCContext{Region: region.Region, Store: &Store{storeID: s.store}}, []*metapb.Region{})
-	c.Assert(err, IsNil)
-	r := s.cache.getRegionByIDFromCache(s.region)
-	c.Assert(r, IsNil)
-
-	// refill cache
-	region, err = s.cache.LocateRegionByID(s.bo, s.region)
-	c.Assert(err, IsNil)
-	c.Assert(region, NotNil)
-
-	// test kv load new region with new start-key and new epoch
-	v2 := region.Region.confVer + 1
-	r2 := metapb.Region{Id: region.Region.id, RegionEpoch: &metapb.RegionEpoch{Version: region.Region.ver, ConfVer: v2}, StartKey: []byte{1}}
-	st := &Store{storeID: s.store}
-	s.cache.insertRegionToCache(&Region{meta: &r2, store: unsafe.Pointer(st), lastAccess: time.Now().Unix()})
-	region, err = s.cache.LocateRegionByID(s.bo, s.region)
-	c.Assert(err, IsNil)
-	c.Assert(region, NotNil)
-	c.Assert(region.Region.confVer, Equals, v2)
-	c.Assert(region.Region.ver, Equals, region.Region.ver)
-
-	v3 := region.Region.confVer + 1
-	r3 := metapb.Region{Id: region.Region.id, RegionEpoch: &metapb.RegionEpoch{Version: v3, ConfVer: region.Region.confVer}, StartKey: []byte{2}}
-	st = &Store{storeID: s.store}
-	s.cache.insertRegionToCache(&Region{meta: &r3, store: unsafe.Pointer(st), lastAccess: time.Now().Unix()})
-	region, err = s.cache.LocateRegionByID(s.bo, s.region)
-	c.Assert(err, IsNil)
-	c.Assert(region, NotNil)
-	c.Assert(region.Region.confVer, Equals, region.Region.confVer)
-	c.Assert(region.Region.ver, Equals, v3)
-}
-
 func createSampleRegion(startKey, endKey []byte) *Region {
 	return &Region{
 		meta: &metapb.Region{
@@ -1390,6 +1351,25 @@ func (s *testRegionCacheSuite) TestContainsByEnd(c *C) {
 	c.Assert(createSampleRegion([]byte{10}, []byte{20}).ContainsByEnd([]byte{}), IsFalse)
 	c.Assert(createSampleRegion([]byte{10}, []byte{20}).ContainsByEnd([]byte{15}), IsTrue)
 	c.Assert(createSampleRegion([]byte{10}, []byte{20}).ContainsByEnd([]byte{30}), IsFalse)
+}
+
+func (s *testRegionCacheSuite) TestSwitchPeerWhenNoLeader(c *C) {
+	var prevCtx *RPCContext
+	for i := 0; i <= len(s.cluster.GetAllStores()); i++ {
+		loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+		c.Assert(err, IsNil)
+		ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
+		c.Assert(err, IsNil)
+		if prevCtx == nil {
+			c.Assert(i, Equals, 0)
+		} else {
+			c.Assert(ctx.AccessIdx, Not(Equals), prevCtx.AccessIdx)
+			c.Assert(ctx.Peer, Not(DeepEquals), prevCtx.Peer)
+		}
+		s.cache.InvalidateCachedRegionWithReason(loc.Region, NoLeader)
+		c.Assert(s.cache.getCachedRegionWithRLock(loc.Region).invalidReason, Equals, NoLeader)
+		prevCtx = ctx
+	}
 }
 
 func BenchmarkOnRequestFail(b *testing.B) {
