@@ -22,9 +22,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ngaut/unistore/lockstore"
-	"github.com/ngaut/unistore/tikv/dbreader"
-	"github.com/ngaut/unistore/tikv/mvcc"
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
 	. "github.com/pingcap/check"
@@ -34,6 +31,9 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -161,7 +161,7 @@ func convertToPrefixNext(key []byte) []byte {
 		if key[i] == 255 {
 			key[i] = 0
 		} else {
-			key[i] += 1
+			key[i]++
 			return key
 		}
 	}
@@ -407,8 +407,8 @@ type testStore struct {
 
 func (ts *testStore) prewrite(req *kvrpcpb.PrewriteRequest) {
 	for _, m := range req.Mutations {
-		lock := &mvcc.MvccLock{
-			MvccLockHdr: mvcc.MvccLockHdr{
+		lock := &mvcc.Lock{
+			LockHdr: mvcc.LockHdr{
 				StartTS:     req.StartVersion,
 				ForUpdateTS: req.ForUpdateTs,
 				TTL:         uint32(req.LockTtl),
@@ -460,9 +460,18 @@ func newTestStore(dbPrefix string, logPrefix string) (*testStore, error) {
 	kvPath := filepath.Join(dbPath, "kv")
 	raftPath := filepath.Join(dbPath, "raft")
 	snapPath := filepath.Join(dbPath, "snap")
-	os.MkdirAll(kvPath, os.ModePerm)
-	os.MkdirAll(raftPath, os.ModePerm)
-	os.Mkdir(snapPath, os.ModePerm)
+	err = os.MkdirAll(kvPath, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
+	err = os.MkdirAll(raftPath, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
+	err = os.Mkdir(snapPath, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
 	return &testStore{
 		db:      db,
 		locks:   lockstore.NewMemStore(4096),
@@ -481,6 +490,6 @@ func createTestDB(dbPath, LogPath string) (*badger.DB, error) {
 }
 
 func cleanTestStore(store *testStore) {
-	os.RemoveAll(store.dbPath)
-	os.RemoveAll(store.logPath)
+	_ = os.RemoveAll(store.dbPath)
+	_ = os.RemoveAll(store.logPath)
 }

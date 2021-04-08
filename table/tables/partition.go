@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -38,9 +39,15 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
+)
+
+const (
+	btreeDegree = 32
 )
 
 // Both partition and partitionedTable implement the table.Table interface.
@@ -216,11 +223,35 @@ type ForListPruning struct {
 	ColPrunes []*ForListColumnPruning
 }
 
+// btreeListColumnItem is BTree's Item that uses string to compare.
+type btreeListColumnItem struct {
+	key      string
+	location ListPartitionLocation
+}
+
+func newBtreeListColumnItem(key string, location ListPartitionLocation) *btreeListColumnItem {
+	return &btreeListColumnItem{
+		key:      key,
+		location: location,
+	}
+}
+
+func newBtreeListColumnSearchItem(key string) *btreeListColumnItem {
+	return &btreeListColumnItem{
+		key: key,
+	}
+}
+
+func (item *btreeListColumnItem) Less(other btree.Item) bool {
+	return item.key < other.(*btreeListColumnItem).key
+}
+
 // ForListColumnPruning is used for list columns partition pruning.
 type ForListColumnPruning struct {
 	ExprCol  *expression.Column
 	valueTp  *types.FieldType
 	valueMap map[string]ListPartitionLocation
+	sorted   *btree.BTree
 }
 
 // ListPartitionGroup indicate the group index of the column value in a partition.
@@ -629,8 +660,9 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo
 			ExprCol:  columns[idx],
 			valueTp:  &colInfo.FieldType,
 			valueMap: make(map[string]ListPartitionLocation),
+			sorted:   btree.New(btreeDegree),
 		}
-		err := colPrune.buildPartitionValueMap(ctx, tblInfo, colIdx, schema, names, p)
+		err := colPrune.buildPartitionValueMapAndSorted(ctx, tblInfo, colIdx, schema, names, p)
 		if err != nil {
 			return err
 		}
@@ -714,9 +746,10 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 	return location[0].PartIdx, nil
 }
 
-// buildListPartitionValueMap builds list columns partition value map for the specified column.
+// buildListPartitionValueMapAndSorted builds list columns partition value map for the specified column.
+// it also builds list columns partition value btree for the specified column.
 // colIdx is the specified column index in the list columns.
-func (lp *ForListColumnPruning) buildPartitionValueMap(ctx sessionctx.Context, tblInfo *model.TableInfo, colIdx int,
+func (lp *ForListColumnPruning) buildPartitionValueMapAndSorted(ctx sessionctx.Context, tblInfo *model.TableInfo, colIdx int,
 	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
 	pi := tblInfo.GetPartitionInfo()
 	sc := ctx.GetSessionVars().StmtCtx
@@ -740,6 +773,7 @@ func (lp *ForListColumnPruning) buildPartitionValueMap(ctx sessionctx.Context, t
 				GroupIdxs: []int{groupIdx},
 			})
 			lp.valueMap[key] = location
+			lp.sorted.ReplaceOrInsert(newBtreeListColumnItem(key, location))
 		}
 	}
 	return nil
@@ -781,6 +815,40 @@ func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v 
 		return nil, nil
 	}
 	return location, nil
+}
+
+// LocateRanges locates partition ranges by the column range
+func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ranger.Range) ([]ListPartitionLocation, error) {
+	lowVal := r.LowVal[0]
+	if r.LowVal[0].Kind() == types.KindMinNotNull {
+		lowVal = types.GetMinValue(lp.ExprCol.GetType())
+	}
+	highVal := r.HighVal[0]
+	if r.HighVal[0].Kind() == types.KindMaxValue {
+		highVal = types.GetMaxValue(lp.ExprCol.GetType())
+	}
+	lowKey, err := lp.genKey(sc, lowVal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	highKey, err := lp.genKey(sc, highVal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if r.LowExclude {
+		lowKey = kv.Key(lowKey).PrefixNext()
+	}
+	if !r.HighExclude {
+		highKey = kv.Key(highKey).PrefixNext()
+	}
+
+	locations := make([]ListPartitionLocation, 0, lp.sorted.Len())
+	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(hack.String(lowKey))), newBtreeListColumnSearchItem(string(hack.String(highKey))), func(item btree.Item) bool {
+		locations = append(locations, item.(*btreeListColumnItem).location)
+		return true
+	})
+	return locations, nil
 }
 
 func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,

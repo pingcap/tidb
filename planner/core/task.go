@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -667,6 +668,9 @@ func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppT
 		rProj = getProj(p.ctx, rp)
 		rp = rProj
 	}
+	newEqCondition := make([]*expression.ScalarFunction, 0, len(p.EqualConditions))
+	newEqCondition = append(newEqCondition, p.EqualConditions...)
+	p.EqualConditions = newEqCondition
 	lKeys := make([]*expression.Column, 0, len(p.EqualConditions))
 	rKeys := make([]*expression.Column, 0, len(p.EqualConditions))
 	for i, eqFunc := range p.EqualConditions {
@@ -956,7 +960,20 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		p.stats = t.tablePlan.statsInfo()
-		if needExtraProj {
+
+		// If agg was pushed down in attach2Task(), the partial agg was placed on the top of tablePlan, the final agg was
+		// placed above the PhysicalTableReader, and the schema should have been set correctly for them, the schema of
+		// partial agg contains the columns needed by the final agg.
+		// If we add the projection here, the projection will be between the final agg and the partial agg, then the
+		// schema will be broken, the final agg will fail to find needed columns in ResolveIndices().
+		// Besides, the agg would only be pushed down if it doesn't contain virtual columns, so virtual column should not be affected.
+		aggPushedDown := false
+		switch p.tablePlan.(type) {
+		case *PhysicalHashAgg, *PhysicalStreamAgg:
+			aggPushedDown = true
+		}
+
+		if needExtraProj && !aggPushedDown {
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(prevSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
 			proj.SetSchema(prevSchema)
 			proj.SetChildren(p)
@@ -1479,9 +1496,9 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	for i, aggFunc := range p.AggFuncs {
 		if aggFunc.Name == ast.AggFuncAvg {
 			// inset a count(column)
-			avgCount := *aggFunc
+			avgCount := aggFunc.Clone()
 			avgCount.Name = ast.AggFuncCount
-			newAggFuncs = append(newAggFuncs, &avgCount)
+			newAggFuncs = append(newAggFuncs, avgCount)
 			avgCount.RetTp = ft
 			avgCountCol := &expression.Column{
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
@@ -1489,9 +1506,9 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			}
 			newSchema.Append(avgCountCol)
 			// insert a sum(column)
-			avgSum := *aggFunc
+			avgSum := aggFunc.Clone()
 			avgSum.Name = ast.AggFuncSum
-			newAggFuncs = append(newAggFuncs, &avgSum)
+			newAggFuncs = append(newAggFuncs, avgSum)
 			newSchema.Append(p.schema.Columns[i])
 			avgSumCol := p.schema.Columns[i]
 			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
@@ -1756,17 +1773,23 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			return invalidTask
 		}
 		attachPlan2Task(partialAgg, mpp)
-		items := finalAgg.(*PhysicalHashAgg).GroupByItems
-		partitionCols := make([]*expression.Column, 0, len(items))
-		for _, expr := range items {
-			col, ok := expr.(*expression.Column)
-			if !ok {
-				return invalidTask
+		partitionCols := p.MppPartitionCols
+		if len(partitionCols) == 0 {
+			items := finalAgg.(*PhysicalHashAgg).GroupByItems
+			partitionCols = make([]*expression.Column, 0, len(items))
+			for _, expr := range items {
+				col, ok := expr.(*expression.Column)
+				if !ok {
+					return invalidTask
+				}
+				partitionCols = append(partitionCols, col)
 			}
-			partitionCols = append(partitionCols, col)
 		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols}
 		newMpp := mpp.enforceExchangerImpl(prop)
+		if newMpp.invalid() {
+			return newMpp
+		}
 		attachPlan2Task(finalAgg, newMpp)
 		if proj != nil {
 			attachPlan2Task(proj, newMpp)
@@ -1968,6 +1991,13 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 }
 
 func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask {
+	if collate.NewCollationEnabled() && prop.PartitionTp == property.HashType {
+		for _, col := range prop.PartitionCols {
+			if types.IsString(col.RetType.Tp) {
+				return &mppTask{cst: math.MaxFloat64}
+			}
+		}
+	}
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType(prop.PartitionTp),

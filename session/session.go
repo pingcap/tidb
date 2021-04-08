@@ -77,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -679,7 +680,7 @@ func (s *session) isTxnRetryableError(err error) bool {
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	var err error
 	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
-		err = tikv.ErrLockExpire
+		err = tikvstore.ErrLockExpire
 	} else {
 		return nil
 	}
@@ -965,15 +966,13 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if name == variable.TiDBSlowLogMasking {
 		name = variable.TiDBRedactLog
 	}
-	if name == variable.SQLModeVar {
-		value = mysql.FormatSQLModeStr(value)
-		if _, err := mysql.GetSQLMode(value); err != nil {
-			return err
-		}
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	var sVal string
 	var err error
-	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
+	sVal, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal)
 	if err != nil {
 		return err
 	}
@@ -1050,7 +1049,7 @@ func (s *session) getTiDBTableValue(name, val string) (string, error) {
 	// Run validation on the tblValue. This will return an error if it can't be validated,
 	// but will also make it more consistent: disTribuTeD -> DISTRIBUTED etc
 	tblValue = trueFalseToOnOff(tblValue)
-	validatedVal, err := variable.ValidateSetSystemVar(s.sessionVars, name, tblValue, variable.ScopeGlobal)
+	validatedVal, err := variable.GetSysVar(name).Validate(s.sessionVars, tblValue, variable.ScopeGlobal)
 	if err != nil {
 		logutil.Logger(context.Background()).Warn("restoring sysvar value since validating mysql.tidb value failed",
 			zap.Error(err),
@@ -2060,7 +2059,6 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
-		s.GetSessionVars().IntPrimaryKeyDefaultAsClustered = true
 	}
 	return s, err
 }
@@ -2094,7 +2092,9 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
-		s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		if GetIndexUsageSyncLease() > 0 {
+			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		}
 	}
 
 	return s, nil
@@ -2548,6 +2548,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableExchangePartition,
 	variable.TiDBAllowFallbackToTiKV,
+	variable.TiDBEnableDynamicPrivileges,
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
@@ -2887,4 +2888,9 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 
 func (s *session) SetPort(port string) {
 	s.sessionVars.Port = port
+}
+
+// GetTxnWriteThroughputSLI implements the Context interface.
+func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return &s.txn.writeSLI
 }

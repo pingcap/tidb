@@ -1842,6 +1842,15 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
+	var assignFlag []int
+	assignFlag, b.err = getAssignFlag(b.ctx, v, selExec.Schema().Len())
+	if b.err != nil {
+		return nil
+	}
+	b.err = plannercore.CheckUpdateList(assignFlag, v)
+	if b.err != nil {
+		return nil
+	}
 	updateExec := &UpdateExec{
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
@@ -1850,8 +1859,27 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		multiUpdateOnSameTable:    multiUpdateOnSameTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
+		assignFlag:                assignFlag,
 	}
 	return updateExec
+}
+
+func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int) ([]int, error) {
+	assignFlag := make([]int, schemaLen)
+	for i := range assignFlag {
+		assignFlag[i] = -1
+	}
+	for _, assign := range v.OrderedList {
+		if !ctx.GetSessionVars().AllowWriteRowID && assign.Col.ID == model.ExtraHandleID {
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
+		tblIdx, found := v.TblColPosInfos.FindTblIdx(assign.Col.Index)
+		if found {
+			colIdx := assign.Col.Index
+			assignFlag[colIdx] = tblIdx
+		}
+	}
+	return assignFlag, nil
 }
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
@@ -2330,6 +2358,12 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		if innerTypes[i].EvalType() == types.ETString {
 			innerTypes[i].Flen = types.UnspecifiedLength
 		}
+	}
+
+	// Use the probe table's collation.
+	for i, col := range v.OuterHashKeys {
+		outerTypes[col.Index] = outerTypes[col.Index].Clone()
+		outerTypes[col.Index].Collate = innerTypes[v.InnerHashKeys[i].Index].Collate
 	}
 
 	var (
@@ -2981,7 +3015,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	e.tableRequest.CollectRangeCounts = &collectTable
 	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	// Do not collect the feedback when the table is the partition table.
-	if collectIndex && tbl.Meta().Partition != nil {
+	if collectIndex && tbl.Meta().GetPartitionInfo() != nil {
 		collectIndex = false
 	}
 	if !collectIndex {
@@ -3835,7 +3869,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	if len(pkCols) == 0 {
 		pkCols = tables.TryGetCommonPkColumnIds(tbl)
 		if len(pkCols) == 0 {
-			pkCols = []int64{0}
+			pkCols = []int64{-1}
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
