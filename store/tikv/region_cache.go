@@ -275,9 +275,10 @@ type RegionCache struct {
 	enableForwarding bool
 
 	mu struct {
-		sync.RWMutex                         // mutex protect cached region
-		regions      map[RegionVerID]*Region // cached regions are organized as regionVerID to region ref mapping
-		sorted       *btree.BTree            // cache regions are organized as sorted key to region ref mapping
+		sync.RWMutex                          // mutex protect cached region
+		regions      map[RegionVerID]*Region  // cached regions are organized as regionVerID to region ref mapping
+		versions     map[uint64][]RegionVerID // cache regionID to RegionVerID mapping
+		sorted       *btree.BTree             // cache regions are organized as sorted key to region ref mapping
 	}
 	storeMu struct {
 		sync.RWMutex
@@ -299,6 +300,7 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 		pdClient: pdClient,
 	}
 	c.mu.regions = make(map[RegionVerID]*Region)
+	c.mu.versions = make(map[uint64][]RegionVerID)
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
@@ -996,8 +998,17 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 		// is under transferring regions.
 		store.workTiFlashIdx = atomic.LoadInt32(&oldRegionStore.workTiFlashIdx)
 		delete(c.mu.regions, oldRegion.VerID())
+		for i, ver := range c.mu.versions[cachedRegion.VerID().id] {
+			if ver.Equal(oldRegion.VerID()) {
+				c.mu.versions[cachedRegion.VerID().id] = append(
+					c.mu.versions[cachedRegion.VerID().id][:i],
+					c.mu.versions[cachedRegion.VerID().id][i+1:]...)
+				break
+			}
+		}
 	}
 	c.mu.regions[cachedRegion.VerID()] = cachedRegion
+	c.mu.versions[cachedRegion.VerID().id] = append(c.mu.versions[cachedRegion.VerID().id], cachedRegion.VerID())
 }
 
 // searchCachedRegion finds a region from cache by key. Like `getCachedRegion`,
@@ -1034,7 +1045,12 @@ func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 	var newestRegion *Region
 	ts := time.Now().Unix()
-	for v, r := range c.mu.regions {
+	for _, v := range c.mu.versions[regionID] {
+		r, ok := c.mu.regions[v]
+		if !ok {
+			// should not happen
+			continue
+		}
 		if v.id == regionID {
 			lastAccess := atomic.LoadInt64(&r.lastAccess)
 			if ts-lastAccess > RegionCacheTTLSec {
@@ -1563,6 +1579,11 @@ func (r *RegionVerID) GetConfVer() uint64 {
 // String formats the RegionVerID to string
 func (r *RegionVerID) String() string {
 	return fmt.Sprintf("{ region id: %v, ver: %v, confVer: %v }", r.id, r.ver, r.confVer)
+}
+
+// Equals checks whether the RegionVerID equals to another one
+func (r *RegionVerID) Equal(another RegionVerID) bool {
+	return r.id == another.id && r.confVer == another.confVer && r.ver == another.ver
 }
 
 // VerID returns the Region's RegionVerID.
