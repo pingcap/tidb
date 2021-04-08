@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"bytes"
@@ -20,14 +20,15 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 )
 
 type testRawKVSuite struct {
 	OneByOneSuite
 	cluster cluster.Cluster
-	client  *RawKVClient
-	bo      *Backoffer
+	client  tikv.RawKVClientProbe
+	bo      *tikv.Backoffer
 }
 
 var _ = Suite(&testRawKVSuite{})
@@ -37,13 +38,11 @@ func (s *testRawKVSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	unistore.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
-	s.client = &RawKVClient{
-		clusterID:   0,
-		regionCache: NewRegionCache(pdClient),
-		pdClient:    pdClient,
-		rpcClient:   client,
-	}
-	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
+	s.client = tikv.RawKVClientProbe{RawKVClient: &tikv.RawKVClient{}}
+	s.client.SetPDClient(pdClient)
+	s.client.SetRegionCache(tikv.NewRegionCache(pdClient))
+	s.client.SetRPCClient(client)
+	s.bo = tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
 func (s *testRawKVSuite) TearDownTest(c *C) {
@@ -168,13 +167,13 @@ func (s *testRawKVSuite) checkData(c *C, expected map[string]string) {
 }
 
 func (s *testRawKVSuite) split(c *C, regionKey, splitKey string) error {
-	loc, err := s.client.regionCache.LocateKey(s.bo, []byte(regionKey))
+	loc, err := s.client.GetRegionCache().LocateKey(s.bo, []byte(regionKey))
 	if err != nil {
 		return err
 	}
 
 	newRegionID, peerID := s.cluster.AllocID(), s.cluster.AllocID()
-	s.cluster.SplitRaw(loc.Region.id, newRegionID, []byte(splitKey), []uint64{peerID}, peerID)
+	s.cluster.SplitRaw(loc.Region.GetID(), newRegionID, []byte(splitKey), []uint64{peerID}, peerID)
 	return nil
 }
 
@@ -193,7 +192,7 @@ func (s *testRawKVSuite) TestRawBatch(c *C) {
 	size := 0
 	var testKeys [][]byte
 	var testValues [][]byte
-	for i := 0; size/rawBatchPutSize < 4; i++ {
+	for i := 0; size/(tikv.ConfigProbe{}.GetRawBatchPutSize()) < 4; i++ {
 		key := fmt.Sprint("key", i)
 		size += len(key)
 		testKeys = append(testKeys, []byte(key))

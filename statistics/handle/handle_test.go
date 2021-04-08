@@ -1995,6 +1995,8 @@ type statsSerialSuite struct {
 
 func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	session.SetIndexUsageSyncLease(1)
+	defer session.SetIndexUsageSyncLease(0)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_idx(a int, b int)")
@@ -2034,6 +2036,8 @@ func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {
 
 func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	session.SetIndexUsageSyncLease(1)
+	defer session.SetIndexUsageSyncLease(0)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_idx(a int, b int)")
@@ -2244,4 +2248,47 @@ func (s *testStatsSuite) TestDuplicateExtendedStats(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "extended statistics 's2' with same type on same columns already exists")
 	tk.MustExec("alter table t add stats_extended s2 correlation(a,c)")
+}
+
+func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+
+	tk.MustExec("alter table t drop column a")
+	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), time.Duration(0)), IsNil)
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+}
+
+func (s *testStatsSuite) TestShowExtendedStats4DropColumn(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("insert into t values(1,1,1),(2,2,2),(3,3,3)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustExec("alter table t add stats_extended s2 correlation(b,c)")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("show stats_extended").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][2], Equals, "s1")
+	c.Assert(rows[0][3], Equals, "[a,b]")
+	c.Assert(rows[1][2], Equals, "s2")
+	c.Assert(rows[1][3], Equals, "[b,c]")
+
+	tk.MustExec("alter table t drop column b")
+	rows = tk.MustQuery("show stats_extended").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	// Previously registered extended stats should be invalid for re-created columns.
+	tk.MustExec("alter table t add column b int")
+	rows = tk.MustQuery("show stats_extended").Rows()
+	c.Assert(len(rows), Equals, 0)
 }
