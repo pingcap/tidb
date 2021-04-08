@@ -673,7 +673,7 @@ func (b *builtinArithmeticMultiplyIntSig) vecEvalInt(input *chunk.Chunk, result 
 		}
 
 		tmp = x[i] * y[i]
-		if x[i] != 0 && tmp/x[i] != y[i] {
+		if (x[i] != 0 && tmp/x[i] != y[i]) || (tmp == math.MinInt64 && x[i] == -1) {
 			result.SetNull(i, true)
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
 		}
