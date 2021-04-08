@@ -259,6 +259,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 			c.Flag |= mysql.PriKeyFlag
 			// Primary key can not be NULL.
 			c.Flag |= mysql.NotNullFlag
+			setNoDefaultValueFlag(c, false)
 		}
 	case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 		for i, key := range v.Keys {

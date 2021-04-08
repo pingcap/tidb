@@ -6634,3 +6634,20 @@ func (s *testSerialSuite) TestTruncateAllPartitions(c *C) {
 	tk1.MustExec("alter table partition_table truncate partition all;")
 	tk1.MustQuery("select count(*) from partition_table;").Check(testkit.Rows("0"))
 }
+
+func (s *testSerialSuite) TestIssue23872(c *C) {
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists test_create_table;")
+	defer func() {
+		tk.MustExec("drop table if exists test_create_table;")
+	}()
+	_, err := tk.Exec("create table test_create_table(id smallint,id1 int, primary key (id));")
+	c.Assert(err, IsNil)
+	rs, err := tk.Exec("select * from test_create_table;")
+	c.Assert(err, IsNil)
+	cols := rs.Fields()
+	expectFlag := uint16(mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag)
+	c.Assert(cols[0].Column.Flag, Equals, expectFlag)
+}
