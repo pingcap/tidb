@@ -296,7 +296,7 @@ func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error)
 	switch indexInfo.State {
 	case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
 		// We can not rollback now, so just continue to drop index.
-		// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+		// Normally won't fetch here, because there is a check when canceling DDL jobs. See function: IsJobRollbackable.
 		job.State = model.JobStateRunning
 		return ver, nil
 	case model.StatePublic:
