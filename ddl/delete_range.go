@@ -358,7 +358,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		if len(partitionIDs) == 0 {
 			return doBatchDeleteIndiceRange(s, job.ID, job.TableID, indexIDs, now)
 		}
-		for _, pid := range partitionIDs {
+		for _, pID := range partitionIDs {
 			if err := doBatchDeleteIndiceRange(s, job.ID, pid, indexIDs, now); err != nil {
 				return errors.Trace(err)
 			}
