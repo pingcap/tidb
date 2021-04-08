@@ -1029,6 +1029,7 @@ func buildSchemaFromFields(
 				TblName:     tblName,
 				OrigColName: col.Name,
 				ColName:     asName,
+				OrigColName: col.Name,
 			})
 			columns = append(columns, colInfoToColumn(col, len(columns)))
 		}
