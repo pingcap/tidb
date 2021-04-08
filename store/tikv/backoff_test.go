@@ -21,19 +21,9 @@ import (
 )
 
 type testBackoffSuite struct {
-	OneByOneSuite
-	store *KVStore
 }
 
 var _ = Suite(&testBackoffSuite{})
-
-func (s *testBackoffSuite) SetUpTest(c *C) {
-	s.store = NewTestStore(c)
-}
-
-func (s *testBackoffSuite) TearDownTest(c *C) {
-	s.store.Close()
-}
 
 func (s *testBackoffSuite) TestBackoffWithMax(c *C) {
 	b := NewBackofferWithVars(context.TODO(), 2000, nil)
