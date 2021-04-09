@@ -885,11 +885,13 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
 		newTask.cst += sortCPUCost
 	}
+	p.cost = newTask.cst
 	if t.doubleReadNeedProj {
 		schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
 		proj.SetChildren(p)
+		proj.cost = newTask.cst
 		newTask.p = proj
 	} else {
 		newTask.p = p
@@ -959,6 +961,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		p.stats = t.indexPlan.statsInfo()
+		p.cost = newTask.cost()
 		newTask.p = p
 	} else {
 		tp := t.tablePlan

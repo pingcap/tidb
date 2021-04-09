@@ -115,7 +115,7 @@
         "SQL": "explain format = 'verbose' select count(*) from t3 where b = 0",
         "Plan": [
           "StreamAgg_10 1.00 1.33 root  funcs:count(1)->Column#4",
-          "└─IndexReader_15 0.00 0.00 root  index:IndexRangeScan_14",
+          "└─IndexReader_15 0.00 1.33 root  index:IndexRangeScan_14",
           "  └─IndexRangeScan_14 0.00 20.00 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
         ]
       },
@@ -133,7 +133,7 @@
         "Plan": [
           "StreamAgg_10 1.00 60.22 root  funcs:count(1)->Column#7",
           "└─HashJoin_40 3.00 51.22 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
-          "  ├─IndexReader_28(Build) 3.00 0.00 root  index:IndexFullScan_27",
+          "  ├─IndexReader_28(Build) 3.00 11.66 root  index:IndexFullScan_27",
           "  │ └─IndexFullScan_27 3.00 150.50 cop[tikv] table:t3, index:c(b) keep order:false",
           "  └─TableReader_26(Probe) 3.00 10.76 root  data:Selection_25",
           "    └─Selection_25 3.00 137.00 cop[tikv]  not(isnull(test.t3.a))",
@@ -160,7 +160,7 @@
         "Plan": [
           "StreamAgg_15 1.00 62.68 root  funcs:count(1)->Column#10",
           "└─HashJoin_65 3.00 53.68 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
-          "  ├─IndexReader_53(Build) 3.00 0.00 root  index:IndexFullScan_52",
+          "  ├─IndexReader_53(Build) 3.00 11.66 root  index:IndexFullScan_52",
           "  │ └─IndexFullScan_52 3.00 150.50 cop[tikv] table:t3, index:c(b) keep order:false",
           "  └─TableReader_39(Probe) 3.00 264.38 root  data:ExchangeSender_38",
           "    └─ExchangeSender_38 3.00 264.38 cop[tiflash]  ExchangeType: PassThrough",
