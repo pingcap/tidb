@@ -1995,8 +1995,6 @@ type statsSerialSuite struct {
 
 func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	session.SetIndexUsageSyncLease(1)
-	defer session.SetIndexUsageSyncLease(0)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_idx(a int, b int)")
@@ -2036,8 +2034,6 @@ func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {
 
 func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	session.SetIndexUsageSyncLease(1)
-	defer session.SetIndexUsageSyncLease(0)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_idx(a int, b int)")
