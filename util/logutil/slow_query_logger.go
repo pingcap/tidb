@@ -43,7 +43,7 @@ type slowLogEncoder struct{}
 
 func (e *slowLogEncoder) EncodeEntry(entry zapcore.Entry, _ []zapcore.Field) (*buffer.Buffer, error) {
 	b := _pool.Get()
-	fmt.Fprintf(b, "# Time: %s\n", entry.Time.Format(time.RFC3339Nano))
+	fmt.Fprintf(b, "# Time: %s\n", entry.Time.Format(SlowLogTimeFormat))
 	fmt.Fprintf(b, "%s\n", entry.Message)
 	return b, nil
 }
