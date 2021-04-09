@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -414,7 +414,7 @@ func (e *analyzeColumnsExec) Process(key, value []byte) error {
 	e.chk.Reset()
 	if e.req.NumRows() == e.req.Capacity() {
 		e.seekKey = kv.Key(key).PrefixNext()
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	return nil
 }
