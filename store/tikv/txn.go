@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/terror"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -356,7 +355,24 @@ func (txn *KVTxn) collectLockedKeys() [][]byte {
 
 func (txn *KVTxn) onCommitted(err error) {
 	if txn.commitCallback != nil {
-		info := tidbkv.TxnInfo{TxnScope: txn.GetUnionStore().GetOption(kv.TxnScope).(string), StartTS: txn.startTS, CommitTS: txn.commitTS}
+		isAsyncCommit := txn.committer.isAsyncCommit()
+		isOnePC := txn.committer.isOnePC()
+
+		commitMode := "2pc"
+		if isOnePC {
+			commitMode = "1pc"
+		} else if isAsyncCommit {
+			commitMode = "async_commit"
+		}
+
+		info := tidbkv.TxnInfo{
+			TxnScope:            txn.GetUnionStore().GetOption(kv.TxnScope).(string),
+			StartTS:             txn.startTS,
+			CommitTS:            txn.commitTS,
+			TxnCommitMode:       commitMode,
+			AsyncCommitFallback: txn.committer.hasTriedAsyncCommit && !isAsyncCommit,
+			OnePCFallback:       txn.committer.hasTriedOnePC && !isOnePC,
+		}
 		if err != nil {
 			info.ErrMsg = err.Error()
 		}
@@ -471,7 +487,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 					txn.us.UnmarkPresumeKeyNotExists(key)
 				}
 			}
-			keyMayBeLocked := terror.ErrorNotEqual(tidbkv.ErrWriteConflict, err) && terror.ErrorNotEqual(tidbkv.ErrKeyExists, err)
+			keyMayBeLocked := !(kv.IsErrWriteConflict(err) || kv.IsErrKeyExist(err))
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
 				wg := txn.asyncPessimisticRollback(ctx, keys)
