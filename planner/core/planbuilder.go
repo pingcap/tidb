@@ -2237,14 +2237,30 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
+	user := b.ctx.GetSessionVars().User
 	var authErr error
-	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
-			b.ctx.GetSessionVars().User.AuthHostname, tableInfo.Name.L)
+	if user != nil {
+		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
 	}
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tn.DBInfo.Name.L,
 		tableInfo.Name.L, "", authErr)
+
+	// `REPLACE INTO` requires both INSERT + DELETE privilege
+	// `ON DUPLICATE KEY UPDATE` requires both INSERT + UPDATE privilege
+	var extraPriv mysql.PrivilegeType
+	if insert.IsReplace {
+		extraPriv = mysql.DeletePriv
+	} else if insert.OnDuplicate != nil {
+		extraPriv = mysql.UpdatePriv
+	}
+	if extraPriv != 0 {
+		if user != nil {
+			cmd := strings.ToUpper(mysql.Priv2Str[extraPriv])
+			authErr = ErrTableaccessDenied.GenWithStackByArgs(cmd, user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, extraPriv, tn.DBInfo.Name.L, tableInfo.Name.L, "", authErr)
+	}
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
