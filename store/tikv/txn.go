@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
 )
 
@@ -264,9 +263,9 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	}
 
 	defer func() {
-		ctxValue := ctx.Value(execdetails.CommitDetailCtxKey)
+		ctxValue := ctx.Value(util.CommitDetailCtxKey)
 		if ctxValue != nil {
-			commitDetail := ctxValue.(**execdetails.CommitDetails)
+			commitDetail := ctxValue.(**util.CommitDetails)
 			if *commitDetail != nil {
 				(*commitDetail).TxnRetry++
 			} else {
@@ -407,9 +406,9 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 		}
 		if lockCtx.Stats != nil {
 			lockCtx.Stats.TotalTime = time.Since(startTime)
-			ctxValue := ctx.Value(execdetails.LockKeysDetailCtxKey)
+			ctxValue := ctx.Value(util.LockKeysDetailCtxKey)
 			if ctxValue != nil {
-				lockKeysDetail := ctxValue.(**execdetails.LockKeysDetails)
+				lockKeysDetail := ctxValue.(**util.LockKeysDetails)
 				*lockKeysDetail = lockCtx.Stats
 			}
 		}
@@ -462,7 +461,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 			assignedPrimaryKey = true
 		}
 
-		lockCtx.Stats = &execdetails.LockKeysDetails{
+		lockCtx.Stats = &util.LockKeysDetails{
 			LockKeys: int32(len(keys)),
 		}
 		bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
