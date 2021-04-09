@@ -82,7 +82,7 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
-	return txn.KVTxn.Delete(tikvstore.Key(k))
+	return txn.KVTxn.Delete(k)
 }
 
 func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {

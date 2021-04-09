@@ -227,8 +227,8 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion startKey", curRegion.StartKey),
-				zap.Stringer("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion startKey", kv.Key(curRegion.StartKey)),
+				zap.Stringer("curRegion endKey", kv.Key(curRegion.EndKey)),
 				zap.Reflect("kvResp", kvResp),
 				zap.Error(err))
 			return nil, errors.Trace(err)
@@ -239,8 +239,8 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion startKey", curRegion.StartKey),
-				zap.Stringer("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion startKey", kv.Key(curRegion.StartKey)),
+				zap.Stringer("curRegion endKey", kv.Key(curRegion.EndKey)),
 				zap.Reflect("kvResp", kvResp),
 				zap.Stringer("error", err))
 			continue
@@ -251,8 +251,8 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion startKey", curRegion.StartKey),
-				zap.Stringer("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion startKey", kv.Key(curRegion.StartKey)),
+				zap.Stringer("curRegion endKey", kv.Key(curRegion.EndKey)),
 				zap.Reflect("kvResp", kvResp),
 				zap.String("error", data.GetError()))
 			return nil, errors.New(data.GetError())

@@ -32,11 +32,11 @@ type Scanner struct {
 	batchSize    int
 	cache        []*pb.KvPair
 	idx          int
-	nextStartKey kv.Key
-	endKey       kv.Key
+	nextStartKey []byte
+	endKey       []byte
 
 	// Use for reverse scan.
-	nextEndKey kv.Key
+	nextEndKey []byte
 	reverse    bool
 
 	valid bool
@@ -70,7 +70,7 @@ func (s *Scanner) Valid() bool {
 }
 
 // Key return key.
-func (s *Scanner) Key() kv.Key {
+func (s *Scanner) Key() []byte {
 	if s.valid {
 		return s.cache[s.idx].Key
 	}
@@ -110,8 +110,8 @@ func (s *Scanner) Next() error {
 		}
 
 		current := s.cache[s.idx]
-		if (!s.reverse && (len(s.endKey) > 0 && kv.Key(current.Key).Cmp(s.endKey) >= 0)) ||
-			(s.reverse && len(s.nextStartKey) > 0 && kv.Key(current.Key).Cmp(s.nextStartKey) < 0) {
+		if (!s.reverse && (len(s.endKey) > 0 && kv.CmpKey(current.Key, s.endKey) >= 0)) ||
+			(s.reverse && len(s.nextStartKey) > 0 && kv.CmpKey(current.Key, s.nextStartKey) < 0) {
 			s.eof = true
 			s.Close()
 			return nil
@@ -157,8 +157,8 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 
 func (s *Scanner) getData(bo *Backoffer) error {
 	logutil.BgLogger().Debug("txn getData",
-		zap.Stringer("nextStartKey", s.nextStartKey),
-		zap.Stringer("nextEndKey", s.nextEndKey),
+		zap.String("nextStartKey", kv.StrKey(s.nextStartKey)),
+		zap.String("nextEndKey", kv.StrKey(s.nextEndKey)),
 		zap.Bool("reverse", s.reverse),
 		zap.Uint64("txnStartTS", s.startTS()))
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
@@ -280,8 +280,8 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			} else {
 				s.nextEndKey = reqStartKey
 			}
-			if (!s.reverse && (len(loc.EndKey) == 0 || (len(s.endKey) > 0 && s.nextStartKey.Cmp(s.endKey) >= 0))) ||
-				(s.reverse && (len(loc.StartKey) == 0 || (len(s.nextStartKey) > 0 && s.nextStartKey.Cmp(s.nextEndKey) >= 0))) {
+			if (!s.reverse && (len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.CmpKey(s.nextStartKey, s.endKey) >= 0))) ||
+				(s.reverse && (len(loc.StartKey) == 0 || (len(s.nextStartKey) > 0 && kv.CmpKey(s.nextStartKey, s.nextEndKey) >= 0))) {
 				// Current Region is the last one.
 				s.eof = true
 			}
@@ -293,7 +293,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// more data.
 		lastKey := kvPairs[len(kvPairs)-1].GetKey()
 		if !s.reverse {
-			s.nextStartKey = kv.Key(lastKey).Next()
+			s.nextStartKey = kv.NextKey(lastKey)
 		} else {
 			s.nextEndKey = lastKey
 		}

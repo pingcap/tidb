@@ -72,11 +72,11 @@ func (s *testScanSuite) beginTxn(c *C) *tikv.KVTxn {
 	return txn
 }
 
-func (s *testScanSuite) makeKey(i int) kv.Key {
+func (s *testScanSuite) makeKey(i int) []byte {
 	var key []byte
 	key = append(key, s.recordPrefix...)
 	key = append(key, []byte(fmt.Sprintf("%10d", i))...)
-	return kv.Key(key)
+	return key
 }
 
 func (s *testScanSuite) makeValue(i int) []byte {
@@ -92,9 +92,9 @@ func (s *testScanSuite) TestScan(c *C) {
 				logutil.BgLogger().Error("bytes equal check fail",
 					zap.Int("i", i),
 					zap.Int("rowNum", rowNum),
-					zap.Stringer("obtained key", k),
-					zap.Stringer("obtained val", kv.Key(scan.Value())),
-					zap.Stringer("expected", expectedKey),
+					zap.String("obtained key", kv.StrKey(k)),
+					zap.String("obtained val", kv.StrKey(scan.Value())),
+					zap.String("expected", kv.StrKey(expectedKey)),
 					zap.Bool("keyOnly", keyOnly))
 			}
 			c.Assert([]byte(k), BytesEquals, []byte(expectedKey))

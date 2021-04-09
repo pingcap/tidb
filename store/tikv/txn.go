@@ -179,7 +179,7 @@ func (txn *KVTxn) IterReverse(k []byte) (unionstore.Iterator, error) {
 }
 
 // Delete removes the entry for key k from kv store.
-func (txn *KVTxn) Delete(k kv.Key) error {
+func (txn *KVTxn) Delete(k []byte) error {
 	return txn.us.GetMemBuffer().Delete(k)
 }
 

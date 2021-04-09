@@ -23,7 +23,7 @@ import (
 // Iterator is the interface for a iterator on KV store.
 type Iterator interface {
 	Valid() bool
-	Key() kv.Key
+	Key() []byte
 	Value() []byte
 	Next() error
 	Close()

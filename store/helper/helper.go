@@ -100,8 +100,8 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 		logutil.BgLogger().Info("get MVCC by encoded key failed",
 			zap.Stringer("encodeKey", encodedKey),
 			zap.Reflect("region", keyLocation.Region),
-			zap.Stringer("startKey", keyLocation.StartKey),
-			zap.Stringer("endKey", keyLocation.EndKey),
+			zap.Stringer("startKey", kv.Key(keyLocation.StartKey)),
+			zap.Stringer("endKey", kv.Key(keyLocation.EndKey)),
 			zap.Reflect("kvResp", kvResp),
 			zap.Error(err))
 		return nil, errors.Trace(err)

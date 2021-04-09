@@ -18,32 +18,29 @@ import (
 	"encoding/hex"
 )
 
-// Key represents high-level Key type.
-type Key []byte
-
-// Next returns the next key in byte-order.
-func (k Key) Next() Key {
+// NextKey returns the next key in byte-order.
+func NextKey(k []byte) []byte {
 	// add 0x0 to the end of key
 	buf := make([]byte, len(k)+1)
 	copy(buf, k)
 	return buf
 }
 
-// Cmp returns the comparison result of two key.
+// CmpKey returns the comparison result of two key.
 // The result will be 0 if a==b, -1 if a < b, and +1 if a > b.
-func (k Key) Cmp(another Key) int {
+func CmpKey(k, another []byte) int {
 	return bytes.Compare(k, another)
 }
 
-// String implements fmt.Stringer interface.
-func (k Key) String() string {
+// StrKey returns string for key.
+func StrKey(k []byte) string {
 	return hex.EncodeToString(k)
 }
 
 // KeyRange represents a range where StartKey <= key < EndKey.
 type KeyRange struct {
-	StartKey Key
-	EndKey   Key
+	StartKey []byte
+	EndKey   []byte
 }
 
 // NewKeyRange creates a new key range.

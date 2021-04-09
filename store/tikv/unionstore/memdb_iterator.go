@@ -23,8 +23,8 @@ import (
 type MemdbIterator struct {
 	db           *MemDB
 	curr         memdbNodeAddr
-	start        kv.Key
-	end          kv.Key
+	start        []byte
+	end          []byte
 	reverse      bool
 	includeFlags bool
 }
@@ -58,7 +58,7 @@ func (db *MemDB) IterReverse(k []byte) (Iterator, error) {
 }
 
 // IterWithFlags returns a MemdbIterator.
-func (db *MemDB) IterWithFlags(k kv.Key, upperBound kv.Key) *MemdbIterator {
+func (db *MemDB) IterWithFlags(k []byte, upperBound []byte) *MemdbIterator {
 	i := &MemdbIterator{
 		db:           db,
 		start:        k,
@@ -70,7 +70,7 @@ func (db *MemDB) IterWithFlags(k kv.Key, upperBound kv.Key) *MemdbIterator {
 }
 
 // IterReverseWithFlags returns a reversed MemdbIterator.
-func (db *MemDB) IterReverseWithFlags(k kv.Key) *MemdbIterator {
+func (db *MemDB) IterReverseWithFlags(k []byte) *MemdbIterator {
 	i := &MemdbIterator{
 		db:           db,
 		end:          k,
@@ -128,7 +128,7 @@ func (i *MemdbIterator) HasValue() bool {
 }
 
 // Key returns current key.
-func (i *MemdbIterator) Key() kv.Key {
+func (i *MemdbIterator) Key() []byte {
 	return i.curr.getKey()
 }
 
@@ -189,7 +189,7 @@ func (i *MemdbIterator) seekToLast() {
 	i.curr = y
 }
 
-func (i *MemdbIterator) seek(key kv.Key) {
+func (i *MemdbIterator) seek(key []byte) {
 	y := memdbNodeAddr{nil, nullAddr}
 	x := i.db.getNode(i.db.root)
 

@@ -591,8 +591,8 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 // KeyLocation is the region and range that a key is located.
 type KeyLocation struct {
 	Region   RegionVerID
-	StartKey kv.Key
-	EndKey   kv.Key
+	StartKey []byte
+	EndKey   []byte
 }
 
 // NewKeyLocation creates a KeyLocation.

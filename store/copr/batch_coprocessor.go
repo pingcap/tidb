@@ -441,7 +441,7 @@ func (b *batchCopIterator) sendToRespCh(resp *batchCopResponse) (exit bool) {
 func toTiKVKeyRanges(ranges []kv.KeyRange) *tikv.KeyRanges {
 	res := make([]tikvstore.KeyRange, len(ranges))
 	for id, r := range ranges {
-		res[id] = tikvstore.KeyRange{StartKey: tikvstore.Key(r.StartKey), EndKey: tikvstore.Key(r.EndKey)}
+		res[id] = tikvstore.KeyRange{StartKey: r.StartKey, EndKey: r.EndKey}
 	}
 	return tikv.NewKeyRanges(res)
 }
