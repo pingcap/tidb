@@ -106,7 +106,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		failpoint.Inject("PessimisticLockErrWriteConflict", func() error {
 			time.Sleep(300 * time.Millisecond)
-			return tidbkv.ErrWriteConflict
+			return &kv.ErrWriteConflict{WriteConflict: nil}
 		})
 		startTime := time.Now()
 		resp, err := c.store.SendReq(bo, req, batch.region, ReadTimeoutShort)
