@@ -255,28 +255,28 @@ func (s *testSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 	defer tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:10'`)
 	testcases := []struct {
-		name         string
-		sql          string
-		injectSafeTS uint64
-		useSafeTS    bool
+		name            string
+		sql             string
+		injectResolveTS uint64
+		useResolveTS    bool
 	}{
 		{
 			name: "max 20 seconds ago, safeTS 10 secs ago",
 			sql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:20'`,
-			injectSafeTS: func() uint64 {
+			injectResolveTS: func() uint64 {
 				phy := time.Now().Add(-10*time.Second).Unix() * 1000
 				return oracle.ComposeTS(phy, 0)
 			}(),
-			useSafeTS: true,
+			useResolveTS: true,
 		},
 		{
 			name: "max 10 seconds ago, safeTS 20 secs ago",
 			sql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:10'`,
-			injectSafeTS: func() uint64 {
+			injectResolveTS: func() uint64 {
 				phy := time.Now().Add(-20*time.Second).Unix() * 1000
 				return oracle.ComposeTS(phy, 0)
 			}(),
-			useSafeTS: false,
+			useResolveTS: false,
 		},
 		{
 			name: "max 20 seconds ago, safeTS 10 secs ago",
@@ -284,11 +284,11 @@ func (s *testSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 				return fmt.Sprintf(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '%v'`,
 					time.Now().Add(-20*time.Second).Format("2006-01-02 15:04:05"))
 			}(),
-			injectSafeTS: func() uint64 {
+			injectResolveTS: func() uint64 {
 				phy := time.Now().Add(-10*time.Second).Unix() * 1000
 				return oracle.ComposeTS(phy, 0)
 			}(),
-			useSafeTS: true,
+			useResolveTS: true,
 		},
 		{
 			name: "max 10 seconds ago, safeTS 20 secs ago",
@@ -296,23 +296,24 @@ func (s *testSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 				return fmt.Sprintf(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '%v'`,
 					time.Now().Add(-10*time.Second).Format("2006-01-02 15:04:05"))
 			}(),
-			injectSafeTS: func() uint64 {
+			injectResolveTS: func() uint64 {
 				phy := time.Now().Add(-20*time.Second).Unix() * 1000
 				return oracle.ComposeTS(phy, 0)
 			}(),
-			useSafeTS: false,
+			useResolveTS: false,
 		},
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/injectSafeTS", fmt.Sprintf("return(%v)", testcase.injectSafeTS)), IsNil)
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/injectResolveTS",
+			fmt.Sprintf("return(%v)", testcase.injectResolveTS)), IsNil)
 		tk.MustExec(testcase.sql)
-		if testcase.useSafeTS {
-			c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, testcase.injectSafeTS)
+		if testcase.useResolveTS {
+			c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, testcase.injectResolveTS)
 		} else {
-			c.Assert(oracle.CompareTS(tk.Se.GetSessionVars().TxnCtx.StartTS, testcase.injectSafeTS), Equals, 1)
+			c.Assert(oracle.CompareTS(tk.Se.GetSessionVars().TxnCtx.StartTS, testcase.injectResolveTS), Equals, 1)
 		}
 		tk.MustExec("commit")
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/injectSafeTS")
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/injectResolveTS")
 	}
 }

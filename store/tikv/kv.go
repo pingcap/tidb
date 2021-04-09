@@ -79,9 +79,9 @@ type KVStore struct {
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
 	closed    chan struct{} // this is used to nofity when the store is closed
 
-	safeTSMu struct {
+	resolveTSMu struct {
 		sync.RWMutex
-		storeSafeTS map[uint64]uint64 // storeID -> safeTS
+		resolveTS map[uint64]uint64 // storeID -> resolveTS
 	}
 
 	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
@@ -136,7 +136,7 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		replicaReadSeed: rand.Uint32(),
 	}
 	store.lockResolver = newLockResolver(store)
-	store.safeTSMu.storeSafeTS = make(map[uint64]uint64)
+	store.resolveTSMu.resolveTS = make(map[uint64]uint64)
 
 	go store.runSafePointChecker()
 	go store.safeTSUpdater()
@@ -212,7 +212,7 @@ func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVT
 func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTxn, error) {
 	minSafeTS := uint64(0)
 	if txnScope == oracle.GlobalTxnScope {
-		minSafeTS = s.getGlobalMinSafeTS()
+		minSafeTS = s.getGlobalMinResolveTS()
 	} else {
 		stores := s.regionCache.getStoresByLabels([]*metapb.StoreLabel{
 			{
@@ -220,7 +220,7 @@ func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTx
 				Value: txnScope,
 			},
 		})
-		minSafeTS = s.getMinSafeTSByStores(stores)
+		minSafeTS = s.getMinResolveTSByStores(stores)
 	}
 	startTS := minStartTS
 	// If the safeTS is larger then then minStartTS, we will use safeTS as StartTS, otherwise we will use
@@ -391,12 +391,12 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
 }
 
-func (s *KVStore) getMinSafeTSByStores(stores []*Store) uint64 {
+func (s *KVStore) getMinResolveTSByStores(stores []*Store) uint64 {
 	minSafeTS := uint64(math.MaxUint64)
-	s.safeTSMu.RLock()
-	defer s.safeTSMu.RUnlock()
+	s.resolveTSMu.RLock()
+	defer s.resolveTSMu.RUnlock()
 	for _, store := range stores {
-		safeTS := s.safeTSMu.storeSafeTS[store.storeID]
+		safeTS := s.resolveTSMu.resolveTS[store.storeID]
 		if safeTS < minSafeTS {
 			minSafeTS = safeTS
 		}
@@ -404,22 +404,22 @@ func (s *KVStore) getMinSafeTSByStores(stores []*Store) uint64 {
 	return minSafeTS
 }
 
-func (s *KVStore) getGlobalMinSafeTS() uint64 {
-	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
+func (s *KVStore) getGlobalMinResolveTS() uint64 {
+	failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
 		injectTS := val.(int)
 		failpoint.Return(uint64(injectTS))
 	})
 	stores := s.regionCache.getStoresByType(tikvrpc.TiKV)
-	minSafeTS := uint64(math.MaxUint64)
-	s.safeTSMu.RLock()
-	defer s.safeTSMu.RUnlock()
+	minResolveTS := uint64(math.MaxUint64)
+	s.resolveTSMu.RLock()
+	defer s.resolveTSMu.RUnlock()
 	for _, store := range stores {
-		safeTS := s.safeTSMu.storeSafeTS[store.storeID]
-		if safeTS < minSafeTS {
-			minSafeTS = safeTS
+		storeResolveTS := s.resolveTSMu.resolveTS[store.storeID]
+		if storeResolveTS < minResolveTS {
+			minResolveTS = storeResolveTS
 		}
 	}
-	return minSafeTS
+	return minResolveTS
 }
 
 func (s *KVStore) safeTSUpdater() {
@@ -432,12 +432,12 @@ func (s *KVStore) safeTSUpdater() {
 		case <-s.Closed():
 			return
 		case <-t.C:
-			s.updateSafeTS(ctx)
+			s.updateResolveTS(ctx)
 		}
 	}
 }
 
-func (s *KVStore) updateSafeTS(ctx context.Context) {
+func (s *KVStore) updateResolveTS(ctx context.Context) {
 	stores := s.regionCache.getStoresByType(tikvrpc.TiKV)
 	tikvClient := s.GetTiKVClient()
 	wg := &sync.WaitGroup{}
@@ -454,9 +454,9 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 				return
 			}
 			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
-			s.safeTSMu.Lock()
-			s.safeTSMu.storeSafeTS[store.storeID] = safeTSResp.GetSafeTs()
-			s.safeTSMu.Unlock()
+			s.resolveTSMu.Lock()
+			s.resolveTSMu.resolveTS[store.storeID] = safeTSResp.GetSafeTs()
+			s.resolveTSMu.Unlock()
 		}(ctx, wg, store)
 	}
 	wg.Wait()
