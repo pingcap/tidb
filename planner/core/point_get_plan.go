@@ -71,7 +71,7 @@ type PointGetPlan struct {
 	LockWaitTime       int64
 	partitionColumnPos int
 	Columns            []*model.ColumnInfo
-	cost 			   float64
+	cost               float64
 }
 
 type nameValuePair struct {
