@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	us "github.com/ngaut/unistore/tikv"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/codec"
 )
