@@ -16,6 +16,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/log"
 	"reflect"
 	"strings"
 	"sync"
@@ -76,9 +77,12 @@ func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNam
 	col.FieldType = *types.NewFieldType(mysqlType)
 	col.Decimal = decimal
 
-	originDefVal, _ := generateOriginDefaultValue(col)
-	_ = col.SetOriginDefaultValue(originDefVal)
-	_ = col.SetDefaultValue(originDefVal)
+	originDefVal, err1 := generateOriginDefaultValue(col)
+	log.Info("generateOriginDefaultValue   error" + err1.Error())
+	err2 := col.SetOriginDefaultValue(originDefVal)
+	log.Info("SetOriginDefaultValue   error" + err2.Error())
+	err3 := col.SetDefaultValue(originDefVal)
+	log.Info("SetDefaultValue   error" + err3.Error())
 
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
@@ -312,8 +316,8 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(cols[4].Name.L, Equals, "c4")
 	c.Assert(cols[5].Offset, Equals, 5)
 	c.Assert(cols[5].Name.L, Equals, "c5")
-	//c.Assert(cols[6].Offset, Equals, 6)
-	//c.Assert(cols[6].Name.L, Equals, "c7")
+	c.Assert(cols[6].Offset, Equals, 6)
+	c.Assert(cols[6].Name.L, Equals, "c7")
 
 	values, err = tables.RowWithCols(t, ctx, h, cols)
 	c.Assert(err, IsNil)
@@ -321,7 +325,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(values, HasLen, 7)
 	c.Assert(values[0].GetInt64(), Equals, int64(202))
 	c.Assert(values[5].GetInt64(), Equals, int64(101))
-	//c.Assert(values[6].GetMysqlTime().Microsecond(), Not(Equals), int(0))
+	c.Assert(values[6].GetMysqlTime().Microsecond(), Not(Equals), int(0))
 
 	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c2", false)
 	testCheckJobDone(c, d, job, false)
