@@ -3431,7 +3431,6 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
 	e.resultHandler.open(nil, result)
 	return e, nil
 }
