@@ -827,11 +827,13 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Response, error) {
 	resp := &Response{}
 	execDetail := &kvrpcpb.ExecDetailsV2{}
+	var affectRow int
 	var err error
 	switch req.Type {
 	case CmdGet:
 		r := &kvrpcpb.GetResponse{}
 		r, err = client.KvGet(ctx, req.Get())
+		affectRow := len(r.Value)
 		execDetail = r.GetExecDetailsV2()
 		resp.Resp = r
 	case CmdScan:
@@ -849,6 +851,7 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 	case CmdBatchGet:
 		r := &kvrpcpb.BatchGetResponse{}
 		r, err = client.KvBatchGet(ctx, req.BatchGet())
+		affectRow = len(r.Pairs)
 		execDetail = r.GetExecDetailsV2()
 		resp.Resp = r
 	case CmdBatchRollback:
@@ -932,7 +935,7 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 	if execDetail != nil {
 		readByte := float64(execDetail.GetScanDetailV2().GetReadBytes())
 		readTime := float64(execDetail.GetTimeDetail().GetKvReadWallTimeMs())
-		if readByte < 1*1024*1024 {
+		if readByte < 1*1024*1024 && affectRow < 20 {
 			TiKVSmallReadDuration.Observe(readTime)
 		} else {
 			TiKVLargeReadThroughput.Observe(readByte / readTime)
