@@ -1373,7 +1373,6 @@ func (e *ShowExec) fetchShowGrants() error {
 
 func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
-	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
 	e.appendRow([]interface{}{"Alter routine", "Functions,Procedures", "To alter or drop stored functions/procedures"})
 	e.appendRow([]interface{}{"Create", "Databases,Tables,Indexes", "To create new databases and tables"})
 	e.appendRow([]interface{}{"Create routine", "Databases", "To use CREATE FUNCTION/PROCEDURE"})
