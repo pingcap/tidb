@@ -341,6 +341,10 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
+	Cost() float64
+
+	SetCost(cost float64)
+
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
@@ -376,6 +380,15 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
+	cost             float64
+}
+
+func (p *basePhysicalPlan) Cost() float64 {
+	return p.cost
+}
+
+func (p *basePhysicalPlan) SetCost(cost float64) {
+	p.cost = cost
 }
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {

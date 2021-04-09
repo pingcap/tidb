@@ -84,6 +84,14 @@ func (p *PointGetPlan) Schema() *expression.Schema {
 	return p.schema
 }
 
+// Cost implements PhysicalPlan interface
+func (p *PointGetPlan) Cost() float64 {
+	return 0
+}
+
+// SetCost implements PhysicalPlan interface
+func (p *PointGetPlan) SetCost(cost float64) {}
+
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 // current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
 func (p *PointGetPlan) attach2Task(...task) task {
@@ -263,6 +271,14 @@ type BatchPointGetPlan struct {
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo
 }
+
+// Cost implements PhysicalPlan interface
+func (p *BatchPointGetPlan) Cost() float64 {
+	return 0
+}
+
+// SetCost implements PhysicalPlan interface
+func (p *BatchPointGetPlan) SetCost(cost float64) {}
 
 // Clone implements PhysicalPlan interface.
 func (p *BatchPointGetPlan) Clone() (PhysicalPlan, error) {

@@ -9,6 +9,25 @@
     ]
   },
   {
+    "name": "TestVerboseExplain",
+    "cases": [
+      "explain format = 'verbose' select count(*) from t3",
+      "explain format = 'verbose' select count(*) from t2",
+      "explain format = 'verbose' select * from t3 order by a",
+      "explain format = 'verbose' select * from t3 order by b",
+      "explain format = 'verbose' select * from t3 order by a limit 1",
+      "explain format = 'verbose' select * from t3 order by b limit 1",
+      "explain format = 'verbose' select count(*) from t2 group by a",
+      "explain format = 'verbose' select count(*) from t3 where b = 0",
+      "explain format = 'verbose' select count(*) from t2 where a = 0",
+      "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
+      "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
+      "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
+      "explain format = 'verbose' select (2) in (select count(*) from t1) from (select t.b < (select t.b from t2 limit 1 )  from t3 t) t"
+    ]
+
+  },
+  {
     "name": "TestMPPJoin",
     "cases": [
       "explain format = 'brief' select count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",

@@ -1500,6 +1500,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			Columns:        ds.TblCols,
 			ColumnNames:    ds.names,
 		}
+		ts.cost = cost
 		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.stats)
 		return mppTask, nil
 	}
@@ -1524,6 +1525,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			return invalidTask, nil
 		}
 	}
+	ts.cost = task.cost()
 	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	if prop.IsFlashProp() && len(copTask.rootTaskConds) != 0 {
 		return invalidTask, nil
@@ -1720,6 +1722,7 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 		mpp.cst += mpp.count() * sessVars.CopCPUFactor
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
 		sel.SetChildren(ts)
+		sel.cost = mpp.cst
 		mpp.p = sel
 	}
 	return mpp
@@ -1737,6 +1740,7 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
 		sel.SetChildren(ts)
+		sel.cost = copTask.cst
 		copTask.tablePlan = sel
 	}
 }
@@ -1860,5 +1864,6 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		is.KeepOrder = true
 	}
 	cost += float64(len(is.Ranges)) * sessVars.SeekFactor
+	is.cost = cost
 	return is, cost, rowCount
 }
