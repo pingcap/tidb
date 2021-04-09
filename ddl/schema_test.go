@@ -96,7 +96,7 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 	isDropped := true
 
 	for {
-		kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			info, err := t.GetDatabase(dbInfo.ID)
 			c.Assert(err, IsNil)
@@ -114,6 +114,7 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 			c.Assert(info.State, Equals, state)
 			return nil
 		})
+		c.Assert(err, IsNil)
 
 		if isDropped {
 			break
@@ -123,14 +124,20 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 
 func (s *testSchemaSuite) TestSchema(c *C) {
 	store := testCreateStore(c, "test_schema")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	d := testNewDDLAndStart(
 		context.Background(),
 		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 	ctx := testNewContext(d)
 	dbInfo := testSchemaInfo(c, d, "test")
 
@@ -188,7 +195,10 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	store := testCreateStore(c, "test_schema_wait")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	d1 := testNewDDLAndStart(
 		context.Background(),
@@ -196,7 +206,10 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d1.Stop()
+	defer func() {
+		err := d1.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	testCheckOwner(c, d1, true)
 
@@ -206,7 +219,10 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 		WithStore(store),
 		WithLease(testLease*4),
 	)
-	defer d2.Stop()
+	defer func() {
+		err := d2.Stop()
+		c.Assert(err, IsNil)
+	}()
 	ctx := testNewContext(d2)
 
 	// d2 must not be owner.

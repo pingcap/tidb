@@ -226,6 +226,9 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 				}
 				var items []item
 				for key, val := range data {
+					if config.ContainHiddenConfig(key) {
+						continue
+					}
 					var str string
 					switch val.(type) {
 					case string: // remove quotes

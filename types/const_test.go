@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -33,10 +32,9 @@ import (
 var _ = Suite(&testMySQLConstSuite{})
 
 type testMySQLConstSuite struct {
-	cluster   cluster.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	dom       *domain.Domain
+	cluster cluster.Cluster
+	store   kv.Storage
+	dom     *domain.Domain
 	*parser.Parser
 }
 

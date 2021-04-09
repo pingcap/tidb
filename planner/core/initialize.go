@@ -15,6 +15,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -418,6 +419,21 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
+		if p.StoreType == kv.TiFlash && !p.GetTableScan().KeepOrder {
+			// When allow batch cop is 1, only agg / topN uses batch cop.
+			// When allow batch cop is 2, every query uses batch cop.
+			switch ctx.GetSessionVars().AllowBatchCop {
+			case 1:
+				for _, plan := range p.TablePlans {
+					switch plan.(type) {
+					case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
+						p.BatchCop = true
+					}
+				}
+			case 2:
+				p.BatchCop = true
+			}
+		}
 	}
 	return &p
 }

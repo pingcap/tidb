@@ -200,6 +200,37 @@
     }
     ```
 
+    If the handle is clustered, specify the primary key column values in the query string
+
+    ```shell
+    $curl http://{TiDBIP}:10080/mvcc/key/{db}/{table}?${c1}={v1}&${c2}=${v2}
+    ```
+
+    ```shell
+    $curl http://127.0.0.1:10080/mvcc/key/test/t\?a\=aaa\&b\=2020-01-01
+    {
+        "key": "7480000000000000365F72016161610000000000FA0419A5420000000000",
+        "region_id": 52,
+        "value": {
+            "info": {
+                "writes": [
+                    {
+                        "start_ts": 423158426542538752,
+                        "commit_ts": 423158426543587328,
+                        "short_value": "gAACAAAAAQMDAAQAYWFhZA=="
+                    }
+                ],
+                "values": [
+                    {
+                        "start_ts": 423158426542538752,
+                        "value": "gAACAAAAAQMDAAQAYWFhZA=="
+                    }
+                ]
+            }
+        }
+    }
+    ```
+
 1. Get MVCC Information of the first key in the table with a specified start ts
 
     ```shell
@@ -446,3 +477,18 @@ timezone.*
     * op=nowait: return after binlog status is recoverd, do not wait until the skipped-binlog transactions are committed.
     * op=reset: reset `SkippedCommitterCounter` to 0 to avoid the problem that `SkippedCommitterCounter` is not cleared due to some unusual cases.
     * op=status: Get the current status of binlog recovery.
+
+1. Enable/disable async commit feature
+
+    ```shell
+    curl -X POST -d "tidb_enable_async_commit=1" http://{TiDBIP}:10080/settings
+    curl -X POST -d "tidb_enable_async_commit=0" http://{TiDBIP}:10080/settings
+    ```
+
+1. Enable/disable one-phase commit feature
+
+    ```shell
+    curl -X POST -d "tidb_enable_1pc=1" http://{TiDBIP}:10080/settings
+    curl -X POST -d "tidb_enable_1pc=0" http://{TiDBIP}:10080/settings
+    ```
+

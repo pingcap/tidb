@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -1233,15 +1234,20 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 		if isSingleCol && lowIsNull {
 			totalCount += float64(idx.NullCount)
 		}
+		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
 		// If the first column's range is point.
 		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer == Version2 && coll != nil {
-			expBackoffSel, err := idx.expBackoffEstimation(sc, coll, indexRange)
+			var expBackoffSel float64
+			expBackoffSel, expBackoffSuccess, err = idx.expBackoffEstimation(sc, coll, indexRange)
 			if err != nil {
 				return 0, err
 			}
-			totalCount += expBackoffSel * idx.TotalRowCount()
-		} else {
+			if expBackoffSuccess {
+				totalCount += expBackoffSel * idx.TotalRowCount()
+			}
+		}
+		if !expBackoffSuccess {
 			totalCount += idx.BetweenRowCount(l, r)
 		}
 	}
@@ -1252,7 +1258,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
-func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistColl, indexRange *ranger.Range) (float64, error) {
+func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistColl, indexRange *ranger.Range) (float64, bool, error) {
 	tmpRan := []*ranger.Range{
 		{
 			LowVal:  make([]types.Datum, 1),
@@ -1286,7 +1292,7 @@ func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistC
 			continue
 		}
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		singleColumnEstResults = append(singleColumnEstResults, count)
 	}
@@ -1299,14 +1305,20 @@ func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistC
 	for i := 0; i < l && i < 4; i++ {
 		singleColumnEstResults[i] = singleColumnEstResults[i] / float64(coll.Count)
 	}
+	failpoint.Inject("cleanEstResults", func() {
+		singleColumnEstResults = singleColumnEstResults[:0]
+		l = 0
+	})
 	if l == 1 {
-		return singleColumnEstResults[0], nil
+		return singleColumnEstResults[0], true, nil
 	} else if l == 2 {
-		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]), nil
+		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]), true, nil
 	} else if l == 3 {
-		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])), nil
+		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])), true, nil
+	} else if l == 0 {
+		return 0, false, nil
 	}
-	return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])) * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3]))), nil
+	return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])) * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3]))), true, nil
 }
 
 type countByRangeFunc = func(*stmtctx.StatementContext, int64, []*ranger.Range) (float64, error)
@@ -1744,7 +1756,10 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	res := bucket4Merging{}
 	res.upper = buckets[len(buckets)-1].upper.Clone()
 	right := buckets[len(buckets)-1].Clone()
+
+	totNDV := int64(0)
 	for i := len(buckets) - 1; i >= 0; i-- {
+		totNDV += buckets[i].NDV
 		res.Count += buckets[i].Count
 		compare, err := buckets[i].upper.CompareDatum(sc, res.upper)
 		if err != nil {
@@ -1762,6 +1777,14 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		}
 	}
 	res.NDV = right.NDV + right.disjointNDV
+
+	// since `mergeBucketNDV` is based on uniform and inclusion assumptions, it has the trend to under-estimate,
+	// and as the number of buckets increases, these assumptions become weak,
+	// so to mitigate this problem, a damping factor based on the number of buckets is introduced.
+	res.NDV = int64(float64(res.NDV) * math.Pow(1.15, float64(len(buckets)-1)))
+	if res.NDV > totNDV {
+		res.NDV = totNDV
+	}
 	return &res, nil
 }
 
@@ -1776,7 +1799,7 @@ func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
 }
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64) (*Histogram, error) {
+func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
 	var totCount, totNull, bucketNumber, totColSize int64
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
@@ -1814,9 +1837,20 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 
 	for _, meta := range popedTopN {
 		totCount += int64(meta.Count)
-		_, d, err := codec.DecodeOne(meta.Encoded)
-		if err != nil {
-			return nil, err
+		var d types.Datum
+		if isIndex {
+			d.SetBytes(meta.Encoded)
+		} else {
+			var err error
+			if types.IsTypeTime(hists[0].Tp.Tp) {
+				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
+				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.Tp, sc.TimeZone)
+			} else {
+				_, d, err = codec.DecodeOne(meta.Encoded)
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 		if minValue == nil {
 			minValue = d.Clone()
@@ -1831,6 +1865,16 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		}
 		buckets = append(buckets, meta.buildBucket4Merging(&d))
 	}
+
+	// Remove empty buckets
+	tail := 0
+	for i := range buckets {
+		if buckets[i].Count != 0 {
+			buckets[tail] = buckets[i]
+			tail++
+		}
+	}
+	buckets = buckets[:tail]
 
 	var sortError error
 	sort.Slice(buckets, func(i, j int) bool {
@@ -1850,14 +1894,17 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if sortError != nil {
 		return nil, sortError
 	}
-	var sum int64
-	r := len(buckets)
+
+	var sum, prevSum int64
+	r, prevR := len(buckets), 0
 	bucketCount := int64(1)
+	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
+	var bucketNDV int64
 	for i := len(buckets) - 1; i >= 0; i-- {
 		sum += buckets[i].Count
-		if sum >= totCount*bucketCount/expBucketNumber {
-			// if the buckets have the same upper, we merge them into the same new buckets.
-			for ; i > 0; i-- {
+		bucketNDV += buckets[i].NDV
+		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
+			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
 				res, err := buckets[i-1].upper.CompareDatum(sc, buckets[i].upper)
 				if err != nil {
 					return nil, err
@@ -1865,18 +1912,33 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				if res != 0 {
 					break
 				}
+				sum += buckets[i-1].Count
+				bucketNDV += buckets[i-1].NDV
 			}
 			merged, err := mergePartitionBuckets(sc, buckets[i:r])
 			if err != nil {
 				return nil, err
 			}
 			globalBuckets = append(globalBuckets, merged)
+			prevR = r
 			r = i
 			bucketCount++
+			prevSum = sum
+			bucketNDV = 0
 		}
 	}
 	if r > 0 {
-		merged, err := mergePartitionBuckets(sc, buckets[0:r])
+		bucketSum := int64(0)
+		for _, b := range buckets[:r] {
+			bucketSum += b.Count
+		}
+
+		if len(globalBuckets) > 0 && bucketSum < gBucketCountThreshold { // merge them into the previous global bucket
+			r = prevR
+			globalBuckets = globalBuckets[:len(globalBuckets)-1]
+		}
+
+		merged, err := mergePartitionBuckets(sc, buckets[:r])
 		if err != nil {
 			return nil, err
 		}
@@ -1888,16 +1950,36 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 
 	// Calc the bucket lower.
-	if minValue == nil {
-		return nil, errors.Errorf("merge partition-level hist failed")
+	if minValue == nil || len(globalBuckets) == 0 { // both hists and popedTopN are empty, returns an empty hist in this case
+		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
 	}
 	globalBuckets[0].lower = minValue.Clone()
 	for i := 1; i < len(globalBuckets); i++ {
-		globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+		if globalBuckets[i].NDV == 1 { // there is only 1 value so lower = upper
+			globalBuckets[i].lower = globalBuckets[i].upper.Clone()
+		} else {
+			globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+		}
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}
+
+	// Recalculate repeats
+	// TODO: optimize it later since it's a simple but not the fastest implementation whose complexity is O(nBkt * nHist * log(nBkt))
+	for _, bucket := range globalBuckets {
+		var repeat float64
+		for _, hist := range hists {
+			repeat += hist.equalRowCount(*bucket.upper, isIndex) // only hists of indexes have bucket.NDV
+		}
+		if int64(repeat) > bucket.Repeat {
+			bucket.Repeat = int64(repeat)
+		}
+	}
+
 	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize)
 	for _, bucket := range globalBuckets {
+		if !isIndex {
+			bucket.NDV = 0 // bucket.NDV is not maintained for column histograms
+		}
 		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
 	}
 	return globalHist, nil

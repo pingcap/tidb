@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -64,6 +65,20 @@ func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
 		return nil
 	}
 	return txn.Transaction.GetUnionStore()
+}
+
+func (txn *wrapTxn) CacheTableInfo(id int64, info *model.TableInfo) {
+	if txn.Transaction == nil {
+		return
+	}
+	txn.Transaction.CacheTableInfo(id, info)
+}
+
+func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
+	if txn.Transaction == nil {
+		return nil
+	}
+	return txn.Transaction.GetTableInfo(id)
 }
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
@@ -197,7 +212,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
+		txn, err := c.Store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(oracle.GlobalTxnScope).SetStartTs(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -241,6 +256,11 @@ func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
+
+// GetTxnWriteThroughputSLI implements the sessionctx.Context interface.
+func (c *Context) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return &sli.TxnWriteThroughputSLI{}
+}
 
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit() {}
