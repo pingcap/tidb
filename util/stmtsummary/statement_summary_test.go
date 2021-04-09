@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 )
@@ -181,7 +182,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 			CalleeAddress: "202",
 			BackoffTime:   180,
 			RequestCount:  20,
-			CommitDetail: &execdetails.CommitDetails{
+			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime:   500,
 				PrewriteTime:      50000,
 				CommitTime:        5000,
@@ -308,7 +309,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 			CalleeAddress: "302",
 			BackoffTime:   18,
 			RequestCount:  2,
-			CommitDetail: &execdetails.CommitDetails{
+			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime:   50,
 				PrewriteTime:      5000,
 				CommitTime:        500,
@@ -564,7 +565,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 			CalleeAddress: "129",
 			BackoffTime:   80,
 			RequestCount:  10,
-			CommitDetail: &execdetails.CommitDetails{
+			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime:   100,
 				PrewriteTime:      10000,
 				CommitTime:        1000,
