@@ -2676,7 +2676,7 @@ func checkColFuncDepend(
 			Name:   colInfo.Name,
 		}
 		pIdx, err := expression.FindFieldName(p.OutputNames(), pkName)
-		if err != nil {
+		if err != nil || pIdx < 0 {
 			primaryFuncDepend = false
 			break
 		}
@@ -3625,9 +3625,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, dbName)
-	if err != nil {
-		return nil, err
+	// Skip storage engine check for CreateView.
+	if b.capFlag&canExpandAST == 0 {
+		possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, dbName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Try to substitute generate column only if there is an index on generate column.
@@ -3727,12 +3730,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
-			DBName:      dbName,
-			TblName:     tableInfo.Name,
-			ColName:     col.Name,
-			OrigTblName: tableInfo.Name,
-			OrigColName: col.Name,
-			Hidden:      col.Hidden,
+			DBName:            dbName,
+			TblName:           tableInfo.Name,
+			ColName:           col.Name,
+			OrigTblName:       tableInfo.Name,
+			OrigColName:       col.Name,
+			Hidden:            col.Hidden,
+			NotExplicitUsable: col.State != model.StatePublic,
 		})
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
@@ -3963,7 +3967,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
-			terror.ErrorNotEqual(err, ErrNoSuchTable) {
+			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
+			terror.ErrorNotEqual(err, ErrInternal) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		return nil, err

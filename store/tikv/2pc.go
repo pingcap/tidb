@@ -100,6 +100,9 @@ type twoPhaseCommitter struct {
 	useOnePC          uint32
 	onePCCommitTS     uint64
 
+	hasTriedAsyncCommit bool
+	hasTriedOnePC       bool
+
 	// doingAmend means the amend prewrite is ongoing.
 	doingAmend bool
 
@@ -977,11 +980,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	if c.checkAsyncCommit() {
 		commitTSMayBeCalculated = true
 		c.setAsyncCommit(true)
+		c.hasTriedAsyncCommit = true
 	}
 	// Check if 1PC is enabled.
 	if c.checkOnePC() {
 		commitTSMayBeCalculated = true
 		c.setOnePC(true)
+		c.hasTriedOnePC = true
 	}
 	// If we want to use async commit or 1PC and also want linearizability across
 	// all nodes, we have to make sure the commit TS of this transaction is greater
@@ -1290,7 +1295,7 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 			err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, &keysNeedToLock)
 			if err != nil {
 				// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
-				if terror.ErrorEqual(tidbkv.ErrWriteConflict, err) {
+				if _, ok := errors.Cause(err).(*kv.ErrWriteConflict); ok {
 					newForUpdateTSVer, err := c.store.CurrentTimestamp(oracle.GlobalTxnScope)
 					if err != nil {
 						return errors.Trace(err)
