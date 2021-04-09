@@ -232,7 +232,7 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 	// 1. for string type since we may eval the constant to another collation instead of its own collation.
 	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
 	refineValueAndOp := func(col *expression.Column, value *types.Datum, op *string) (err error) {
-		if col.RetType.EvalType() == types.ETString && value.Kind() == types.KindString || value.Kind() == types.KindBinaryLiteral {
+		if col.RetType.EvalType() == types.ETString && (value.Kind() == types.KindString || value.Kind() == types.KindBinaryLiteral) {
 			value.SetString(value.GetString(), col.RetType.Collate)
 		}
 		if col.GetType().Tp == mysql.TypeYear {
