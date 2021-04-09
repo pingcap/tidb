@@ -1021,6 +1021,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
+		ts.SetCost(cost)
 		cop.tablePlan = ts
 	}
 	cop.cst = cost
@@ -1635,6 +1636,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}
 
 	rTsk.cst = cost
+	pointGetPlan.SetCost(cost)
 	return rTsk
 }
 
@@ -1704,6 +1706,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	}
 
 	rTsk.cst = cost
+	batchPointGetPlan.SetCost(cost)
 	return rTsk
 }
 

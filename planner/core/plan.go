@@ -341,8 +341,10 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
+	// Cost returns the estimated cost of the subplan.
 	Cost() float64
 
+	// SetCost set the cost of the subplan.
 	SetCost(cost float64)
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
@@ -383,10 +385,12 @@ type basePhysicalPlan struct {
 	cost             float64
 }
 
+// Cost implements PhysicalPlan interface.
 func (p *basePhysicalPlan) Cost() float64 {
 	return p.cost
 }
 
+// SetCost implements PhysicalPlan interface.
 func (p *basePhysicalPlan) SetCost(cost float64) {
 	p.cost = cost
 }
