@@ -86,3 +86,44 @@ type ErrKeyExist struct {
 func (k *ErrKeyExist) Error() string {
 	return k.AlreadyExist.String()
 }
+
+// IsErrKeyExist returns true if it is ErrKeyExist.
+func IsErrKeyExist(err error) bool {
+	_, ok := errors.Cause(err).(*ErrKeyExist)
+	return ok
+}
+
+// ErrWriteConflict wraps *kvrpcpb.ErrWriteConflict to implement the error interface.
+type ErrWriteConflict struct {
+	*kvrpcpb.WriteConflict
+}
+
+func (k *ErrWriteConflict) Error() string {
+	return k.WriteConflict.String()
+}
+
+// IsErrWriteConflict returns true if it is ErrWriteConflict.
+func IsErrWriteConflict(err error) bool {
+	_, ok := errors.Cause(err).(*ErrWriteConflict)
+	return ok
+}
+
+//NewErrWriteConfictWithArgs generates an ErrWriteConflict with args.
+func NewErrWriteConfictWithArgs(startTs, conflictTs, conflictCommitTs uint64, key []byte) *ErrWriteConflict {
+	conflict := kvrpcpb.WriteConflict{
+		StartTs:          startTs,
+		ConflictTs:       conflictTs,
+		Key:              key,
+		ConflictCommitTs: conflictCommitTs,
+	}
+	return &ErrWriteConflict{WriteConflict: &conflict}
+}
+
+// ErrRetryable wraps *kvrpcpb.Retryable to implement the error interface.
+type ErrRetryable struct {
+	Retryable string
+}
+
+func (k *ErrRetryable) Error() string {
+	return k.Retryable
+}

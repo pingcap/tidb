@@ -13,14 +13,14 @@
 
 // +build !race
 
-package tikv
+package tikv_test
 
 import (
 	"context"
-	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -28,23 +28,24 @@ func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 	if *WithTiKV {
 		c.Skip("scatter will timeout with single node TiKV")
 	}
+	config := tikv.ConfigProbe{}
 	const preSplitThresholdInTest = 500
-	old := atomic.LoadUint32(&preSplitDetectThreshold)
-	defer atomic.StoreUint32(&preSplitDetectThreshold, old)
-	atomic.StoreUint32(&preSplitDetectThreshold, preSplitThresholdInTest)
+	old := config.LoadPreSplitDetectThreshold()
+	defer config.StorePreSplitDetectThreshold(old)
+	config.StorePreSplitDetectThreshold(preSplitThresholdInTest)
 
-	old = atomic.LoadUint32(&preSplitSizeThreshold)
-	defer atomic.StoreUint32(&preSplitSizeThreshold, old)
-	atomic.StoreUint32(&preSplitSizeThreshold, 5000)
+	old = config.LoadPreSplitSizeThreshold()
+	defer config.StorePreSplitSizeThreshold(old)
+	config.StorePreSplitSizeThreshold(5000)
 
-	bo := NewBackofferWithVars(context.Background(), 1, nil)
-	checkKeyRegion := func(bo *Backoffer, start, end []byte, checker Checker) {
+	bo := tikv.NewBackofferWithVars(context.Background(), 1, nil)
+	checkKeyRegion := func(bo *tikv.Backoffer, start, end []byte, checker Checker) {
 		// Check regions after split.
-		loc1, err := s.store.regionCache.LocateKey(bo, start)
+		loc1, err := s.store.GetRegionCache().LocateKey(bo, start)
 		c.Assert(err, IsNil)
-		loc2, err := s.store.regionCache.LocateKey(bo, end)
+		loc2, err := s.store.GetRegionCache().LocateKey(bo, end)
 		c.Assert(err, IsNil)
-		c.Assert(loc1.Region.id, checker, loc2.Region.id)
+		c.Assert(loc1.Region.GetID(), checker, loc2.Region.GetID())
 	}
 	mode := []string{"optimistic", "pessimistic"}
 	var (
@@ -66,7 +67,7 @@ func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 		if m == "pessimistic" {
 			txn.SetOption(kv.Pessimistic, true)
 			lockCtx := &tidbkv.LockCtx{}
-			lockCtx.ForUpdateTS = txn.startTS
+			lockCtx.ForUpdateTS = txn.StartTS()
 			keys := make([]tidbkv.Key, 0, preSplitThresholdInTest)
 			for i := 0; i < preSplitThresholdInTest; i++ {
 				keys = append(keys, encodeKey(s.prefix, s08d("pkey", i)))
