@@ -211,7 +211,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		return err
 	}
 
-	result.Fetch(ctx)
 	worker := &partialIndexWorker{
 		stats:        e.stats,
 		idxID:        e.getPartitalPlanID(workID),
