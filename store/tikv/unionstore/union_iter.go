@@ -15,7 +15,7 @@ package unionstore
 
 import (
 	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
 
