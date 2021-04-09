@@ -414,6 +414,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k tidbkv.Key) ([]by
 			panic("cache miss")
 		}
 	})
+
 	cli := NewClientHelper(s.store, s.resolvedLocks)
 
 	// Secondary locks or async commit locks cannot be ignored when getting using the max version.
