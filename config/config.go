@@ -126,6 +126,8 @@ type Config struct {
 	IndexLimit                 int                `toml:"index-limit" json:"index-limit"`
 	TableColumnCountLimit      uint32             `toml:"table-column-count-limit" json:"table-column-count-limit"`
 	GracefulWaitBeforeShutdown int                `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
+	// AlterPrimaryKey is used to control alter primary key feature.
+	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
@@ -560,6 +562,7 @@ var defaultConf = Config{
 	MaxIndexLength:               3072,
 	IndexLimit:                   64,
 	TableColumnCountLimit:        1017,
+	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
@@ -991,7 +994,7 @@ const (
 	OOMActionLog    = "log"
 )
 
-/// hideConfig is used to filter a single line of config for hiding.
+// hideConfig is used to filter a single line of config for hiding.
 var hideConfig = []string{
 	"index-usage-sync-lease",
 }

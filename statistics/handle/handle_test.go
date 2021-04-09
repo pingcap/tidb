@@ -989,8 +989,8 @@ partition by range (a) (
 			"test t p1 a 0 0 6 1 11 16 0",
 			"test t p1 a 0 1 10 2 17 19 0"))
 	tk.MustQuery("show stats_buckets where is_index=1").Check(
-		testkit.Rows("test t global a 1 0 7 2 1 6 6",
-			"test t global a 1 1 17 2 6 19 9",
+		testkit.Rows("test t global a 1 0 7 2 1 6 0",
+			"test t global a 1 1 17 2 6 19 0",
 			"test t p0 a 1 0 4 1 1 4 4",
 			"test t p0 a 1 1 7 2 5 6 2",
 			"test t p1 a 1 0 8 1 11 18 8",
@@ -1035,7 +1035,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 	tk.MustQuery("show stats_buckets where is_index=0").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tint global c 0 0 5 2 1 4 0", // bucket.ndv is not maintained for column histograms
-		"test tint global c 0 1 12 2 4 17 0",
+		"test tint global c 0 1 12 2 17 17 0",
 		"test tint p0 c 0 0 2 1 1 2 0",
 		"test tint p0 c 0 1 3 1 3 3 0",
 		"test tint p1 c 0 0 3 1 11 13 0",
@@ -1048,8 +1048,8 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("show stats_buckets where is_index=1").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tint global c 1 0 5 0 1 5 4", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
-		"test tint global c 1 1 12 2 5 17 6",
+		"test tint global c 1 0 5 2 1 4 0", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
+		"test tint global c 1 1 12 2 4 17 0",
 		"test tint p0 c 1 0 3 0 1 4 3",
 		"test tint p0 c 1 1 3 0 5 5 0",
 		"test tint p1 c 1 0 5 0 11 16 5",
@@ -1094,7 +1094,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 	tk.MustQuery("show stats_buckets where table_name='tdouble' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tdouble global c 0 0 5 2 1 4 0", // bucket.ndv is not maintained for column histograms
-		"test tdouble global c 0 1 12 2 4 17 0",
+		"test tdouble global c 0 1 12 2 17 17 0",
 		"test tdouble p0 c 0 0 2 1 1 2 0",
 		"test tdouble p0 c 0 1 3 1 3 3 0",
 		"test tdouble p1 c 0 0 3 1 11 13 0",
@@ -1110,8 +1110,8 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("show stats_buckets where table_name='tdouble' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tdouble global c 1 0 5 0 1 5 4", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
-		"test tdouble global c 1 1 12 2 5 17 6",
+		"test tdouble global c 1 0 5 2 1 4 0", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
+		"test tdouble global c 1 1 12 2 4 17 0",
 		"test tdouble p0 c 1 0 3 0 1 4 3",
 		"test tdouble p0 c 1 1 3 0 5 5 0",
 		"test tdouble p1 c 1 0 5 0 11 16 5",
@@ -1159,7 +1159,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 	tk.MustQuery("show stats_buckets where table_name='tdecimal' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tdecimal global c 0 0 5 2 1.00 4.00 0", // bucket.ndv is not maintained for column histograms
-		"test tdecimal global c 0 1 12 2 4.00 17.00 0",
+		"test tdecimal global c 0 1 12 2 17.00 17.00 0",
 		"test tdecimal p0 c 0 0 2 1 1.00 2.00 0",
 		"test tdecimal p0 c 0 1 3 1 3.00 3.00 0",
 		"test tdecimal p1 c 0 0 3 1 11.00 13.00 0",
@@ -1175,8 +1175,8 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("show stats_buckets where table_name='tdecimal' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tdecimal global c 1 0 5 0 1.00 5.00 4", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
-		"test tdecimal global c 1 1 12 2 5.00 17.00 6",
+		"test tdecimal global c 1 0 5 2 1.00 4.00 0", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
+		"test tdecimal global c 1 1 12 2 4.00 17.00 0",
 		"test tdecimal p0 c 1 0 3 0 1.00 4.00 3",
 		"test tdecimal p0 c 1 1 3 0 5.00 5.00 0",
 		"test tdecimal p1 c 1 0 5 0 11.00 16.00 5",
@@ -1224,7 +1224,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 	tk.MustQuery("show stats_buckets where table_name='tdatetime' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tdatetime global c 0 0 5 2 2000-01-01 00:00:00 2000-01-04 00:00:00 0", // bucket.ndv is not maintained for column histograms
-		"test tdatetime global c 0 1 12 2 2000-01-04 00:00:00 2000-01-17 00:00:00 0",
+		"test tdatetime global c 0 1 12 2 2000-01-17 00:00:00 2000-01-17 00:00:00 0",
 		"test tdatetime p0 c 0 0 2 1 2000-01-01 00:00:00 2000-01-02 00:00:00 0",
 		"test tdatetime p0 c 0 1 3 1 2000-01-03 00:00:00 2000-01-03 00:00:00 0",
 		"test tdatetime p1 c 0 0 3 1 2000-01-11 00:00:00 2000-01-13 00:00:00 0",
@@ -1240,8 +1240,8 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("show stats_buckets where table_name='tdatetime' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tdatetime global c 1 0 5 0 2000-01-01 00:00:00 2000-01-05 00:00:00 4", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
-		"test tdatetime global c 1 1 12 2 2000-01-05 00:00:00 2000-01-17 00:00:00 6",
+		"test tdatetime global c 1 0 5 2 2000-01-01 00:00:00 2000-01-04 00:00:00 0", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
+		"test tdatetime global c 1 1 12 2 2000-01-04 00:00:00 2000-01-17 00:00:00 0",
 		"test tdatetime p0 c 1 0 3 0 2000-01-01 00:00:00 2000-01-04 00:00:00 3",
 		"test tdatetime p0 c 1 1 3 0 2000-01-05 00:00:00 2000-01-05 00:00:00 0",
 		"test tdatetime p1 c 1 0 5 0 2000-01-11 00:00:00 2000-01-16 00:00:00 5",
@@ -1289,7 +1289,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 	tk.MustQuery("show stats_buckets where table_name='tstring' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tstring global c 0 0 5 2 a1 a4 0", // bucket.ndv is not maintained for column histograms
-		"test tstring global c 0 1 12 2 a4 b17 0",
+		"test tstring global c 0 1 12 2 b17 b17 0",
 		"test tstring p0 c 0 0 2 1 a1 a2 0",
 		"test tstring p0 c 0 1 3 1 a3 a3 0",
 		"test tstring p1 c 0 0 3 1 b11 b13 0",
@@ -1305,8 +1305,8 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("show stats_buckets where table_name='tstring' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tstring global c 1 0 5 0 a1 a5 4", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
-		"test tstring global c 1 1 12 2 a5 b17 6",
+		"test tstring global c 1 0 5 2 a1 a4 0", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
+		"test tstring global c 1 1 12 2 a4 b17 0",
 		"test tstring p0 c 1 0 3 0 a1 a4 3",
 		"test tstring p0 c 1 1 3 0 a5 a5 0",
 		"test tstring p1 c 1 0 5 0 b11 b16 5",
@@ -1350,8 +1350,8 @@ func (s *testStatsSuite) TestGlobalStatsData3(c *C) {
 		"test tintint p1 a 1 (13, 2) 3"))
 
 	tk.MustQuery("show stats_buckets where table_name='tintint' and is_index=1").Check(testkit.Rows(
-		"test tintint global a 1 0 6 0 (1, 1) (3, 1) 5",   // (2, 3) is popped into it
-		"test tintint global a 1 1 11 0 (3, 1) (13, 2) 4", // (13, 1) is popped into it
+		"test tintint global a 1 0 6 2 (1, 1) (2, 3) 0",   // (2, 3) is popped into it
+		"test tintint global a 1 1 11 2 (2, 3) (13, 1) 0", // (13, 1) is popped into it
 		"test tintint p0 a 1 0 4 1 (1, 1) (2, 2) 4",
 		"test tintint p0 a 1 1 4 0 (2, 3) (3, 1) 0",
 		"test tintint p1 a 1 0 3 0 (11, 1) (13, 1) 3",
@@ -1384,8 +1384,8 @@ func (s *testStatsSuite) TestGlobalStatsData3(c *C) {
 		"test tintstr p1 a 1 (13, 2) 3"))
 
 	tk.MustQuery("show stats_buckets where table_name='tintstr' and is_index=1").Check(testkit.Rows(
-		"test tintstr global a 1 0 6 0 (1, 1) (3, 1) 5",   // (2, 3) is popped into it
-		"test tintstr global a 1 1 11 0 (3, 1) (13, 2) 4", // (13, 1) is popped into it
+		"test tintstr global a 1 0 6 2 (1, 1) (2, 3) 0",   // (2, 3) is popped into it
+		"test tintstr global a 1 1 11 2 (2, 3) (13, 1) 0", // (13, 1) is popped into it
 		"test tintstr p0 a 1 0 4 1 (1, 1) (2, 2) 4",
 		"test tintstr p0 a 1 1 4 0 (2, 3) (3, 1) 0",
 		"test tintstr p1 a 1 0 3 0 (11, 1) (13, 1) 3",
@@ -1418,8 +1418,8 @@ func (s *testStatsSuite) TestGlobalStatsData3(c *C) {
 		"test tintdouble p1 a 1 (13, 2) 3"))
 
 	tk.MustQuery("show stats_buckets where table_name='tintdouble' and is_index=1").Check(testkit.Rows(
-		"test tintdouble global a 1 0 6 0 (1, 1) (3, 1) 5",   // (2, 3) is popped into it
-		"test tintdouble global a 1 1 11 0 (3, 1) (13, 2) 4", // (13, 1) is popped into it
+		"test tintdouble global a 1 0 6 2 (1, 1) (2, 3) 0",   // (2, 3) is popped into it
+		"test tintdouble global a 1 1 11 2 (2, 3) (13, 1) 0", // (13, 1) is popped into it
 		"test tintdouble p0 a 1 0 4 1 (1, 1) (2, 2) 4",
 		"test tintdouble p0 a 1 1 4 0 (2, 3) (3, 1) 0",
 		"test tintdouble p1 a 1 0 3 0 (11, 1) (13, 1) 3",
@@ -1452,8 +1452,8 @@ func (s *testStatsSuite) TestGlobalStatsData3(c *C) {
 		"test tdoubledecimal p1 a 1 (13, 2.00) 3"))
 
 	tk.MustQuery("show stats_buckets where table_name='tdoubledecimal' and is_index=1").Check(testkit.Rows(
-		"test tdoubledecimal global a 1 0 6 0 (1, 1.00) (3, 1.00) 5",   // (2, 3) is popped into it
-		"test tdoubledecimal global a 1 1 11 0 (3, 1.00) (13, 2.00) 4", // (13, 1) is popped into it
+		"test tdoubledecimal global a 1 0 6 2 (1, 1.00) (2, 3.00) 0",   // (2, 3) is popped into it
+		"test tdoubledecimal global a 1 1 11 2 (2, 3.00) (13, 1.00) 0", // (13, 1) is popped into it
 		"test tdoubledecimal p0 a 1 0 4 1 (1, 1.00) (2, 2.00) 4",
 		"test tdoubledecimal p0 a 1 1 4 0 (2, 3.00) (3, 1.00) 0",
 		"test tdoubledecimal p1 a 1 0 3 0 (11, 1.00) (13, 1.00) 3",
@@ -1486,8 +1486,8 @@ func (s *testStatsSuite) TestGlobalStatsData3(c *C) {
 		"test tstrdt p1 a 1 (13, 2000-01-02 00:00:00) 3"))
 
 	tk.MustQuery("show stats_buckets where table_name='tstrdt' and is_index=1").Check(testkit.Rows(
-		"test tstrdt global a 1 0 6 0 (1, 2000-01-01 00:00:00) (3, 2000-01-01 00:00:00) 5",   // (2, 3) is popped into it
-		"test tstrdt global a 1 1 11 0 (3, 2000-01-01 00:00:00) (13, 2000-01-02 00:00:00) 4", // (13, 1) is popped into it
+		"test tstrdt global a 1 0 6 2 (1, 2000-01-01 00:00:00) (2, 2000-01-03 00:00:00) 0",   // (2, 3) is popped into it
+		"test tstrdt global a 1 1 11 2 (2, 2000-01-03 00:00:00) (13, 2000-01-01 00:00:00) 0", // (13, 1) is popped into it
 		"test tstrdt p0 a 1 0 4 1 (1, 2000-01-01 00:00:00) (2, 2000-01-02 00:00:00) 4",
 		"test tstrdt p0 a 1 1 4 0 (2, 2000-01-03 00:00:00) (3, 2000-01-01 00:00:00) 0",
 		"test tstrdt p1 a 1 0 3 0 (11, 2000-01-01 00:00:00) (13, 2000-01-01 00:00:00) 3",
@@ -1984,7 +1984,7 @@ func (s *testStatsSuite) TestFMSWithAnalyzePartition(c *C) {
 		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
 		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
 	))
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
 }
 
 var _ = SerialSuites(&statsSerialSuite{})
@@ -2222,4 +2222,129 @@ func (s *testStatsSuite) TestRepetitiveAddDropExtendedStats(c *C) {
 	))
 	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
 	c.Assert(len(result.Rows()), Equals, 1)
+}
+
+func (s *testStatsSuite) TestDuplicateExtendedStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	err := tk.ExecToErr("alter table t add stats_extended s1 correlation(a,a)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Cannot create extended statistics on duplicate column names 'a'")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	err = tk.ExecToErr("alter table t add stats_extended s1 correlation(a,c)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "extended statistics 's1' for the specified table already exists")
+	err = tk.ExecToErr("alter table t add stats_extended s2 correlation(a,b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "extended statistics 's2' with same type on same columns already exists")
+	err = tk.ExecToErr("alter table t add stats_extended s2 correlation(b,a)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "extended statistics 's2' with same type on same columns already exists")
+	tk.MustExec("alter table t add stats_extended s2 correlation(a,c)")
+}
+
+func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+
+	tk.MustExec("alter table t drop column a")
+	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), time.Duration(0)), IsNil)
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+}
+
+func (s *testStatsSuite) TestIndexFMSketch(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c))")
+	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("analyze table t index ia")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
+	tk.MustExec("analyze table t index ibc")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("5"))
+	tk.MustExec("drop table if exists t")
+	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
+
+	// clustered index
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_clustered_index=ON")
+	tk.MustExec("create table t (a datetime, b datetime, primary key (a))")
+	tk.MustExec("insert into t values ('2000-01-01', '2000-01-01')")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustExec("drop table if exists t")
+	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
+
+	// test NDV
+	checkNDV := func(rows, ndv int) {
+		tk.MustExec("analyze table t")
+		rs := tk.MustQuery(fmt.Sprintf("select value from mysql.stats_fm_sketch")).Rows()
+		c.Assert(len(rs), Equals, rows)
+		for i := range rs {
+			fm, err := statistics.DecodeFMSketch([]byte(rs[i][0].(string)))
+			c.Assert(err, IsNil)
+			c.Assert(fm.NDV(), Equals, int64(ndv))
+		}
+	}
+
+	tk.MustExec("set @@tidb_enable_clustered_index=OFF")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("insert into t values (1), (2), (2), (3)")
+	checkNDV(2, 3)
+	tk.MustExec("insert into t values (4), (5)")
+	checkNDV(2, 5)
+	tk.MustExec("insert into t values (2), (5)")
+	checkNDV(2, 5)
+	tk.MustExec("drop table if exists t")
+	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
+
+	// clustered index
+	tk.MustExec("set @@tidb_enable_clustered_index=ON")
+	tk.MustExec("create table t (a datetime, b datetime, primary key (a))")
+	tk.MustExec("insert into t values ('2000-01-01', '2000-01-01')")
+	checkNDV(2, 1)
+	tk.MustExec("insert into t values ('2020-01-01', '2020-01-01')")
+	checkNDV(2, 2)
+	tk.MustExec("insert into t values ('1999-01-01', '1999-01-01'), ('1999-01-02', '1999-01-02'), ('1999-01-03', '1999-01-03')")
+	checkNDV(2, 5)
+}
+
+func (s *testStatsSuite) TestShowExtendedStats4DropColumn(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("insert into t values(1,1,1),(2,2,2),(3,3,3)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustExec("alter table t add stats_extended s2 correlation(b,c)")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("show stats_extended").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][2], Equals, "s1")
+	c.Assert(rows[0][3], Equals, "[a,b]")
+	c.Assert(rows[1][2], Equals, "s2")
+	c.Assert(rows[1][3], Equals, "[b,c]")
+
+	tk.MustExec("alter table t drop column b")
+	rows = tk.MustQuery("show stats_extended").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	// Previously registered extended stats should be invalid for re-created columns.
+	tk.MustExec("alter table t add column b int")
+	rows = tk.MustQuery("show stats_extended").Rows()
+	c.Assert(len(rows), Equals, 0)
 }

@@ -77,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -679,7 +680,7 @@ func (s *session) isTxnRetryableError(err error) bool {
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	var err error
 	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
-		err = tikv.ErrLockExpire
+		err = tikvstore.ErrLockExpire
 	} else {
 		return nil
 	}
@@ -965,15 +966,13 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if name == variable.TiDBSlowLogMasking {
 		name = variable.TiDBRedactLog
 	}
-	if name == variable.SQLModeVar {
-		value = mysql.FormatSQLModeStr(value)
-		if _, err := mysql.GetSQLMode(value); err != nil {
-			return err
-		}
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	var sVal string
 	var err error
-	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
+	sVal, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal)
 	if err != nil {
 		return err
 	}
@@ -1050,7 +1049,7 @@ func (s *session) getTiDBTableValue(name, val string) (string, error) {
 	// Run validation on the tblValue. This will return an error if it can't be validated,
 	// but will also make it more consistent: disTribuTeD -> DISTRIBUTED etc
 	tblValue = trueFalseToOnOff(tblValue)
-	validatedVal, err := variable.ValidateSetSystemVar(s.sessionVars, name, tblValue, variable.ScopeGlobal)
+	validatedVal, err := variable.GetSysVar(name).Validate(s.sessionVars, tblValue, variable.ScopeGlobal)
 	if err != nil {
 		logutil.Logger(context.Background()).Warn("restoring sysvar value since validating mysql.tidb value failed",
 			zap.Error(err),
@@ -1391,8 +1390,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.sessionVars.StartTime = time.Now()
-	s.sessionVars.CoprCacheHitNum.Store(0)
-	s.sessionVars.CoprRespTimes.Store(0)
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -1448,30 +1445,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 		if tiFlashExchangePushDown {
 			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
-		}
-		coprRespTimes := s.sessionVars.CoprRespTimes.Load()
-		coprCacheHits := s.sessionVars.CoprCacheHitNum.Load()
-		if coprRespTimes > 0 {
-			ratio := float64(coprCacheHits) / float64(coprRespTimes)
-			switch {
-			case ratio >= 0.01:
-				telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
-				fallthrough
-			case ratio >= 0.1:
-				telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
-				fallthrough
-			case ratio >= 0.2:
-				telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
-				fallthrough
-			case ratio >= 0.4:
-				telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
-				fallthrough
-			case ratio >= 0.8:
-				telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
-				fallthrough
-			case ratio >= 1:
-				telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
-			}
 		}
 	}
 	return recordSet, nil
@@ -1647,9 +1620,18 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 
 func (s *session) preparedStmtExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
+	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
+	}
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
 	logQuery(st.OriginText(), s.sessionVars)
@@ -1696,6 +1678,17 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
 	logQuery(stmt.GetTextToLog(), s.sessionVars)
+
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
+	}
 
 	// run ExecStmt
 	var resultSet sqlexec.RecordSet
@@ -2066,7 +2059,6 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
-		s.GetSessionVars().IntPrimaryKeyDefaultAsClustered = true
 	}
 	return s, err
 }
@@ -2554,6 +2546,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableExchangePartition,
 	variable.TiDBAllowFallbackToTiKV,
+	variable.TiDBEnableDynamicPrivileges,
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
@@ -2893,4 +2886,9 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 
 func (s *session) SetPort(port string) {
 	s.sessionVars.Port = port
+}
+
+// GetTxnWriteThroughputSLI implements the Context interface.
+func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return &s.txn.writeSLI
 }
