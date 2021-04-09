@@ -16,7 +16,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/log"
 	"reflect"
 	"strings"
 	"sync"
@@ -77,12 +76,11 @@ func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNam
 	col.FieldType = *types.NewFieldType(mysqlType)
 	col.Decimal = decimal
 
-	originDefVal, err1 := generateOriginDefaultValue(col)
-	log.Info("generateOriginDefaultValue   error" + err1.Error())
-	err2 := col.SetOriginDefaultValue(originDefVal)
-	log.Info("SetOriginDefaultValue   error" + err2.Error())
-	err3 := col.SetDefaultValue(originDefVal)
-	log.Info("SetDefaultValue   error" + err3.Error())
+	originDefVal, _ := generateOriginDefaultValue(col)
+	if originDefVal != nil {
+		col.SetOriginDefaultValue(originDefVal)
+		col.SetDefaultValue(originDefVal)
+	}
 
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
