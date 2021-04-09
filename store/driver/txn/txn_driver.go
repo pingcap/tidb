@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -40,7 +41,6 @@ type tikvTxn struct {
 
 // NewTiKVTxn returns a new Transaction.
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
-	txn.SetBinlogExecutor(&binlogExecutor{txn: txn})
 	return &tikvTxn{txn, make(map[int64]*model.TableInfo)}
 }
 
@@ -74,6 +74,18 @@ func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 
 func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
 	return &tikvUnionStore{txn.KVTxn.GetUnionStore()}
+}
+
+func (txn *tikvTxn) SetOption(opt int, val interface{}) {
+	switch opt {
+	case tikvstore.BinlogInfo:
+		txn.SetBinlogExecutor(&binlogExecutor{
+			txn:     txn.KVTxn,
+			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
+		})
+	default:
+		txn.KVTxn.SetOption(opt, val)
+	}
 }
 
 func (txn *tikvTxn) extractKeyErr(err error) error {

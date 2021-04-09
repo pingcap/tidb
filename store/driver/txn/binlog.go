@@ -20,14 +20,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
 
 type binlogExecutor struct {
-	txn *tikv.KVTxn
+	txn     *tikv.KVTxn
+	binInfo *binloginfo.BinlogInfo
 }
 
 func (e *binlogExecutor) Skip() {
@@ -38,15 +38,14 @@ func (e *binlogExecutor) Prewrite(ctx context.Context, primary []byte) <-chan ti
 	ch := make(chan tikv.BinlogWriteResult, 1)
 	go func() {
 		logutil.Eventf(ctx, "start prewrite binlog")
-		binInfo := e.txn.GetUnionStore().GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
-		bin := binInfo.Data
+		bin := e.binInfo.Data
 		bin.StartTs = int64(e.txn.StartTS())
 		if bin.Tp == binlog.BinlogType_Prewrite {
 			bin.PrewriteKey = primary
 		}
-		wr := binInfo.WriteBinlog(e.txn.GetClusterID())
+		wr := e.binInfo.WriteBinlog(e.txn.GetClusterID())
 		if wr.Skipped() {
-			binInfo.Data.PrewriteValue = nil
+			e.binInfo.Data.PrewriteValue = nil
 			binloginfo.AddOneSkippedCommitter()
 		}
 		logutil.Eventf(ctx, "finish prewrite binlog")
@@ -56,13 +55,12 @@ func (e *binlogExecutor) Prewrite(ctx context.Context, primary []byte) <-chan ti
 }
 
 func (e *binlogExecutor) Commit(ctx context.Context, commitTS int64) {
-	binInfo := e.txn.GetUnionStore().GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
-	binInfo.Data.Tp = binlog.BinlogType_Commit
+	e.binInfo.Data.Tp = binlog.BinlogType_Commit
 	if commitTS == 0 {
-		binInfo.Data.Tp = binlog.BinlogType_Rollback
+		e.binInfo.Data.Tp = binlog.BinlogType_Rollback
 	}
-	binInfo.Data.CommitTs = commitTS
-	binInfo.Data.PrewriteValue = nil
+	e.binInfo.Data.CommitTs = commitTS
+	e.binInfo.Data.PrewriteValue = nil
 
 	wg := sync.WaitGroup{}
 	mock := false
@@ -74,7 +72,7 @@ func (e *binlogExecutor) Commit(ctx context.Context, commitTS int64) {
 	})
 	go func() {
 		logutil.Eventf(ctx, "start write finish binlog")
-		binlogWriteResult := binInfo.WriteBinlog(e.txn.GetClusterID())
+		binlogWriteResult := e.binInfo.WriteBinlog(e.txn.GetClusterID())
 		err := binlogWriteResult.GetError()
 		if err != nil {
 			logutil.BgLogger().Error("failed to write binlog",
