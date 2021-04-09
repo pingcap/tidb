@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -320,7 +321,7 @@ func (s *testPointGetSuite) TestCBOPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t (a varchar(20), b int, c int, d int, primary key(a), unique key(b, c))")
 	tk.MustExec("insert into t values('1',4,4,1), ('2',3,3,2), ('3',2,2,3), ('4',1,1,4)")
 
@@ -393,7 +394,7 @@ func (s *testPointGetSuite) TestBatchPointGetPartition(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
@@ -566,7 +567,7 @@ func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
 func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop tables if exists t1, t2, t3, t4, t5")
 	tk.MustExec("create table t1(id varchar(20) primary key)")
 	tk.MustExec("create table t2(id varchar(20), unique(id))")
@@ -597,4 +598,83 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 		plan.Check(testkit.Rows(output[i].Plan...))
 		res.Check(testkit.Rows(output[i].Res...))
 	}
+}
+
+func (s *testPointGetSuite) TestPointGetWithIndexHints(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	// point get
+	tk.MustExec("create table t(a int, b int, unique index ab(a, b), unique index ba(b, a))")
+	tk.MustQuery("explain format='brief' select a, b from t where a=1 and b=1").Check(testkit.Rows("Point_Get 1.00 root table:t, index:ab(a, b) "))
+	tk.MustQuery("explain format='brief' select a, b from t use index(ba) where a=1 and b=1").Check(testkit.Rows("Point_Get 1.00 root table:t, index:ba(b, a) "))
+	tk.MustQuery("explain format='brief' select a, b from t ignore index(ab, ba) where a=1 and b=1").Check(testkit.Rows(
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  eq(test.t.a, 1), eq(test.t.b, 1)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	// batch get
+	tk.MustQuery("explain format='brief' select a, b from t where (a=1 and b=1) or (a=2 and b=2)").Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, index:ab(a, b) keep order:false, desc:false"))
+	tk.MustQuery("explain format='brief' select a, b from t use index(ba) where (a=1 and b=1) or (a=2 and b=2)").Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, index:ba(b, a) keep order:false, desc:false"))
+	tk.MustQuery("explain format='brief' select a, b from t ignore index(ab, ba) where (a=1 and b=1) or (a=2 and b=2)").Check(testkit.Rows(
+		"TableReader 2.00 root  data:Selection",
+		"└─Selection 2.00 cop[tikv]  or(and(eq(test.t.a, 1), eq(test.t.b, 1)), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format='brief' select a, b from t where (a, b) in ((1, 1), (2, 2))").Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, index:ab(a, b) keep order:false, desc:false"))
+	tk.MustQuery("explain format='brief' select a, b from t use index(ba) where (a, b) in ((1, 1), (2, 2))").Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, index:ba(b, a) keep order:false, desc:false"))
+	tk.MustQuery("explain format='brief' select a, b from t ignore index(ab, ba) where (a, b) in ((1, 1), (2, 2))").Check(testkit.Rows(
+		"TableReader 2.00 root  data:Selection",
+		"└─Selection 2.00 cop[tikv]  or(and(eq(test.t.a, 1), eq(test.t.b, 1)), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	// primary key
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int primary key, b int, unique index ab(a, b))")
+	tk.MustQuery("explain format='brief' select a from t1 where a=1").Check(testkit.Rows("Point_Get 1.00 root table:t1 handle:1"))
+	tk.MustQuery("explain format='brief' select a from t1 use index(ab) where a=1").Check(testkit.Rows(
+		"IndexReader 10.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 10.00 cop[tikv] table:t1, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo"))
+
+	// other cases
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a int, b int, unique index aa(a), unique index bb(b))")
+	tk.MustQuery("explain format='brief' select a from t2 ignore index(bb) where a=1").Check(testkit.Rows("Point_Get 1.00 root table:t2, index:aa(a) "))
+	tk.MustQuery("explain format='brief' select a from t2 use index(bb) where a=1").Check(testkit.Rows(
+		"IndexLookUp 1.00 root  ",
+		"├─IndexFullScan(Build) 10000.00 cop[tikv] table:t2, index:bb(b) keep order:false, stats:pseudo",
+		"└─Selection(Probe) 1.00 cop[tikv]  eq(test.t2.a, 1)",
+		"  └─TableRowIDScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+}
+
+func (s *testPointGetSuite) TestIssue18042(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), index ab(a, b));")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustExec("SELECT /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 MB) */ * FROM t where a = 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(1<<20))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
+	tk.MustExec("drop table t")
+}
+
+func (s *testPointGetSuite) TestIssue23511(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("CREATE TABLE `t1`  (`COL1` bit(11) NOT NULL,PRIMARY KEY (`COL1`));")
+	tk.MustExec("CREATE TABLE `t2`  (`COL1` bit(11) NOT NULL);")
+	tk.MustExec("insert into t1 values(b'00000111001'), (b'00000000000');")
+	tk.MustExec("insert into t2 values(b'00000111001');")
+	tk.MustQuery("select * from t1 where col1 = 0x39;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x39;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t1 where col1 = 0x00;").Check(testkit.Rows("\x00\x00"))
+	tk.MustQuery("select * from t1 where col1 = 0x0000;").Check(testkit.Rows("\x00\x00"))
+	tk.MustQuery("explain format = 'brief' select * from t1 where col1 = 0x39;").
+		Check(testkit.Rows("Point_Get 1.00 root table:t1, index:PRIMARY(COL1) "))
+	tk.MustQuery("select * from t1 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t1 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
+	tk.MustExec("drop table t1, t2;")
 }

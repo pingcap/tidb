@@ -580,16 +580,11 @@ func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle
 	s.se.GetSessionVars().EnableChangeColumnType = true
 	defer func() {
 		s.se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		config.RestoreFunc()()
 	}()
-
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = false
-	})
 
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), `create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a), index idx2(a, c))`)
+	_, err = s.se.Execute(context.Background(), `create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a) clustered, index idx2(a, c))`)
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values(-1, -11)")
 	c.Assert(err, IsNil)
@@ -798,12 +793,12 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumn(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	sqls := make([]sqlWithErr, 2)
+	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
-	sqls[1] = sqlWithErr{"update t t1, tt t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
+	sqls[1] = sqlWithErr{"update t set c1='5', c3='2020-03-01' where c4 = 8;", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls[2] = sqlWithErr{"update t t1, tt t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
 		errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
-	// TODO: Fix the case of sqls[2].
-	// sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'where clause'")}
 	dropColumnSQL := "alter table t drop column c3"
 	query := &expectQuery{sql: "select * from t;", rows: []string{"a N 8"}}
 	s.runTestInSchemaState(c, model.StateWriteOnly, false, dropColumnSQL, sqls, query)
@@ -821,12 +816,11 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumns(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	sqls := make([]sqlWithErr, 2)
-	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls := make([]sqlWithErr, 3)
+	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c1' in 'field list'")}
 	sqls[1] = sqlWithErr{"update t t1, t_drop_columns t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
-		errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
-	// TODO: Fix the case of sqls[2].
-	// sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+		errors.New("[planner:1054]Unknown column 'c1' in 'field list'")}
+	sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'where clause'")}
 	dropColumnsSQL := "alter table t drop column c3, drop column c1"
 	query := &expectQuery{sql: "select * from t;", rows: []string{"N 8"}}
 	s.runTestInSchemaState(c, model.StateWriteOnly, false, dropColumnsSQL, sqls, query)
@@ -935,7 +929,7 @@ func (s *testStateChangeSuiteBase) CheckResult(tk *testkit.TestKit, sql string, 
 }
 
 func (s *testStateChangeSuite) TestShowIndex(c *C) {
-	_, err := s.se.Execute(context.Background(), `create table t(c1 int primary key, c2 int)`)
+	_, err := s.se.Execute(context.Background(), `create table t(c1 int primary key nonclustered, c2 int)`)
 	c.Assert(err, IsNil)
 	defer func() {
 		_, err := s.se.Execute(context.Background(), "drop table t")
@@ -1062,12 +1056,7 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
-func (s *serialTestStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = true
-	})
-
+func (s *testStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
 	_, err := s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 1")
 	c.Assert(err, IsNil)
 	defer func() {
@@ -1076,7 +1065,7 @@ func (s *serialTestStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C)
 	}()
 	domain.GetDomain(s.se).GetGlobalVarsCache().Disable()
 
-	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b);"
+	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b) NONCLUSTERED;"
 	sql2 := "ALTER TABLE t MODIFY COLUMN b tinyint;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)

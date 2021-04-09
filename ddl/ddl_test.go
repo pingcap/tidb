@@ -79,8 +79,6 @@ func TestT(t *testing.T) {
 		// Test for table lock.
 		conf.EnableTableLock = true
 		conf.Log.SlowThreshold = 10000
-		// Test for add/drop primary key.
-		conf.AlterPrimaryKey = true
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
