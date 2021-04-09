@@ -15,13 +15,13 @@ package tikv
 
 import (
 	"context"
-	"github.com/pingcap/kvproto/pkg/coprocessor_v2"
 	"io"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/coprocessor_v2"
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
