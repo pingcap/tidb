@@ -833,7 +833,7 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 	case CmdGet:
 		r := &kvrpcpb.GetResponse{}
 		r, err = client.KvGet(ctx, req.Get())
-		affectRow := len(r.Value)
+		affectRow = len(r.Value)
 		execDetail = r.GetExecDetailsV2()
 		resp.Resp = r
 	case CmdScan:
