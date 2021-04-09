@@ -2020,7 +2020,7 @@ func (s *testStatsSuite) TestFMSWithAnalyzePartition(c *C) {
 		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
 		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
 	))
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
 }
 
 var _ = SerialSuites(&statsSerialSuite{})
@@ -2296,6 +2296,66 @@ func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
 	tk.MustExec("alter table t drop column a")
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), time.Duration(0)), IsNil)
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+}
+
+func (s *testStatsSuite) TestIndexFMSketch(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c))")
+	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("analyze table t index ia")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
+	tk.MustExec("analyze table t index ibc")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("5"))
+	tk.MustExec("drop table if exists t")
+	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
+
+	// clustered index
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_clustered_index=ON")
+	tk.MustExec("create table t (a datetime, b datetime, primary key (a))")
+	tk.MustExec("insert into t values ('2000-01-01', '2000-01-01')")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustExec("drop table if exists t")
+	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
+
+	// test NDV
+	checkNDV := func(rows, ndv int) {
+		tk.MustExec("analyze table t")
+		rs := tk.MustQuery(fmt.Sprintf("select value from mysql.stats_fm_sketch")).Rows()
+		c.Assert(len(rs), Equals, rows)
+		for i := range rs {
+			fm, err := statistics.DecodeFMSketch([]byte(rs[i][0].(string)))
+			c.Assert(err, IsNil)
+			c.Assert(fm.NDV(), Equals, int64(ndv))
+		}
+	}
+
+	tk.MustExec("set @@tidb_enable_clustered_index=OFF")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("insert into t values (1), (2), (2), (3)")
+	checkNDV(2, 3)
+	tk.MustExec("insert into t values (4), (5)")
+	checkNDV(2, 5)
+	tk.MustExec("insert into t values (2), (5)")
+	checkNDV(2, 5)
+	tk.MustExec("drop table if exists t")
+	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
+
+	// clustered index
+	tk.MustExec("set @@tidb_enable_clustered_index=ON")
+	tk.MustExec("create table t (a datetime, b datetime, primary key (a))")
+	tk.MustExec("insert into t values ('2000-01-01', '2000-01-01')")
+	checkNDV(2, 1)
+	tk.MustExec("insert into t values ('2020-01-01', '2020-01-01')")
+	checkNDV(2, 2)
+	tk.MustExec("insert into t values ('1999-01-01', '1999-01-01'), ('1999-01-02', '1999-01-02'), ('1999-01-03', '1999-01-03')")
+	checkNDV(2, 5)
 }
 
 func (s *testStatsSuite) TestShowExtendedStats4DropColumn(c *C) {
