@@ -5,7 +5,6 @@ import (
 
 	"github.com/pingcap/errors"
 	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 // BatchBufferGetter is the interface for BatchGet.
@@ -19,7 +18,7 @@ type BatchBufferGetter interface {
 // BatchGetter is the interface for BatchGet.
 type BatchGetter interface {
 	// BatchGet gets a batch of values.
-	BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
 }
 
 // Getter is the interface for the Get method.
@@ -42,12 +41,12 @@ func NewBufferBatchGetter(buffer BatchBufferGetter, middleCache Getter, snapshot
 }
 
 // BatchGet implements the BatchGetter interface.
-func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 	if b.buffer.Len() == 0 {
 		return b.snapshot.BatchGet(ctx, keys)
 	}
 	bufferValues := make([][]byte, len(keys))
-	shrinkKeys := make([]kv.Key, 0, len(keys))
+	shrinkKeys := make([][]byte, 0, len(keys))
 	for i, key := range keys {
 		val, err := b.buffer.Get(key)
 		if err == nil {

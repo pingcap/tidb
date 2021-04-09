@@ -70,7 +70,7 @@ func (s *testSnapshotSuite) beginTxn(c *C) *KVTxn {
 	return txn
 }
 
-func (s *testSnapshotSuite) checkAll(keys []kv.Key, c *C) {
+func (s *testSnapshotSuite) checkAll(keys [][]byte, c *C) {
 	txn := s.beginTxn(c)
 	snapshot := newTiKVSnapshot(s.store, txn.StartTS(), 0)
 	m, err := snapshot.BatchGet(context.Background(), keys)
@@ -93,7 +93,7 @@ func (s *testSnapshotSuite) checkAll(keys []kv.Key, c *C) {
 	c.Assert(m, HasLen, cnt)
 }
 
-func (s *testSnapshotSuite) deleteKeys(keys []kv.Key, c *C) {
+func (s *testSnapshotSuite) deleteKeys(keys [][]byte, c *C) {
 	txn := s.beginTxn(c)
 	for _, k := range keys {
 		err := txn.Delete(k)
@@ -132,7 +132,7 @@ func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 
 	txn = s.beginTxn(c)
 	snapshot := newTiKVSnapshot(s.store, txn.StartTS(), 0)
-	_, err := snapshot.BatchGet(context.Background(), []kv.Key{kv.Key("x"), kv.Key("y")})
+	_, err := snapshot.BatchGet(context.Background(), [][]byte{kv.Key("x"), kv.Key("y")})
 	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail", `return(true)`), IsNil)
@@ -166,8 +166,8 @@ func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {
 	}
 }
 
-func makeKeys(rowNum int, prefix string) []kv.Key {
-	keys := make([]kv.Key, 0, rowNum)
+func makeKeys(rowNum int, prefix string) [][]byte {
+	keys := make([][]byte, 0, rowNum)
 	for i := 0; i < rowNum; i++ {
 		k := encodeKey(prefix, s08d("key", i))
 		keys = append(keys, k)
@@ -193,7 +193,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	_, err = txn1.Get(ctx, x)
 	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)
 
-	res, err := txn1.BatchGet(ctx, []kv.Key{x, y, kv.Key("z")})
+	res, err := txn1.BatchGet(ctx, [][]byte{x, y, kv.Key("z")})
 	c.Assert(err, IsNil)
 	c.Assert(res, HasLen, 0)
 
@@ -256,7 +256,7 @@ func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
 			for i := 0; i < 30; i++ {
 				_, err := snapshot.Get(ctx, key)
 				c.Assert(err, IsNil)
-				_, err = snapshot.BatchGet(ctx, []kv.Key{key, kv.Key("key_not_exist")})
+				_, err = snapshot.BatchGet(ctx, [][]byte{key, kv.Key("key_not_exist")})
 				c.Assert(err, IsNil)
 			}
 			wg.Done()

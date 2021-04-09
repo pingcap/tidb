@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-type Key = kv.Key
 type KeyFlags = kv.KeyFlags
 type StagingHandle = tidbkv.StagingHandle
 
@@ -400,7 +399,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 	}
 	h3 := s.deriveAndFill(1000, 2000, 3, db)
 
-	db.InspectStage(int(h3), func(key Key, _ KeyFlags, val []byte) {
+	db.InspectStage(int(h3), func(key []byte, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -408,7 +407,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 		c.Assert(v-k, DeepEquals, 3)
 	})
 
-	db.InspectStage(int(h2), func(key Key, _ KeyFlags, val []byte) {
+	db.InspectStage(int(h2), func(key []byte, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -423,7 +422,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 	db.Cleanup(h3)
 	db.Release(h2)
 
-	db.InspectStage(int(h1), func(key Key, _ KeyFlags, val []byte) {
+	db.InspectStage(int(h1), func(key []byte, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -709,7 +708,7 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 }
 
 // FnKeyCmp is the function for iterator the keys
-type FnKeyCmp func(key Key) bool
+type FnKeyCmp func(key []byte) bool
 
 // TODO: remove it since it is duplicated with kv.NextUtil
 // NextUntil applies FnKeyCmp to each entry of the iterator until meets some condition.
@@ -733,7 +732,7 @@ func (s *testKVSuite) TestIterNextUntil(c *C) {
 	iter, err := buffer.Iter(nil, nil)
 	c.Assert(err, IsNil)
 
-	err = NextUntil(iter, func(k Key) bool {
+	err = NextUntil(iter, func(k []byte) bool {
 		return false
 	})
 	c.Assert(err, IsNil)
@@ -853,7 +852,7 @@ func (s *testKVSuite) TestBufferBatchGetter(c *C) {
 	buffer.Delete(kb)
 
 	batchGetter := NewBufferBatchGetter(buffer, middle, snap)
-	result, err := batchGetter.BatchGet(context.Background(), []Key{ka, kb, kc, kd})
+	result, err := batchGetter.BatchGet(context.Background(), [][]byte{ka, kb, kc, kd})
 	c.Assert(err, IsNil)
 	c.Assert(len(result), Equals, 3)
 	c.Assert(string(result[string(ka)]), Equals, "a2")

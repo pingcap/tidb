@@ -43,7 +43,7 @@ func newUnionstoreBatchGetter(g kv.BatchGetter) unionstore.BatchGetter {
 	return &kvBatchGetter{BatchGetter: g}
 }
 
-func (g *kvBatchGetter) BatchGet(ctx context.Context, keys []tikvstore.Key) (map[string][]byte, error) {
+func (g *kvBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 	return g.BatchGetter.BatchGet(ctx, toKVKeys(keys))
 }
 
@@ -116,7 +116,7 @@ func (m *memBuffer) GetFlags(key kv.Key) (tikvstore.KeyFlags, error) {
 }
 
 func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, tikvstore.KeyFlags, []byte)) {
-	tf := func(key tikvstore.Key, flag tikvstore.KeyFlags, value []byte) {
+	tf := func(key []byte, flag tikvstore.KeyFlags, value []byte) {
 		f(kv.Key(key), flag, value)
 	}
 	m.MemDB.InspectStage(int(handle), tf)

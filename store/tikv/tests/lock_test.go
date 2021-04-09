@@ -156,7 +156,7 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 	s.putAlphabets(c)
 	s.prepareAlphabetLocks(c)
 
-	var keys []kv.Key
+	var keys [][]byte
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		keys = append(keys, []byte{ch})
 	}

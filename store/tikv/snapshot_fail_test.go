@@ -83,7 +83,7 @@ func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	res, err := txn.BatchGet(context.Background(), []kv.Key{[]byte("k1"), []byte("k2")})
+	res, err := txn.BatchGet(context.Background(), [][]byte{[]byte("k1"), []byte("k2")})
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, map[string][]byte{"k1": []byte("v1"), "k2": []byte("v2")})
 }

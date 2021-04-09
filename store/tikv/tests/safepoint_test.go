@@ -51,8 +51,8 @@ func (s *testSafePointSuite) beginTxn(c *C) tikv.TxnProbe {
 	return txn
 }
 
-func mymakeKeys(rowNum int, prefix string) []kv.Key {
-	keys := make([]kv.Key, 0, rowNum)
+func mymakeKeys(rowNum int, prefix string) [][]byte {
+	keys := make([][]byte, 0, rowNum)
 	for i := 0; i < rowNum; i++ {
 		k := encodeKey(prefix, s08d("key", i))
 		keys = append(keys, k)

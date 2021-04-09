@@ -152,7 +152,7 @@ func (db *MemDB) DiscardValues() {
 }
 
 // InspectStage used to inspect the value updates in the given stage.
-func (db *MemDB) InspectStage(handle int, f func(kv.Key, kv.KeyFlags, []byte)) {
+func (db *MemDB) InspectStage(handle int, f func([]byte, kv.KeyFlags, []byte)) {
 	idx := handle - 1
 	tail := db.vlog.checkpoint()
 	head := db.stages[idx]
@@ -272,7 +272,7 @@ func (db *MemDB) Dirty() bool {
 	return db.dirty
 }
 
-func (db *MemDB) set(key kv.Key, value []byte, ops ...kv.FlagsOp) error {
+func (db *MemDB) set(key []byte, value []byte, ops ...kv.FlagsOp) error {
 	if db.vlogInvalid {
 		// panic for easier debugging.
 		panic("vlog is resetted")
@@ -336,7 +336,7 @@ func (db *MemDB) setValue(x memdbNodeAddr, value []byte) {
 
 // traverse search for and if not found and insert is true, will add a new node in.
 // Returns a pointer to the new node, or the node found.
-func (db *MemDB) traverse(key kv.Key, insert bool) memdbNodeAddr {
+func (db *MemDB) traverse(key []byte, insert bool) memdbNodeAddr {
 	x := db.getRoot()
 	y := memdbNodeAddr{nil, nullAddr}
 	found := false
@@ -734,7 +734,7 @@ func (db *MemDB) getRoot() memdbNodeAddr {
 	return db.getNode(db.root)
 }
 
-func (db *MemDB) allocNode(key kv.Key) memdbNodeAddr {
+func (db *MemDB) allocNode(key []byte) memdbNodeAddr {
 	db.size += len(key)
 	db.count++
 	x, xn := db.allocator.allocNode(key)
@@ -787,7 +787,7 @@ func (n *memdbNode) setBlack() {
 	n.flags &= ^nodeColorBit
 }
 
-func (n *memdbNode) getKey() kv.Key {
+func (n *memdbNode) getKey() []byte {
 	var ret []byte
 	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&ret))
 	hdr.Data = uintptr(unsafe.Pointer(&n.flags)) + 1

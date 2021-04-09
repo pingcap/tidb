@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type tikvSnapshot struct {
@@ -40,13 +39,13 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	data, err := s.KVSnapshot.Get(ctx, tikvstore.Key(k))
+	data, err := s.KVSnapshot.Get(ctx, k)
 	return data, extractKeyErr(err)
 }
 
 // Iter return a list of key-value pair after `k`.
 func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	scanner, err := s.KVSnapshot.Iter(tikvstore.Key(k), tikvstore.Key(upperBound))
+	scanner, err := s.KVSnapshot.Iter(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -55,22 +54,22 @@ func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
-	scanner, err := s.KVSnapshot.IterReverse(tikvstore.Key(k))
+	scanner, err := s.KVSnapshot.IterReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
 }
 
-func toTiKVKeys(keys []kv.Key) []tikvstore.Key {
-	res := make([]tikvstore.Key, len(keys))
+func toTiKVKeys(keys []kv.Key) [][]byte {
+	res := make([][]byte, len(keys))
 	for id, k := range keys {
-		res[id] = tikvstore.Key(k)
+		res[id] = []byte(k)
 	}
 	return res
 }
 
-func toKVKeys(keys []tikvstore.Key) []kv.Key {
+func toKVKeys(keys [][]byte) []kv.Key {
 	res := make([]kv.Key, len(keys))
 	for id, k := range keys {
 		res[id] = kv.Key(k)

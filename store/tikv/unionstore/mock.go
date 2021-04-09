@@ -17,14 +17,13 @@ import (
 	"context"
 
 	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type mockSnapshot struct {
 	store *MemDB
 }
 
-func (s *mockSnapshot) Get(_ context.Context, k kv.Key) ([]byte, error) {
+func (s *mockSnapshot) Get(_ context.Context, k []byte) ([]byte, error) {
 	return s.store.Get(k)
 }
 
@@ -32,7 +31,7 @@ func (s *mockSnapshot) SetPriority(priority int) {
 
 }
 
-func (s *mockSnapshot) BatchGet(_ context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (s *mockSnapshot) BatchGet(_ context.Context, keys [][]byte) (map[string][]byte, error) {
 	m := make(map[string][]byte, len(keys))
 	for _, k := range keys {
 		v, err := s.store.Get(k)
@@ -47,11 +46,11 @@ func (s *mockSnapshot) BatchGet(_ context.Context, keys []kv.Key) (map[string][]
 	return m, nil
 }
 
-func (s *mockSnapshot) Iter(k kv.Key, upperBound kv.Key) (Iterator, error) {
+func (s *mockSnapshot) Iter(k []byte, upperBound []byte) (Iterator, error) {
 	return s.store.Iter(k, upperBound)
 }
 
-func (s *mockSnapshot) IterReverse(k kv.Key) (Iterator, error) {
+func (s *mockSnapshot) IterReverse(k []byte) (Iterator, error) {
 	return s.store.IterReverse(k)
 }
 
