@@ -125,7 +125,6 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.respIter.Fetch(ctx)
 	return nil
 }
 
