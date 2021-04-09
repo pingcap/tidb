@@ -28,6 +28,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/metrics"
+)
+
+var (
+	TiKVSmallReadDuration   = metrics.TiKVSmallReadDuration
+	TiKVLargeReadThroughput = metrics.TiKVLargeReadThroughput
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -820,10 +826,14 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 // cancel function will be sent to the channel, together with a lease checked by a background goroutine.
 func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Response, error) {
 	resp := &Response{}
+	execDetail := &kvrpcpb.ExecDetailsV2{}
 	var err error
 	switch req.Type {
 	case CmdGet:
-		resp.Resp, err = client.KvGet(ctx, req.Get())
+		r := &kvrpcpb.GetResponse{}
+		r, err = client.KvGet(ctx, req.Get())
+		execDetail = r.GetExecDetailsV2()
+		resp.Resp = r
 	case CmdScan:
 		resp.Resp, err = client.KvScan(ctx, req.Scan())
 	case CmdPrewrite:
@@ -837,7 +847,10 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 	case CmdCleanup:
 		resp.Resp, err = client.KvCleanup(ctx, req.Cleanup())
 	case CmdBatchGet:
-		resp.Resp, err = client.KvBatchGet(ctx, req.BatchGet())
+		r := &kvrpcpb.BatchGetResponse{}
+		r, err = client.KvBatchGet(ctx, req.BatchGet())
+		execDetail = r.GetExecDetailsV2()
+		resp.Resp = r
 	case CmdBatchRollback:
 		resp.Resp, err = client.KvBatchRollback(ctx, req.BatchRollback())
 	case CmdScanLock:
@@ -915,6 +928,15 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
+	}
+	if execDetail != nil {
+		readByte := float64(execDetail.GetScanDetailV2().GetReadBytes())
+		readTime := float64(execDetail.GetTimeDetail().GetKvReadWallTimeMs())
+		if readByte < 1*1024*1024 {
+			TiKVSmallReadDuration.Observe(readTime)
+		} else {
+			TiKVLargeReadThroughput.Observe(readByte / readTime)
+		}
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
