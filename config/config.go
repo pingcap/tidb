@@ -654,7 +654,7 @@ var defaultConf = Config{
 		MaxSQLLength:        4096,
 		RefreshInterval:     1800,
 		HistorySize:         24,
-		MaxEvictedCount:     48,
+		MaxEvictedCount:     24,
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},

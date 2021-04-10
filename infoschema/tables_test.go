@@ -1537,5 +1537,4 @@ func (s *testTableSuite) TestStmtEvictedInfoTable(c *C) {
 	// Create a new session to test.
 	tk = s.newTestKitWithRoot(c)
 
-	tk.MustQuery("set global tidb_stmt_summary_")
 }
