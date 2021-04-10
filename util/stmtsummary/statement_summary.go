@@ -80,9 +80,9 @@ type stmtSummaryEvictedInfo struct {
 	evictedCount int
 }
 type evictedInfoHistory struct {
-	maxCount	int
-	tail		int
-	element []stmtSummaryEvictedInfo
+	maxCount int
+	tail     int
+	element  []stmtSummaryEvictedInfo
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -250,9 +250,9 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 		sysVars:    sysVars,
 		currentInfo: &evictedInfoHistory{
-			element: make([]stmtSummaryEvictedInfo,0,maxStmtEvictedCount),
-			tail: 0,
-			maxCount:maxStmtEvictedCount,
+			element:  make([]stmtSummaryEvictedInfo, 0, maxStmtEvictedCount),
+			tail:     0,
+			maxCount: maxStmtEvictedCount,
 		},
 	}
 }
@@ -299,9 +299,9 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
 			if ssMap.summaryMap.Size() == ssMap.maxStmtCount() {
-				_,values,err:=ssMap.summaryMap.GetOldest()
-				if err{
-					ssMap.currentInfo.AddEvictedInfo(beginTime,beginTime+intervalSeconds,values)
+				_, values, err := ssMap.summaryMap.GetOldest()
+				if err {
+					ssMap.currentInfo.AddEvictedInfo(beginTime, beginTime+intervalSeconds, values)
 				}
 
 			}
@@ -376,15 +376,15 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isS
 	return rows
 }
 
-func (evictedHistory *evictedInfoHistory)AddEvictedInfo(begintime int64,endtime int64,historylist kvcache.Value) {
-	if evictedHistory.tail==0&& len(evictedHistory.element)==0{
-		evictedHistory.Add(begintime,endtime,0)
+func (evictedHistory *evictedInfoHistory) AddEvictedInfo(begintime int64, endtime int64, historylist kvcache.Value) {
+	if evictedHistory.tail == 0 && len(evictedHistory.element) == 0 {
+		evictedHistory.Add(begintime, endtime, 0)
 	}
-	if evictedHistory.element[evictedHistory.tail].beginTime!=begintime {
-		if len(evictedHistory.element)<evictedHistory.maxCount{
-			evictedHistory.Add(begintime,endtime,0)
-			evictedHistory.tail=len(evictedHistory.element)-1
-		}else {
+	if evictedHistory.element[evictedHistory.tail].beginTime != begintime {
+		if len(evictedHistory.element) < evictedHistory.maxCount {
+			evictedHistory.Add(begintime, endtime, 0)
+			evictedHistory.tail = len(evictedHistory.element) - 1
+		} else {
 			if evictedHistory.tail == len(evictedHistory.element)-1 {
 				evictedHistory.tail = 0
 			} else {
@@ -412,10 +412,10 @@ func (evictedHistory *evictedInfoHistory)AddEvictedInfo(begintime int64,endtime 
 
 }
 
-func (EvictedHistory *evictedInfoHistory) Add(begintime,endtime int64,evictedCount int) {
-	EvictedHistory.element=append(EvictedHistory.element,stmtSummaryEvictedInfo{
-		beginTime:begintime,
-		endTime:endtime,
+func (evictedHistory *evictedInfoHistory) Add(begintime, endtime int64, evictedCount int) {
+	evictedHistory.element = append(evictedHistory.element, stmtSummaryEvictedInfo{
+		beginTime:    begintime,
+		endTime:      endtime,
 		evictedCount: evictedCount,
 	})
 }
@@ -571,10 +571,10 @@ func (ssMap *stmtSummaryByDigestMap) SetMaxEvictedCount(value string, inSession 
 	capacity := ssMap.sysVars.getVariable(typeMaxEvictedInfoCount)
 	ssMap.Lock()
 	defer ssMap.Unlock()
-	ssMap.currentInfo.maxCount=int(capacity)
+	ssMap.currentInfo.maxCount = int(capacity)
 	// OverFlow
-	if len(ssMap.currentInfo.element)>=ssMap.currentInfo.maxCount {
-		ssMap.currentInfo.element=make([]stmtSummaryEvictedInfo,0,ssMap.currentInfo.maxCount)
+	if len(ssMap.currentInfo.element) >= ssMap.currentInfo.maxCount {
+		ssMap.currentInfo.element = make([]stmtSummaryEvictedInfo, 0, ssMap.currentInfo.maxCount)
 	}
 
 	return nil
