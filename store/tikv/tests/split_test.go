@@ -11,94 +11,108 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"context"
 	"sync"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	pd "github.com/tikv/pd/client"
 )
 
-var errStopped = errors.New("stopped")
-
-type testStoreSuite struct {
-	testStoreSuiteBase
-}
-
-type testStoreSerialSuite struct {
-	testStoreSuiteBase
-}
-
-type testStoreSuiteBase struct {
+type testSplitSuite struct {
 	OneByOneSuite
-	store *KVStore
+	cluster cluster.Cluster
+	store   tikv.StoreProbe
+	bo      *tikv.Backoffer
 }
 
-var _ = Suite(&testStoreSuite{})
-var _ = SerialSuites(&testStoreSerialSuite{})
+var _ = Suite(&testSplitSuite{})
 
-func (s *testStoreSuiteBase) SetUpTest(c *C) {
-	s.store = NewTestStore(c)
+func (s *testSplitSuite) SetUpTest(c *C) {
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	c.Assert(err, IsNil)
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	c.Assert(err, IsNil)
+
+	// TODO: make this possible
+	// store, err := mockstore.NewMockStore(
+	// 	mockstore.WithClusterInspector(func(c cluster.Cluster) {
+	// 		mockstore.BootstrapWithSingleStore(c)
+	// 		s.cluster = c
+	// 	}),
+	// )
+	// c.Assert(err, IsNil)
+	s.store = tikv.StoreProbe{KVStore: store}
+	s.bo = tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
-func (s *testStoreSuiteBase) TearDownTest(c *C) {
-	c.Assert(s.store.Close(), IsNil)
+func (s *testSplitSuite) begin(c *C) tikv.TxnProbe {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	return txn
 }
 
-func (s *testStoreSuite) TestOracle(c *C) {
-	o := &oracles.MockOracle{}
-	s.store.oracle = o
-
-	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
-	c.Assert(err, IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
-	c.Assert(err, IsNil)
-	c.Assert(t1, Less, t2)
-
-	t1, err = o.GetLowResolutionTimestamp(ctx, &oracle.Option{})
-	c.Assert(err, IsNil)
-	t2, err = o.GetLowResolutionTimestamp(ctx, &oracle.Option{})
-	c.Assert(err, IsNil)
-	c.Assert(t1, Less, t2)
-	f := o.GetLowResolutionTimestampAsync(ctx, &oracle.Option{})
-	c.Assert(f, NotNil)
-	_ = o.UntilExpired(0, 0, &oracle.Option{})
-
-	// Check retry.
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	o.Disable()
-	go func() {
-		defer wg.Done()
-		time.Sleep(time.Millisecond * 100)
-		o.Enable()
-	}()
-
-	go func() {
-		defer wg.Done()
-		t3, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, nil), oracle.GlobalTxnScope)
-		c.Assert(err, IsNil)
-		c.Assert(t2, Less, t3)
-		expired := s.store.oracle.IsExpired(t2, 50, &oracle.Option{})
-		c.Assert(expired, IsTrue)
-	}()
-
-	wg.Wait()
+func (s *testSplitSuite) split(c *C, regionID uint64, key []byte) {
+	newRegionID, peerID := s.cluster.AllocID(), s.cluster.AllocID()
+	s.cluster.Split(regionID, newRegionID, key, []uint64{peerID}, peerID)
 }
+
+func (s *testSplitSuite) TestSplitBatchGet(c *C) {
+	loc, err := s.store.GetRegionCache().LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+
+	txn := s.begin(c)
+
+	keys := [][]byte{{'a'}, {'b'}, {'c'}}
+	_, region, err := s.store.GetRegionCache().GroupKeysByRegion(s.bo, keys, nil)
+	c.Assert(err, IsNil)
+
+	s.split(c, loc.Region.GetID(), []byte("b"))
+	s.store.GetRegionCache().InvalidateCachedRegion(loc.Region)
+
+	// mocktikv will panic if it meets a not-in-region key.
+	err = txn.BatchGetSingleRegion(s.bo, region, keys, func([]byte, []byte) {})
+	c.Assert(err, IsNil)
+}
+
+func (s *testSplitSuite) TestStaleEpoch(c *C) {
+	mockPDClient := &mockPDClient{client: s.store.GetRegionCache().PDClient()}
+	s.store.SetRegionCachePDClient(mockPDClient)
+
+	loc, err := s.store.GetRegionCache().LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+
+	txn := s.begin(c)
+	err = txn.Set([]byte("a"), []byte("a"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("c"), []byte("c"))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	// Initiate a split and disable the PD client. If it still works, the
+	// new region is updated from kvrpc.
+	s.split(c, loc.Region.GetID(), []byte("b"))
+	mockPDClient.disable()
+
+	txn = s.begin(c)
+	_, err = txn.Get(context.TODO(), []byte("a"))
+	c.Assert(err, IsNil)
+	_, err = txn.Get(context.TODO(), []byte("c"))
+	c.Assert(err, IsNil)
+}
+
+var errStopped = errors.New("stopped")
 
 type mockPDClient struct {
 	sync.RWMutex
@@ -239,81 +253,3 @@ func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.
 }
 
 func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
-
-type checkRequestClient struct {
-	Client
-	priority pb.CommandPri
-}
-
-func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
-	if c.priority != req.Priority {
-		if resp.Resp != nil {
-			if getResp, ok := resp.Resp.(*pb.GetResponse); ok {
-				getResp.Error = &pb.KeyError{
-					Abort: "request check error",
-				}
-			}
-		}
-	}
-	return resp, err
-}
-
-func (s *testStoreSuite) TestRequestPriority(c *C) {
-	client := &checkRequestClient{
-		Client: s.store.client,
-	}
-	s.store.client = client
-
-	// Cover 2PC commit.
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	client.priority = pb.CommandPri_High
-	txn.SetOption(kv.Priority, kv.PriorityHigh)
-	err = txn.Set([]byte("key"), []byte("value"))
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	// Cover the basic Get request.
-	txn, err = s.store.Begin()
-	c.Assert(err, IsNil)
-	client.priority = pb.CommandPri_Low
-	txn.SetOption(kv.Priority, kv.PriorityLow)
-	_, err = txn.Get(context.TODO(), []byte("key"))
-	c.Assert(err, IsNil)
-
-	// A counter example.
-	client.priority = pb.CommandPri_Low
-	txn.SetOption(kv.Priority, kv.PriorityNormal)
-	_, err = txn.Get(context.TODO(), []byte("key"))
-	// err is translated to "try again later" by backoffer, so doesn't check error value here.
-	c.Assert(err, NotNil)
-
-	// Cover Seek request.
-	client.priority = pb.CommandPri_High
-	txn.SetOption(kv.Priority, kv.PriorityHigh)
-	iter, err := txn.Iter([]byte("key"), nil)
-	c.Assert(err, IsNil)
-	for iter.Valid() {
-		c.Assert(iter.Next(), IsNil)
-	}
-	iter.Close()
-}
-
-func (s *testStoreSerialSuite) TestOracleChangeByFailpoint(c *C) {
-	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
-	}()
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD",
-		"return(10000)"), IsNil)
-	o := &oracles.MockOracle{}
-	s.store.oracle = o
-	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
-	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
-	c.Assert(err, IsNil)
-	c.Assert(t1, Greater, t2)
-}

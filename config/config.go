@@ -1000,7 +1000,7 @@ const (
 	OOMActionLog    = "log"
 )
 
-/// hideConfig is used to filter a single line of config for hiding.
+// hideConfig is used to filter a single line of config for hiding.
 var hideConfig = []string{
 	"index-usage-sync-lease",
 }

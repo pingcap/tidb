@@ -288,7 +288,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return err
 	}
-	e.result.Fetch(ctx)
 	return nil
 }
 
@@ -479,7 +478,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	if err != nil {
 		return err
 	}
-	result.Fetch(ctx)
 	worker := &indexWorker{
 		idxLookup:       e,
 		workCh:          workCh,
@@ -918,9 +916,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			}
 			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
 		}
-		if tp == getHandleFromTable {
-			tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
-		}
+		tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
 		handleEncoded, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, datums...)
 		if err != nil {
 			return nil, err

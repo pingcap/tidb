@@ -1,5 +1,5 @@
-// Copyright 2021 PingCAP, Inc.
-
+// Copyright 2021-present PingCAP, Inc.
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,18 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package unionstore
+package pberror
 
 import (
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 )
 
-// MemBufferIterator is an Iterator with KeyFlags related functions.
-type MemBufferIterator interface {
-	tidbkv.Iterator
-	HasValue() bool
-	Flags() kv.KeyFlags
-	UpdateFlags(...kv.FlagsOp)
-	Handle() MemKeyHandle
+// PBError is a implementation of error.
+type PBError struct {
+	RequestErr *errorpb.Error
+}
+
+// Error implements the error.
+func (re *PBError) Error() string {
+	return re.RequestErr.String()
 }
