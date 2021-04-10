@@ -57,7 +57,7 @@ In addition to that, you may enjoy following:
 - The PingCAP Team [English Blog](https://en.pingcap.com/blog) and [Chinese Blog](https://pingcap.com/blog-cn/)
 - [TiDB Monthly](https://pingcap.com/weekly/)
 
-For support, please contact [PingCAP](http://bit.ly/contact_us_via_github)
+For support, please contact [PingCAP](http://bit.ly/contact_us_via_github).
 
 ## Quick start
 
