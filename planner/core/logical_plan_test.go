@@ -953,6 +953,27 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: "delete from t order by a",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+			},
+		},
+		{
+			sql: "delete from t",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
+			},
+		},
+		/* Not currently supported. See https://github.com/pingcap/tidb/issues/23644
+		{
+			sql: "delete from t where 1=1",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
+			},
+		},
+		*/
+		{
 			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
 			ans: []visitInfo{
 				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
@@ -1811,6 +1832,24 @@ func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
 			c.Assert(plan, NotNil)
 		} else {
 			c.Assert(plan, IsNil)
+		}
+	}
+}
+
+func (s *testPlanSuite) TestWindowLogicalPlanAmbiguous(c *C) {
+	sql := "select a, max(a) over(), sum(a) over() from t"
+	var planString string
+	// The ambiguous logical plan which contains window function can usually be found in 100 iterations.
+	iterations := 100
+	for i := 0; i < iterations; i++ {
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil)
+		p, _, err := BuildLogicalPlan(context.Background(), s.ctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		if planString == "" {
+			planString = ToString(p)
+		} else {
+			c.Assert(planString, Equals, ToString(p))
 		}
 	}
 }
