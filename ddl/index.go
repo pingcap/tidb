@@ -722,7 +722,7 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 	}
 
 	// Check that drop primary index will not cause invisible implicit primary index.
-	if err := checkNewIndexes(tblInfo, []*model.IndexInfo{indexInfo}, job); err != nil {
+	if err := checkInvisibleIndexesOnPK(tblInfo, []*model.IndexInfo{indexInfo}, job); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
@@ -853,16 +853,15 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 	}
 
 	// Check that drop primary index will not cause invisible implicit primary index.
-	if err := checkNewIndexes(tblInfo, indexInfos, job); err != nil {
+	if err := checkInvisibleIndexesOnPK(tblInfo, indexInfos, job); err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
 
 	return tblInfo, indexInfos, ifExists, nil
 }
 
-func checkNewIndexes(tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, job *model.Job) error {
+func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, job *model.Job) error {
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-	// tblInfo.FindIndexByName()
 	for _, oidx := range tblInfo.Indices {
 		needAppend := true
 		for _, idx := range indexInfos {
