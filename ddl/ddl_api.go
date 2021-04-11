@@ -5228,21 +5228,8 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	return errors.Trace(err)
 }
 
-func (d *ddl) getSchemaAndTable(ti ast.Ident) (*model.DBInfo, table.Table, error) {
-	is := d.infoHandle.Get()
-	schema, ok := is.SchemaByName(ti.Schema)
-	if !ok {
-		return nil, nil, errors.Trace(infoschema.ErrDatabaseNotExists)
-	}
-	t, err := is.TableByName(ti.Schema, ti.Name)
-	if err != nil {
-		return nil, nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
-	}
-	return schema, t, nil
-}
-
 func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTable(ti)
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return err
 	}
