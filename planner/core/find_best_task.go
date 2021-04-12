@@ -1489,7 +1489,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	if prop.TaskTp == property.MppTaskType {
 		if ts.KeepOrder {
-			return &mppTask{}, err
+			return &mppTask{}, nil
 		}
 		if prop.PartitionTp != property.AnyType || ts.isPartition {
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
