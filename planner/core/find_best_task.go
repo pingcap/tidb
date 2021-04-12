@@ -642,7 +642,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			return
 		}
 		if prop.CanAddEnforcer {
-			prop = oldProp
+			*prop = *oldProp
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
 			prop.CanAddEnforcer = true
 		}

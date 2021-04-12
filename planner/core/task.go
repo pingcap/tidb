@@ -668,6 +668,9 @@ func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppT
 		rProj = getProj(p.ctx, rp)
 		rp = rProj
 	}
+	newEqCondition := make([]*expression.ScalarFunction, 0, len(p.EqualConditions))
+	newEqCondition = append(newEqCondition, p.EqualConditions...)
+	p.EqualConditions = newEqCondition
 	lKeys := make([]*expression.Column, 0, len(p.EqualConditions))
 	rKeys := make([]*expression.Column, 0, len(p.EqualConditions))
 	for i, eqFunc := range p.EqualConditions {
