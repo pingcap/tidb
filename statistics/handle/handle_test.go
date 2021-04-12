@@ -2384,3 +2384,56 @@ func (s *testStatsSuite) TestShowExtendedStats4DropColumn(c *C) {
 	rows = tk.MustQuery("show stats_extended").Rows()
 	c.Assert(len(rows), Equals, 0)
 }
+
+func (s *testStatsSuite) TestDropPartitionStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (
+	a int,
+	key(a)
+)
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20),
+	partition global values less than (30)
+)`)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	defer tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	defer tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("insert into t values (1), (5), (11), (15), (21), (25)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	checkPartitionStats := func(names ...string) {
+		rs := tk.MustQuery("show stats_meta").Rows()
+		c.Assert(len(rs), Equals, len(names))
+		for i := range names {
+			c.Assert(rs[i][2].(string), Equals, names[i])
+		}
+	}
+
+	tk.MustExec("analyze table t")
+	checkPartitionStats("global", "p0", "p1", "global")
+
+	tk.MustExec("drop stats t partition p0")
+	checkPartitionStats("global", "p1", "global")
+
+	err := tk.ExecToErr("drop stats t partition abcde")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "can not found the specified partition name abcde in the table definition")
+
+	tk.MustExec("drop stats t partition global")
+	checkPartitionStats("global", "p1")
+
+	tk.MustExec("drop stats t global")
+	checkPartitionStats("p1")
+
+	tk.MustExec("analyze table t")
+	checkPartitionStats("global", "p0", "p1", "global")
+
+	tk.MustExec("drop stats t partition p0, p1, global")
+	checkPartitionStats("global")
+}
+
