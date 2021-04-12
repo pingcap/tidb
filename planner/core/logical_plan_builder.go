@@ -4233,9 +4233,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}()
 
 	// update subquery table should be forbidden
-	var asNameList []string
-	asNameList = extractTableSourceAsNames(update.TableRefs.TableRefs, asNameList, true)
-	for _, asName := range asNameList {
+	var subQueryTblAsNames []string
+	subQueryTblAsNames = extractTableSourceAsNames(update.TableRefs.TableRefs, subQueryTblAsNames, true)
+	for _, asName := range subQueryTblAsNames {
 		for _, assign := range update.List {
 			if assign.Column.Table.L == asName {
 				return nil, ErrNonUpdatableTable.GenWithStackByArgs(asName, "UPDATE")
@@ -4309,7 +4309,20 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	var updateTableList []*ast.TableName
 	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
-	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updateTableList, update.List, p)
+	updatableTbl := updateTableList[:0]
+	for _, tbl := range updateTableList {
+		updatable := true
+		for _, nTbl := range subQueryTblAsNames {
+			if tbl.Name.L == nTbl {
+				updatable = false
+				break
+			}
+		}
+		if updatable {
+			updatableTbl = append(updatableTbl, tbl)
+		}
+	}
+	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updatableTbl, update.List, p)
 	if err != nil {
 		return nil, err
 	}
