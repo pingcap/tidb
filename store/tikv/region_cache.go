@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -592,14 +592,18 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 // KeyLocation is the region and range that a key is located.
 type KeyLocation struct {
 	Region   RegionVerID
-	StartKey tidbkv.Key
-	EndKey   tidbkv.Key
+	StartKey []byte
+	EndKey   []byte
 }
 
 // Contains checks if key is in [StartKey, EndKey).
 func (l *KeyLocation) Contains(key []byte) bool {
 	return bytes.Compare(l.StartKey, key) <= 0 &&
 		(bytes.Compare(key, l.EndKey) < 0 || len(l.EndKey) == 0)
+}
+
+func (l *KeyLocation) String() string {
+	return fmt.Sprintf("Region %s,StartKey:%s,EndKey:%s", l.Region.String(), hex.EncodeToString(l.StartKey), hex.EncodeToString(l.EndKey))
 }
 
 // LocateKey searches for the region and range that the key is located.
