@@ -16,10 +16,8 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
 )
@@ -313,7 +311,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.Trace(kv.ErrBodyMissing)
 		}
 		batchGetResp := resp.Resp.(*pb.BatchGetResponse)
 		var (
@@ -474,7 +472,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k tidbkv.Key) ([]by
 			continue
 		}
 		if resp.Resp == nil {
-			return nil, errors.Trace(ErrBodyMissing)
+			return nil, errors.Trace(kv.ErrBodyMissing)
 		}
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		if cmdGetResp.ExecDetailsV2 != nil {
@@ -537,13 +535,13 @@ func (s *KVSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
 }
 
 // Iter return a list of key-value pair after `k`.
-func (s *KVSnapshot) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
+func (s *KVSnapshot) Iter(k tidbkv.Key, upperBound tidbkv.Key) (unionstore.Iterator, error) {
 	scanner, err := newScanner(s, k, upperBound, scanBatchSize, false)
 	return scanner, errors.Trace(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (s *KVSnapshot) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
+func (s *KVSnapshot) IterReverse(k tidbkv.Key) (unionstore.Iterator, error) {
 	scanner, err := newScanner(s, nil, k, scanBatchSize, true)
 	return scanner, errors.Trace(err)
 }
@@ -633,12 +631,13 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	}
 
 	if keyErr.Conflict != nil {
-		return newWriteConflictError(keyErr.Conflict)
+		return &kv.ErrWriteConflict{WriteConflict: keyErr.GetConflict()}
 	}
+
 	if keyErr.Retryable != "" {
-		notFoundDetail := prettyLockNotFoundKey(keyErr.GetRetryable())
-		return tidbkv.ErrTxnRetryable.GenWithStackByArgs(keyErr.GetRetryable() + " " + notFoundDetail)
+		return &kv.ErrRetryable{Retryable: keyErr.Retryable}
 	}
+
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
 		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
@@ -654,79 +653,6 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 		return errors.Trace(err)
 	}
 	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
-}
-
-func prettyLockNotFoundKey(rawRetry string) string {
-	if !strings.Contains(rawRetry, "TxnLockNotFound") {
-		return ""
-	}
-	start := strings.Index(rawRetry, "[")
-	if start == -1 {
-		return ""
-	}
-	rawRetry = rawRetry[start:]
-	end := strings.Index(rawRetry, "]")
-	if end == -1 {
-		return ""
-	}
-	rawRetry = rawRetry[:end+1]
-	var key []byte
-	err := json.Unmarshal([]byte(rawRetry), &key)
-	if err != nil {
-		return ""
-	}
-	var buf bytes.Buffer
-	prettyWriteKey(&buf, key)
-	return buf.String()
-}
-
-func newWriteConflictError(conflict *pb.WriteConflict) error {
-	var buf bytes.Buffer
-	prettyWriteKey(&buf, conflict.Key)
-	buf.WriteString(" primary=")
-	prettyWriteKey(&buf, conflict.Primary)
-	return tidbkv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
-}
-
-func prettyWriteKey(buf *bytes.Buffer, key []byte) {
-	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
-	if err == nil {
-		_, err1 := fmt.Fprintf(buf, "{tableID=%d, indexID=%d, indexValues={", tableID, indexID)
-		if err1 != nil {
-			logutil.BgLogger().Error("error", zap.Error(err1))
-		}
-		for _, v := range indexValues {
-			_, err2 := fmt.Fprintf(buf, "%s, ", v)
-			if err2 != nil {
-				logutil.BgLogger().Error("error", zap.Error(err2))
-			}
-		}
-		buf.WriteString("}}")
-		return
-	}
-
-	tableID, handle, err := tablecodec.DecodeRecordKey(key)
-	if err == nil {
-		_, err3 := fmt.Fprintf(buf, "{tableID=%d, handle=%d}", tableID, handle)
-		if err3 != nil {
-			logutil.BgLogger().Error("error", zap.Error(err3))
-		}
-		return
-	}
-
-	mKey, mField, err := tablecodec.DecodeMetaKey(key)
-	if err == nil {
-		_, err3 := fmt.Fprintf(buf, "{metaKey=true, key=%s, field=%s}", string(mKey), string(mField))
-		if err3 != nil {
-			logutil.Logger(context.Background()).Error("error", zap.Error(err3))
-		}
-		return
-	}
-
-	_, err4 := fmt.Fprintf(buf, "%#v", key)
-	if err4 != nil {
-		logutil.BgLogger().Error("error", zap.Error(err4))
-	}
 }
 
 func (s *KVSnapshot) recordBackoffInfo(bo *Backoffer) {

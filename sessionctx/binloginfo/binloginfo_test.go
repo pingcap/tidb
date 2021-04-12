@@ -416,9 +416,9 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 }
 
 func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit"), IsNil)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

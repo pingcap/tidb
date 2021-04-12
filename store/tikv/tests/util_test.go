@@ -16,6 +16,7 @@ package tikv_test
 import (
 	"context"
 	"flag"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/util/codec"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -97,4 +99,18 @@ func (s *OneByOneSuite) TearDownSuite(c *C) {
 	} else {
 		withTiKVGlobalLock.RUnlock()
 	}
+}
+
+func encodeKey(prefix, s string) []byte {
+	return codec.EncodeBytes(nil, []byte(fmt.Sprintf("%s_%s", prefix, s)))
+}
+
+func valueBytes(n int) []byte {
+	return []byte(fmt.Sprintf("value%d", n))
+}
+
+// s08d is for returning format string "%s%08d" to keep string sorted.
+// e.g.: "0002" < "0011", otherwise "2" > "11"
+func s08d(prefix string, n int) string {
+	return fmt.Sprintf("%s%08d", prefix, n)
 }

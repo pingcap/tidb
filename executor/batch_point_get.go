@@ -131,11 +131,11 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
 		if e.lock {
-			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+			batchGetter = tikv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.ctx.GetSessionVars().EnablePointGetCache {
 			batchGetter = newCacheBatchGetter(e.ctx, e.tblInfo.ID, snapshot)
 		} else {
-			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
+			batchGetter = tikv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
 		}
 	}
 	e.snapshot = snapshot
@@ -213,6 +213,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
+			}
+			if idxKey == nil {
+				continue
 			}
 			s := hack.String(idxKey)
 			if _, found := dedup[s]; found {
@@ -437,7 +440,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 }
 
 func getPhysID(tblInfo *model.TableInfo, intVal int64) int64 {
-	pi := tblInfo.Partition
+	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID
 	}

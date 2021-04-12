@@ -47,6 +47,12 @@ func (s StoreProbe) Begin() (TxnProbe, error) {
 	return TxnProbe{KVTxn: txn}, err
 }
 
+// GetSnapshot returns a snapshot.
+func (s StoreProbe) GetSnapshot(ts uint64) SnapshotProbe {
+	snap := s.KVStore.GetSnapshot(ts)
+	return SnapshotProbe{KVSnapshot: snap}
+}
+
 // SetRegionCachePDClient replaces pd client inside region cache.
 func (s StoreProbe) SetRegionCachePDClient(client pd.Client) {
 	s.regionCache.pdClient = client
@@ -178,12 +184,12 @@ func (c CommitterProbe) SetMutations(muts CommitterMutations) {
 
 // SetCommitTS resets the committer's commit ts.
 func (c CommitterProbe) SetCommitTS(ts uint64) {
-	c.commitTS = ts
+	atomic.StoreUint64(&c.commitTS, ts)
 }
 
 // GetCommitTS returns the commit ts of the committer.
 func (c CommitterProbe) GetCommitTS() uint64 {
-	return c.commitTS
+	return atomic.LoadUint64(&c.commitTS)
 }
 
 // GetMinCommitTS returns the minimal commit ts can be used.
@@ -357,6 +363,33 @@ func (c CommitterProbe) CleanupMutations(ctx context.Context) error {
 	return c.cleanupMutations(bo, c.mutations)
 }
 
+// SnapshotProbe exposes some snapshot utilities for testing purpose.
+type SnapshotProbe struct {
+	*KVSnapshot
+}
+
+// MergeRegionRequestStats merges RPC runtime stats into snapshot's stats.
+func (s SnapshotProbe) MergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
+	s.mergeRegionRequestStats(stats)
+}
+
+// RecordBackoffInfo records backoff stats into snapshot's stats.
+func (s SnapshotProbe) RecordBackoffInfo(bo *Backoffer) {
+	s.recordBackoffInfo(bo)
+}
+
+// MergeExecDetail merges exec stats into snapshot's stats.
+func (s SnapshotProbe) MergeExecDetail(detail *pb.ExecDetailsV2) {
+	s.mergeExecDetail(detail)
+}
+
+// FormatStats dumps information of stats.
+func (s SnapshotProbe) FormatStats() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mu.stats.String()
+}
+
 // LockProbe exposes some lock utilities for testing purpose.
 type LockProbe struct {
 }
@@ -500,4 +533,34 @@ func (c ConfigProbe) StorePreSplitSizeThreshold(v uint32) {
 // SetOracleUpdateInterval sets the interval of updating cached ts.
 func (c ConfigProbe) SetOracleUpdateInterval(v int) {
 	oracleUpdateInterval = v
+}
+
+// GetRawBatchPutSize returns the raw batch put size config.
+func (c ConfigProbe) GetRawBatchPutSize() int {
+	return rawBatchPutSize
+}
+
+// RawKVClientProbe wraps RawKVClient and exposes internal states for testing purpose.
+type RawKVClientProbe struct {
+	*RawKVClient
+}
+
+// GetRegionCache returns the internal region cache container.
+func (c RawKVClientProbe) GetRegionCache() *RegionCache {
+	return c.regionCache
+}
+
+// SetRegionCache resets the internal region cache container.
+func (c RawKVClientProbe) SetRegionCache(regionCache *RegionCache) {
+	c.regionCache = regionCache
+}
+
+// SetPDClient resets the interval PD client.
+func (c RawKVClientProbe) SetPDClient(client pd.Client) {
+	c.pdClient = client
+}
+
+// SetRPCClient resets the internal RPC client.
+func (c RawKVClientProbe) SetRPCClient(client Client) {
+	c.rpcClient = client
 }

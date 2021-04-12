@@ -80,7 +80,6 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
-	mppTaskID        int64
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -1983,6 +1982,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		NumColumns: int32(len(task.IndexInfo.Columns)),
 		TopNSize:   topNSize,
 		Version:    statsVersion,
+		SketchSize: maxSketchSize,
 	}
 	if e.isCommonHandle && e.idxInfo.Primary {
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
@@ -2095,6 +2095,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		width := int32(opts[ast.AnalyzeOptCMSketchWidth])
 		e.analyzePB.IdxReq.CmsketchDepth = &depth
 		e.analyzePB.IdxReq.CmsketchWidth = &width
+		e.analyzePB.IdxReq.SketchSize = maxSketchSize
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeMixed
 		e.commonHandle = task.CommonHandleInfo
@@ -2358,6 +2359,12 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		if innerTypes[i].EvalType() == types.ETString {
 			innerTypes[i].Flen = types.UnspecifiedLength
 		}
+	}
+
+	// Use the probe table's collation.
+	for i, col := range v.OuterHashKeys {
+		outerTypes[col.Index] = outerTypes[col.Index].Clone()
+		outerTypes[col.Index].Collate = innerTypes[v.InnerHashKeys[i].Index].Collate
 	}
 
 	var (
@@ -2624,7 +2631,6 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		allocTaskID:  &b.mppTaskID,
 	}
 	return gather
 }
@@ -3009,7 +3015,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	e.tableRequest.CollectRangeCounts = &collectTable
 	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	// Do not collect the feedback when the table is the partition table.
-	if collectIndex && tbl.Meta().Partition != nil {
+	if collectIndex && tbl.Meta().GetPartitionInfo() != nil {
 		collectIndex = false
 	}
 	if !collectIndex {
@@ -3425,7 +3431,6 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
 	e.resultHandler.open(nil, result)
 	return e, nil
 }
@@ -3863,7 +3868,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	if len(pkCols) == 0 {
 		pkCols = tables.TryGetCommonPkColumnIds(tbl)
 		if len(pkCols) == 0 {
-			pkCols = []int64{0}
+			pkCols = []int64{-1}
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {

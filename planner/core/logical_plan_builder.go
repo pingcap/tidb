@@ -2676,7 +2676,7 @@ func checkColFuncDepend(
 			Name:   colInfo.Name,
 		}
 		pIdx, err := expression.FindFieldName(p.OutputNames(), pkName)
-		if err != nil {
+		if err != nil || pIdx < 0 {
 			primaryFuncDepend = false
 			break
 		}
@@ -3204,6 +3204,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	})
 }
 
+func (b *PlanBuilder) popVisitInfo() {
+	b.visitInfo = b.visitInfo[:len(b.visitInfo)-1]
+}
+
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
 	b.appendUnmatchedIndexHintWarning(hintInfo.indexHintList, false)
@@ -3439,11 +3443,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
-		groupedFuncs, err := b.groupWindowFuncs(windowFuncs)
+		groupedFuncs, orderedSpec, err := b.groupWindowFuncs(windowFuncs)
 		if err != nil {
 			return nil, err
 		}
-		p, windowMapper, err = b.buildWindowFunctions(ctx, p, groupedFuncs, windowAggMap)
+		p, windowMapper, err = b.buildWindowFunctions(ctx, p, groupedFuncs, orderedSpec, windowAggMap)
 		if err != nil {
 			return nil, err
 		}
@@ -3621,9 +3625,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, dbName)
-	if err != nil {
-		return nil, err
+	// Skip storage engine check for CreateView.
+	if b.capFlag&canExpandAST == 0 {
+		possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, dbName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Try to substitute generate column only if there is an index on generate column.
@@ -3723,12 +3730,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
-			DBName:      dbName,
-			TblName:     tableInfo.Name,
-			ColName:     col.Name,
-			OrigTblName: tableInfo.Name,
-			OrigColName: col.Name,
-			Hidden:      col.Hidden,
+			DBName:            dbName,
+			TblName:           tableInfo.Name,
+			ColName:           col.Name,
+			OrigTblName:       tableInfo.Name,
+			OrigColName:       col.Name,
+			Hidden:            col.Hidden,
+			NotExplicitUsable: col.State != model.StatePublic,
 		})
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
@@ -3959,7 +3967,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
-			terror.ErrorNotEqual(err, ErrNoSuchTable) {
+			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
+			terror.ErrorNotEqual(err, ErrInternal) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		return nil, err
@@ -4595,6 +4604,13 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 	}
 
+	// If the delete is non-qualified it does not require Select Priv
+	if delete.Where == nil && delete.Order == nil {
+		b.popVisitInfo()
+	}
+	var authErr error
+	sessionVars := b.ctx.GetSessionVars()
+
 	proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 	proj.SetChildren(p)
 	proj.SetSchema(oldSchema.Clone())
@@ -4669,7 +4685,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			if tn.TableInfo.IsSequence() {
 				return nil, errors.Errorf("delete sequence %s is not supported now.", tn.Name.O)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tb.DBInfo.Name.L, tb.Name.L, "", nil)
+			if sessionVars.User != nil {
+				authErr = ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tb.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tb.DBInfo.Name.L, tb.Name.L, "", authErr)
 		}
 	} else {
 		// Delete from a, b, c, d.
@@ -4686,7 +4705,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			if dbName == "" {
 				dbName = b.ctx.GetSessionVars().CurrentDB
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", nil)
+			if sessionVars.User != nil {
+				authErr = ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, v.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 		}
 	}
 	if del.IsMultiTable {
@@ -5088,10 +5110,10 @@ type windowFuncs struct {
 
 // sortWindowSpecs sorts the window specifications by reversed alphabetical order, then we could add less `Sort` operator
 // in physical plan because the window functions with the same partition by and order by clause will be at near places.
-func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr) []windowFuncs {
+func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, orderedSpec []*ast.WindowSpec) []windowFuncs {
 	windows := make([]windowFuncs, 0, len(groupedFuncs))
-	for spec, funcs := range groupedFuncs {
-		windows = append(windows, windowFuncs{spec, funcs})
+	for _, spec := range orderedSpec {
+		windows = append(windows, windowFuncs{spec, groupedFuncs[spec]})
 	}
 	lItemsBuf := make([]*ast.ByItem, 0, 4)
 	rItemsBuf := make([]*ast.ByItem, 0, 4)
@@ -5103,10 +5125,10 @@ func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr) []w
 	return windows
 }
 
-func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
+func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, orderedSpec []*ast.WindowSpec, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
 	args := make([]ast.ExprNode, 0, 4)
 	windowMap := make(map[*ast.WindowFuncExpr]int)
-	for _, window := range sortWindowSpecs(groupedFuncs) {
+	for _, window := range sortWindowSpecs(groupedFuncs, orderedSpec) {
 		args = args[:0]
 		spec, funcs := window.spec, window.funcs
 		for _, windowFunc := range funcs {
@@ -5306,44 +5328,58 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 	return spec, false
 }
 
+// append ast.WindowSpec to []*ast.WindowSpec if absent
+func appendIfAbsentWindowSpec(specs []*ast.WindowSpec, ns *ast.WindowSpec) []*ast.WindowSpec {
+	for _, spec := range specs {
+		if spec == ns {
+			return specs
+		}
+	}
+	return append(specs, ns)
+}
+
 // groupWindowFuncs groups the window functions according to the window specification name.
 // TODO: We can group the window function by the definition of window specification.
-func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, error) {
+func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, []*ast.WindowSpec, error) {
 	// updatedSpecMap is used to handle the specifications that have frame clause changed.
 	updatedSpecMap := make(map[string]*ast.WindowSpec)
 	groupedWindow := make(map[*ast.WindowSpec][]*ast.WindowFuncExpr)
+	orderedSpec := make([]*ast.WindowSpec, 0, len(windowFuncs))
 	for _, windowFunc := range windowFuncs {
 		if windowFunc.Spec.Name.L == "" {
 			spec := &windowFunc.Spec
 			if spec.Ref.L != "" {
 				ref, ok := b.windowSpecs[spec.Ref.L]
 				if !ok {
-					return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(getWindowName(spec.Ref.O))
+					return nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(getWindowName(spec.Ref.O))
 				}
 				err := mergeWindowSpec(spec, ref)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 			}
 			spec, _ = b.handleDefaultFrame(spec, windowFunc.F)
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
+			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
 			continue
 		}
 
 		name := windowFunc.Spec.Name.L
 		spec, ok := b.windowSpecs[name]
 		if !ok {
-			return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
+			return nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
 		}
 		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
 		if !updated {
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
+			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
 		} else {
 			if _, ok := updatedSpecMap[name]; !ok {
 				updatedSpecMap[name] = newSpec
 			}
 			updatedSpec := updatedSpecMap[name]
 			groupedWindow[updatedSpec] = append(groupedWindow[updatedSpec], windowFunc)
+			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, updatedSpec)
 		}
 	}
 	// Unused window specs should also be checked in b.buildWindowFunctions,
@@ -5352,10 +5388,11 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if _, ok := groupedWindow[spec]; !ok {
 			if _, ok = updatedSpecMap[spec.Name.L]; !ok {
 				groupedWindow[spec] = nil
+				orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
 			}
 		}
 	}
-	return groupedWindow, nil
+	return groupedWindow, orderedSpec, nil
 }
 
 // resolveWindowSpec resolve window specifications for sql like `select ... from t window w1 as (w2), w2 as (partition by a)`.
@@ -5494,6 +5531,15 @@ func extractTableSourceAsNames(node ast.ResultSetNode, input []string, onlySelec
 		input = append(input, x.AsName.L)
 	}
 	return input
+}
+
+func appendDynamicVisitInfo(vi []visitInfo, priv string, withGrant bool, err error) []visitInfo {
+	return append(vi, visitInfo{
+		privilege:        mysql.ExtendedPriv,
+		dynamicPriv:      priv,
+		dynamicWithGrant: withGrant,
+		err:              err,
+	})
 }
 
 func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col string, err error) []visitInfo {
