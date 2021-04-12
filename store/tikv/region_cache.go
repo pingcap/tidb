@@ -602,8 +602,9 @@ func (l *KeyLocation) Contains(key []byte) bool {
 		(bytes.Compare(key, l.EndKey) < 0 || len(l.EndKey) == 0)
 }
 
+// String implements fmt.Stringer interface.
 func (l *KeyLocation) String() string {
-	return fmt.Sprintf("Region %s,StartKey:%s,EndKey:%s", l.Region.String(), hex.EncodeToString(l.StartKey), hex.EncodeToString(l.EndKey))
+	return fmt.Sprintf("region %s,startKey:%s,endKey:%s", l.Region.String(), hex.EncodeToString(l.StartKey), hex.EncodeToString(l.EndKey))
 }
 
 // LocateKey searches for the region and range that the key is located.
