@@ -1802,6 +1802,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}
 	if isMatchProp {
 		ts.Desc = prop.SortItems[0].Desc
+		// When the rowCount is small, the performance gap between scan and desc scan is not big.
 		if prop.SortItems[0].Desc && rowCount >= 10000 {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
@@ -1854,6 +1855,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {
 		is.Desc = prop.SortItems[0].Desc
+		// When the rowCount is small, the performance gap between scan and desc scan is not big.
 		if prop.SortItems[0].Desc && rowCount >= 10000 {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
