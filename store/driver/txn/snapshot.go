@@ -15,6 +15,7 @@ package txn
 
 import (
 	"context"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -62,17 +63,11 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 }
 
 func toTiKVKeys(keys []kv.Key) [][]byte {
-	res := make([][]byte, len(keys))
-	for id, k := range keys {
-		res[id] = []byte(k)
-	}
-	return res
+	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
+	return bytesKeys
 }
 
 func toKVKeys(keys [][]byte) []kv.Key {
-	res := make([]kv.Key, len(keys))
-	for id, k := range keys {
-		res[id] = kv.Key(k)
-	}
-	return res
+	kvKeys := *(*[]kv.Key)(unsafe.Pointer(&keys))
+	return kvKeys
 }
