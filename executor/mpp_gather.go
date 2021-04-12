@@ -45,8 +45,7 @@ type MPPGather struct {
 	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
 
-	allocTaskID *int64
-	mppReqs     []*kv.MPPDispatchRequest
+	mppReqs []*kv.MPPDispatchRequest
 
 	respIter distsql.SelectResult
 }
@@ -109,7 +108,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
 	planIDs := collectPlanIDS(e.originalPlan, nil)
-	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.allocTaskID, e.is)
+	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -126,7 +125,6 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.respIter.Fetch(ctx)
 	return nil
 }
 
