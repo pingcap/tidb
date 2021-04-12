@@ -469,8 +469,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput .
 					txn.us.UnmarkPresumeKeyNotExists(key)
 				}
 			}
-			_, isErrKeyExist := errors.Cause(err).(*ErrKeyExist)
-			keyMayBeLocked := terror.ErrorNotEqual(kv.ErrWriteConflict, err) && !isErrKeyExist
+			keyMayBeLocked := terror.ErrorNotEqual(kv.ErrWriteConflict, err) && !IsErrKeyExist(err)
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
 				wg := txn.asyncPessimisticRollback(ctx, keys)
