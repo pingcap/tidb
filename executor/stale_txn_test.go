@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSerialSuite) TestExactStalenessTransaction(c *C) {
+func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
@@ -101,6 +101,7 @@ func (s *testSerialSuite) TestExactStalenessTransaction(c *C) {
 		} else if testcase.preSec > 0 {
 			curSec := time.Now().Unix()
 			startTS := oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS)
+			// exact stale txn tolerate 2 seconds deviation for startTS
 			c.Assert(startTS, Greater, (curSec-testcase.preSec-2)*1000)
 			c.Assert(startTS, Less, (curSec-testcase.preSec+2)*1000)
 		} else if !testcase.IsStaleness {
@@ -115,7 +116,7 @@ func (s *testSerialSuite) TestExactStalenessTransaction(c *C) {
 	}
 }
 
-func (s *testSerialSuite) TestStaleReadKVRequest(c *C) {
+func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	tk := testkit.NewTestKit(c, s.store)
@@ -163,7 +164,7 @@ func (s *testSerialSuite) TestStaleReadKVRequest(c *C) {
 	}
 }
 
-func (s *testSerialSuite) TestStalenessAndHistoryRead(c *C) {
+func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
@@ -192,7 +193,7 @@ func (s *testSerialSuite) TestStalenessAndHistoryRead(c *C) {
 	tk.MustExec("commit")
 }
 
-func (s *testSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
+func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	testcases := []struct {
 		name      string
 		sql       string
@@ -245,7 +246,7 @@ func (s *testSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	}
 }
 
-func (s *testSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
+func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	tk := testkit.NewTestKit(c, s.store)
@@ -261,7 +262,7 @@ func (s *testSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 		useResolveTS    bool
 	}{
 		{
-			name: "max 20 seconds ago, safeTS 10 secs ago",
+			name: "max 20 seconds ago, resolveTS 10 secs ago",
 			sql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:20'`,
 			injectResolveTS: func() uint64 {
 				phy := time.Now().Add(-10*time.Second).Unix() * 1000
@@ -270,7 +271,7 @@ func (s *testSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 			useResolveTS: true,
 		},
 		{
-			name: "max 10 seconds ago, safeTS 20 secs ago",
+			name: "max 10 seconds ago, resolveTS 20 secs ago",
 			sql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:10'`,
 			injectResolveTS: func() uint64 {
 				phy := time.Now().Add(-20*time.Second).Unix() * 1000
@@ -279,7 +280,7 @@ func (s *testSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 			useResolveTS: false,
 		},
 		{
-			name: "max 20 seconds ago, safeTS 10 secs ago",
+			name: "max 20 seconds ago, resolveTS 10 secs ago",
 			sql: func() string {
 				return fmt.Sprintf(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '%v'`,
 					time.Now().Add(-20*time.Second).Format("2006-01-02 15:04:05"))
@@ -291,7 +292,7 @@ func (s *testSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 			useResolveTS: true,
 		},
 		{
-			name: "max 10 seconds ago, safeTS 20 secs ago",
+			name: "max 10 seconds ago, resolveTS 20 secs ago",
 			sql: func() string {
 				return fmt.Sprintf(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '%v'`,
 					time.Now().Add(-10*time.Second).Format("2006-01-02 15:04:05"))

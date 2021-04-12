@@ -210,23 +210,28 @@ func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVT
 
 // BeginWithMinStartTS begins transaction with the least startTS
 func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTxn, error) {
-	minSafeTS := uint64(0)
-	if txnScope == oracle.GlobalTxnScope {
-		minSafeTS = s.getGlobalMinResolveTS()
+	stores := make([]*Store, 0)
+	allStores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	if txnScope != oracle.GlobalTxnScope {
+		for _, store := range allStores {
+			if store.IsLabelsMatch([]*metapb.StoreLabel{
+				{
+					Key:   "zone",
+					Value: txnScope,
+				},
+			}) {
+				stores = append(stores, store)
+			}
+		}
 	} else {
-		stores := s.regionCache.getStoresByLabels([]*metapb.StoreLabel{
-			{
-				Key:   "zone",
-				Value: txnScope,
-			},
-		})
-		minSafeTS = s.getMinResolveTSByStores(stores)
+		stores = allStores
 	}
+	resolveTS := s.getMinResolveTSByStores(stores)
 	startTS := minStartTS
-	// If the safeTS is larger then then minStartTS, we will use safeTS as StartTS, otherwise we will use
+	// If the resolveTS is larger then then minStartTS, we will use resolveTS as StartTS, otherwise we will use
 	// minStartTS directly.
-	if oracle.CompareTS(startTS, minSafeTS) < 0 {
-		startTS = minSafeTS
+	if oracle.CompareTS(startTS, resolveTS) < 0 {
+		startTS = resolveTS
 	}
 	return s.BeginWithStartTS(txnScope, startTS)
 }
@@ -392,6 +397,10 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 }
 
 func (s *KVStore) getMinResolveTSByStores(stores []*Store) uint64 {
+	failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
+		injectTS := val.(int)
+		failpoint.Return(uint64(injectTS))
+	})
 	minSafeTS := uint64(math.MaxUint64)
 	s.resolveTSMu.RLock()
 	defer s.resolveTSMu.RUnlock()
@@ -402,24 +411,6 @@ func (s *KVStore) getMinResolveTSByStores(stores []*Store) uint64 {
 		}
 	}
 	return minSafeTS
-}
-
-func (s *KVStore) getGlobalMinResolveTS() uint64 {
-	failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
-		injectTS := val.(int)
-		failpoint.Return(uint64(injectTS))
-	})
-	stores := s.regionCache.getStoresByType(tikvrpc.TiKV)
-	minResolveTS := uint64(math.MaxUint64)
-	s.resolveTSMu.RLock()
-	defer s.resolveTSMu.RUnlock()
-	for _, store := range stores {
-		storeResolveTS := s.resolveTSMu.resolveTS[store.storeID]
-		if storeResolveTS < minResolveTS {
-			minResolveTS = storeResolveTS
-		}
-	}
-	return minResolveTS
 }
 
 func (s *KVStore) safeTSUpdater() {
