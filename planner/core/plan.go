@@ -406,7 +406,7 @@ func (p *basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
-// ExplainInfo implements Plan interface.
+// ExplainNormalizedInfo implements PhysicalPlan interface.
 func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
 	return ""
 }
