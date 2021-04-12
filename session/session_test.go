@@ -410,6 +410,18 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
 }
 
+func (s *testSessionSuite3) TestOriginalColName(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, v int)")
+	rs, err := tk.Exec("select id as i from t")
+	c.Assert(err, IsNil)
+	c.Assert(rs.Fields()[0].Column.Name.L, Equals, "id")
+	rs, err = tk.Exec("select id as i from t where id = 1")
+	c.Assert(err, IsNil)
+	c.Assert(rs.Fields()[0].Column.Name.L, Equals, "id")
+}
+
 func (s *testSessionSuite3) TestLastMessage(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
