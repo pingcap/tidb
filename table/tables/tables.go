@@ -1481,7 +1481,7 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 
 	// Check unique key exists.
 	{
-		canSkipIgnoreCheck := func(idx table.Index) bool {
+		shouldSkipIgnoreCheck := func(idx table.Index) bool {
 			if !IsIndexWritable(idx) || !idx.Meta().Unique || (t.Meta().IsCommonHandle && idx.Meta().Primary) {
 				return true
 			}
@@ -1494,7 +1494,7 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 		}
 
 		for _, idx := range t.Indices() {
-			if canSkipIgnoreCheck(idx) {
+			if shouldSkipIgnoreCheck(idx) {
 				continue
 			}
 			newVals, err := idx.FetchValues(newRow, nil)
