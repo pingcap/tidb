@@ -715,8 +715,8 @@ func (s *testCommitterSuite) TestPessimisticLockReturnValues(c *C) {
 	lockCtx.Values = map[string]tidbkv.ReturnedValue{}
 	c.Assert(txn.LockKeys(context.Background(), lockCtx, key, key2), IsNil)
 	c.Assert(lockCtx.Values, HasLen, 2)
-	c.Assert(lockCtx.Values[string(key)].Value, BytesEquals, []byte(key))
-	c.Assert(lockCtx.Values[string(key2)].Value, BytesEquals, []byte(key2))
+	c.Assert(lockCtx.Values[string(key)].Value, BytesEquals, key)
+	c.Assert(lockCtx.Values[string(key2)].Value, BytesEquals, key2)
 }
 
 // TestElapsedTTL tests that elapsed time is correct even if ts physical time is greater than local time.
@@ -1042,10 +1042,10 @@ func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
 	mutation := commit.MutationsOfKeys([][]byte{untouchedIndexKey, noValueIndexKey})
 	c.Assert(mutation.Len(), Equals, 2)
 	c.Assert(mutation.GetOp(0), Equals, pb.Op_Lock)
-	c.Assert(mutation.GetKey(0), BytesEquals, []byte(untouchedIndexKey))
+	c.Assert(mutation.GetKey(0), BytesEquals, untouchedIndexKey)
 	c.Assert(mutation.GetValue(0), BytesEquals, untouchedIndexValue)
 	c.Assert(mutation.GetOp(1), Equals, pb.Op_Lock)
-	c.Assert(mutation.GetKey(1), BytesEquals, []byte(noValueIndexKey))
+	c.Assert(mutation.GetKey(1), BytesEquals, noValueIndexKey)
 	c.Assert(mutation.GetValue(1), BytesEquals, []byte{})
 }
 
@@ -1124,10 +1124,10 @@ func (s *testCommitterSuite) TestPushPessimisticLock(c *C) {
 	// The primary lock is a pessimistic lock and the secondary lock is a optimistic lock.
 	lock1 := s.getLockInfo(c, k1)
 	c.Assert(lock1.LockType, Equals, kvrpcpb.Op_PessimisticLock)
-	c.Assert(lock1.PrimaryLock, BytesEquals, []byte(k1))
+	c.Assert(lock1.PrimaryLock, BytesEquals, k1)
 	lock2 := s.getLockInfo(c, k2)
 	c.Assert(lock2.LockType, Equals, kvrpcpb.Op_Put)
-	c.Assert(lock2.PrimaryLock, BytesEquals, []byte(k1))
+	c.Assert(lock2.PrimaryLock, BytesEquals, k1)
 
 	txn2 := s.begin(c)
 	start := time.Now()
@@ -1178,11 +1178,11 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	c.Assert(err, IsNil)
 	lock1 := s.getLockInfo(c, pessimisticLockKey)
 	c.Assert(lock1.LockType, Equals, kvrpcpb.Op_PessimisticLock)
-	c.Assert(lock1.PrimaryLock, BytesEquals, []byte(pk))
+	c.Assert(lock1.PrimaryLock, BytesEquals, pk)
 	optimisticLockKey := secondaryLockkeys[0]
 	lock2 := s.getLockInfo(c, optimisticLockKey)
 	c.Assert(lock2.LockType, Equals, kvrpcpb.Op_Put)
-	c.Assert(lock2.PrimaryLock, BytesEquals, []byte(pk))
+	c.Assert(lock2.PrimaryLock, BytesEquals, pk)
 
 	// stop txn ttl manager and remove primary key, make the other keys left behind
 	committer.CloseTTLManager()

@@ -221,7 +221,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 
 	snapshot := newTiKVSnapshot(s.store, maxTimestamp, 0)
 	start := time.Now()
-	c.Assert(committer.primary(), BytesEquals, []byte(x))
+	c.Assert(committer.primary(), BytesEquals, x)
 	// Point get secondary key. Shouldn't be blocked by the lock and read old data.
 	_, err = snapshot.Get(ctx, y)
 	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)

@@ -88,7 +88,7 @@ func (s *testScanSuite) TestScan(c *C) {
 		for i := 0; i < rowNum; i++ {
 			k := scan.Key()
 			expectedKey := s.makeKey(i)
-			if ok := bytes.Equal([]byte(k), []byte(expectedKey)); !ok {
+			if ok := bytes.Equal(k, expectedKey); !ok {
 				logutil.BgLogger().Error("bytes equal check fail",
 					zap.Int("i", i),
 					zap.Int("rowNum", rowNum),
@@ -97,7 +97,7 @@ func (s *testScanSuite) TestScan(c *C) {
 					zap.String("expected", kv.StrKey(expectedKey)),
 					zap.Bool("keyOnly", keyOnly))
 			}
-			c.Assert([]byte(k), BytesEquals, []byte(expectedKey))
+			c.Assert(k, BytesEquals, expectedKey)
 			if !keyOnly {
 				v := scan.Value()
 				c.Assert(v, BytesEquals, s.makeValue(i))

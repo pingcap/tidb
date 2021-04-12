@@ -130,7 +130,7 @@ func (s *testLockSuite) TestScanLockResolveWithSeek(c *C) {
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert(iter.Valid(), IsTrue)
-		c.Assert([]byte(iter.Key()), BytesEquals, []byte{ch})
+		c.Assert(iter.Key(), BytesEquals, []byte{ch})
 		c.Assert(iter.Value(), BytesEquals, []byte{ch})
 		c.Assert(iter.Next(), IsNil)
 	}
@@ -147,7 +147,7 @@ func (s *testLockSuite) TestScanLockResolveWithSeekKeyOnly(c *C) {
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert(iter.Valid(), IsTrue)
-		c.Assert([]byte(iter.Key()), BytesEquals, []byte{ch})
+		c.Assert(iter.Key(), BytesEquals, []byte{ch})
 		c.Assert(iter.Next(), IsNil)
 	}
 }

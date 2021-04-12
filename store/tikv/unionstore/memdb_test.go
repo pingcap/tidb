@@ -95,7 +95,7 @@ func (s *testMemDBSuite) TestIterator(c *C) {
 
 	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		c.Assert(it.Value(), BytesEquals, buf[:])
 		i++
 	}
@@ -104,7 +104,7 @@ func (s *testMemDBSuite) TestIterator(c *C) {
 	i--
 	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		c.Assert(it.Value(), BytesEquals, buf[:])
 		i--
 	}
@@ -133,7 +133,7 @@ func (s *testMemDBSuite) TestDiscard(c *C) {
 	var i int
 	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		c.Assert(it.Value(), BytesEquals, buf[:])
 		i++
 	}
@@ -142,7 +142,7 @@ func (s *testMemDBSuite) TestDiscard(c *C) {
 	i--
 	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		c.Assert(it.Value(), BytesEquals, buf[:])
 		i--
 	}
@@ -189,7 +189,7 @@ func (s *testMemDBSuite) TestFlushOverwrite(c *C) {
 	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
 		binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
-		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Key(), BytesEquals, kbuf[:])
 		c.Assert(it.Value(), BytesEquals, vbuf[:])
 		i++
 	}
@@ -199,7 +199,7 @@ func (s *testMemDBSuite) TestFlushOverwrite(c *C) {
 	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
 		binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
-		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Key(), BytesEquals, kbuf[:])
 		c.Assert(it.Value(), BytesEquals, vbuf[:])
 		i--
 	}
@@ -268,7 +268,7 @@ func (s *testMemDBSuite) TestNestedSandbox(c *C) {
 		if i < 100 {
 			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
 		}
-		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Key(), BytesEquals, kbuf[:])
 		c.Assert(it.Value(), BytesEquals, vbuf[:])
 		i++
 	}
@@ -281,7 +281,7 @@ func (s *testMemDBSuite) TestNestedSandbox(c *C) {
 		if i < 100 {
 			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
 		}
-		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Key(), BytesEquals, kbuf[:])
 		c.Assert(it.Value(), BytesEquals, vbuf[:])
 		i--
 	}
@@ -318,7 +318,7 @@ func (s *testMemDBSuite) TestOverwrite(c *C) {
 
 	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		v := binary.BigEndian.Uint32(it.Value())
 		if i%3 == 0 {
 			c.Assert(v, Equals, uint32(i*10))
@@ -332,7 +332,7 @@ func (s *testMemDBSuite) TestOverwrite(c *C) {
 	i--
 	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		v := binary.BigEndian.Uint32(it.Value())
 		if i%3 == 0 {
 			c.Assert(v, Equals, uint32(i*10))
@@ -544,16 +544,16 @@ func (s *testMemDBSuite) checkConsist(c *C, p1 *MemDB, p2 *leveldb.DB) {
 		c.Assert(err, IsNil)
 		c.Assert(v, BytesEquals, it2.Value())
 
-		c.Assert([]byte(it1.Key()), BytesEquals, it2.Key())
+		c.Assert(it1.Key(), BytesEquals, it2.Key())
 		c.Assert(it1.Value(), BytesEquals, it2.Value())
 
 		it, _ := p1.Iter(it2.Key(), nil)
-		c.Assert([]byte(it.Key()), BytesEquals, it2.Key())
+		c.Assert(it.Key(), BytesEquals, it2.Key())
 		c.Assert(it.Value(), BytesEquals, it2.Value())
 
 		if prevKey != nil {
 			it, _ = p1.IterReverse(it2.Key())
-			c.Assert([]byte(it.Key()), BytesEquals, prevKey)
+			c.Assert(it.Key(), BytesEquals, prevKey)
 			c.Assert(it.Value(), BytesEquals, prevVal)
 		}
 
@@ -564,7 +564,7 @@ func (s *testMemDBSuite) checkConsist(c *C, p1 *MemDB, p2 *leveldb.DB) {
 
 	it1, _ = p1.IterReverse(nil)
 	for it2.Last(); it2.Valid(); it2.Prev() {
-		c.Assert([]byte(it1.Key()), BytesEquals, it2.Key())
+		c.Assert(it1.Key(), BytesEquals, it2.Key())
 		c.Assert(it1.Value(), BytesEquals, it2.Value())
 		it1.Next()
 	}
@@ -635,7 +635,7 @@ func checkNewIterator(c *C, buffer *MemDB) {
 		val := encodeInt(i * indexStep)
 		iter, err := buffer.Iter(val, nil)
 		c.Assert(err, IsNil)
-		c.Assert([]byte(iter.Key()), BytesEquals, val)
+		c.Assert(iter.Key(), BytesEquals, val)
 		c.Assert(decodeInt([]byte(valToStr(c, iter))), Equals, i*indexStep)
 		iter.Close()
 	}
@@ -645,7 +645,7 @@ func checkNewIterator(c *C, buffer *MemDB) {
 		val := encodeInt(i * indexStep)
 		iter, err := buffer.Iter(val, nil)
 		c.Assert(err, IsNil)
-		c.Assert([]byte(iter.Key()), BytesEquals, val)
+		c.Assert(iter.Key(), BytesEquals, val)
 		c.Assert(valToStr(c, iter), Equals, string(val))
 
 		err = iter.Next()
@@ -653,7 +653,7 @@ func checkNewIterator(c *C, buffer *MemDB) {
 		c.Assert(iter.Valid(), IsTrue)
 
 		val = encodeInt((i + 1) * indexStep)
-		c.Assert([]byte(iter.Key()), BytesEquals, val)
+		c.Assert(iter.Key(), BytesEquals, val)
 		c.Assert(valToStr(c, iter), Equals, string(val))
 		iter.Close()
 	}
@@ -670,8 +670,8 @@ func checkNewIterator(c *C, buffer *MemDB) {
 	iter, err = buffer.Iter(inBetween, nil)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Valid(), IsTrue)
-	c.Assert([]byte(iter.Key()), Not(BytesEquals), inBetween)
-	c.Assert([]byte(iter.Key()), BytesEquals, last)
+	c.Assert(iter.Key(), Not(BytesEquals), inBetween)
+	c.Assert(iter.Key(), BytesEquals, last)
 	iter.Close()
 }
 
@@ -779,7 +779,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 
 		it, err = buffer.Iter([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"), nil)
 		c.Assert(err, IsNil)
-		c.Assert(string([]byte(it.Key())), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
+		c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
 	}
 	s.ResetMembuffers()
 }
