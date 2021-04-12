@@ -576,7 +576,9 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			if outerCol == nil {
 				continue
 			}
-			visited = s.deriveConds(outerCol, innerCol, mergedSchema, lenJoinConds, visited, false)
+			if !s.nullSensitive {
+				visited = s.deriveConds(outerCol, innerCol, mergedSchema, lenJoinConds, visited, false)
+			}
 			visited = s.deriveConds(outerCol, innerCol, mergedSchema, lenJoinConds, visited, true)
 		}
 	}
