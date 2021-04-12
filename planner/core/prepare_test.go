@@ -1024,3 +1024,32 @@ func (s *testPlanSerialSuite) TestPlanCacheSnapshot(c *C) {
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
+
+func (s *testPlanSerialSuite) TestIssue23671(c *C) {
+	store, _, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t (a int, b int, index ab(a, b))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("prepare s1 from 'select * from t use index(ab) where a>=? and b>=? and b<=?'")
+	tk.MustExec("set @a=1, @b=1, @c=1")
+	tk.MustQuery("execute s1 using @a, @b, @c").Check(testkit.Rows("1 1"))
+	tk.MustExec("set @a=1, @b=1, @c=10")
+	tk.MustQuery("execute s1 using @a, @b, @c").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
