@@ -25,6 +25,11 @@ type tikvSnapshot struct {
 	*tikv.KVSnapshot
 }
 
+// NewSnapshot creates a kv.Snapshot with tikv.KVSnapshot.
+func NewSnapshot(snapshot *tikv.KVSnapshot) kv.Snapshot {
+	return &tikvSnapshot{snapshot}
+}
+
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
