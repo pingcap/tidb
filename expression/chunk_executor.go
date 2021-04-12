@@ -127,12 +127,11 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 			i64s := result.Int64s()
 			buf := chunk.NewColumn(ft, input.NumRows())
 			buf.ReserveBytes(input.NumRows())
-			uintBuf := make([]byte, 8)
 			for i := range i64s {
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
-					buf.AppendBytes(strconv.AppendUint(uintBuf[:0], uint64(i64s[i]), 10))
+					buf.AppendBytes(types.NewBinaryLiteralFromUint((uint64)(i64s[i]), -1))
 				}
 			}
 			// TODO: recycle all old Columns returned here.
@@ -265,7 +264,7 @@ func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.Fiel
 		return nil
 	}
 	if fieldType.Tp == mysql.TypeBit {
-		output.AppendBytes(colID, strconv.AppendUint(make([]byte, 0, 8), uint64(res), 10))
+		output.AppendBytes(colID, types.NewBinaryLiteralFromUint((uint64)(res), -1))
 		return nil
 	}
 	if mysql.HasUnsignedFlag(fieldType.Flag) {
