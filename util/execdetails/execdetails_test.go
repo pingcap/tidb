@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -34,7 +35,7 @@ func TestString(t *testing.T) {
 		CopTime:      time.Second + 3*time.Millisecond,
 		BackoffTime:  time.Second,
 		RequestCount: 1,
-		CommitDetail: &CommitDetails{
+		CommitDetail: &util.CommitDetails{
 			GetCommitTsTime:   time.Second,
 			PrewriteTime:      time.Second,
 			CommitTime:        time.Second,
@@ -204,7 +205,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	}
 }
 func TestRuntimeStatsWithCommit(t *testing.T) {
-	commitDetail := &CommitDetails{
+	commitDetail := &util.CommitDetails{
 		GetCommitTsTime:   time.Second,
 		PrewriteTime:      time.Second,
 		CommitTime:        time.Second,
@@ -236,7 +237,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 	if stats.String() != expect {
 		t.Fatalf("%v != %v", stats.String(), expect)
 	}
-	lockDetail := &LockKeysDetails{
+	lockDetail := &util.LockKeysDetails{
 		TotalTime:       time.Second,
 		RegionNum:       2,
 		LockKeys:        10,
@@ -281,7 +282,7 @@ func TestRootRuntimeStats(t *testing.T) {
 	concurrency := &RuntimeStatsWithConcurrencyInfo{}
 	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("worker", 15))
 	stmtStats.RegisterStats(pid, concurrency)
-	commitDetail := &CommitDetails{
+	commitDetail := &util.CommitDetails{
 		GetCommitTsTime:   time.Second,
 		PrewriteTime:      time.Second,
 		CommitTime:        time.Second,
