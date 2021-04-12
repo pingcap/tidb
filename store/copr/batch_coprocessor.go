@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -439,9 +440,6 @@ func (b *batchCopIterator) sendToRespCh(resp *batchCopResponse) (exit bool) {
 }
 
 func toTiKVKeyRanges(ranges []kv.KeyRange) *tikv.KeyRanges {
-	res := make([]tikvstore.KeyRange, len(ranges))
-	for id, r := range ranges {
-		res[id] = tikvstore.KeyRange{StartKey: r.StartKey, EndKey: r.EndKey}
-	}
+	res := *(*[]tikvstore.KeyRange)(unsafe.Pointer(&ranges))
 	return tikv.NewKeyRanges(res)
 }

@@ -133,7 +133,7 @@ func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	txn = s.beginTxn(c)
-	snapshot := newTiKVSnapshot(s.store, txn.StartTS(), 0)
+	snapshot := txn.GetSnapshot()
 	_, err := snapshot.BatchGet(context.Background(), [][]byte{[]byte("x"), []byte("y")})
 	c.Assert(err, IsNil)
 
@@ -221,7 +221,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 
 	snapshot := s.store.GetSnapshot(math.MaxUint64)
 	start := time.Now()
-	c.Assert(committer.primary(), BytesEquals, x)
+	c.Assert(committer.GetPrimaryKey(), BytesEquals, x)
 	// Point get secondary key. Shouldn't be blocked by the lock and read old data.
 	_, err = snapshot.Get(ctx, y)
 	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)

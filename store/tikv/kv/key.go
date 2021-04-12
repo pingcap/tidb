@@ -42,8 +42,3 @@ type KeyRange struct {
 	StartKey []byte
 	EndKey   []byte
 }
-
-// NewKeyRange creates a new key range.
-func NewKeyRange(start, end []byte) KeyRange {
-	return KeyRange{StartKey: start, EndKey: end}
-}

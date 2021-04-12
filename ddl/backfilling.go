@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -331,7 +332,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(context.Background(), maxSleep, nil)
-	tikvRange := tikvstore.NewKeyRange(kvRange.StartKey, kvRange.EndKey)
+	tikvRange := *(*tikvstore.KeyRange)(unsafe.Pointer(&kvRange))
 	ranges, err := tikv.SplitRegionRanges(bo, s.GetRegionCache(), []tikvstore.KeyRange{tikvRange})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -340,10 +341,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
 		return nil, errors.Trace(errInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
-	res := make([]kv.KeyRange, len(ranges))
-	for idx, r := range ranges {
-		res[idx] = kv.KeyRange{StartKey: kv.Key(r.StartKey), EndKey: kv.Key(r.EndKey)}
-	}
+	res := *(*[]kv.KeyRange)(unsafe.Pointer(&ranges))
 	return res, nil
 }
 
