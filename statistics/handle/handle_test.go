@@ -2436,4 +2436,3 @@ partition by range (a) (
 	tk.MustExec("drop stats t partition p0, p1, global")
 	checkPartitionStats("global")
 }
-
