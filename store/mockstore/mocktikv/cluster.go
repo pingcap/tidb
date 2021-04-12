@@ -178,19 +178,20 @@ func (c *Cluster) GetStoreByAddr(addr string) *metapb.Store {
 }
 
 // GetAndCheckStoreByAddr checks and returns a Store's meta by an addr
-func (c *Cluster) GetAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
+func (c *Cluster) GetAndCheckStoreByAddr(addr string) (ss []*metapb.Store, err error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	for _, s := range c.stores {
 		if s.cancel {
-			return nil, context.Canceled
+			err = context.Canceled
+			return
 		}
 		if s.meta.GetAddress() == addr {
-			return proto.Clone(s.meta).(*metapb.Store), nil
+			ss = append(ss, proto.Clone(s.meta).(*metapb.Store))
 		}
 	}
-	return nil, nil
+	return
 }
 
 // AddStore add a new Store to the cluster.
@@ -207,6 +208,15 @@ func (c *Cluster) RemoveStore(storeID uint64) {
 	defer c.Unlock()
 
 	delete(c.stores, storeID)
+}
+
+// MarkTombstone marks store as tombstone.
+func (c *Cluster) MarkTombstone(storeID uint64) {
+	c.Lock()
+	defer c.Unlock()
+	nm := *c.stores[storeID].meta
+	nm.State = metapb.StoreState_Tombstone
+	c.stores[storeID].meta = &nm
 }
 
 // UpdateStoreAddr updates store address for cluster.

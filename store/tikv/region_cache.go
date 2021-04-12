@@ -1522,7 +1522,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
 		return
 	}
-	if store == nil {
+	if store == nil || store.State == metapb.StoreState_Tombstone {
 		// store has be removed in PD, we should invalidate all regions using those store.
 		logutil.BgLogger().Info("invalidate regions in removed store",
 			zap.Uint64("store", s.storeID), zap.String("add", s.addr))
