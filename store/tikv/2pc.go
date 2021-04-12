@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/prometheus/client_golang/prometheus"
 	zap "go.uber.org/zap"
 )
@@ -304,9 +303,7 @@ func newTwoPhaseCommitter(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, err
 			ch: make(chan struct{}),
 		},
 		isPessimistic: txn.IsPessimistic(),
-		binlog: &binlogExecutor{
-			txn: txn,
-		},
+		binlog:        txn.binlog,
 	}, nil
 }
 
@@ -417,7 +414,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		return errors.Trace(err)
 	}
 
-	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: c.mutations.Len()}
+	commitDetail := &util.CommitDetails{WriteSize: size, WriteKeys: c.mutations.Len()}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
 	c.hasNoNeedCommitKeys = checkCnt > 0
@@ -1198,7 +1195,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	return c.commitTxn(ctx, commitDetail)
 }
 
-func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdetails.CommitDetails) error {
+func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *util.CommitDetails) error {
 	c.txn.GetMemBuffer().DiscardValues()
 	start := time.Now()
 
@@ -1368,7 +1365,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 	return false, nil
 }
 
-func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *execdetails.CommitDetails) (uint64, error) {
+func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *util.CommitDetails) (uint64, error) {
 	start := time.Now()
 	logutil.Event(ctx, "start get commit ts")
 	commitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
@@ -1456,7 +1453,7 @@ func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 }
 
 func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
-	return c.txn.us.GetOption(kv.BinlogInfo) != nil
+	return c.binlog != nil
 }
 
 // TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's
@@ -1679,12 +1676,12 @@ func PriorityToPB(pri int) pb.CommandPri {
 	}
 }
 
-func (c *twoPhaseCommitter) setDetail(d *execdetails.CommitDetails) {
+func (c *twoPhaseCommitter) setDetail(d *util.CommitDetails) {
 	atomic.StorePointer(&c.detail, unsafe.Pointer(d))
 }
 
-func (c *twoPhaseCommitter) getDetail() *execdetails.CommitDetails {
-	return (*execdetails.CommitDetails)(atomic.LoadPointer(&c.detail))
+func (c *twoPhaseCommitter) getDetail() *util.CommitDetails {
+	return (*util.CommitDetails)(atomic.LoadPointer(&c.detail))
 }
 
 func (c *twoPhaseCommitter) setUndeterminedErr(err error) {
