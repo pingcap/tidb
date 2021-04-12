@@ -1012,8 +1012,8 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 	tk.MustExec("analyze table tint with 2 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(testkit.Rows(
-		"0 20",  // global: g.count = p0.count + p1.count
-		"0 9",   // p0
+		"0 20", // global: g.count = p0.count + p1.count
+		"0 9",  // p0
 		"0 11")) // p1
 
 	tk.MustQuery("show stats_topn where table_name='tint' and is_index=0").Check(testkit.Rows(
@@ -1043,7 +1043,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("select distinct_count, null_count, tot_col_size from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("12 1 19", // global, g = p0 + p1
-			"5 1 8",   // p0
+			"5 1 8", // p0
 			"7 0 11")) // p1
 
 	tk.MustQuery("show stats_buckets where is_index=1").Check(testkit.Rows(
@@ -1057,7 +1057,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("select distinct_count, null_count from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
 		testkit.Rows("12 1", // global, g = p0 + p1
-			"5 1",  // p0
+			"5 1", // p0
 			"7 0")) // p1
 
 	// double + (column + index with 1 column)
@@ -2381,4 +2381,46 @@ func (s *testStatsSuite) TestShowExtendedStats4DropColumn(c *C) {
 	tk.MustExec("alter table t add column b int")
 	rows = tk.MustQuery("show stats_extended").Rows()
 	c.Assert(len(rows), Equals, 0)
+}
+
+func (s *testStatsSuite) TestGlobalStatsNDV(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`CREATE TABLE t ( a int, key(a) )
+	PARTITION BY RANGE (a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20),
+    PARTITION p2 VALUES LESS THAN (30),
+    PARTITION p3 VALUES LESS THAN (40))`)
+
+	checkNDV := func(ndvs ...int) { // g, p0, ..., p3
+		tk.MustExec("analyze table t")
+		rs := tk.MustQuery(`show stats_histograms where is_index=1`).Rows()
+		c.Assert(len(rs), Equals, 5)
+		for i, ndv := range ndvs {
+			c.Assert(rs[i][6].(string), Equals, fmt.Sprintf("%v", ndv))
+		}
+	}
+
+	// all partitions are empty
+	checkNDV(0, 0, 0, 0, 0)
+
+	// p0 has data while others are empty
+	tk.MustExec("insert into t values (1), (2), (3)")
+	checkNDV(3, 3, 0, 0, 0)
+
+	// p0, p1, p2 have data while p3 is empty
+	tk.MustExec("insert into t values (11), (12), (13), (21), (22), (23)")
+	checkNDV(9, 3, 3, 3, 0)
+
+	// all partitions are not empty
+	tk.MustExec("insert into t values (31), (32), (33), (34)")
+	checkNDV(13, 3, 3, 3, 4)
+
+	// insert some duplicated records
+	tk.MustExec("insert into t values (31), (33), (34)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	checkNDV(13, 3, 3, 3, 4)
 }
