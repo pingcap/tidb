@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -64,7 +65,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*a
 			return nil, errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
 		}
 
-		if err := checkIndexColumn(col, ip); err != nil {
+		if err := checkIndexColumn(col, ip.Length); err != nil {
 			return nil, err
 		}
 
@@ -108,34 +109,23 @@ func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 	return lastCol, nil
 }
 
-func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
-	// The sum of length of all index columns.
-	sumLength := 0
-	for _, ic := range idxColumns {
-		col := model.FindColumnInfo(columns, ic.Name.L)
-		if col == nil {
-			return errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
-		}
-
-		indexColumnLength, err := getIndexColumnLength(col, ic.Length)
-		if err != nil {
-			return err
-		}
-		sumLength += indexColumnLength
-		// The sum of all lengths must be shorter than the max length for prefix.
-		if sumLength > config.GetGlobalConfig().MaxIndexLength {
-			return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
-		}
+func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, pkLenAppendToKey int) error {
+	idxLen, err := indexColumnsLen(columns, idxColumns)
+	if err != nil {
+		return err
+	}
+	if idxLen+pkLenAppendToKey > config.GetGlobalConfig().MaxIndexLength {
+		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
 }
 
-func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) error {
+func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
 		if col.GeneratedExprString != "" {
 			return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
 		}
-		return errors.Trace(errWrongKeyColumn.GenWithStackByArgs(ic.Column.Name))
+		return errors.Trace(errWrongKeyColumn.GenWithStackByArgs(col.Name))
 	}
 
 	// JSON column cannot index.
@@ -145,33 +135,33 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) err
 
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
 	if types.IsTypeBlob(col.FieldType.Tp) {
-		if ic.Length == types.UnspecifiedLength {
+		if indexColumnLen == types.UnspecifiedLength {
 			return errors.Trace(errBlobKeyWithoutLength.GenWithStackByArgs(col.Name.O))
 		}
-		if ic.Length == types.ErrorLength {
+		if indexColumnLen == types.ErrorLength {
 			return errors.Trace(errKeyPart0.GenWithStackByArgs(col.Name.O))
 		}
 	}
 
 	// Length can only be specified for specifiable types.
-	if ic.Length != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
+	if indexColumnLen != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
 		return errors.Trace(errIncorrectPrefixKey)
 	}
 
 	// Key length must be shorter or equal to the column length.
-	if ic.Length != types.UnspecifiedLength &&
+	if indexColumnLen != types.UnspecifiedLength &&
 		types.IsTypeChar(col.FieldType.Tp) {
-		if col.Flen < ic.Length {
+		if col.Flen < indexColumnLen {
 			return errors.Trace(errIncorrectPrefixKey)
 		}
 		// Length must be non-zero for char.
-		if ic.Length == types.ErrorLength {
+		if indexColumnLen == types.ErrorLength {
 			return errors.Trace(errKeyPart0.GenWithStackByArgs(col.Name.O))
 		}
 	}
 
 	// Specified length must be shorter than the max length for prefix.
-	if ic.Length > config.GetGlobalConfig().MaxIndexLength {
+	if indexColumnLen > config.GetGlobalConfig().MaxIndexLength {
 		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
@@ -488,7 +478,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.Global = global
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
-
 		if err = checkTooManyIndexes(tblInfo.Indices); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -927,7 +916,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 		idxVal[j] = idxColumnVal
 	}
 
-	rsData := tables.TryGetHandleRestoredDataWrapper(w.table, nil, w.rowMap)
+	rsData := tables.TryGetHandleRestoredDataWrapper(w.table, nil, w.rowMap, idxInfo)
 	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal, rsData: rsData}
 	return idxRecord, nil
 }
@@ -1128,7 +1117,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, w.priority)
+		txn.SetOption(tikvstore.Priority, w.priority)
 
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -1340,7 +1329,7 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, w.priority)
+		txn.SetOption(tikvstore.Priority, w.priority)
 
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {

@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -492,12 +491,13 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
 	tk.MustExec("show table status;")
 	rs, err := tk.Exec("show table status;")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rs, NotNil)
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	err = rs.Close()
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
 
 	for i := range rows {
 		row := rows[i]
@@ -514,10 +514,34 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 		  partition p2 values less than (maxvalue)
   		);`)
 	rs, err = tk.Exec("show table status from test like 'tp';")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+
+	tk.MustExec("create database UPPER_CASE")
+	tk.MustExec("use UPPER_CASE")
+	tk.MustExec("create table t (i int)")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("use upper_case")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("drop database UPPER_CASE")
 }
 
 func (s *testSuite5) TestShowSlow(c *C) {
@@ -1078,9 +1102,9 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(267, Equals, len(rows))
+	c.Assert(268, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[266][0].(string))
+	c.Assert("yearweek", Equals, rows[267][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {
@@ -1129,6 +1153,17 @@ func (s *testSuite5) TestInvisibleCoprCacheConfig(c *C) {
 			"\t\t\t\"capacity-mb\": 1000\n" +
 			"\t\t},\n"
 	c.Assert(strings.Contains(configValue, coprCacheVal), Equals, true)
+}
+
+func (s *testSuite5) TestInvisibleGlobalKillConfig(c *C) {
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKitWithSession(c, s.store, se1)
+	rows := tk.MustQuery("show variables like '%config%'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	configValue := rows[0][1].(string)
+	globalKillVal := "global-kill"
+	c.Assert(strings.Contains(configValue, globalKillVal), Equals, false)
 }
 
 func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c *C) {

@@ -63,6 +63,7 @@ const (
 	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
 	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
 	account_locked FROM mysql.user`
+	sqlLoadGlobalGrantsTable = `SELECT HIGH_PRIORITY Host,User,Priv,With_Grant_Option FROM mysql.global_grants`
 )
 
 func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
@@ -111,6 +112,13 @@ type globalPrivRecord struct {
 
 	Priv   GlobalPrivValue
 	Broken bool
+}
+
+type dynamicPrivRecord struct {
+	baseRecord
+
+	PrivilegeName string
+	GrantOption   bool
 }
 
 // SSLType is enum value for GlobalPrivValue.SSLType.
@@ -247,6 +255,7 @@ type MySQLPrivilege struct {
 	User          []UserRecord
 	UserMap       map[string][]UserRecord // Accelerate User searching
 	Global        map[string][]globalPrivRecord
+	Dynamic       map[string][]dynamicPrivRecord
 	DB            []dbRecord
 	DBMap         map[string][]dbRecord // Accelerate DB searching
 	TablesPriv    []tablesPrivRecord
@@ -301,6 +310,11 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	}
 
 	err = p.LoadGlobalPrivTable(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = p.LoadGlobalGrantsTable(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -481,6 +495,11 @@ func (p MySQLPrivilege) SortUserTable() {
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
 func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sessionctx.Context) error {
 	return p.loadTable(ctx, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow)
+}
+
+// LoadGlobalGrantsTable loads the mysql.global_priv table from database.
+func (p *MySQLPrivilege) LoadGlobalGrantsTable(ctx sessionctx.Context) error {
+	return p.loadTable(ctx, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow)
 }
 
 // LoadDBTable loads the mysql.db table from database.
@@ -664,6 +683,25 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 		p.Global = make(map[string][]globalPrivRecord)
 	}
 	p.Global[value.User] = append(p.Global[value.User], value)
+	return nil
+}
+
+func (p *MySQLPrivilege) decodeGlobalGrantsTableRow(row chunk.Row, fs []*ast.ResultField) error {
+	var value dynamicPrivRecord
+	for i, f := range fs {
+		switch {
+		case f.ColumnAsName.L == "priv":
+			value.PrivilegeName = strings.ToUpper(row.GetString(i))
+		case f.ColumnAsName.L == "with_grant_option":
+			value.GrantOption = row.GetEnum(i).String() == "Y"
+		default:
+			value.assignUserOrHost(row, i, f)
+		}
+	}
+	if p.Dynamic == nil {
+		p.Dynamic = make(map[string][]dynamicPrivRecord)
+	}
+	p.Dynamic[value.User] = append(p.Dynamic[value.User], value)
 	return nil
 }
 
@@ -915,6 +953,37 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 		}
 	}
 	return nil
+}
+
+// RequestDynamicVerification checks all roles for a specific DYNAMIC privilege.
+func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
+	privName = strings.ToUpper(privName)
+	roleList := p.FindAllRole(activeRoles)
+	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
+	// Loop through each of the roles and return on first match
+	// If grantable is required, ensure the record has the GrantOption set.
+	for _, r := range roleList {
+		u := r.Username
+		h := r.Hostname
+		for _, record := range p.Dynamic[u] {
+			if record.match(u, h) {
+				if withGrant && !record.GrantOption {
+					continue
+				}
+				if record.PrivilegeName == privName {
+					return true
+				}
+			}
+		}
+	}
+	// For compatibility reasons, the SUPER privilege also has all DYNAMIC privileges granted to it (dynamic privs are a super replacement)
+	// This may be changed in future, but will require a bootstrap task to assign all dynamic privileges
+	// to users with SUPER, otherwise tasks such as BACKUP and ROLE_ADMIN will start to fail.
+	// The visitInfo system will also need modification to support OR conditions.
+	if withGrant && !p.RequestVerification(activeRoles, user, host, "", "", "", mysql.GrantPriv) {
+		return false
+	}
+	return p.RequestVerification(activeRoles, user, host, "", "", "", mysql.SuperPriv)
 }
 
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
@@ -1232,6 +1301,27 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		s := fmt.Sprintf(`GRANT %s TO '%s'@'%s'`, g, user, host)
 		gs = append(gs, s)
 	}
+
+	// Show dynamic privileges
+	var dynamicPrivs, grantableDynamicPrivs []string
+	for _, record := range p.Dynamic[user] {
+		if record.fullyMatch(user, host) {
+			if record.GrantOption {
+				grantableDynamicPrivs = append(grantableDynamicPrivs, record.PrivilegeName)
+			} else {
+				dynamicPrivs = append(dynamicPrivs, record.PrivilegeName)
+			}
+		}
+	}
+	// Merge the DYNAMIC privs into a line for non-grantable and then grantable.
+	if len(dynamicPrivs) > 0 {
+		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s'", strings.Join(dynamicPrivs, ","), user, host)
+		gs = append(gs, s)
+	}
+	if len(grantableDynamicPrivs) > 0 {
+		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION", strings.Join(grantableDynamicPrivs, ","), user, host)
+		gs = append(gs, s)
+	}
 	return gs
 }
 
@@ -1323,7 +1413,22 @@ func (p *MySQLPrivilege) UserPrivilegesTable() [][]types.Datum {
 	for _, user := range p.User {
 		rows = appendUserPrivilegesTableRow(rows, user)
 	}
+	for _, dynamicPrivs := range p.Dynamic {
+		for _, dynamicPriv := range dynamicPrivs {
+			rows = appendDynamicPrivRecord(rows, dynamicPriv)
+		}
+	}
 	return rows
+}
+
+func appendDynamicPrivRecord(rows [][]types.Datum, user dynamicPrivRecord) [][]types.Datum {
+	isGrantable := "NO"
+	if user.GrantOption {
+		isGrantable = "YES"
+	}
+	grantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
+	record := types.MakeDatums(grantee, "def", user.PrivilegeName, isGrantable)
+	return append(rows, record)
 }
 
 func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]types.Datum {
@@ -1333,8 +1438,13 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]typ
 	} else {
 		isGrantable = "NO"
 	}
-	guarantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
-
+	grantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
+	if user.Privileges <= 1 {
+		// The "USAGE" row only appears if the user has no non-DYNAMIC privileges.
+		// This behavior was observed in MySQL.
+		record := types.MakeDatums(grantee, "def", "USAGE", "NO")
+		return append(rows, record)
+	}
 	for _, priv := range mysql.AllGlobalPrivs {
 		if user.Privileges&priv > 0 {
 			privilegeType := mysql.Priv2Str[priv]
@@ -1342,7 +1452,7 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]typ
 			// | GRANTEE                   | TABLE_CATALOG | PRIVILEGE_TYPE          | IS_GRANTABLE |
 			// +---------------------------+---------------+-------------------------+--------------+
 			// | 'root'@'localhost'        | def           | SELECT                  | YES          |
-			record := types.MakeDatums(guarantee, "def", privilegeType, isGrantable)
+			record := types.MakeDatums(grantee, "def", privilegeType, isGrantable)
 			rows = append(rows, record)
 		}
 	}

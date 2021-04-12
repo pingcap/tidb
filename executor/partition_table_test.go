@@ -15,6 +15,8 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -176,6 +178,50 @@ PRIMARY KEY (pk1,pk2)) partition by hash(pk2) partitions 4;`)
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Sort().Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
 }
 
+func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_info_null")
+	tk.MustExec(`CREATE TABLE t_info_null (
+  id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  date date NOT NULL,
+  media varchar(32) NOT NULL DEFAULT '0',
+  app varchar(32) NOT NULL DEFAULT '',
+  xxx bigint(20) NOT NULL DEFAULT '0',
+  PRIMARY KEY (id, date),
+  UNIQUE KEY idx_media_id (media, date, app)
+) PARTITION BY RANGE COLUMNS(date) (
+  PARTITION p201912 VALUES LESS THAN ("2020-01-01"),
+  PARTITION p202001 VALUES LESS THAN ("2020-02-01"),
+  PARTITION p202002 VALUES LESS THAN ("2020-03-01"),
+  PARTITION p202003 VALUES LESS THAN ("2020-04-01"),
+  PARTITION p202004 VALUES LESS THAN ("2020-05-01"),
+  PARTITION p202005 VALUES LESS THAN ("2020-06-01"),
+  PARTITION p202006 VALUES LESS THAN ("2020-07-01"),
+  PARTITION p202007 VALUES LESS THAN ("2020-08-01"),
+  PARTITION p202008 VALUES LESS THAN ("2020-09-01"),
+  PARTITION p202009 VALUES LESS THAN ("2020-10-01"),
+  PARTITION p202010 VALUES LESS THAN ("2020-11-01"),
+  PARTITION p202011 VALUES LESS THAN ("2020-12-01")
+)`)
+	is := infoschema.GetInfoSchema(tk.Se)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_info_null"))
+	c.Assert(err, IsNil)
+
+	tbInfo := tbl.Meta()
+	// Mock for a case that the tableInfo.Partition is not nil, but tableInfo.Partition.Enable is false.
+	// That may happen when upgrading from a old version TiDB.
+	tbInfo.Partition.Enable = false
+	tbInfo.Partition.Num = 0
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustQuery("explain select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows("Batch_Point_Get_5 2.00 root table:t_info_null, index:idx_media_id(media, date, app) keep order:false, desc:false"))
+	tk.MustQuery("explain select * from t_info_null").Check(testkit.Rows("TableReader_5 10000.00 root  data:TableFullScan_4",
+		"└─TableFullScan_4 10000.00 cop[tikv] table:t_info_null keep order:false, stats:pseudo"))
+	// No panic.
+	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
+}
+
 func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists p")
@@ -202,6 +248,33 @@ partition p2 values less than (10))`)
 
 func (s *globalIndexSuite) TestIssue21731(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists p")
+	tk.MustExec("drop table if exists p, t")
 	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
+}
+
+func (s *globalIndexSuite) TestBatchPointGetTablePartition(c *C) {
+	testKit := testkit.NewTestKitWithInit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	testKit.MustExec("insert into t values(1,1),(1,2),(2,1),(2,2)")
+
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	testKit.MustQuery("select * from t where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("select * from t where a = 1  and b in (1,2)").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	testKit.MustQuery("select * from t where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("select * from t where a = 1  and b in (1,2)").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
 }

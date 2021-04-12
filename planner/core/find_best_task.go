@@ -531,7 +531,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		if len(path.Ranges) == 0 {
 			return []*candidatePath{{path: path}}
 		}
-		if path.StoreType != kv.TiFlash && (prop.TaskTp == property.CopTiFlashLocalReadTaskType || prop.TaskTp == property.CopTiFlashGlobalReadTaskType) {
+		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
 			continue
 		}
 		var currentCandidate *candidatePath
@@ -642,7 +642,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			return
 		}
 		if prop.CanAddEnforcer {
-			prop = oldProp
+			*prop = *oldProp
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
 			prop.CanAddEnforcer = true
 		}
@@ -1493,7 +1493,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			p:      ts,
 			cst:    cost,
 			partTp: property.AnyType,
-			ts:     ts,
 		}
 		ts.PartitionInfo = PartitionInfo{
 			PruningConds:   ds.allConds,
@@ -1752,10 +1751,11 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		physicalTableID: ds.physicalTableID,
 		Ranges:          path.Ranges,
 		AccessCondition: path.AccessConds,
-		filterCondition: path.TableFilters,
 		StoreType:       path.StoreType,
 		IsGlobalRead:    path.IsTiFlashGlobalRead,
 	}.Init(ds.ctx, ds.blockOffset)
+	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))
+	copy(ts.filterCondition, path.TableFilters)
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {

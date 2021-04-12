@@ -1304,12 +1304,13 @@ func (b *builtinCastDurationAsStringSig) vecEvalString(input *chunk.Chunk, resul
 	var isNull bool
 	sc := b.ctx.GetSessionVars().StmtCtx
 	result.ReserveString(n)
+	fsp := b.args[0].GetType().Decimal
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		res, err = types.ProduceStrWithSpecifiedTp(buf.GetDuration(i, 0).String(), b.tp, sc, false)
+		res, err = types.ProduceStrWithSpecifiedTp(buf.GetDuration(i, fsp).String(), b.tp, sc, false)
 		if err != nil {
 			return err
 		}
