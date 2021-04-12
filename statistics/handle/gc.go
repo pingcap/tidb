@@ -70,6 +70,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 	tbl, ok := h.getTableByPhysicalID(is, physicalID)
 	h.mu.Unlock()
 	if !ok {
+		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
 		return errors.Trace(h.DeleteTableStatsFromKV([]int64{physicalID}))
 	}
 	tblInfo := tbl.Meta()
@@ -122,6 +123,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 				}
 			}
 			if !found {
+				logutil.BgLogger().Info("mark mysql.stats_extended record as 'deleted' in GC due to dropped columns", zap.String("table_name", tblInfo.Name.L), zap.Int64("table_id", physicalID), zap.String("stats_name", statsName), zap.Int64("dropped_column_id", colID))
 				err = h.MarkExtendedStatsDeleted(statsName, physicalID, true)
 				if err != nil {
 					logutil.BgLogger().Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.Error(err))
@@ -213,6 +215,9 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 			return err
 		}
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, StatsStatusDeleted, statsID, StatsStatusAnalyzed, StatsStatusInited); err != nil {
+			return err
+		}
+		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %?", statsID); err != nil {
 			return err
 		}
 	}

@@ -61,8 +61,6 @@ var (
 
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
-	// Fetch fetches partial results from client.
-	Fetch(context.Context)
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
 	// Next reads the data into chunk.
@@ -101,9 +99,6 @@ type selectResult struct {
 	memTracker       *memory.Tracker
 
 	stats *selectResultRuntimeStats
-}
-
-func (r *selectResult) Fetch(ctx context.Context) {
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
