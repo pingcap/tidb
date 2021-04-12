@@ -170,12 +170,12 @@ func (txn *KVTxn) String() string {
 // If such entry is not found, it returns an invalid Iterator with no error.
 // It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 // The Iterator must be Closed after use.
-func (txn *KVTxn) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
+func (txn *KVTxn) Iter(k tidbkv.Key, upperBound tidbkv.Key) (unionstore.Iterator, error) {
 	return txn.us.Iter(k, upperBound)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (txn *KVTxn) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
+func (txn *KVTxn) IterReverse(k tidbkv.Key) (unionstore.Iterator, error) {
 	return txn.us.IterReverse(k)
 }
 

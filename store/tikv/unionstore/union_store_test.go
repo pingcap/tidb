@@ -125,7 +125,7 @@ func (s *testUnionStoreSuite) TestIterReverse(c *C) {
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("0")}, [][]byte{[]byte("2"), []byte("0")})
 }
 
-func checkIterator(c *C, iter kv.Iterator, keys [][]byte, values [][]byte) {
+func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
 	defer iter.Close()
 	c.Assert(len(keys), Equals, len(values))
 	for i, k := range keys {
