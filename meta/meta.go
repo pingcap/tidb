@@ -454,6 +454,15 @@ func (m *Meta) DropTableOrView(dbID int64, tblID int64, delAutoID bool) error {
 	return nil
 }
 
+// CleanAutoID is used to delete the auto-id of specific table.
+func (m *Meta) CleanAutoID(dbID, tblID int64) error {
+	dbKey := m.dbKey(dbID)
+	if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblID)); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // UpdateTable updates the table with table info.
 func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	// Check if db exists.
