@@ -1136,6 +1136,11 @@ error = '''
 In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by
 '''
 
+["planner:8132"]
+error = '''
+feature '%s' is not supported when security enhanced mode is enabled
+'''
+
 ["privilege:1141"]
 error = '''
 There is no such grant defined for user '%-.48s' on host '%-.64s'

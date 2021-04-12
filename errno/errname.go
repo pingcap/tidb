@@ -1036,6 +1036,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 
 	ErrJSONObjectKeyTooLong:  mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
 	ErrPartitionStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
+	ErrNotSupportedWithSem:   mysql.Message("feature '%s' is not supported when security enhanced mode is enabled", nil),
 
 	ErrInvalidPlacementSpec:   mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck:   mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
