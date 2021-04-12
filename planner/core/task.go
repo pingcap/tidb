@@ -559,8 +559,8 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	return task
 }
 
-// for different decimal scale and precision, tiflash uses different underlying type.
-// Here we check the scale and precision to decide whether conversion is a must.
+// TiDB only require that the types fall into the same catalog but TiFlash require the type to be exactly the same, so
+// need to check if the conversion is a must
 func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
 	if tp.Tp != rtp.Tp {
 		return true
@@ -571,6 +571,7 @@ func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
 	if tp.Decimal != rtp.Decimal {
 		return true
 	}
+	// for Decimal type, TiFlash have 4 different impl based on the required precision
 	if tp.Flen >= 0 && tp.Flen <= 9 && rtp.Flen >= 0 && rtp.Flen <= 9 {
 		return false
 	}
