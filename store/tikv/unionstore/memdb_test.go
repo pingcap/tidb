@@ -32,7 +32,6 @@ import (
 type Key = tidbkv.Key
 type KeyFlags = kv.KeyFlags
 type StagingHandle = tidbkv.StagingHandle
-type Iterator = tidbkv.Iterator
 
 func init() {
 	testMode = true
