@@ -50,7 +50,7 @@ You can join these groups and chats to discuss and ask TiDB related questions:
 - [Slack Channel](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb)
 - [Chinese Forum](https://asktug.com)
 
-In addition to that, you may enjoy following:
+In addition, you may enjoy following:
 
 - [@PingCAP](https://twitter.com/PingCAP) on Twitter
 - Question tagged [#tidb on StackOverflow](https://stackoverflow.com/questions/tagged/tidb)
