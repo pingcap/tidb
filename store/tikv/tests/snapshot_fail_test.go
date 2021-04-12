@@ -11,23 +11,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"context"
-	"sync/atomic"
+	"math"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type testSnapshotFailSuite struct {
 	OneByOneSuite
-	store *KVStore
+	store tikv.StoreProbe
 }
 
 var _ = SerialSuites(&testSnapshotFailSuite{})
@@ -37,9 +38,9 @@ func (s *testSnapshotFailSuite) SetUpSuite(c *C) {
 	client, pdClient, cluster, err := unistore.New("")
 	c.Assert(err, IsNil)
 	unistore.BootstrapWithSingleStore(cluster)
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-	s.store = store
+	s.store = tikv.StoreProbe{KVStore: store}
 }
 
 func (s *testSnapshotFailSuite) TearDownSuite(c *C) {
@@ -143,7 +144,7 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
 	defer s.cleanup(c)
 
-	snapshot := s.store.GetSnapshot(maxTimestamp)
+	snapshot := s.store.GetSnapshot(math.MaxUint64)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshotGetTSAsync", `pause`), IsNil)
 	ch := make(chan error)
 	go func() {
@@ -160,11 +161,11 @@ func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
 	txn.SetOption(kv.GuaranteeLinearizability, false)
 	// Prewrite an async-commit lock and do not commit it.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", `return`), IsNil)
-	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
+	committer, err := txn.NewCommitter(1)
 	c.Assert(err, IsNil)
 	// Sets its minCommitTS to one second later, so the lock will be ignored by point get.
-	committer.minCommitTS = committer.startTS + (1000 << 18)
-	err = committer.execute(context.Background())
+	committer.SetMinCommitTS(committer.GetStartTS() + (1000 << 18))
+	err = committer.Execute(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshotGetTSAsync"), IsNil)
 
@@ -189,11 +190,11 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	// Prewrite the lock without committing it
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeCommit", `pause`), IsNil)
 	ch := make(chan struct{})
-	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
-	c.Assert(committer.primary(), DeepEquals, []byte("k1"))
+	committer, err := txn.NewCommitter(1)
+	c.Assert(committer.GetPrimaryKey(), DeepEquals, []byte("k1"))
 	go func() {
 		c.Assert(err, IsNil)
-		err = committer.execute(context.Background())
+		err = committer.Execute(context.Background())
 		c.Assert(err, IsNil)
 		ch <- struct{}{}
 	}()
@@ -201,11 +202,11 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	// Wait until prewrite finishes
 	time.Sleep(200 * time.Millisecond)
 	// Should get nothing with max version, and **not pushing forward minCommitTS** of the primary lock
-	snapshot := s.store.GetSnapshot(maxTimestamp)
+	snapshot := s.store.GetSnapshot(math.MaxUint64)
 	_, err = snapshot.Get(context.Background(), []byte("k2"))
 	c.Assert(err, ErrorMatches, ".*key not exist")
 
-	initialCommitTS := atomic.LoadUint64(&committer.commitTS)
+	initialCommitTS := committer.GetCommitTS()
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeCommit"), IsNil)
 
 	<-ch

@@ -138,7 +138,7 @@ func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
 	if err != nil {
 		// Unistore's gc is based on compaction filter.
 		// So skip the error check if err == nil.
-		c.Assert(err, Equals, kv.ErrNotExist)
+		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 	}
 }
 
