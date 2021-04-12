@@ -4424,6 +4424,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
 	for _, tn := range tableList {
+		// Only generate virtual to updatable table, skip not updatable table(i.e. table in update's subQuery)
 		updatable := true
 		for _, nTbl := range notUpdatableTbl {
 			if tn.Name.L == nTbl {
