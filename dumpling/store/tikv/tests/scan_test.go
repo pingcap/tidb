@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"go.uber.org/zap"
 )
@@ -84,7 +85,7 @@ func (s *testScanSuite) makeValue(i int) []byte {
 }
 
 func (s *testScanSuite) TestScan(c *C) {
-	check := func(c *C, scan tidbkv.Iterator, rowNum int, keyOnly bool) {
+	check := func(c *C, scan unionstore.Iterator, rowNum int, keyOnly bool) {
 		for i := 0; i < rowNum; i++ {
 			k := scan.Key()
 			expectedKey := s.makeKey(i)
