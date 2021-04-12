@@ -67,7 +67,7 @@ See [Quick Start Guide](https://pingcap.com/docs/stable/quick-start-with-tidb/).
 
 ### To start developing TiDB
 
-If you want to build TiDB right away there are two options:
+If you want to build TiDB right away, there are two options:
 
 **You have a working [Go environment](https://golang.org/doc/install).**
 
