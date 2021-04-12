@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
@@ -99,6 +100,18 @@ func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 
 func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
 	return &tikvUnionStore{txn.KVTxn.GetUnionStore()}
+}
+
+func (txn *tikvTxn) SetOption(opt int, val interface{}) {
+	switch opt {
+	case tikvstore.BinlogInfo:
+		txn.SetBinlogExecutor(&binlogExecutor{
+			txn:     txn.KVTxn,
+			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
+		})
+	default:
+		txn.KVTxn.SetOption(opt, val)
+	}
 }
 
 func (txn *tikvTxn) extractKeyErr(err error) error {
