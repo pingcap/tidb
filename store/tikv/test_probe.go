@@ -184,12 +184,12 @@ func (c CommitterProbe) SetMutations(muts CommitterMutations) {
 
 // SetCommitTS resets the committer's commit ts.
 func (c CommitterProbe) SetCommitTS(ts uint64) {
-	c.commitTS = ts
+	atomic.StoreUint64(&c.commitTS, ts)
 }
 
 // GetCommitTS returns the commit ts of the committer.
 func (c CommitterProbe) GetCommitTS() uint64 {
-	return c.commitTS
+	return atomic.LoadUint64(&c.commitTS)
 }
 
 // GetMinCommitTS returns the minimal commit ts can be used.
