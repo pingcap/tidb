@@ -80,7 +80,6 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
-	mppTaskID        int64
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -1983,6 +1982,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		NumColumns: int32(len(task.IndexInfo.Columns)),
 		TopNSize:   topNSize,
 		Version:    statsVersion,
+		SketchSize: maxSketchSize,
 	}
 	if e.isCommonHandle && e.idxInfo.Primary {
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
@@ -2095,6 +2095,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		width := int32(opts[ast.AnalyzeOptCMSketchWidth])
 		e.analyzePB.IdxReq.CmsketchDepth = &depth
 		e.analyzePB.IdxReq.CmsketchWidth = &width
+		e.analyzePB.IdxReq.SketchSize = maxSketchSize
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeMixed
 		e.commonHandle = task.CommonHandleInfo
@@ -2630,7 +2631,6 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		allocTaskID:  &b.mppTaskID,
 	}
 	return gather
 }
@@ -3431,7 +3431,6 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
 	e.resultHandler.open(nil, result)
 	return e, nil
 }

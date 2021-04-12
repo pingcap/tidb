@@ -34,7 +34,7 @@ type MemdbIterator struct {
 // If such entry is not found, it returns an invalid Iterator with no error.
 // It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 // The Iterator must be Closed after use.
-func (db *MemDB) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
+func (db *MemDB) Iter(k tidbkv.Key, upperBound tidbkv.Key) (Iterator, error) {
 	i := &MemdbIterator{
 		db:    db,
 		start: k,
@@ -48,7 +48,7 @@ func (db *MemDB) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, err
 // The returned iterator will iterate from greater key to smaller key.
 // If k is nil, the returned iterator will be positioned at the last key.
 // TODO: Add lower bound limit
-func (db *MemDB) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
+func (db *MemDB) IterReverse(k tidbkv.Key) (Iterator, error) {
 	i := &MemdbIterator{
 		db:      db,
 		end:     k,
