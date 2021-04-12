@@ -21,6 +21,7 @@ import (
 
 type commitDetailCtxKeyType struct{}
 type lockKeysDetailCtxKeyType struct{}
+type execDetailsCtxKeyType struct{}
 
 var (
 	// CommitDetailCtxKey presents CommitDetail info key in context.
@@ -28,6 +29,9 @@ var (
 
 	// LockKeysDetailCtxKey presents LockKeysDetail info key in context.
 	LockKeysDetailCtxKey = lockKeysDetailCtxKeyType{}
+
+	// ExecDetailsKey presents ExecDetail info key in context.
+	ExecDetailsKey = execDetailsCtxKeyType{}
 )
 
 // CommitDetails contains commit detail information.
@@ -127,4 +131,12 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 	}
 	lock.Mu.BackoffTypes = append([]fmt.Stringer{}, ld.Mu.BackoffTypes...)
 	return lock
+}
+
+// ExecDetails contains execution detail info.
+type ExecDetails struct {
+	BackoffCount       int64
+	BackoffDuration    int64
+	WaitKVRespDuration int64
+	WaitPDRespDuration int64
 }

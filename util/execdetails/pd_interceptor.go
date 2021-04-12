@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/store/tikv/util"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -28,9 +29,9 @@ var (
 )
 
 func recordPDWaitTime(ctx context.Context, start time.Time) {
-	stmtExec := ctx.Value(StmtExecDetailKey)
+	stmtExec := ctx.Value(util.ExecDetailsKey)
 	if stmtExec != nil {
-		detail := stmtExec.(*StmtExecDetails)
+		detail := stmtExec.(*util.ExecDetails)
 		atomic.AddInt64(&detail.WaitPDRespDuration, int64(time.Since(start)))
 	}
 }
