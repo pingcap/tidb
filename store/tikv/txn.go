@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
 )
 
@@ -136,6 +135,11 @@ func (txn *KVTxn) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
 	return ret, nil
 }
 
+// NewBufferBatchGetter creates a new BufferBatchGetter.
+func NewBufferBatchGetter(buffer unionstore.BatchBufferGetter, middleCache unionstore.Getter, snapshot unionstore.BatchGetter) *unionstore.BufferBatchGetter {
+	return unionstore.NewBufferBatchGetter(buffer, middleCache, snapshot)
+}
+
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 // Do not use len(value) == 0 or value == nil to represent non-exist.
 // If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
@@ -145,7 +149,7 @@ func (txn *KVTxn) BatchGet(ctx context.Context, keys []tidbkv.Key) (map[string][
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	return tidbkv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
+	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
 }
 
 // Set sets the value for key k as v into kv store.
@@ -262,9 +266,9 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	}
 
 	defer func() {
-		ctxValue := ctx.Value(execdetails.CommitDetailCtxKey)
+		ctxValue := ctx.Value(util.CommitDetailCtxKey)
 		if ctxValue != nil {
-			commitDetail := ctxValue.(**execdetails.CommitDetails)
+			commitDetail := ctxValue.(**util.CommitDetails)
 			if *commitDetail != nil {
 				(*commitDetail).TxnRetry++
 			} else {
@@ -405,9 +409,9 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 		}
 		if lockCtx.Stats != nil {
 			lockCtx.Stats.TotalTime = time.Since(startTime)
-			ctxValue := ctx.Value(execdetails.LockKeysDetailCtxKey)
+			ctxValue := ctx.Value(util.LockKeysDetailCtxKey)
 			if ctxValue != nil {
-				lockKeysDetail := ctxValue.(**execdetails.LockKeysDetails)
+				lockKeysDetail := ctxValue.(**util.LockKeysDetails)
 				*lockKeysDetail = lockCtx.Stats
 			}
 		}
@@ -460,7 +464,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 			assignedPrimaryKey = true
 		}
 
-		lockCtx.Stats = &execdetails.LockKeysDetails{
+		lockCtx.Stats = &util.LockKeysDetails{
 			LockKeys: int32(len(keys)),
 		}
 		bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
