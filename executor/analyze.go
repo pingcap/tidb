@@ -460,7 +460,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		}
 	}
 	if needCMS && topn.TotalCount() > 0 {
-		hist.RemoveIdxVals(topn.TopN)
+		hist.RemoveVals(topn.TopN)
 	}
 	if needCMS && cms != nil {
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
@@ -769,7 +769,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	if handleHist != nil {
 		handleHist.ID = e.commonHandle.ID
 		if handleTopn != nil && handleTopn.TotalCount() > 0 {
-			handleHist.RemoveIdxVals(handleTopn.TopN)
+			handleHist.RemoveVals(handleTopn.TopN)
 		}
 		if handleCms != nil {
 			handleCms.CalcDefaultValForAnalyze(uint64(handleHist.NDV))
@@ -1157,7 +1157,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 		snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
 	}
 	for _, t := range e.scanTasks {
-		iter, err := snapshot.Iter(t.StartKey, t.EndKey)
+		iter, err := snapshot.Iter(kv.Key(t.StartKey), kv.Key(t.EndKey))
 		if err != nil {
 			return keysSize, err
 		}
@@ -1191,7 +1191,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 		snapshot.SetOption(tikvstore.SampleStep, step)
 		kvMap := make(map[string][]byte)
 		var iter kv.Iterator
-		iter, *err = snapshot.Iter(task.StartKey, task.EndKey)
+		iter, *err = snapshot.Iter(kv.Key(task.StartKey), kv.Key(task.EndKey))
 		if *err != nil {
 			return
 		}
