@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -133,11 +134,11 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
 		if e.lock {
-			batchGetter = tikv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.ctx.GetSessionVars().EnablePointGetCache {
 			batchGetter = newCacheBatchGetter(e.ctx, e.tblInfo.ID, snapshot)
 		} else {
-			batchGetter = tikv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
+			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
 		}
 	}
 	e.snapshot = snapshot
