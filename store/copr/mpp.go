@@ -60,7 +60,8 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 	if req.KeyRanges == nil {
 		return c.selectAllTiFlashStore(), nil
 	}
-	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), tikv.NewKeyRanges(req.KeyRanges), kv.TiFlash)
+	ranges := toTiKVKeyRanges(req.KeyRanges)
+	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), ranges, kv.TiFlash)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
