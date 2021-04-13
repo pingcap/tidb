@@ -1631,6 +1631,42 @@ func (s *testSerialStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	c.Assert(globalStats.Count, Equals, int64(7))
 }
 
+func (s *testStatsSuite) TestMergeGlobalTopN(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_analyze_version=2;")
+	tk.MustExec("set @@session.tidb_partition_prune_mode='dynamic';")
+	tk.MustExec(`create table t (a int, b int, key(b)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+	);`)
+	tk.MustExec("insert into t values(1, 1), (1, 1), (1, 1), (1, 1), (2, 2), (2, 2), (3, 3), (3, 3), (3, 3), " +
+		"(11, 11), (11, 11), (11, 11), (12, 12), (12, 12), (12, 12), (13, 3), (13, 3);")
+	tk.MustExec("analyze table t with 2 topn;")
+	// The top2 values in partition p0 are 1(count = 4) and 3(count = 3).
+	tk.MustQuery("show stats_topn where table_name = 't' and column_name = 'b' and partition_name = 'p0';").Check(testkit.Rows(
+		("test t p0 b 0 1 4"),
+		("test t p0 b 0 3 3"),
+		("test t p0 b 1 1 4"),
+		("test t p0 b 1 3 3")))
+	// The top2 values in partition p1 are 11(count = 3) and 12(count = 3).
+	tk.MustQuery("show stats_topn where table_name = 't' and column_name = 'b' and partition_name = 'p1';").Check(testkit.Rows(
+		("test t p1 b 0 11 3"),
+		("test t p1 b 0 12 3"),
+		("test t p1 b 1 11 3"),
+		("test t p1 b 1 12 3")))
+	// The top2 values in global are 1(count = 4) and 3(count = 5).
+	// Notice: The value 3 does not appear in the topN structure of partition one.
+	// But we can still use the histogram to calculate its accurate value.
+	tk.MustQuery("show stats_topn where table_name = 't' and column_name = 'b' and partition_name = 'global';").Check(testkit.Rows(
+		("test t global b 0 1 4"),
+		("test t global b 0 3 5"),
+		("test t global b 1 1 4"),
+		("test t global b 1 3 5")))
+}
+
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)

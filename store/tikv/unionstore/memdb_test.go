@@ -32,7 +32,6 @@ import (
 type Key = tidbkv.Key
 type KeyFlags = kv.KeyFlags
 type StagingHandle = tidbkv.StagingHandle
-type Iterator = tidbkv.Iterator
 
 func init() {
 	testMode = true
@@ -836,7 +835,7 @@ func (s *testKVSuite) TestBufferBatchGetter(c *C) {
 	buffer.Set(ka, []byte("a2"))
 	buffer.Delete(kb)
 
-	batchGetter := tidbkv.NewBufferBatchGetter(buffer, middle, snap)
+	batchGetter := NewBufferBatchGetter(buffer, middle, snap)
 	result, err := batchGetter.BatchGet(context.Background(), []Key{ka, kb, kc, kd})
 	c.Assert(err, IsNil)
 	c.Assert(len(result), Equals, 3)
