@@ -21,7 +21,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
@@ -52,8 +51,8 @@ func (s *testSafePointSuite) beginTxn(c *C) tikv.TxnProbe {
 	return txn
 }
 
-func mymakeKeys(rowNum int, prefix string) []tidbkv.Key {
-	keys := make([]tidbkv.Key, 0, rowNum)
+func mymakeKeys(rowNum int, prefix string) [][]byte {
+	keys := make([][]byte, 0, rowNum)
 	for i := 0; i < rowNum; i++ {
 		k := encodeKey(prefix, s08d("key", i))
 		keys = append(keys, k)

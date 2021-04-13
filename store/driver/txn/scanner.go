@@ -14,6 +14,7 @@
 package txn
 
 import (
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 )
 
@@ -25,4 +26,8 @@ type tikvScanner struct {
 func (s *tikvScanner) Next() error {
 	err := s.Scanner.Next()
 	return extractKeyErr(err)
+}
+
+func (s *tikvScanner) Key() kv.Key {
+	return kv.Key(s.Scanner.Key())
 }

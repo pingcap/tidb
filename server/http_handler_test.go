@@ -179,6 +179,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionCommonHandleRange(c *C) {
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
 		StartKey: startKey,
+		EndKey:   nil,
 	}
 	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
