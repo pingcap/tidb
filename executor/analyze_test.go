@@ -282,7 +282,9 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 		cms.CalcDefaultValForAnalyze(2)
 	}
 	for _, idx := range tbl.Indices {
+		fmt.Println("[INDEX]", idx.Info.Name.L)
 		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
+		c.Assert(idx.Info.Name.L, Equals, "idx")
 		c.Assert(err, IsNil)
 		c.Assert(ok, IsTrue)
 		c.Assert(idx.CMSketch.Equal(cms), IsTrue)
