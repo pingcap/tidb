@@ -251,14 +251,14 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	tk := testkit.NewTestKit(c, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx(a, b))")
-	tk.MustExec("insert into t values(1, 1), (1, 1), (1, 2), (1, 2)")
+	tk.MustExec("drop table if exists t_analyze_index_extract_top_n")
+	tk.MustExec("create table t_analyze_index_extract_top_n(a int, b int, index idx(a, b))")
+	tk.MustExec("insert into t_analyze_index_extract_top_n values(1, 1), (1, 1), (1, 2), (1, 2)")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
-	tk.MustExec("analyze table t with 10 cmsketch width")
+	tk.MustExec("analyze table t_analyze_index_extract_top_n with 10 cmsketch width")
 
 	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_analyze_index_extract_top_n"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
@@ -282,9 +282,8 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 		cms.CalcDefaultValForAnalyze(2)
 	}
 	for _, idx := range tbl.Indices {
-		fmt.Println("[INDEX]", idx.Info.Name.L)
-		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
 		c.Assert(idx.Info.Name.L, Equals, "idx")
+		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
 		c.Assert(err, IsNil)
 		c.Assert(ok, IsTrue)
 		c.Assert(idx.CMSketch.Equal(cms), IsTrue)
