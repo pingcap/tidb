@@ -29,10 +29,8 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-type Key = tidbkv.Key
 type KeyFlags = kv.KeyFlags
 type StagingHandle = tidbkv.StagingHandle
-type Iterator = tidbkv.Iterator
 
 func init() {
 	testMode = true
@@ -67,7 +65,7 @@ func (s *testMemDBSuite) TestGetSet(c *C) {
 	var buf [4]byte
 	for i := 0; i < cnt; i++ {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		v, err := p.Get(context.TODO(), buf[:])
+		v, err := p.Get(buf[:])
 		c.Assert(err, IsNil)
 		c.Assert(v, BytesEquals, buf[:])
 	}
@@ -97,7 +95,7 @@ func (s *testMemDBSuite) TestIterator(c *C) {
 
 	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		c.Assert(it.Value(), BytesEquals, buf[:])
 		i++
 	}
@@ -106,7 +104,7 @@ func (s *testMemDBSuite) TestIterator(c *C) {
 	i--
 	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		c.Assert(it.Value(), BytesEquals, buf[:])
 		i--
 	}
@@ -127,7 +125,7 @@ func (s *testMemDBSuite) TestDiscard(c *C) {
 
 	for i := 0; i < cnt; i++ {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		v, err := db.Get(context.TODO(), buf[:])
+		v, err := db.Get(buf[:])
 		c.Assert(err, IsNil)
 		c.Assert(v, BytesEquals, buf[:])
 	}
@@ -135,7 +133,7 @@ func (s *testMemDBSuite) TestDiscard(c *C) {
 	var i int
 	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		c.Assert(it.Value(), BytesEquals, buf[:])
 		i++
 	}
@@ -144,7 +142,7 @@ func (s *testMemDBSuite) TestDiscard(c *C) {
 	i--
 	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		c.Assert(it.Value(), BytesEquals, buf[:])
 		i--
 	}
@@ -153,7 +151,7 @@ func (s *testMemDBSuite) TestDiscard(c *C) {
 	db.Cleanup(base)
 	for i := 0; i < cnt; i++ {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		_, err := db.Get(context.TODO(), buf[:])
+		_, err := db.Get(buf[:])
 		c.Assert(err, NotNil)
 	}
 	it1, _ := db.Iter(nil, nil)
@@ -182,7 +180,7 @@ func (s *testMemDBSuite) TestFlushOverwrite(c *C) {
 	for i := 0; i < cnt; i++ {
 		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
 		binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
-		v, err := db.Get(context.TODO(), kbuf[:])
+		v, err := db.Get(kbuf[:])
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, vbuf[:])
 	}
@@ -191,7 +189,7 @@ func (s *testMemDBSuite) TestFlushOverwrite(c *C) {
 	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
 		binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
-		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Key(), BytesEquals, kbuf[:])
 		c.Assert(it.Value(), BytesEquals, vbuf[:])
 		i++
 	}
@@ -201,7 +199,7 @@ func (s *testMemDBSuite) TestFlushOverwrite(c *C) {
 	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
 		binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
-		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Key(), BytesEquals, kbuf[:])
 		c.Assert(it.Value(), BytesEquals, vbuf[:])
 		i--
 	}
@@ -229,7 +227,7 @@ func (s *testMemDBSuite) TestComplexUpdate(c *C) {
 		if i >= keep {
 			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
 		}
-		v, err := db.Get(context.TODO(), kbuf[:])
+		v, err := db.Get(kbuf[:])
 		c.Assert(err, IsNil)
 		c.Assert(v, BytesEquals, vbuf[:])
 	}
@@ -257,7 +255,7 @@ func (s *testMemDBSuite) TestNestedSandbox(c *C) {
 		if i < 100 {
 			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
 		}
-		v, err := db.Get(context.TODO(), kbuf[:])
+		v, err := db.Get(kbuf[:])
 		c.Assert(err, IsNil)
 		c.Assert(v, BytesEquals, vbuf[:])
 	}
@@ -270,7 +268,7 @@ func (s *testMemDBSuite) TestNestedSandbox(c *C) {
 		if i < 100 {
 			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
 		}
-		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Key(), BytesEquals, kbuf[:])
 		c.Assert(it.Value(), BytesEquals, vbuf[:])
 		i++
 	}
@@ -283,7 +281,7 @@ func (s *testMemDBSuite) TestNestedSandbox(c *C) {
 		if i < 100 {
 			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
 		}
-		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Key(), BytesEquals, kbuf[:])
 		c.Assert(it.Value(), BytesEquals, vbuf[:])
 		i--
 	}
@@ -307,7 +305,7 @@ func (s *testMemDBSuite) TestOverwrite(c *C) {
 
 	for i := 0; i < cnt; i++ {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		val, _ := db.Get(context.TODO(), buf[:])
+		val, _ := db.Get(buf[:])
 		v := binary.BigEndian.Uint32(val)
 		if i%3 == 0 {
 			c.Assert(v, Equals, uint32(i*10))
@@ -320,7 +318,7 @@ func (s *testMemDBSuite) TestOverwrite(c *C) {
 
 	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		v := binary.BigEndian.Uint32(it.Value())
 		if i%3 == 0 {
 			c.Assert(v, Equals, uint32(i*10))
@@ -334,7 +332,7 @@ func (s *testMemDBSuite) TestOverwrite(c *C) {
 	i--
 	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Key(), BytesEquals, buf[:])
 		v := binary.BigEndian.Uint32(it.Value())
 		if i%3 == 0 {
 			c.Assert(v, Equals, uint32(i*10))
@@ -353,14 +351,14 @@ func (s *testMemDBSuite) TestKVLargeThanBlock(c *C) {
 	c.Assert(len(db.vlog.blocks), Equals, 2)
 	db.Set([]byte{3}, make([]byte, 3000))
 	c.Assert(len(db.vlog.blocks), Equals, 2)
-	val, err := db.Get(context.TODO(), []byte{3})
+	val, err := db.Get([]byte{3})
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Equals, 3000)
 }
 
 func (s *testMemDBSuite) TestEmptyDB(c *C) {
 	db := newMemDB()
-	_, err := db.Get(context.TODO(), []byte{0})
+	_, err := db.Get([]byte{0})
 	c.Assert(err, NotNil)
 	it1, _ := db.Iter(nil, nil)
 	it := it1.(*MemdbIterator)
@@ -375,7 +373,7 @@ func (s *testMemDBSuite) TestEmptyDB(c *C) {
 func (s *testMemDBSuite) TestReset(c *C) {
 	db := s.fillDB(1000)
 	db.Reset()
-	_, err := db.Get(context.TODO(), []byte{0, 0, 0, 0})
+	_, err := db.Get([]byte{0, 0, 0, 0})
 	c.Assert(err, NotNil)
 	it1, _ := db.Iter(nil, nil)
 	it := it1.(*MemdbIterator)
@@ -401,7 +399,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 	}
 	h3 := s.deriveAndFill(1000, 2000, 3, db)
 
-	db.InspectStage(h3, func(key Key, _ KeyFlags, val []byte) {
+	db.InspectStage(int(h3), func(key []byte, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -409,7 +407,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 		c.Assert(v-k, DeepEquals, 3)
 	})
 
-	db.InspectStage(h2, func(key Key, _ KeyFlags, val []byte) {
+	db.InspectStage(int(h2), func(key []byte, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -424,7 +422,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 	db.Cleanup(h3)
 	db.Release(h2)
 
-	db.InspectStage(h1, func(key Key, _ KeyFlags, val []byte) {
+	db.InspectStage(int(h1), func(key []byte, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -488,7 +486,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 	for i := uint32(0); i < cnt; i++ {
 		var buf [4]byte
 		binary.BigEndian.PutUint32(buf[:], i)
-		_, err := db.Get(context.TODO(), buf[:])
+		_, err := db.Get(buf[:])
 		c.Assert(err, NotNil)
 		flags, err := db.GetFlags(buf[:])
 		if i%2 == 0 {
@@ -523,7 +521,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 	for i := uint32(0); i < cnt; i++ {
 		var buf [4]byte
 		binary.BigEndian.PutUint32(buf[:], i)
-		_, err := db.Get(context.TODO(), buf[:])
+		_, err := db.Get(buf[:])
 		c.Assert(err, NotNil)
 
 		// UpdateFlags will create missing node.
@@ -542,20 +540,20 @@ func (s *testMemDBSuite) checkConsist(c *C, p1 *MemDB, p2 *leveldb.DB) {
 
 	var prevKey, prevVal []byte
 	for it2.First(); it2.Valid(); it2.Next() {
-		v, err := p1.Get(context.TODO(), it2.Key())
+		v, err := p1.Get(it2.Key())
 		c.Assert(err, IsNil)
 		c.Assert(v, BytesEquals, it2.Value())
 
-		c.Assert([]byte(it1.Key()), BytesEquals, it2.Key())
+		c.Assert(it1.Key(), BytesEquals, it2.Key())
 		c.Assert(it1.Value(), BytesEquals, it2.Value())
 
 		it, _ := p1.Iter(it2.Key(), nil)
-		c.Assert([]byte(it.Key()), BytesEquals, it2.Key())
+		c.Assert(it.Key(), BytesEquals, it2.Key())
 		c.Assert(it.Value(), BytesEquals, it2.Value())
 
 		if prevKey != nil {
 			it, _ = p1.IterReverse(it2.Key())
-			c.Assert([]byte(it.Key()), BytesEquals, prevKey)
+			c.Assert(it.Key(), BytesEquals, prevKey)
 			c.Assert(it.Value(), BytesEquals, prevVal)
 		}
 
@@ -566,7 +564,7 @@ func (s *testMemDBSuite) checkConsist(c *C, p1 *MemDB, p2 *leveldb.DB) {
 
 	it1, _ = p1.IterReverse(nil)
 	for it2.Last(); it2.Valid(); it2.Prev() {
-		c.Assert([]byte(it1.Key()), BytesEquals, it2.Key())
+		c.Assert(it1.Key(), BytesEquals, it2.Key())
 		c.Assert(it1.Value(), BytesEquals, it2.Value())
 		it1.Next()
 	}
@@ -637,7 +635,7 @@ func checkNewIterator(c *C, buffer *MemDB) {
 		val := encodeInt(i * indexStep)
 		iter, err := buffer.Iter(val, nil)
 		c.Assert(err, IsNil)
-		c.Assert([]byte(iter.Key()), BytesEquals, val)
+		c.Assert(iter.Key(), BytesEquals, val)
 		c.Assert(decodeInt([]byte(valToStr(c, iter))), Equals, i*indexStep)
 		iter.Close()
 	}
@@ -647,7 +645,7 @@ func checkNewIterator(c *C, buffer *MemDB) {
 		val := encodeInt(i * indexStep)
 		iter, err := buffer.Iter(val, nil)
 		c.Assert(err, IsNil)
-		c.Assert([]byte(iter.Key()), BytesEquals, val)
+		c.Assert(iter.Key(), BytesEquals, val)
 		c.Assert(valToStr(c, iter), Equals, string(val))
 
 		err = iter.Next()
@@ -655,7 +653,7 @@ func checkNewIterator(c *C, buffer *MemDB) {
 		c.Assert(iter.Valid(), IsTrue)
 
 		val = encodeInt((i + 1) * indexStep)
-		c.Assert([]byte(iter.Key()), BytesEquals, val)
+		c.Assert(iter.Key(), BytesEquals, val)
 		c.Assert(valToStr(c, iter), Equals, string(val))
 		iter.Close()
 	}
@@ -672,15 +670,15 @@ func checkNewIterator(c *C, buffer *MemDB) {
 	iter, err = buffer.Iter(inBetween, nil)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Valid(), IsTrue)
-	c.Assert([]byte(iter.Key()), Not(BytesEquals), inBetween)
-	c.Assert([]byte(iter.Key()), BytesEquals, last)
+	c.Assert(iter.Key(), Not(BytesEquals), inBetween)
+	c.Assert(iter.Key(), BytesEquals, last)
 	iter.Close()
 }
 
 func mustGet(c *C, buffer *MemDB) {
 	for i := startIndex; i < testCount; i++ {
 		s := encodeInt(i * indexStep)
-		val, err := buffer.Get(context.TODO(), s)
+		val, err := buffer.Get(s)
 		c.Assert(err, IsNil)
 		c.Assert(string(val), Equals, string(s))
 	}
@@ -709,6 +707,23 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 	s.ResetMembuffers()
 }
 
+// FnKeyCmp is the function for iterator the keys
+type FnKeyCmp func(key []byte) bool
+
+// TODO: remove it since it is duplicated with kv.NextUtil
+// NextUntil applies FnKeyCmp to each entry of the iterator until meets some condition.
+// It will stop when fn returns true, or iterator is invalid or an error occurs.
+func NextUntil(it Iterator, fn FnKeyCmp) error {
+	var err error
+	for it.Valid() && !fn(it.Key()) {
+		err = it.Next()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *testKVSuite) TestIterNextUntil(c *C) {
 	defer testleak.AfterTest(c)()
 	buffer := newMemDB()
@@ -717,7 +732,7 @@ func (s *testKVSuite) TestIterNextUntil(c *C) {
 	iter, err := buffer.Iter(nil, nil)
 	c.Assert(err, IsNil)
 
-	err = tidbkv.NextUntil(iter, func(k Key) bool {
+	err = NextUntil(iter, func(k []byte) bool {
 		return false
 	})
 	c.Assert(err, IsNil)
@@ -764,7 +779,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 
 		it, err = buffer.Iter([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"), nil)
 		c.Assert(err, IsNil)
-		c.Assert(string([]byte(it.Key())), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
+		c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
 	}
 	s.ResetMembuffers()
 }
@@ -782,17 +797,17 @@ func (s *testKVSuite) TestMemDBStaging(c *C) {
 	err = buffer.Set([]byte("yz"), make([]byte, 1))
 	c.Assert(err, IsNil)
 
-	v, _ := buffer.Get(context.Background(), []byte("x"))
+	v, _ := buffer.Get([]byte("x"))
 	c.Assert(len(v), Equals, 3)
 
 	buffer.Release(h2)
 
-	v, _ = buffer.Get(context.Background(), []byte("yz"))
+	v, _ = buffer.Get([]byte("yz"))
 	c.Assert(len(v), Equals, 1)
 
 	buffer.Cleanup(h1)
 
-	v, _ = buffer.Get(context.Background(), []byte("x"))
+	v, _ = buffer.Get([]byte("x"))
 	c.Assert(len(v), Equals, 2)
 }
 
@@ -836,8 +851,8 @@ func (s *testKVSuite) TestBufferBatchGetter(c *C) {
 	buffer.Set(ka, []byte("a2"))
 	buffer.Delete(kb)
 
-	batchGetter := tidbkv.NewBufferBatchGetter(buffer, middle, snap)
-	result, err := batchGetter.BatchGet(context.Background(), []Key{ka, kb, kc, kd})
+	batchGetter := NewBufferBatchGetter(buffer, middle, snap)
+	result, err := batchGetter.BatchGet(context.Background(), [][]byte{ka, kb, kc, kd})
 	c.Assert(err, IsNil)
 	c.Assert(len(result), Equals, 3)
 	c.Assert(string(result[string(ka)]), Equals, "a2")

@@ -11,11 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -32,7 +34,7 @@ import (
 
 type testSnapshotSuite struct {
 	OneByOneSuite
-	store   *KVStore
+	store   tikv.StoreProbe
 	prefix  string
 	rowNums []int
 }
@@ -41,7 +43,7 @@ var _ = Suite(&testSnapshotSuite{})
 
 func (s *testSnapshotSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c)
+	s.store = tikv.StoreProbe{KVStore: NewTestStore(c)}
 	s.prefix = fmt.Sprintf("snapshot_%d", time.Now().Unix())
 	s.rowNums = append(s.rowNums, 1, 100, 191)
 }
@@ -65,15 +67,15 @@ func (s *testSnapshotSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSnapshotSuite) beginTxn(c *C) *KVTxn {
+func (s *testSnapshotSuite) beginTxn(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	return txn
 }
 
-func (s *testSnapshotSuite) checkAll(keys []tidbkv.Key, c *C) {
+func (s *testSnapshotSuite) checkAll(keys [][]byte, c *C) {
 	txn := s.beginTxn(c)
-	snapshot := newTiKVSnapshot(s.store, txn.StartTS(), 0)
+	snapshot := txn.GetSnapshot()
 	m, err := snapshot.BatchGet(context.Background(), keys)
 	c.Assert(err, IsNil)
 
@@ -95,7 +97,7 @@ func (s *testSnapshotSuite) checkAll(keys []tidbkv.Key, c *C) {
 	c.Assert(m, HasLen, cnt)
 }
 
-func (s *testSnapshotSuite) deleteKeys(keys []tidbkv.Key, c *C) {
+func (s *testSnapshotSuite) deleteKeys(keys [][]byte, c *C) {
 	txn := s.beginTxn(c)
 	for _, k := range keys {
 		err := txn.Delete(k)
@@ -128,21 +130,21 @@ type contextKey string
 
 func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	txn := s.beginTxn(c)
-	c.Assert(txn.Set(tidbkv.Key("x"), []byte("x")), IsNil)
-	c.Assert(txn.Delete(tidbkv.Key("y")), IsNil) // store data is affected by other tests.
+	c.Assert(txn.Set([]byte("x"), []byte("x")), IsNil)
+	c.Assert(txn.Delete([]byte("y")), IsNil) // store data is affected by other tests.
 	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	txn = s.beginTxn(c)
-	snapshot := newTiKVSnapshot(s.store, txn.StartTS(), 0)
-	_, err := snapshot.BatchGet(context.Background(), []tidbkv.Key{tidbkv.Key("x"), tidbkv.Key("y")})
+	snapshot := txn.GetSnapshot()
+	_, err := snapshot.BatchGet(context.Background(), [][]byte{[]byte("x"), []byte("y")})
 	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail", `return(true)`), IsNil)
 	ctx := context.WithValue(context.Background(), contextKey("TestSnapshotCache"), true)
-	_, err = snapshot.Get(ctx, tidbkv.Key("x"))
+	_, err = snapshot.Get(ctx, []byte("x"))
 	c.Assert(err, IsNil)
 
-	_, err = snapshot.Get(ctx, tidbkv.Key("y"))
+	_, err = snapshot.Get(ctx, []byte("y"))
 	c.Assert(tidbkv.IsErrNotFound(err), IsTrue)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail"), IsNil)
@@ -162,14 +164,14 @@ func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {
 		c.Assert(err, IsNil)
 
 		keys := makeKeys(rowNum, s.prefix)
-		keys = append(keys, tidbkv.Key("noSuchKey"))
+		keys = append(keys, []byte("noSuchKey"))
 		s.checkAll(keys, c)
 		s.deleteKeys(keys, c)
 	}
 }
 
-func makeKeys(rowNum int, prefix string) []tidbkv.Key {
-	keys := make([]tidbkv.Key, 0, rowNum)
+func makeKeys(rowNum int, prefix string) [][]byte {
+	keys := make([][]byte, 0, rowNum)
 	for i := 0; i < rowNum; i++ {
 		k := encodeKey(prefix, s08d("key", i))
 		keys = append(keys, k)
@@ -177,102 +179,62 @@ func makeKeys(rowNum int, prefix string) []tidbkv.Key {
 	return keys
 }
 
-func (s *testSnapshotSuite) TestWriteConflictPrettyFormat(c *C) {
-	conflict := &pb.WriteConflict{
-		StartTs:          399402937522847774,
-		ConflictTs:       399402937719455772,
-		ConflictCommitTs: 399402937719455773,
-		Key:              []byte{116, 128, 0, 0, 0, 0, 0, 1, 155, 95, 105, 128, 0, 0, 0, 0, 0, 0, 1, 1, 82, 87, 48, 49, 0, 0, 0, 0, 251, 1, 55, 54, 56, 50, 50, 49, 49, 48, 255, 57, 0, 0, 0, 0, 0, 0, 0, 248, 1, 0, 0, 0, 0, 0, 0, 0, 0, 247},
-		Primary:          []byte{116, 128, 0, 0, 0, 0, 0, 1, 155, 95, 105, 128, 0, 0, 0, 0, 0, 0, 1, 1, 82, 87, 48, 49, 0, 0, 0, 0, 251, 1, 55, 54, 56, 50, 50, 49, 49, 48, 255, 57, 0, 0, 0, 0, 0, 0, 0, 248, 1, 0, 0, 0, 0, 0, 0, 0, 0, 247},
-	}
-
-	expectedStr := "[kv:9007]Write conflict, " +
-		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
-		"key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
-		"primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
-		tidbkv.TxnRetryableMark
-	c.Assert(newWriteConflictError(conflict).Error(), Equals, expectedStr)
-
-	conflict = &pb.WriteConflict{
-		StartTs:          399402937522847774,
-		ConflictTs:       399402937719455772,
-		ConflictCommitTs: 399402937719455773,
-		Key:              []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe},
-		Primary:          []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe},
-	}
-	expectedStr = "[kv:9007]Write conflict, " +
-		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
-		"key={metaKey=true, key=DB:56, field=TID:108} " +
-		"primary={metaKey=true, key=DB:56, field=TID:108} " +
-		tidbkv.TxnRetryableMark
-	c.Assert(newWriteConflictError(conflict).Error(), Equals, expectedStr)
-}
-
-func (s *testSnapshotSuite) TestLockNotFoundPrint(c *C) {
-	msg := "Txn(Mvcc(TxnLockNotFound { start_ts: 408090278408224772, commit_ts: 408090279311835140, " +
-		"key: [116, 128, 0, 0, 0, 0, 0, 50, 137, 95, 105, 128, 0, 0, 0, 0,0 ,0, 1, 1, 67, 49, 57, 48, 57, 50, 57, 48, 255, 48, 48, 48, 48, 48, 52, 56, 54, 255, 50, 53, 53, 50, 51, 0, 0, 0, 252] }))"
-	key := prettyLockNotFoundKey(msg)
-	c.Assert(key, Equals, "{tableID=12937, indexID=1, indexValues={C19092900000048625523, }}")
-}
-
 func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
-	x := tidbkv.Key("x_key_TestSkipLargeTxnLock")
-	y := tidbkv.Key("y_key_TestSkipLargeTxnLock")
+	x := []byte("x_key_TestSkipLargeTxnLock")
+	y := []byte("y_key_TestSkipLargeTxnLock")
 	txn := s.beginTxn(c)
 	c.Assert(txn.Set(x, []byte("x")), IsNil)
 	c.Assert(txn.Set(y, []byte("y")), IsNil)
 	ctx := context.Background()
-	bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
-	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+	committer, err := txn.NewCommitter(0)
 	c.Assert(err, IsNil)
-	committer.lockTTL = 3000
-	c.Assert(committer.prewriteMutations(bo, committer.mutations), IsNil)
+	committer.SetLockTTL(3000)
+	c.Assert(committer.PrewriteAllMutations(ctx), IsNil)
 
 	txn1 := s.beginTxn(c)
 	// txn1 is not blocked by txn in the large txn protocol.
 	_, err = txn1.Get(ctx, x)
 	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)
 
-	res, err := txn1.BatchGet(ctx, []tidbkv.Key{x, y, tidbkv.Key("z")})
+	res, err := txn1.BatchGet(ctx, [][]byte{x, y, []byte("z")})
 	c.Assert(err, IsNil)
 	c.Assert(res, HasLen, 0)
 
 	// Commit txn, check the final commit ts is pushed.
-	committer.commitTS = txn.StartTS() + 1
-	c.Assert(committer.commitMutations(bo, committer.mutations), IsNil)
-	status, err := s.store.lockResolver.GetTxnStatus(txn.StartTS(), 0, x)
+	committer.SetCommitTS(txn.StartTS() + 1)
+	c.Assert(committer.CommitMutations(ctx), IsNil)
+	status, err := s.store.GetLockResolver().GetTxnStatus(txn.StartTS(), 0, x)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsTrue)
 	c.Assert(status.CommitTS(), Greater, txn1.StartTS())
 }
 
 func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
-	x := tidbkv.Key("x_key_TestPointGetSkipTxnLock")
-	y := tidbkv.Key("y_key_TestPointGetSkipTxnLock")
+	x := []byte("x_key_TestPointGetSkipTxnLock")
+	y := []byte("y_key_TestPointGetSkipTxnLock")
 	txn := s.beginTxn(c)
 	c.Assert(txn.Set(x, []byte("x")), IsNil)
 	c.Assert(txn.Set(y, []byte("y")), IsNil)
 	ctx := context.Background()
-	bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
-	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+	committer, err := txn.NewCommitter(0)
 	c.Assert(err, IsNil)
-	committer.lockTTL = 3000
-	c.Assert(committer.prewriteMutations(bo, committer.mutations), IsNil)
+	committer.SetLockTTL(3000)
+	c.Assert(committer.PrewriteAllMutations(ctx), IsNil)
 
-	snapshot := newTiKVSnapshot(s.store, maxTimestamp, 0)
+	snapshot := s.store.GetSnapshot(math.MaxUint64)
 	start := time.Now()
-	c.Assert(committer.primary(), BytesEquals, []byte(x))
+	c.Assert(committer.GetPrimaryKey(), BytesEquals, x)
 	// Point get secondary key. Shouldn't be blocked by the lock and read old data.
 	_, err = snapshot.Get(ctx, y)
 	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)
 	c.Assert(time.Since(start), Less, 500*time.Millisecond)
 
 	// Commit the primary key
-	committer.commitTS = txn.StartTS() + 1
-	err = committer.commitMutations(bo, committer.mutationsOfKeys([][]byte{committer.primary()}))
+	committer.SetCommitTS(txn.StartTS() + 1)
+	err = committer.CommitMutations(ctx)
 	c.Assert(err, IsNil)
 
-	snapshot = newTiKVSnapshot(s.store, maxTimestamp, 0)
+	snapshot = s.store.GetSnapshot(math.MaxUint64)
 	start = time.Now()
 	// Point get secondary key. Should read committed data.
 	value, err := snapshot.Get(ctx, y)
@@ -283,13 +245,13 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 
 func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
 	txn := s.beginTxn(c)
-	key := tidbkv.Key("key_test_snapshot_threadsafe")
+	key := []byte("key_test_snapshot_threadsafe")
 	c.Assert(txn.Set(key, []byte("x")), IsNil)
 	ctx := context.Background()
 	err := txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	snapshot := newTiKVSnapshot(s.store, maxTimestamp, 0)
+	snapshot := s.store.GetSnapshot(math.MaxUint64)
 	var wg sync.WaitGroup
 	wg.Add(5)
 	for i := 0; i < 5; i++ {
@@ -297,7 +259,7 @@ func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
 			for i := 0; i < 30; i++ {
 				_, err := snapshot.Get(ctx, key)
 				c.Assert(err, IsNil)
-				_, err = snapshot.BatchGet(ctx, []tidbkv.Key{key, tidbkv.Key("key_not_exist")})
+				_, err = snapshot.BatchGet(ctx, [][]byte{key, []byte("key_not_exist")})
 				c.Assert(err, IsNil)
 			}
 			wg.Done()
@@ -307,20 +269,20 @@ func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
 }
 
 func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
-	reqStats := NewRegionRequestRuntimeStats()
-	RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Second)
-	RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Millisecond)
-	snapshot := newTiKVSnapshot(s.store, 0, 0)
-	snapshot.SetOption(kv.CollectRuntimeStats, &SnapshotRuntimeStats{})
-	snapshot.mergeRegionRequestStats(reqStats.Stats)
-	snapshot.mergeRegionRequestStats(reqStats.Stats)
-	bo := NewBackofferWithVars(context.Background(), 2000, nil)
-	err := bo.BackoffWithMaxSleep(BoTxnLockFast, 30, errors.New("test"))
+	reqStats := tikv.NewRegionRequestRuntimeStats()
+	tikv.RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Second)
+	tikv.RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Millisecond)
+	snapshot := s.store.GetSnapshot(0)
+	snapshot.SetOption(kv.CollectRuntimeStats, &tikv.SnapshotRuntimeStats{})
+	snapshot.MergeRegionRequestStats(reqStats.Stats)
+	snapshot.MergeRegionRequestStats(reqStats.Stats)
+	bo := tikv.NewBackofferWithVars(context.Background(), 2000, nil)
+	err := bo.BackoffWithMaxSleep(tikv.BoTxnLockFast, 30, errors.New("test"))
 	c.Assert(err, IsNil)
-	snapshot.recordBackoffInfo(bo)
-	snapshot.recordBackoffInfo(bo)
+	snapshot.RecordBackoffInfo(bo)
+	snapshot.RecordBackoffInfo(bo)
 	expect := "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}"
-	c.Assert(snapshot.mu.stats.String(), Equals, expect)
+	c.Assert(snapshot.FormatStats(), Equals, expect)
 	detail := &pb.ExecDetailsV2{
 		TimeDetail: &pb.TimeDetail{
 			WaitWallTimeMs:    100,
@@ -336,7 +298,7 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 			RocksdbBlockCacheHitCount: 10,
 		},
 	}
-	snapshot.mergeExecDetail(detail)
+	snapshot.MergeExecDetail(detail)
 	expect = "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}, " +
 		"total_process_time: 100ms, total_wait_time: 100ms, " +
 		"scan_detail: {total_process_keys: 10, " +
@@ -344,8 +306,8 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 		"rocksdb: {delete_skipped_count: 5, " +
 		"key_skipped_count: 1, " +
 		"block: {cache_hit_count: 10, read_count: 20, read_byte: 15 Bytes}}}"
-	c.Assert(snapshot.mu.stats.String(), Equals, expect)
-	snapshot.mergeExecDetail(detail)
+	c.Assert(snapshot.FormatStats(), Equals, expect)
+	snapshot.MergeExecDetail(detail)
 	expect = "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}, " +
 		"total_process_time: 200ms, total_wait_time: 200ms, " +
 		"scan_detail: {total_process_keys: 20, " +
@@ -353,5 +315,5 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 		"rocksdb: {delete_skipped_count: 10, " +
 		"key_skipped_count: 2, " +
 		"block: {cache_hit_count: 20, read_count: 40, read_byte: 30 Bytes}}}"
-	c.Assert(snapshot.mu.stats.String(), Equals, expect)
+	c.Assert(snapshot.FormatStats(), Equals, expect)
 }

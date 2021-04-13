@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/util"
 )
 
@@ -102,7 +103,8 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = t1.Commit(ctx)
 	c.Assert(err, NotNil)
-	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("%s", errors.ErrorStack(err)))
+	_, ok := errors.Cause(err).(*tikverr.ErrWriteConflict)
+	c.Assert(ok, IsTrue, Commentf("%s", errors.ErrorStack(err)))
 }
 
 func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
@@ -157,13 +159,13 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte("i"))
 	c.Assert(err, IsNil)
-	c.Assert([]byte(loc.StartKey), BytesEquals, []byte("h"))
-	c.Assert([]byte(loc.EndKey), BytesEquals, []byte("o"))
+	c.Assert(loc.StartKey, BytesEquals, []byte("h"))
+	c.Assert(loc.EndKey, BytesEquals, []byte("o"))
 
 	loc, err = s.store.GetRegionCache().LocateKey(bo, []byte("p"))
 	c.Assert(err, IsNil)
-	c.Assert([]byte(loc.StartKey), BytesEquals, []byte("o"))
-	c.Assert([]byte(loc.EndKey), BytesEquals, []byte("u"))
+	c.Assert(loc.StartKey, BytesEquals, []byte("o"))
+	c.Assert(loc.EndKey, BytesEquals, []byte("u"))
 
 	var sessionID uint64 = 0
 	test := func(keys []string, values []string) {
