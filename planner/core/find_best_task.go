@@ -43,6 +43,10 @@ const (
 	// of a Selection or a JoinCondition, we can use this default value.
 	SelectionFactor = 0.8
 	distinctFactor  = 0.8
+
+	// When scan row count is small, the performance gap between asc and
+	// desc is not big. So we can use scanFactor to build suitable plan.
+	smallScanThreshold = 10000
 )
 
 var aggFuncFactor = map[string]float64{
@@ -1810,7 +1814,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	if isMatchProp {
 		ts.Desc = prop.SortItems[0].Desc
 		// When the rowCount is small, the performance gap between scan and desc scan is not big.
-		if prop.SortItems[0].Desc && rowCount >= 10000 {
+		if prop.SortItems[0].Desc && rowCount >= smallScanThreshold {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		ts.KeepOrder = true
@@ -1863,7 +1867,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	if isMatchProp {
 		is.Desc = prop.SortItems[0].Desc
 		// When the rowCount is small, the performance gap between scan and desc scan is not big.
-		if prop.SortItems[0].Desc && rowCount >= 10000 {
+		if prop.SortItems[0].Desc && rowCount >= smallScanThreshold {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		is.KeepOrder = true
