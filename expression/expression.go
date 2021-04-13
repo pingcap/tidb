@@ -1001,11 +1001,17 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, /*ast.Mod,*/
 		ast.If, ast.Ifnull, ast.Case,
-		ast.Substr, ast.Substring,
 		ast.Month,
 		ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
 		ast.JSONLength:
 		return true
+	case ast.Substr, ast.Substring:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_Substring2ArgsUTF8,
+			tipb.ScalarFuncSig_Substring3ArgsUTF8:
+			ret = true
+		}
 	case ast.Cast:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastIntAsTime,
