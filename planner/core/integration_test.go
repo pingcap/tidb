@@ -349,9 +349,6 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	}
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
-=======
 func (s *testIntegrationSerialSuite) TestPushDownToTiFlashWithKeepOrder(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -389,8 +386,7 @@ func (s *testIntegrationSerialSuite) TestPushDownToTiFlashWithKeepOrder(c *C) {
 	}
 }
 
-func (s *testIntegrationSerialSuite) TestMPPJoin(c *C) {
->>>>>>> 91dcc753f... planner: do not push down to TiFlash if the table scan require to scan data in desc order (#23948)
+func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists d1_t")
