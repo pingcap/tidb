@@ -55,7 +55,8 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -141,7 +142,8 @@ func (s *testPrepareSerialSuite) TestPrepareCacheIndexScan(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -169,7 +171,8 @@ func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -201,13 +204,15 @@ func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 		c.Check(err, IsNil)
 		execPlan, ok := p.(*core.Execute)
 		c.Check(ok, IsTrue)
-		executor.ResetContextOfStmt(tk.Se, stmt)
+		err = executor.ResetContextOfStmt(tk.Se, stmt)
+		c.Assert(err, IsNil)
 		err = execPlan.OptimizePreparedPlan(ctx, tk.Se, is)
 		c.Check(err, IsNil)
 		planStr[i] = core.ToString(execPlan.Plan)
 		c.Check(planStr[i], Matches, expectedPattern, Commentf("for %dth %s", i, sql1))
 		pb := &dto.Metric{}
-		counter.Write(pb)
+		err = counter.Write(pb)
+		c.Assert(err, IsNil)
 		cnt[i] = pb.GetCounter().GetValue()
 		c.Check(cnt[i], Equals, float64(i))
 		time.Sleep(time.Millisecond * 10)
@@ -223,7 +228,8 @@ func (s *testPrepareSerialSuite) TestPrepareCacheNow(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -250,7 +256,8 @@ func (s *testPrepareSerialSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 	}()
 	tk.MustExec("use test")
 
@@ -288,7 +295,8 @@ func (s *testPrepareSerialSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 			c.Assert(terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached), IsTrue)
 			break
 		}
-		tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
+		_, err = tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
+		c.Assert(err, IsNil)
 	}
 }
 
@@ -301,7 +309,8 @@ func (s *testPrepareSerialSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) 
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -338,7 +347,11 @@ func readGaugeInt(g prometheus.Gauge) int {
 	g.Collect(ch)
 	m := <-ch
 	mm := &dto.Metric{}
-	m.Write(mm)
+	err := m.Write(mm)
+	if err != nil {
+		panic(err)
+	}
+
 	return int(mm.GetGauge().GetValue())
 }
 
@@ -350,7 +363,8 @@ func (s *testPrepareSuite) TestPrepareWithWindowFunction(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 	}()
 	tk.MustExec("set @@tidb_enable_window_function = 1")
 	defer func() {
@@ -375,7 +389,8 @@ func (s *testPrepareSuite) TestPrepareWithSnapshot(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 	}()
 
 	safePointName := "tikv_gc_safe_point"
@@ -408,7 +423,8 @@ func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -453,7 +469,8 @@ func (s *testPrepareSerialSuite) TestPrepareCacheForPartition(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -590,7 +607,8 @@ func (s *testPrepareSerialSuite) TestConstPropAndPPDWithCache(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -695,7 +713,8 @@ func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -718,7 +737,8 @@ func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
 	tk.MustExec("begin")
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	cnt := pb.GetCounter().GetValue()
 	c.Check(cnt, Equals, float64(1))
 	tk.MustExec("insert into t1 values(1)")
@@ -726,7 +746,8 @@ func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows(
 		"1",
 	))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	cnt = pb.GetCounter().GetValue()
 	c.Check(cnt, Equals, float64(1))
 	tk.MustExec("insert into t2 values(1)")
@@ -734,13 +755,15 @@ func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows(
 		"1",
 	))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	cnt = pb.GetCounter().GetValue()
 	c.Check(cnt, Equals, float64(2))
 	tk.MustExec("rollback")
 	// Though cached plan contains UnionScan, it does not impact correctness, so it is reused.
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	cnt = pb.GetCounter().GetValue()
 	c.Check(cnt, Equals, float64(3))
 
@@ -748,7 +771,8 @@ func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
 	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
 	tk.MustExec("begin")
 	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	cnt = pb.GetCounter().GetValue()
 	c.Check(cnt, Equals, float64(4))
 	tk.MustExec("insert into t1 values(1)")
@@ -756,7 +780,8 @@ func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
 	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows(
 		"1 <nil>",
 	))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	cnt = pb.GetCounter().GetValue()
 	c.Check(cnt, Equals, float64(4))
 	tk.MustExec("insert into t2 values(1)")
@@ -764,20 +789,23 @@ func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
 	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows(
 		"1 1",
 	))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	cnt = pb.GetCounter().GetValue()
 	c.Check(cnt, Equals, float64(4))
 	// Cached plan is reused.
 	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows(
 		"1 1",
 	))
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	cnt = pb.GetCounter().GetValue()
 	c.Check(cnt, Equals, float64(5))
 	tk.MustExec("rollback")
 	// Though cached plan contains UnionScan, it does not impact correctness, so it is reused.
 	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	cnt = pb.GetCounter().GetValue()
 	c.Check(cnt, Equals, float64(6))
 }
@@ -790,7 +818,8 @@ func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -832,7 +861,8 @@ func (s *testPlanSerialSuite) TestPlanCacheUnsignedHandleOverflow(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -865,7 +895,8 @@ func (s *testPlanSerialSuite) TestIssue18066(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -901,7 +932,8 @@ func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 	}()
 
 	tk.MustExec("use test")
@@ -932,7 +964,8 @@ func (s *testPrepareSuite) TestInvisibleIndex(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 	}()
 
 	tk.MustExec("use test")
@@ -967,7 +1000,8 @@ func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -993,7 +1027,8 @@ func (s *testPlanSerialSuite) TestPlanCacheSnapshot(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
-		store.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
