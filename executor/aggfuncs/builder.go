@@ -68,6 +68,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildVarSamp(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevSamp:
 		return buildStddevSamp(aggFuncDesc, ordinal)
+	case ast.AggFuncJsonArrayagg:
+		return buildJSONArrayAgg(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -626,6 +628,20 @@ func buildJSONObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFu
 		return nil
 	default:
 		return &jsonObjectAgg{base}
+	}
+}
+
+// buildJSONArrayAgg builds the AggFunc implementation for function "json_arrayagg".
+func buildJSONArrayAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		return &jsonArrayAgg{base}
 	}
 }
 

@@ -105,6 +105,9 @@ var (
 
 	// All the AggFunc implementations for "JSON_OBJECTAGG" are listed here
 	_ AggFunc = (*jsonObjectAgg)(nil)
+
+	// All the AggFunc implementations for "JSON_ARRAYAGG" are listed here
+	_ AggFunc = (*jsonArrayAgg)(nil)
 )
 
 const (

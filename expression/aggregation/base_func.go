@@ -117,6 +117,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4PopOrSamp(ctx)
 	case ast.AggFuncJsonObjectAgg:
 		a.typeInfer4JsonFuncs(ctx)
+	case ast.AggFuncJsonArrayagg:
+		a.typeInfer4JsonFuncs(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -363,6 +365,7 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncFirstRow:            {},
 	ast.WindowFuncNtile:            {},
 	ast.AggFuncJsonObjectAgg:       {},
+	ast.AggFuncJsonArrayagg:        {},
 }
 
 // WrapCastAsDecimalForAggArgs wraps the args of some specific aggregate functions
