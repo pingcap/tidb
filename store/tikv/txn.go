@@ -67,6 +67,8 @@ type KVTxn struct {
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info tidbkv.TxnInfo, err error)
+
+	binlog BinlogExecutor
 }
 
 func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
@@ -135,6 +137,11 @@ func (txn *KVTxn) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
 	return ret, nil
 }
 
+// NewBufferBatchGetter creates a new BufferBatchGetter.
+func NewBufferBatchGetter(buffer unionstore.BatchBufferGetter, middleCache unionstore.Getter, snapshot unionstore.BatchGetter) *unionstore.BufferBatchGetter {
+	return unionstore.NewBufferBatchGetter(buffer, middleCache, snapshot)
+}
+
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 // Do not use len(value) == 0 or value == nil to represent non-exist.
 // If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
@@ -144,7 +151,7 @@ func (txn *KVTxn) BatchGet(ctx context.Context, keys []tidbkv.Key) (map[string][
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	return tidbkv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
+	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
 }
 
 // Set sets the value for key k as v into kv store.
@@ -163,12 +170,12 @@ func (txn *KVTxn) String() string {
 // If such entry is not found, it returns an invalid Iterator with no error.
 // It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 // The Iterator must be Closed after use.
-func (txn *KVTxn) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
+func (txn *KVTxn) Iter(k tidbkv.Key, upperBound tidbkv.Key) (unionstore.Iterator, error) {
 	return txn.us.Iter(k, upperBound)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (txn *KVTxn) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
+func (txn *KVTxn) IterReverse(k tidbkv.Key) (unionstore.Iterator, error) {
 	return txn.us.IterReverse(k)
 }
 
@@ -631,4 +638,14 @@ func (txn *KVTxn) GetMemBuffer() *unionstore.MemDB {
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *KVTxn) GetSnapshot() *KVSnapshot {
 	return txn.snapshot
+}
+
+// SetBinlogExecutor sets the method to perform binlong synchronization.
+func (txn *KVTxn) SetBinlogExecutor(binlog BinlogExecutor) {
+	txn.binlog = binlog
+}
+
+// GetClusterID returns store's cluster id.
+func (txn *KVTxn) GetClusterID() uint64 {
+	return txn.store.clusterID
 }
