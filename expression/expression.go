@@ -1028,7 +1028,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.Round:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundDec:
+		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal:
 			return true
 		}
 	case ast.Extract:

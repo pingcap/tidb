@@ -737,6 +737,14 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeDouble), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
 	c.Assert(canPush, Equals, true)
 
@@ -758,6 +766,11 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 
 	// ExtractDatetimeFromString: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// RoundDecimal: can not be pushed
+	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
