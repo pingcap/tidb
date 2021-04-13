@@ -694,21 +694,34 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				p: dual,
 			}, cntPlan, nil
 		}
-		canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
-		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
-		if !candidate.path.IsIntHandlePath {
-			canConvertPointGet = canConvertPointGet &&
-				candidate.path.Index.Unique && !candidate.path.Index.HasPrefixIndex()
-			idxColsLen := len(candidate.path.Index.Columns)
-			for _, ran := range candidate.path.Ranges {
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType != kv.TiFlash
+		if canConvertPointGet && !path.IsIntHandlePath {
+			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
+			canConvertPointGet = path.Index.Unique && !path.Index.HasPrefixIndex()
+			// If any range cannot cover all columns of the index, we cannot build [batch] point get.
+			idxColsLen := len(path.Index.Columns)
+			for _, ran := range path.Ranges {
 				if len(ran.LowVal) != idxColsLen {
 					canConvertPointGet = false
 					break
 				}
 			}
 		}
-		if ds.table.Meta().GetPartitionInfo() != nil && ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			canConvertPointGet = false
+		var hashPartColName *ast.ColumnName
+		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
+			// We do not build [batch] point get for dynamic table partitions now. This can be optimized.
+			if ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+				canConvertPointGet = false
+			} else if len(path.Ranges) > 1 {
+				// We can only build batch point get for hash partitions on a simple column now. This is
+				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
+				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
+				// BatchPointGet plan for more cases.
+				hashPartColName = getHashPartitionColumnName(ds.ctx, tblInfo)
+				if hashPartColName == nil {
+					canConvertPointGet = false
+				}
+			}
 		}
 		if canConvertPointGet {
 			allRangeIsPoint := true
@@ -723,7 +736,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				if len(path.Ranges) == 1 {
 					pointGetTask = ds.convertToPointGet(prop, candidate)
 				} else {
-					pointGetTask = ds.convertToBatchPointGet(prop, candidate)
+					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName)
 				}
 				if !pointGetTask.invalid() {
 					cntPlan += 1
@@ -1642,7 +1655,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	return rTsk
 }
 
-func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath) task {
+func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath, hashPartColName *ast.ColumnName) task {
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -1658,6 +1671,8 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsEmpty(),
 		Columns:          ds.Columns,
+		SinglePart:       ds.isPartition,
+		PartTblID:        ds.physicalTableID,
 	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
@@ -1683,6 +1698,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		batchPointGetPlan.IndexInfo = candidate.path.Index
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
+		batchPointGetPlan.PartitionColPos = getPartitionColumnPos(candidate.path.Index, hashPartColName)
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
