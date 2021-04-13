@@ -15,20 +15,15 @@ package txn
 
 import (
 	"context"
-	"fmt"
-	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/table/tables"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"go.uber.org/zap"
 )
 
 type tikvTxn struct {
@@ -60,11 +55,77 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	return txn.extractKeyErr(err)
 }
 
+// GetSnapshot returns the Snapshot binding to this transaction.
+func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
+	return &tikvSnapshot{txn.KVTxn.GetSnapshot()}
+}
+
+// Iter creates an Iterator positioned on the first entry that k <= entry's key.
+// If such entry is not found, it returns an invalid Iterator with no error.
+// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
+// The Iterator must be Closed after use.
+func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	return txn.KVTxn.Iter(k, upperBound)
+}
+
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+// The returned iterator will iterate from greater key to smaller key.
+// If k is nil, the returned iterator will be positioned at the last key.
+// TODO: Add lower bound limit
+func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
+	return txn.KVTxn.IterReverse(k)
+}
+
+type memBuffer struct {
+	*unionstore.MemDB
+}
+
+func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
+	return &memBuffer{txn.KVTxn.GetMemBuffer()}
+}
+
+// Iter creates an Iterator positioned on the first entry that k <= entry's key.
+// If such entry is not found, it returns an invalid Iterator with no error.
+// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
+// The Iterator must be Closed after use.
+func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	return m.MemDB.Iter(k, upperBound)
+}
+
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+// The returned iterator will iterate from greater key to smaller key.
+// If k is nil, the returned iterator will be positioned at the last key.
+// TODO: Add lower bound limit
+func (m *memBuffer) IterReverse(k kv.Key) (kv.Iterator, error) {
+	return m.MemDB.IterReverse(k)
+}
+
+// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+func (m *memBuffer) SnapshotIter(k, upperbound kv.Key) kv.Iterator {
+	return m.MemDB.SnapshotIter(k, upperbound)
+}
+
+func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
+	return &tikvUnionStore{txn.KVTxn.GetUnionStore()}
+}
+
+func (txn *tikvTxn) SetOption(opt int, val interface{}) {
+	switch opt {
+	case tikvstore.BinlogInfo:
+		txn.SetBinlogExecutor(&binlogExecutor{
+			txn:     txn.KVTxn,
+			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
+		})
+	default:
+		txn.KVTxn.SetOption(opt, val)
+	}
+}
+
 func (txn *tikvTxn) extractKeyErr(err error) error {
-	if e, ok := errors.Cause(err).(*tikv.ErrKeyExist); ok {
+	if e, ok := errors.Cause(err).(*tikvstore.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())
 	}
-	return errors.Trace(err)
+	return extractKeyErr(err)
 }
 
 func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
@@ -77,8 +138,7 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if tblInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
 	}
-
-	value, err := txn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}
@@ -89,102 +149,23 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
 }
 
-func genKeyExistsError(name string, value string, err error) error {
-	if err != nil {
-		logutil.BgLogger().Info("extractKeyExistsErr meets error", zap.Error(err))
-	}
-	return kv.ErrKeyExists.FastGenByArgs(value, name)
+//tikvUnionStore implements kv.UnionStore
+type tikvUnionStore struct {
+	*unionstore.KVUnionStore
 }
 
-func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.TableInfo) error {
-	const name = "PRIMARY"
-	_, handle, err := tablecodec.DecodeRecordKey(key)
-	if err != nil {
-		return genKeyExistsError(name, key.String(), err)
-	}
-
-	if handle.IsInt() {
-		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
-			if mysql.HasUnsignedFlag(pkInfo.Flag) {
-				handleStr := fmt.Sprintf("%d", uint64(handle.IntValue()))
-				return genKeyExistsError(name, handleStr, nil)
-			}
-		}
-		return genKeyExistsError(name, handle.String(), nil)
-	}
-
-	if len(value) == 0 {
-		return genKeyExistsError(name, handle.String(), errors.New("missing value"))
-	}
-
-	idxInfo := tables.FindPrimaryIndex(tblInfo)
-	if idxInfo == nil {
-		return genKeyExistsError(name, handle.String(), errors.New("cannot find index info"))
-	}
-
-	cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
-	for _, col := range tblInfo.Columns {
-		cols[col.ID] = &col.FieldType
-	}
-	handleColIDs := make([]int64, 0, len(idxInfo.Columns))
-	for _, col := range idxInfo.Columns {
-		handleColIDs = append(handleColIDs, tblInfo.Columns[col.Offset].ID)
-	}
-
-	row, err := tablecodec.DecodeRowToDatumMap(value, cols, time.Local)
-	if err != nil {
-		return genKeyExistsError(name, handle.String(), err)
-	}
-
-	data, err := tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, cols, time.Local, row)
-	if err != nil {
-		return genKeyExistsError(name, handle.String(), err)
-	}
-
-	valueStr := make([]string, 0, len(data))
-	for _, col := range idxInfo.Columns {
-		d := data[tblInfo.Columns[col.Offset].ID]
-		str, err := d.ToString()
-		if err != nil {
-			return genKeyExistsError(name, key.String(), err)
-		}
-		valueStr = append(valueStr, str)
-	}
-	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
+func (u *tikvUnionStore) GetMemBuffer() kv.MemBuffer {
+	return &memBuffer{u.KVUnionStore.GetMemBuffer()}
 }
 
-func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.TableInfo, indexID int64) error {
-	var idxInfo *model.IndexInfo
-	for _, index := range tblInfo.Indices {
-		if index.ID == indexID {
-			idxInfo = index
-		}
-	}
-	if idxInfo == nil {
-		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find index info"))
-	}
-	name := idxInfo.Name.String()
+func (u *tikvUnionStore) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	return u.KVUnionStore.Iter(k, upperBound)
+}
 
-	if len(value) == 0 {
-		return genKeyExistsError(name, key.String(), errors.New("missing value"))
-	}
-
-	colInfo := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
-	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleNotNeeded, colInfo)
-	if err != nil {
-		return genKeyExistsError(name, key.String(), err)
-	}
-	valueStr := make([]string, 0, len(values))
-	for i, val := range values {
-		d, err := tablecodec.DecodeColumnValue(val, colInfo[i].Ft, time.Local)
-		if err != nil {
-			return genKeyExistsError(name, key.String(), err)
-		}
-		str, err := d.ToString()
-		if err != nil {
-			return genKeyExistsError(name, key.String(), err)
-		}
-		valueStr = append(valueStr, str)
-	}
-	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+// The returned iterator will iterate from greater key to smaller key.
+// If k is nil, the returned iterator will be positioned at the last key.
+// TODO: Add lower bound limit
+func (u *tikvUnionStore) IterReverse(k kv.Key) (kv.Iterator, error) {
+	return u.KVUnionStore.IterReverse(k)
 }

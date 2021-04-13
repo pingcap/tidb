@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -125,17 +126,20 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	testKit.MustQuery("explain format = 'brief' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"HashJoin 7.49 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-		"├─TableReader(Build) 5.99 root  data:Selection",
-		"│ └─Selection 5.99 cop[tikv]  not(isnull(test.t2.a))",
-		"│   └─TableFullScan 6.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"└─TableReader(Probe) 5.99 root  data:Selection",
-		"  └─Selection 5.99 cop[tikv]  not(isnull(test.t1.a))",
-		"    └─TableFullScan 6.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-	))
-	testKit.MustQuery("explain format = 'hint' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := testKit.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
@@ -182,14 +186,20 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-
-	testKit.MustQuery(`explain format = 'brief' select * from t where 1 = 0`).Check(testkit.Rows(
-		`TableDual 0.00 root  rows:0`,
-	))
-
-	testKit.MustQuery(`explain format = 'brief' select * from t where 1 = 1 limit 0`).Check(testkit.Rows(
-		`TableDual 0.00 root  rows:0`,
-	))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := testKit.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testAnalyzeSuite) TestEstimation(c *C) {
@@ -209,7 +219,8 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
@@ -217,12 +228,20 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	}
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	testKit.MustQuery("explain format = 'brief' select count(*) from t group by a").Check(testkit.Rows(
-		"HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
-		"└─TableReader 2.00 root  data:HashAgg",
-		"  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
-		"    └─TableFullScan 8.00 cop[tikv] table:t keep order:false",
-	))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := testKit.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func constructInsertSQL(i, n int) string {
@@ -411,7 +430,8 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
 	}
 	h := dom.StatsHandle()
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")
@@ -419,18 +439,26 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	statistics.RatioOfPseudoEstimate.Store(10.0)
-	testKit.MustQuery("explain format = 'brief' select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableReader 29.77 root  data:Selection",
-		"└─Selection 29.77 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-		"  └─TableFullScan 80.00 cop[tikv] table:t keep order:false",
-	))
-	statistics.RatioOfPseudoEstimate.Store(0.7)
-	testKit.MustQuery("explain format = 'brief' select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableReader 8.84 root  data:Selection",
-		"└─Selection 8.84 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-		"  └─TableFullScan 80.00 cop[tikv] table:t keep order:false, stats:pseudo",
-	))
+	var input []struct {
+		SQL                   string
+		RatioOfPseudoEstimate float64
+	}
+	var output []struct {
+		SQL                   string
+		RatioOfPseudoEstimate float64
+		Plan                  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		statistics.RatioOfPseudoEstimate.Store(tt.RatioOfPseudoEstimate)
+		plan := testKit.MustQuery(tt.SQL)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt.SQL
+			output[i].RatioOfPseudoEstimate = tt.RatioOfPseudoEstimate
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
@@ -452,7 +480,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		testKit := testkit.NewTestKit(c, store)
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
-		testKit.MustExec("create table t (id int, KEY id (id))")
+		testKit.MustExec("create table t (id int not null, KEY id (id))")
 		testKit.MustExec("insert into t values (1), (2), (3)")
 
 		sql := "select * from t where id = ?"
@@ -554,16 +582,22 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
 	dom.StatsHandle().Clear()
-	dom.StatsHandle().Update(dom.InfoSchema())
-	// Using the histogram (a, b) to estimate `a = 5` will get 1.22, while using the CM Sketch to estimate
-	// the `a = 5 and c = 5` will get 10, it is not consistent.
-	tk.MustQuery("explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5").
-		Check(testkit.Rows(
-			"IndexLookUp 10.00 root  ",
-			"├─IndexRangeScan(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",
-			"└─Selection(Probe) 10.00 cop[tikv]  eq(test.t.c, 5)",
-			"  └─TableRowIDScan 12.50 cop[tikv] table:t keep order:false",
-		))
+	err = dom.StatsHandle().Update(dom.InfoSchema())
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
@@ -911,7 +945,7 @@ func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
 	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = false
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
 	err = s.loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom)
 	c.Assert(err, IsNil)

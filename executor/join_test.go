@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -1374,7 +1375,7 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
@@ -2292,7 +2293,7 @@ func (s *testSuiteJoin1) TestInvalidEnumVal(c *C) {
 	rows.Check(testkit.Rows("a a", " ", " ", " ", " "))
 }
 
-func (s *testSuite9) TestIssue18572_1(c *C) {
+func (s *testSuiteJoinSerial) TestIssue18572_1(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, index idx(b));")
@@ -2311,7 +2312,7 @@ func (s *testSuite9) TestIssue18572_1(c *C) {
 	c.Assert(rs.Close(), IsNil)
 }
 
-func (s *testSuite9) TestIssue18572_2(c *C) {
+func (s *testSuiteJoinSerial) TestIssue18572_2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, index idx(b));")
@@ -2330,7 +2331,7 @@ func (s *testSuite9) TestIssue18572_2(c *C) {
 	c.Assert(rs.Close(), IsNil)
 }
 
-func (s *testSuite9) TestIssue18572_3(c *C) {
+func (s *testSuiteJoinSerial) TestIssue18572_3(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, index idx(b));")

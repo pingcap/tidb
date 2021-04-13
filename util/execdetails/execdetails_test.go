@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -34,7 +35,7 @@ func TestString(t *testing.T) {
 		CopTime:      time.Second + 3*time.Millisecond,
 		BackoffTime:  time.Second,
 		RequestCount: 1,
-		CommitDetail: &CommitDetails{
+		CommitDetail: &util.CommitDetails{
 			GetCommitTsTime:   time.Second,
 			PrewriteTime:      time.Second,
 			CommitTime:        time.Second,
@@ -130,8 +131,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
-	if stats.GetOrCreateCopStats(aggID, "tikv").String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}, "+
-		"scan_detail: {total_process_keys: 0, total_keys: 0, rocksdb: {delete_skipped_count: 0, key_skipped_count: 0, block: {cache_hit_count: 0, read_count: 0, read_byte: 0 Bytes}}}" {
+	if stats.GetOrCreateCopStats(aggID, "tikv").String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
 		t.Fatalf("agg cop stats string is not as expected, got: %v", stats.GetOrCreateCopStats(aggID, "tikv").String())
 	}
 	rootStats := stats.GetRootStats(tableReaderID)
@@ -149,6 +149,11 @@ func TestCopRuntimeStats(t *testing.T) {
 	if cop.String() != "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, "+
 		"scan_detail: {total_process_keys: 0, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block: {cache_hit_count: 10, read_count: 0, read_byte: 100 Bytes}}}" {
 		t.Fatalf(cop.String())
+	}
+
+	zeroScanDetail := ScanDetail{}
+	if zeroScanDetail.String() != "" {
+		t.Fatalf(zeroScanDetail.String())
 	}
 }
 
@@ -200,7 +205,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	}
 }
 func TestRuntimeStatsWithCommit(t *testing.T) {
-	commitDetail := &CommitDetails{
+	commitDetail := &util.CommitDetails{
 		GetCommitTsTime:   time.Second,
 		PrewriteTime:      time.Second,
 		CommitTime:        time.Second,
@@ -232,7 +237,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 	if stats.String() != expect {
 		t.Fatalf("%v != %v", stats.String(), expect)
 	}
-	lockDetail := &LockKeysDetails{
+	lockDetail := &util.LockKeysDetails{
 		TotalTime:       time.Second,
 		RegionNum:       2,
 		LockKeys:        10,
@@ -277,7 +282,7 @@ func TestRootRuntimeStats(t *testing.T) {
 	concurrency := &RuntimeStatsWithConcurrencyInfo{}
 	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("worker", 15))
 	stmtStats.RegisterStats(pid, concurrency)
-	commitDetail := &CommitDetails{
+	commitDetail := &util.CommitDetails{
 		GetCommitTsTime:   time.Second,
 		PrewriteTime:      time.Second,
 		CommitTime:        time.Second,
