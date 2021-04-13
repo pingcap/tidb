@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/tablecodec"
 )
 
@@ -46,7 +45,8 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
-	err := txn.KVTxn.LockKeys(ctx, lockCtx, keysInput...)
+	keys := toTiKVKeys(keysInput)
+	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
 	return txn.extractKeyErr(err)
 }
 
@@ -65,7 +65,8 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 // It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 // The Iterator must be Closed after use.
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	return txn.KVTxn.Iter(k, upperBound)
+	it, err := txn.KVTxn.Iter(k, upperBound)
+	return newKVIterator(it), errors.Trace(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
@@ -73,36 +74,28 @@ func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 // If k is nil, the returned iterator will be positioned at the last key.
 // TODO: Add lower bound limit
 func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
-	return txn.KVTxn.IterReverse(k)
+	it, err := txn.KVTxn.IterReverse(k)
+	return newKVIterator(it), errors.Trace(err)
 }
 
-type memBuffer struct {
-	*unionstore.MemDB
+func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	return txn.KVTxn.BatchGet(ctx, toTiKVKeys(keys))
+}
+
+func (txn *tikvTxn) Delete(k kv.Key) error {
+	return txn.KVTxn.Delete(k)
+}
+
+func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	return txn.KVTxn.Get(ctx, k)
+}
+
+func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
+	return txn.KVTxn.Set(k, v)
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
-	return &memBuffer{txn.KVTxn.GetMemBuffer()}
-}
-
-// Iter creates an Iterator positioned on the first entry that k <= entry's key.
-// If such entry is not found, it returns an invalid Iterator with no error.
-// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
-// The Iterator must be Closed after use.
-func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	return m.MemDB.Iter(k, upperBound)
-}
-
-// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-// The returned iterator will iterate from greater key to smaller key.
-// If k is nil, the returned iterator will be positioned at the last key.
-// TODO: Add lower bound limit
-func (m *memBuffer) IterReverse(k kv.Key) (kv.Iterator, error) {
-	return m.MemDB.IterReverse(k)
-}
-
-// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
-func (m *memBuffer) SnapshotIter(k, upperbound kv.Key) kv.Iterator {
-	return m.MemDB.SnapshotIter(k, upperbound)
+	return newMemBuffer(txn.KVTxn.GetMemBuffer())
 }
 
 func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
@@ -147,25 +140,4 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 		return extractKeyExistsErrFromHandle(key, value, tblInfo)
 	}
 	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
-}
-
-//tikvUnionStore implements kv.UnionStore
-type tikvUnionStore struct {
-	*unionstore.KVUnionStore
-}
-
-func (u *tikvUnionStore) GetMemBuffer() kv.MemBuffer {
-	return &memBuffer{u.KVUnionStore.GetMemBuffer()}
-}
-
-func (u *tikvUnionStore) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	return u.KVUnionStore.Iter(k, upperBound)
-}
-
-// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-// The returned iterator will iterate from greater key to smaller key.
-// If k is nil, the returned iterator will be positioned at the last key.
-// TODO: Add lower bound limit
-func (u *tikvUnionStore) IterReverse(k kv.Key) (kv.Iterator, error) {
-	return u.KVUnionStore.IterReverse(k)
 }
