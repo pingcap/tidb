@@ -18,7 +18,6 @@ import (
 	"math"
 	"unsafe"
 
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -193,7 +192,7 @@ func (a *nodeAllocator) getNode(addr memdbArenaAddr) *memdbNode {
 	return (*memdbNode)(unsafe.Pointer(&a.blocks[addr.idx].buf[addr.off]))
 }
 
-func (a *nodeAllocator) allocNode(key tidbkv.Key) (memdbArenaAddr, *memdbNode) {
+func (a *nodeAllocator) allocNode(key []byte) (memdbArenaAddr, *memdbNode) {
 	nodeSize := 8*4 + 2 + 1 + len(key)
 	addr, mem := a.alloc(nodeSize, true)
 	n := (*memdbNode)(unsafe.Pointer(&mem[0]))
@@ -329,7 +328,7 @@ func (l *memdbVlog) revertToCheckpoint(db *MemDB, cp *memdbCheckpoint) {
 	}
 }
 
-func (l *memdbVlog) inspectKVInLog(db *MemDB, head, tail *memdbCheckpoint, f func(tidbkv.Key, kv.KeyFlags, []byte)) {
+func (l *memdbVlog) inspectKVInLog(db *MemDB, head, tail *memdbCheckpoint, f func([]byte, kv.KeyFlags, []byte)) {
 	cursor := *tail
 	for !head.isSamePosition(&cursor) {
 		cursorAddr := memdbArenaAddr{idx: uint32(cursor.blocks - 1), off: uint32(cursor.offsetInBlock)}
