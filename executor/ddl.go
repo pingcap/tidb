@@ -204,7 +204,7 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
-	if err == nil && s.IsTemporary {
+	if err == nil && s.TemporaryKeyword == ast.TemporarySession {
 		sessVars := e.ctx.GetSessionVars()
 		if sessVars.TemporaryTable == nil {
 			us := unionstore.NewUnionStore(nil)
