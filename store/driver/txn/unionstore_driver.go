@@ -115,6 +115,18 @@ func (m *memBuffer) GetFlags(key kv.Key) (tikvstore.KeyFlags, error) {
 	return m.MemDB.GetFlags(key)
 }
 
+func (m *memBuffer) Staging() kv.StagingHandle {
+	return kv.StagingHandle(m.MemDB.Staging())
+}
+
+func (m *memBuffer) Cleanup(h kv.StagingHandle) {
+	m.MemDB.Cleanup(int(h))
+}
+
+func (m *memBuffer) Release(h kv.StagingHandle) {
+	m.MemDB.Release(int(h))
+}
+
 func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, tikvstore.KeyFlags, []byte)) {
 	tf := func(key []byte, flag tikvstore.KeyFlags, value []byte) {
 		f(kv.Key(key), flag, value)
