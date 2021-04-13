@@ -37,10 +37,6 @@ import (
 // Append UnCommitIndexKVFlag to the value indicate the index key/value is no need to commit.
 const UnCommitIndexKVFlag byte = '1'
 
-// MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
-// We use it to abort the transaction to guarantee GC worker will not influence it.
-const MaxTxnTimeUse = 24 * 60 * 60 * 1000
-
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
