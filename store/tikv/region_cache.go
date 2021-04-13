@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -604,7 +603,7 @@ func (l *KeyLocation) Contains(key []byte) bool {
 
 // String implements fmt.Stringer interface.
 func (l *KeyLocation) String() string {
-	return fmt.Sprintf("region %s,startKey:%s,endKey:%s", l.Region.String(), hex.EncodeToString(l.StartKey), hex.EncodeToString(l.EndKey))
+	return fmt.Sprintf("region %s,startKey:%s,endKey:%s", l.Region.String(), kv.StrKey(l.StartKey), kv.StrKey(l.EndKey))
 }
 
 // LocateKey searches for the region and range that the key is located.
