@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"go.uber.org/zap"
 )
 
@@ -150,7 +151,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	txnCtx.InfoSchema = is
 	txnCtx.SchemaVersion = is.SchemaMetaVersion()
 	// DDL will force commit old transaction, after DDL, in transaction status should be false.
-	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
+	e.ctx.GetSessionVars().SetInTxn(false)
 	return nil
 }
 
@@ -301,6 +302,26 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 		return e.executeCreateTemporaryTable(s)
 	}
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
+	if err == nil && s.TemporaryKeyword == ast.TemporarySession {
+		sessVars := e.ctx.GetSessionVars()
+		if sessVars.TemporaryTable == nil {
+			us := unionstore.NewUnionStore(nil)
+			memDB := us.GetMemBuffer()
+			sessVars.TemporaryTable = &variable.TemporaryTable{
+				TableIDs: make(map[int64]struct{}),
+				MemDB: memDB,
+			}
+		}
+
+		// Get the new created table.
+		is := domain.GetDomain(e.ctx).InfoSchema()
+		tbl, err := is.TableByName(s.Table.Schema, s.Table.Name)
+		if err != nil {
+			return err
+		}
+		sessVars.TemporaryTable.TableIDs[tbl.Meta().ID] = struct{}{}
+		fmt.Println("in create table execute ... set session temporary table")
+	}
 	return err
 }
 
@@ -417,8 +438,12 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),
 			)
-			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
-			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+			exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+			stmt, err := exec.ParseWithParams(context.TODO(), "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+			if err != nil {
+				return err
+			}
+			_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
 			if err != nil {
 				return err
 			}

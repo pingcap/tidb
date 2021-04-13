@@ -89,8 +89,12 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 			continue
 		}
 		var dbName, tableName *model.CIStr
-		if child.SelectBlockOffset() != parentOffset {
-			hintTable := sctx.GetSessionVars().PlannerSelectBlockAsName[child.SelectBlockOffset()]
+		if blockOffset != parentOffset {
+			blockAsNames := sctx.GetSessionVars().PlannerSelectBlockAsName
+			if blockOffset >= len(blockAsNames) {
+				continue
+			}
+			hintTable := blockAsNames[blockOffset]
 			// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
 			dbName, tableName, blockOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
 		} else {
@@ -127,16 +131,17 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 	switch pp := p.(type) {
 	case *PhysicalTableReader:
 		tbl := pp.TablePlans[0].(*PhysicalTableScan)
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(HintUseIndex),
-			Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
-		})
 		if tbl.StoreType == kv.TiFlash {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,
 				HintName: model.NewCIStr(HintReadFromStorage),
 				HintData: model.NewCIStr(kv.TiFlash.Name()),
+				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
+			})
+		} else {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   qbName,
+				HintName: model.NewCIStr(HintUseIndex),
 				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 			})
 		}

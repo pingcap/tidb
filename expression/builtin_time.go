@@ -217,6 +217,7 @@ var (
 	_ builtinFunc = &builtinStrToDateDurationSig{}
 	_ builtinFunc = &builtinFromUnixTime1ArgSig{}
 	_ builtinFunc = &builtinFromUnixTime2ArgSig{}
+	_ builtinFunc = &builtinExtractDatetimeFromStringSig{}
 	_ builtinFunc = &builtinExtractDatetimeSig{}
 	_ builtinFunc = &builtinExtractDurationSig{}
 	_ builtinFunc = &builtinAddDateStringStringSig{}
@@ -2631,17 +2632,22 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 	var bf baseBuiltinFunc
 	if isDatetimeUnit {
-		decimalArg1 := int(types.MaxFsp)
 		if args[1].GetType().EvalType() != types.ETString {
-			decimalArg1 = 0
+			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDatetime)
+			if err != nil {
+				return nil, err
+			}
+			sig = &builtinExtractDatetimeSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetime)
+		} else {
+			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
+			if err != nil {
+				return nil, err
+			}
+			bf.args[1].GetType().Decimal = int(types.MaxFsp)
+			sig = &builtinExtractDatetimeFromStringSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetimeFromString)
 		}
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
-		if err != nil {
-			return nil, err
-		}
-		bf.args[1].GetType().Decimal = decimalArg1
-		sig = &builtinExtractDatetimeSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetime)
 	} else {
 		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDuration)
 		if err != nil {
@@ -2653,19 +2659,19 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	return sig, nil
 }
 
-type builtinExtractDatetimeSig struct {
+type builtinExtractDatetimeFromStringSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinExtractDatetimeSig) Clone() builtinFunc {
-	newSig := &builtinExtractDatetimeSig{}
+func (b *builtinExtractDatetimeFromStringSig) Clone() builtinFunc {
+	newSig := &builtinExtractDatetimeFromStringSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
 // evalInt evals a builtinExtractDatetimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
-func (b *builtinExtractDatetimeSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *builtinExtractDatetimeFromStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 	unit, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -2707,6 +2713,31 @@ func (b *builtinExtractDatetimeSig) evalInt(row chunk.Row) (int64, bool, error) 
 			return 0, isNull, err
 		}
 		return 0, false, nil
+	}
+	res, err := types.ExtractDatetimeNum(&dt, unit)
+	return res, err != nil, err
+}
+
+type builtinExtractDatetimeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinExtractDatetimeSig) Clone() builtinFunc {
+	newSig := &builtinExtractDatetimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinExtractDatetimeSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
+func (b *builtinExtractDatetimeSig) evalInt(row chunk.Row) (int64, bool, error) {
+	unit, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	dt, isNull, err := b.args[1].EvalTime(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
 	}
 	res, err := types.ExtractDatetimeNum(&dt, unit)
 	return res, err != nil, err
