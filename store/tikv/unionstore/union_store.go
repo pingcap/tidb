@@ -28,6 +28,19 @@ type KVUnionStore struct {
 	opts      options
 }
 
+// KVUnionStore implements the Snapshot interface.
+// For temporary table, the snapshot field of the KVUnionStore(A) is actually another KVUnionStore(B),
+// and the temporary table data is stored in the memBuffer field of KVUnionStore(B).
+// The data storage hierarchy:
+// membuffer(for the current txn) -> membuffer(for the temporary table data) -> tikv snapshot
+var _ tidbkv.Snapshot = &KVUnionStore{}
+
+
+func (us *KVUnionStore) BatchGet(ctx context.Context, keys []tidbkv.Key) (map[string][]byte, error) {
+	// TODO
+	panic("here")
+}
+
 // NewUnionStore builds a new unionStore.
 func NewUnionStore(snapshot tidbkv.Snapshot) *KVUnionStore {
 	return &KVUnionStore{
@@ -37,9 +50,21 @@ func NewUnionStore(snapshot tidbkv.Snapshot) *KVUnionStore {
 	}
 }
 
+func (us *KVUnionStore) GetSnapshot() tidbkv.Snapshot {
+	return us.snapshot
+}
+
+func (us *KVUnionStore) SetSnapshot(snap tidbkv.Snapshot) {
+	us.snapshot = snap
+}
+
 // GetMemBuffer return the MemBuffer binding to this unionStore.
 func (us *KVUnionStore) GetMemBuffer() *MemDB {
 	return us.memBuffer
+}
+
+func (us *KVUnionStore) SetMemBuffer(m *MemDB) {
+	us.memBuffer = m
 }
 
 // Get implements the Retriever interface.

@@ -348,19 +348,24 @@ type txnFuture struct {
 	future   oracle.Future
 	store    kv.Storage
 	txnScope string
+	tmpTable interface{}
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
+	option := kv.TransactionOption{}.SetTxnScope(tf.txnScope).SetStartTs(startTS)
+	if tf.tmpTable != nil {
+		option.SetTMPTable(tf.tmpTable)
+	}
 	if err == nil {
-		return tf.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(tf.txnScope).SetStartTs(startTS))
+		return tf.store.BeginWithOption(option)
 	} else if config.GetGlobalConfig().Store == "unistore" {
 		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
-	return tf.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(tf.txnScope))
+	return tf.store.BeginWithOption(option)
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
@@ -377,7 +382,15 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	} else {
 		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
 	}
-	ret := &txnFuture{future: tsFuture, store: s.store, txnScope: s.sessionVars.CheckAndGetTxnScope()}
+	ret := &txnFuture{
+		future: tsFuture,
+		store: s.store,
+		txnScope: s.sessionVars.CheckAndGetTxnScope(),
+	}
+	if s.sessionVars.TemporaryTable != nil {
+		ret.tmpTable = s.sessionVars.TemporaryTable.MemDB
+		fmt.Println("")
+	}
 	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
 		ret.future = txnFailFuture{}
 	})

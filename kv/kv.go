@@ -372,6 +372,7 @@ type TransactionOption struct {
 	TxnScope string
 	StartTS  *uint64
 	PrevSec  *uint64
+	TMPTable interface{}
 }
 
 // SetStartTs set startTS
@@ -389,6 +390,11 @@ func (to TransactionOption) SetPrevSec(prevSec uint64) TransactionOption {
 // SetTxnScope set txnScope
 func (to TransactionOption) SetTxnScope(txnScope string) TransactionOption {
 	to.TxnScope = txnScope
+	return to
+}
+
+func (to TransactionOption) SetTMPTable(tmp interface{}) TransactionOption {
+	to.TMPTable = tmp
 	return to
 }
 

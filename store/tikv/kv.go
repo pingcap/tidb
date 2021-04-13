@@ -27,6 +27,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/latch"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -168,12 +169,12 @@ func (s *KVStore) runSafePointChecker() {
 
 // Begin a global transaction.
 func (s *KVStore) Begin() (*KVTxn, error) {
-	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
+	return s.BeginWithTxnScope(oracle.GlobalTxnScope, nil)
 }
 
 // BeginWithTxnScope begins a transaction with the given txnScope (local or global)
-func (s *KVStore) BeginWithTxnScope(txnScope string) (*KVTxn, error) {
-	txn, err := newTiKVTxn(s, txnScope)
+func (s *KVStore) BeginWithTxnScope(txnScope string, tmpTable *unionstore.MemDB) (*KVTxn, error) {
+	txn, err := newTiKVTxn(s, txnScope, tmpTable)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -181,8 +182,8 @@ func (s *KVStore) BeginWithTxnScope(txnScope string) (*KVTxn, error) {
 }
 
 // BeginWithStartTS begins a transaction with startTS.
-func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (*KVTxn, error) {
-	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
+func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64, tmpTable *unionstore.MemDB) (*KVTxn, error) {
+	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed(), tmpTable)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -190,8 +191,8 @@ func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (*KVTxn, err
 }
 
 // BeginWithExactStaleness begins transaction with given staleness
-func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVTxn, error) {
-	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
+func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64, tmpTable *unionstore.MemDB) (*KVTxn, error) {
+	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec, tmpTable)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

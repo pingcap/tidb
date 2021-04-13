@@ -22,6 +22,7 @@ import (
 	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -102,12 +103,16 @@ func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transacti
 	if txnScope == "" {
 		txnScope = oracle.GlobalTxnScope
 	}
-	if option.StartTS != nil {
-		return newTiKVTxn(s.BeginWithStartTS(txnScope, *option.StartTS))
-	} else if option.PrevSec != nil {
-		return newTiKVTxn(s.BeginWithExactStaleness(txnScope, *option.PrevSec))
+	var tmpTable *unionstore.MemDB
+	if option.TMPTable != nil {
+		tmpTable = option.TMPTable.(*unionstore.MemDB)
 	}
-	return newTiKVTxn(s.BeginWithTxnScope(txnScope))
+	if option.StartTS != nil {
+		return newTiKVTxn(s.BeginWithStartTS(txnScope, *option.StartTS, tmpTable))
+	} else if option.PrevSec != nil {
+		return newTiKVTxn(s.BeginWithExactStaleness(txnScope, *option.PrevSec, tmpTable))
+	}
+	return newTiKVTxn(s.BeginWithTxnScope(txnScope, tmpTable))
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.

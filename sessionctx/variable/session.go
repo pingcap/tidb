@@ -821,6 +821,13 @@ type SessionVars struct {
 
 	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
 	EnableDynamicPrivileges bool
+
+	*TemporaryTable
+}
+
+type TemporaryTable struct {
+	TableIDs map[int64]struct{}
+	MemDB interface{}
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
@@ -309,14 +310,18 @@ func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction
 	if txnScope == "" {
 		txnScope = oracle.GlobalTxnScope
 	}
+	var tmpTable *unionstore.MemDB
+	if option.TMPTable != nil {
+		tmpTable = option.TMPTable.(*unionstore.MemDB)
+	}
 	var txn *tikv.KVTxn
 	var err error
 	if option.StartTS != nil {
-		txn, err = s.BeginWithStartTS(txnScope, *option.StartTS)
+		txn, err = s.BeginWithStartTS(txnScope, *option.StartTS, tmpTable)
 	} else if option.PrevSec != nil {
-		txn, err = s.BeginWithExactStaleness(txnScope, *option.PrevSec)
+		txn, err = s.BeginWithExactStaleness(txnScope, *option.PrevSec, tmpTable)
 	} else {
-		txn, err = s.BeginWithTxnScope(txnScope)
+		txn, err = s.BeginWithTxnScope(txnScope, tmpTable)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

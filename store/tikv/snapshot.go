@@ -862,3 +862,9 @@ func (rs *SnapshotRuntimeStats) String() string {
 	}
 	return buf.String()
 }
+
+
+// tmpTableSnapshot merges the temporary table data with the real tikv snapshot to provide a new snapshot.
+type tmpTableSnapshot struct {
+	tidbkv.Snapshot
+}

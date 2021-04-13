@@ -121,13 +121,13 @@ func (txn TxnProbe) CollectLockedKeys() [][]byte {
 
 // BatchGetSingleRegion gets a batch of keys from a region.
 func (txn TxnProbe) BatchGetSingleRegion(bo *Backoffer, region RegionVerID, keys [][]byte, collect func([]byte, []byte)) error {
-	snapshot := txn.GetSnapshot()
+	snapshot := txn.GetSnapshot().(*KVSnapshot)
 	return snapshot.batchGetSingleRegion(bo, batchKeys{region: region, keys: keys}, collect)
 }
 
 // NewScanner returns a scanner to iterate given key range.
 func (txn TxnProbe) NewScanner(start, end []byte, batchSize int, reverse bool) (*Scanner, error) {
-	return newScanner(txn.GetSnapshot(), start, end, batchSize, reverse)
+	return newScanner(txn.GetSnapshot().(*KVSnapshot), start, end, batchSize, reverse)
 }
 
 // GetStartTime returns the time when txn starts.

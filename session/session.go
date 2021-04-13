@@ -63,9 +63,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/telemetry"
@@ -506,7 +508,46 @@ func (s *session) doCommit(ctx context.Context) error {
 			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
 
-	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
+	var memDB *unionstore.MemDB
+	var stage kv.StagingHandle
+	if s.sessionVars.TemporaryTable != nil {
+		// Handle temporary table.
+		for tid, _ := range s.sessionVars.TemporaryTable.TableIDs {
+			seekKey := tablecodec.EncodeTablePrefix(tid)
+			endKey := tablecodec.EncodeTablePrefix(tid + 1)
+			memBuffer := s.txn.GetMemBuffer()
+			iter, err := memBuffer.Iter(seekKey, endKey)
+			if err != nil {
+				return err
+			}
+			for iter.Valid() && iter.Key().HasPrefix(seekKey) {
+				if memDB == nil {
+					memDB = s.sessionVars.TemporaryTable.MemDB.(*unionstore.MemDB)
+					stage = memDB.Staging()
+					defer memDB.Cleanup(stage)
+				}
+
+				fmt.Println("===key value ====", iter.Key(), iter.Value())
+
+				// Copy the membuffer data to the temporary table and remove it.
+				err = memDB.Set(iter.Key(), iter.Value())
+				if err != nil {
+					return err
+				}
+				memBuffer.Delete(iter.Key())
+
+				iter.Next()
+			}
+		}
+	}
+
+	err = s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
+
+	// The problem is, the commit operation on tikv and temporary table must be success or fail at the same time.
+	if err == nil && memDB != nil {
+		memDB.Release(stage)
+	}
+	return err
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
@@ -1821,6 +1862,16 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
 			s.txn.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
 		}
+
+		// Session level temporary table.
+		// if s.sessionVars.TemporaryTable != nil {
+		// 	us := s.txn.GetUnionStore()
+
+		// 	snapshot := unionstore.NewUnionStore(us.GetSnapshot())
+		// 	snapshot.SetMemBuffer(s.sessionVars.TemporaryTable.MemDB.(*unionstore.MemDB))
+
+		// 	us.SetSnapshot(snapshot)
+		// }
 	}
 	return &s.txn, nil
 }
@@ -1877,7 +1928,11 @@ func (s *session) NewTxn(ctx context.Context) error {
 			zap.String("txnScope", txnScope))
 	}
 
-	txn, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
+	option := kv.TransactionOption{}.SetTxnScope(s.sessionVars.CheckAndGetTxnScope())
+	if s.sessionVars.TemporaryTable != nil {
+		option.SetTMPTable(s.sessionVars.TemporaryTable.MemDB)
+	}
+	txn, err := s.store.BeginWithOption(option)
 	if err != nil {
 		return err
 	}

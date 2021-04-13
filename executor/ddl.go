@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"go.uber.org/zap"
 )
 
@@ -203,6 +204,26 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
+	if err == nil && s.IsTemporary {
+		sessVars := e.ctx.GetSessionVars()
+		if sessVars.TemporaryTable == nil {
+			us := unionstore.NewUnionStore(nil)
+			memDB := us.GetMemBuffer()
+			sessVars.TemporaryTable = &variable.TemporaryTable{
+				TableIDs: make(map[int64]struct{}),
+				MemDB: memDB,
+			}
+		}
+
+		// Get the new created table.
+		is := domain.GetDomain(e.ctx).InfoSchema()
+		tbl, err := is.TableByName(s.Table.Schema, s.Table.Name)
+		if err != nil {
+			return err
+		}
+		sessVars.TemporaryTable.TableIDs[tbl.Meta().ID] = struct{}{}
+		fmt.Println("in create table execute ... set session temporary table")
+	}
 	return err
 }
 

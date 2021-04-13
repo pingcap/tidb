@@ -49,7 +49,7 @@ type SchemaAmender interface {
 
 // KVTxn contains methods to interact with a TiKV transaction.
 type KVTxn struct {
-	snapshot  *KVSnapshot
+	snapshot  tidbkv.Snapshot
 	us        *unionstore.KVUnionStore
 	store     *KVStore // for connection to region.
 	startTS   uint64
@@ -71,20 +71,30 @@ type KVTxn struct {
 	commitCallback func(info tidbkv.TxnInfo, err error)
 }
 
-func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
+// tmpTable is optional.
+func newTiKVTxn(store *KVStore, txnScope string, tmpTable *unionstore.MemDB) (*KVTxn, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := store.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return newTiKVTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed())
+	return newTiKVTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed(), tmpTable)
 }
 
 // newTiKVTxnWithStartTS creates a txn with startTS.
-func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*KVTxn, error) {
-	snapshot := newTiKVSnapshot(store, startTS, replicaReadSeed)
+func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, replicaReadSeed uint32, tmpTable *unionstore.MemDB) (*KVTxn, error) {
+	var snapshot tidbkv.Snapshot
+	kvSnap := newTiKVSnapshot(store, startTS, replicaReadSeed)
+	if tmpTable != nil {
+		fmt.Println("!!!!!!!!!!!!!!!!!!!!!!! tmp table set, union store is changed !!@!!!!!!")
+		us := unionstore.NewUnionStore(kvSnap)
+		us.SetMemBuffer(tmpTable)
+		snapshot = us
+	} else {
+		snapshot = kvSnap
+	}
 	newTiKVTxn := &KVTxn{
-		snapshot:  snapshot,
+		snapshot:  kvSnap,
 		us:        unionstore.NewUnionStore(snapshot),
 		store:     store,
 		startTS:   startTS,
@@ -96,13 +106,13 @@ func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, repl
 	return newTiKVTxn, nil
 }
 
-func newTiKVTxnWithExactStaleness(store *KVStore, txnScope string, prevSec uint64) (*KVTxn, error) {
+func newTiKVTxnWithExactStaleness(store *KVStore, txnScope string, prevSec uint64, tmpTable *unionstore.MemDB) (*KVTxn, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := store.getStalenessTimestamp(bo, txnScope, prevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return newTiKVTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed())
+	return newTiKVTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed(), tmpTable)
 }
 
 // SetSuccess is used to probe if kv variables are set or not. It is ONLY used in test cases.
@@ -111,7 +121,12 @@ var SetSuccess = false
 // SetVars sets variables to the transaction.
 func (txn *KVTxn) SetVars(vars *tidbkv.Variables) {
 	txn.vars = vars
-	txn.snapshot.vars = vars
+	switch raw := txn.snapshot.(type) {
+	case *unionstore.KVUnionStore:
+		// TODO: fuck, set it!
+	case *KVSnapshot:
+		raw.vars = vars
+	}
 	failpoint.Inject("probeSetVars", func(val failpoint.Value) {
 		if val.(bool) {
 			SetSuccess = true
@@ -631,6 +646,6 @@ func (txn *KVTxn) GetMemBuffer() *unionstore.MemDB {
 }
 
 // GetSnapshot returns the Snapshot binding to this transaction.
-func (txn *KVTxn) GetSnapshot() *KVSnapshot {
+func (txn *KVTxn) GetSnapshot() tidbkv.Snapshot {
 	return txn.snapshot
 }

@@ -42,6 +42,9 @@ func (h MemKeyHandle) toAddr() memdbArenaAddr {
 	return memdbArenaAddr{idx: uint32(h.idx), off: h.off}
 }
 
+// MemDB implements the Snashot interface.
+var _ tidbkv.Snapshot = &MemDB{}
+
 // MemDB is rollbackable Red-Black Tree optimized for TiDB's transaction states buffer use scenario.
 // You can think MemDB is a combination of two separate tree map, one for key => value and another for key => keyFlags.
 //
@@ -177,6 +180,21 @@ func (db *MemDB) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
 		return nil, tidbkv.ErrNotExist
 	}
 	return db.vlog.getValue(x.vptr), nil
+}
+
+func (db *MemDB) BatchGet(ctx context.Context, keys []tidbkv.Key) (map[string][]byte, error) {
+	// TODO
+	panic("here")
+}
+
+func (db *MemDB) SetOption(opt int, val interface{}) {
+	// TODO
+	panic("here")
+}
+// DelOption deletes an option.
+func (db *MemDB) DelOption(opt int) {
+	// TODO
+	panic("here")
 }
 
 // SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
