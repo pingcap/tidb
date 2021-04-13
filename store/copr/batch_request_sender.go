@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -71,7 +72,7 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *tikv.Backoffer, ctxs []copTas
 	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
 	} else if atomic.LoadUint32(&tikv.ShuttingDown) > 0 {
-		return tikv.ErrTiDBShuttingDown
+		return kv.ErrTiDBShuttingDown
 	}
 
 	for _, failedCtx := range ctxs {
@@ -85,6 +86,6 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *tikv.Backoffer, ctxs []copTas
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
-	err = bo.Backoff(tikv.BoTiKVRPC, errors.Errorf("send tikv request error: %v, ctxs: %v, try next peer later", err, ctxs))
+	err = bo.Backoff(tikv.BoTiFlashRPC, errors.Errorf("send tikv request error: %v, ctxs: %v, try next peer later", err, ctxs))
 	return errors.Trace(err)
 }

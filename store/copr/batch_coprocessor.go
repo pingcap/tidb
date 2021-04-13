@@ -19,14 +19,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -122,7 +123,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
 		for _, task := range tasks {
-			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region)
+			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -149,15 +150,6 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 		if needRetry {
 			// Backoff once for each retry.
 			err = bo.Backoff(tikv.BoRegionMiss, errors.New("Cannot find region with TiFlash peer"))
-			// Actually ErrRegionUnavailable would be thrown out rather than ErrTiFlashServerTimeout. However, since currently
-			// we don't have MockTiFlash, we inject ErrTiFlashServerTimeout to simulate the situation that TiFlash is down.
-			if storeType == kv.TiFlash {
-				failpoint.Inject("errorMockTiFlashServerTimeout", func(val failpoint.Value) {
-					if val.(bool) {
-						failpoint.Return(nil, errors.Trace(tikv.ErrTiFlashServerTimeout))
-					}
-				})
-			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -184,7 +176,8 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
 	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), tikv.NewKeyRanges(req.KeyRanges), req.StoreType)
+	ranges := toTiKVKeyRanges(req.KeyRanges)
+	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), ranges, req.StoreType)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -275,7 +268,7 @@ func (b *batchCopIterator) recvFromRespCh(ctx context.Context) (resp *batchCopRe
 			return
 		case <-ticker.C:
 			if atomic.LoadUint32(b.vars.Killed) == 1 {
-				resp = &batchCopResponse{err: tikv.ErrQueryInterrupted}
+				resp = &batchCopResponse{err: tikvstore.ErrQueryInterrupted}
 				ok = true
 				return
 			}
@@ -319,9 +312,9 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *tikv.Backoffer, t
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
-	var ranges []kv.KeyRange
+	var ranges []tikvstore.KeyRange
 	for _, taskCtx := range batchTask.copTasks {
-		taskCtx.task.ranges.Do(func(ran *kv.KeyRange) {
+		taskCtx.task.ranges.Do(func(ran *tikvstore.KeyRange) {
 			ranges = append(ranges, *ran)
 		})
 	}
@@ -358,7 +351,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffe
 		RecordScanStat: true,
 		TaskId:         b.req.TaskID,
 	})
-	req.StoreTp = kv.TiFlash
+	req.StoreTp = tikvrpc.TiFlash
 
 	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.copTasks)))
 	resp, retry, cancel, err := sender.sendStreamReqToAddr(bo, task.copTasks, req, tikv.ReadTimeoutUltraLong)
@@ -401,7 +394,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return errors.Trace(err)
+			return tikvstore.ErrTiFlashServerTimeout
 		}
 	}
 }
@@ -444,4 +437,9 @@ func (b *batchCopIterator) sendToRespCh(resp *batchCopResponse) (exit bool) {
 		exit = true
 	}
 	return
+}
+
+func toTiKVKeyRanges(ranges []kv.KeyRange) *tikv.KeyRanges {
+	res := *(*[]tikvstore.KeyRange)(unsafe.Pointer(&ranges))
+	return tikv.NewKeyRanges(res)
 }

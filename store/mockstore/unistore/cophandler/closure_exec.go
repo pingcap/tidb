@@ -20,8 +20,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ngaut/unistore/tikv/dbreader"
-	"github.com/ngaut/unistore/tikv/mvcc"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
@@ -32,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -77,6 +77,8 @@ func getExecutorListFromRootExec(rootExec *tipb.Executor) ([]*tipb.Executor, err
 			currentExec = currentExec.Limit.Child
 		case tipb.ExecType_TypeExchangeSender:
 			currentExec = currentExec.ExchangeSender.Child
+		case tipb.ExecType_TypeSelection:
+			currentExec = currentExec.Selection.Child
 		default:
 			return nil, errors.New("unsupported executor type " + currentExec.Tp.String())
 		}
@@ -94,26 +96,6 @@ func getExecutorList(dagReq *tipb.DAGRequest) ([]*tipb.Executor, error) {
 	}
 	// convert TiFlash executors tree to executor list
 	return getExecutorListFromRootExec(dagReq.RootExecutor)
-}
-
-func buildClosureExecutorForTiFlash(dagCtx *dagContext, rootExecutor *tipb.Executor) (*closureExecutor, error) {
-	scanExec, err := getScanExecFromRootExec(rootExecutor)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	ce, err := newClosureExecutor(dagCtx, nil, scanExec, false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	executors, err := getExecutorListFromRootExec(rootExecutor)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	err = buildClosureExecutorFromExecutorList(dagCtx, executors, ce)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return ce, nil
 }
 
 func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.Executor, ce *closureExecutor) error {
@@ -150,7 +132,7 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 		ce.resultFieldType = outputFieldTypes
 		return nil
 	}
-	var err error = nil
+	var err error
 	if secondExec := executors[1]; secondExec.Tp == tipb.ExecType_TypeSelection {
 		ce.selectionCtx.conditions, err = convertToExprs(ce.sc, ce.fieldTps, secondExec.Selection.Conditions)
 		if err != nil {
@@ -532,12 +514,9 @@ type closureProcessor interface {
 }
 
 type scanCtx struct {
-	count            int
-	limit            int
-	chk              *chunk.Chunk
-	desc             bool
-	decoder          *rowcodec.ChunkDecoder
-	primaryColumnIds []int64
+	chk     *chunk.Chunk
+	desc    bool
+	decoder *rowcodec.ChunkDecoder
 
 	newCollationRd  *rowcodec.BytesDecoder
 	newCollationIds map[int64]int
@@ -762,7 +741,7 @@ type tableScanProcessor struct {
 
 func (e *tableScanProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	e.rowCount++
 	e.curNdv++
@@ -784,7 +763,7 @@ type mockReaderScanProcessor struct {
 
 func (e *mockReaderScanProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	e.rowCount++
 	err := e.mockReadScanProcessCore(key, value)
@@ -903,7 +882,7 @@ type indexScanProcessor struct {
 
 func (e *indexScanProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	e.rowCount++
 	err := e.indexScanProcessCore(key, value)
@@ -1001,7 +980,7 @@ func (e *selectionProcessor) Process(key, value []byte) error {
 		e.selectionCtx.execDetail.update(begin, gotRow)
 	}(time.Now())
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	err := e.processCore(key, value)
 	if err != nil {
@@ -1199,7 +1178,7 @@ func safeCopy(b []byte) []byte {
 	return append([]byte{}, b...)
 }
 
-func checkLock(lock mvcc.MvccLock, key []byte, startTS uint64, resolved []uint64) error {
+func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
 	if isResolved(startTS, resolved) {
 		return nil
 	}

@@ -177,6 +177,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowProcessList()
 	case ast.ShowEvents:
 		// empty result
+	case ast.ShowStatsExtended:
+		return e.fetchShowStatsExtended()
 	case ast.ShowStatsMeta:
 		return e.fetchShowStatsMeta()
 	case ast.ShowStatsHistograms:
@@ -427,7 +429,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 		data_free, auto_increment, create_time, update_time, check_time,
 		table_collation, IFNULL(checksum,''), create_options, table_comment
 		FROM information_schema.tables
-		WHERE table_schema=%? ORDER BY table_name`, e.DBName.L)
+		WHERE lower(table_schema)=%? ORDER BY table_name`, e.DBName.L)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -573,12 +575,17 @@ func (e *ShowExec) fetchShowIndex() error {
 			"",               // Index_comment
 			"YES",            // Index_visible
 			"NULL",           // Expression
+			"YES",            // Clustered
 		})
 	}
 	for _, idx := range tb.Indices() {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
 			continue
+		}
+		isClustered := "NO"
+		if tb.Meta().IsCommonHandle && idxInfo.Primary {
+			isClustered = "YES"
 		}
 		for i, col := range idxInfo.Columns {
 			nonUniq := 1
@@ -625,6 +632,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				idx.Meta().Comment,     // Index_comment
 				visible,                // Index_visible
 				expression,             // Expression
+				isClustered,            // Clustered
 			})
 		}
 	}
@@ -1364,7 +1372,6 @@ func (e *ShowExec) fetchShowGrants() error {
 }
 
 func (e *ShowExec) fetchShowPrivileges() error {
-	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
 	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
 	e.appendRow([]interface{}{"Alter routine", "Functions,Procedures", "To alter or drop stored functions/procedures"})
 	e.appendRow([]interface{}{"Create", "Databases,Tables,Indexes", "To create new databases and tables"})

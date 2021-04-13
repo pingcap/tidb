@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
-	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -48,15 +48,14 @@ import (
 // Methods copied from kv.Storage and tikv.Storage due to limitation of go1.13.
 type Storage interface {
 	Begin() (kv.Transaction, error)
-	BeginWithTxnScope(txnScope string) (kv.Transaction, error)
-	BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error)
-	BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error)
+	BeginWithOption(option kv.TransactionOption) (kv.Transaction, error)
 	GetSnapshot(ver kv.Version) kv.Snapshot
 	GetClient() kv.Client
 	GetMPPClient() kv.MPPClient
 	Close() error
 	UUID() string
 	CurrentVersion(txnScope string) (kv.Version, error)
+	CurrentTimestamp(txnScop string) (uint64, error)
 	GetOracle() oracle.Oracle
 	SupportDeleteRange() (supported bool)
 	Name() string
@@ -101,8 +100,7 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 		logutil.BgLogger().Info("get MVCC by encoded key failed",
 			zap.Stringer("encodeKey", encodedKey),
 			zap.Reflect("region", keyLocation.Region),
-			zap.Stringer("startKey", keyLocation.StartKey),
-			zap.Stringer("endKey", keyLocation.EndKey),
+			zap.Stringer("keyLocation", keyLocation),
 			zap.Reflect("kvResp", kvResp),
 			zap.Error(err))
 		return nil, errors.Trace(err)
@@ -603,6 +601,22 @@ func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 	}
 }
 
+func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitionID int64) tableInfoWithKeyRange {
+	sk, ek := tablecodec.GetTableHandleKeyRange(partitionID)
+	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	return tableInfoWithKeyRange{
+		&TableInfo{
+			DB:      db,
+			Table:   table,
+			IsIndex: false,
+			Index:   nil,
+		},
+		startKey,
+		endKey,
+	}
+}
+
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
@@ -618,7 +632,13 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.
 	tables := []tableInfoWithKeyRange{}
 	for _, db := range schemas {
 		for _, table := range db.Tables {
-			tables = append(tables, newTableWithKeyRange(db, table))
+			if table.Partition != nil {
+				for _, partition := range table.Partition.Definitions {
+					tables = append(tables, newPartitionTableWithKeyRange(db, table, partition.ID))
+				}
+			} else {
+				tables = append(tables, newTableWithKeyRange(db, table))
+			}
 			for _, index := range table.Indices {
 				tables = append(tables, newIndexWithKeyRange(db, table, index))
 			}
@@ -840,7 +860,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Error(err)
+			log.Error("err", zap.Error(err))
 		}
 	}()
 

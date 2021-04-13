@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
+	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -120,12 +122,15 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		CAPath:   d.security.ClusterSSLCA,
 		CertPath: d.security.ClusterSSLCert,
 		KeyPath:  d.security.ClusterSSLKey,
-	}, pd.WithGRPCDialOptions(
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
-			Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
-		}),
-	), pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second))
+	},
+		pd.WithGRPCDialOptions(
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
+				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
+			}),
+		),
+		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
+		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
 	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {
@@ -287,4 +292,47 @@ func (s *tikvStore) Close() error {
 // GetMemCache return memory manager of the storage
 func (s *tikvStore) GetMemCache() kv.MemManager {
 	return s.memCache
+}
+
+// Begin a global transaction.
+func (s *tikvStore) Begin() (kv.Transaction, error) {
+	txn, err := s.KVStore.Begin()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return txn_driver.NewTiKVTxn(txn), err
+}
+
+// BeginWithOption begins a transaction with given option
+func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+	txnScope := option.TxnScope
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
+	}
+	var txn *tikv.KVTxn
+	var err error
+	if option.StartTS != nil {
+		txn, err = s.BeginWithStartTS(txnScope, *option.StartTS)
+	} else if option.PrevSec != nil {
+		txn, err = s.BeginWithExactStaleness(txnScope, *option.PrevSec)
+	} else {
+		txn, err = s.BeginWithTxnScope(txnScope)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return txn_driver.NewTiKVTxn(txn), err
+}
+
+// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
+// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
+	return txn_driver.NewSnapshot(s.KVStore.GetSnapshot(ver.Ver))
+}
+
+// CurrentVersion returns current max committed version with the given txnScope (local or global).
+func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
+	ver, err := s.KVStore.CurrentTimestamp(txnScope)
+	return kv.NewVersion(ver), err
 }

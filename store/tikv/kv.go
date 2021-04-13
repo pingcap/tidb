@@ -24,8 +24,9 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/latch"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -95,13 +96,13 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 	diff := time.Since(cachedTime)
 
 	if diff > (GcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
-		return ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point")
+		return kv.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point")
 	}
 
 	if startTime < cachedSafePoint {
 		t1 := oracle.GetTimeFromTS(startTime)
 		t2 := oracle.GetTimeFromTS(cachedSafePoint)
-		return ErrGCTooEarly.GenWithStackByArgs(t1, t2)
+		return kv.ErrGCTooEarly.GenWithStackByArgs(t1, t2)
 	}
 
 	return nil
@@ -166,13 +167,12 @@ func (s *KVStore) runSafePointChecker() {
 }
 
 // Begin a global transaction.
-func (s *KVStore) Begin() (kv.Transaction, error) {
+func (s *KVStore) Begin() (*KVTxn, error) {
 	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
 }
 
-// BeginWithTxnScope begins a transaction with the given txnScope (local or
-// global)
-func (s *KVStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
+// BeginWithTxnScope begins a transaction with the given txnScope (local or global)
+func (s *KVStore) BeginWithTxnScope(txnScope string) (*KVTxn, error) {
 	txn, err := newTiKVTxn(s, txnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -181,7 +181,7 @@ func (s *KVStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
 }
 
 // BeginWithStartTS begins a transaction with startTS.
-func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
+func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -190,7 +190,7 @@ func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transact
 }
 
 // BeginWithExactStaleness begins transaction with given staleness
-func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -199,9 +199,9 @@ func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.T
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
-// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-func (s *KVStore) GetSnapshot(ver kv.Version) kv.Snapshot {
-	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
+// if ts is MaxVersion or > current max committed version, we will use current version for this snapshot.
+func (s *KVStore) GetSnapshot(ts uint64) *KVSnapshot {
+	snapshot := newTiKVSnapshot(s, ts, s.nextReplicaReadSeed())
 	return snapshot
 }
 
@@ -231,14 +231,14 @@ func (s *KVStore) UUID() string {
 	return s.uuid
 }
 
-// CurrentVersion returns current max committed version with the given txnScope (local or global).
-func (s *KVStore) CurrentVersion(txnScope string) (kv.Version, error) {
+// CurrentTimestamp returns current timestamp with the given txnScope (local or global).
+func (s *KVStore) CurrentTimestamp(txnScope string) (uint64, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := s.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
-		return kv.NewVersion(0), errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	return kv.NewVersion(startTS), nil
+	return startTS, nil
 }
 
 func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64, error) {
@@ -255,8 +255,8 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
 		// This may cause duplicate data to be written.
 		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
-			if val.(bool) && !kv.IsMockCommitErrorEnable() {
-				err = ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
+			if val.(bool) && !IsMockCommitErrorEnable() {
+				err = kv.ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
 			}
 		})
 
@@ -299,7 +299,7 @@ func (s *KVStore) GetPDClient() pd.Client {
 
 // ShowStatus returns the specified status of the storage
 func (s *KVStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
-	return nil, kv.ErrNotImplemented
+	return nil, tidbkv.ErrNotImplemented
 }
 
 // SupportDeleteRange gets the storage support delete range or not.
