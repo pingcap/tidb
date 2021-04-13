@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -218,6 +217,10 @@ func (s *testClusteredSuite) TestClusteredBatchPointGet(c *C) {
 		testkit.Rows("1 1 1", "3 3 3", "5 5 5"))
 }
 
+type SnapCacheSizeGetter interface {
+	SnapCacheSize() int
+}
+
 func (s *testClusteredSuite) TestClusteredInsertIgnoreBatchGetKeyCount(c *C) {
 	tk := s.newTK(c)
 	tk.MustExec("drop table if exists t")
@@ -227,9 +230,10 @@ func (s *testClusteredSuite) TestClusteredInsertIgnoreBatchGetKeyCount(c *C) {
 	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
 	snapSize := 0
-	if t, ok := txn.GetSnapshot().(*tikv.KVSnapshot); ok {
+	if t, ok := txn.GetSnapshot().(SnapCacheSizeGetter); ok {
 		snapSize = t.SnapCacheSize()
 	}
+
 	c.Assert(snapSize, Equals, 1)
 	tk.MustExec("rollback")
 }
