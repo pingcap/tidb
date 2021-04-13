@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 )
 
-// tikvBatchGetter wrapps unionstore.BufferBatchGetter as kv.BatchGetter.
+// tikvBatchGetter wraps unionstore.BufferBatchGetter as kv.BatchGetter.
 type tikvBatchGetter struct {
 	*unionstore.BufferBatchGetter
 }
@@ -31,7 +31,7 @@ func (getter *tikvBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map
 	return getter.BufferBatchGetter.BatchGet(ctx, toTiKVKeys(keys))
 }
 
-// kvBatchGetter wrapps kv.BatchGetter as unionstore.BatchGetter.
+// kvBatchGetter wraps kv.BatchGetter as unionstore.BatchGetter.
 type kvBatchGetter struct {
 	kv.BatchGetter
 }
@@ -47,7 +47,7 @@ func (g *kvBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string
 	return g.BatchGetter.BatchGet(ctx, toKVKeys(keys))
 }
 
-// kvGetter wrapps kv.Getter as unionstore.Getter
+// kvGetter wraps kv.Getter as unionstore.Getter
 type kvGetter struct {
 	kv.Getter
 }
@@ -87,7 +87,7 @@ func NewBufferBatchGetter(buffer kv.MemBuffer, middleCache kv.Getter, snapshot k
 	return &tikvBatchGetter{getter}
 }
 
-// memBuffer wrapps unionstore.MemDB as kv.MemBuffer.
+// memBuffer wraps unionstore.MemDB as kv.MemBuffer.
 type memBuffer struct {
 	*unionstore.MemDB
 }
@@ -210,7 +210,7 @@ func (g *tikvGetter) Get(_ context.Context, k kv.Key) ([]byte, error) {
 	return g.Getter.Get(k)
 }
 
-// tikvIterator wrapps unionstore.Iterator as kv.Iterator
+// tikvIterator wraps unionstore.Iterator as kv.Iterator
 type tikvIterator struct {
 	unionstore.Iterator
 }
