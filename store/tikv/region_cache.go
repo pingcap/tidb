@@ -31,8 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/ddl/placement"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -447,16 +445,11 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 	failpoint.Inject("assertStoreLabels", func(val failpoint.Value) {
 		if len(opts) > 0 {
-			value := val.(string)
-			v := ""
+			kv := strings.Split(val.(string), "_")
 			for _, label := range options.labels {
-				if label.Key == placement.DCLabelKey {
-					v = label.Value
-					break
+				if label.Key == kv[0] && label.Value != kv[1] {
+					panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", kv[0], kv[1]))
 				}
-			}
-			if v != value {
-				panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", v, value))
 			}
 		}
 	})
@@ -598,14 +591,19 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 // KeyLocation is the region and range that a key is located.
 type KeyLocation struct {
 	Region   RegionVerID
-	StartKey tidbkv.Key
-	EndKey   tidbkv.Key
+	StartKey []byte
+	EndKey   []byte
 }
 
 // Contains checks if key is in [StartKey, EndKey).
 func (l *KeyLocation) Contains(key []byte) bool {
 	return bytes.Compare(l.StartKey, key) <= 0 &&
 		(bytes.Compare(key, l.EndKey) < 0 || len(l.EndKey) == 0)
+}
+
+// String implements fmt.Stringer interface.
+func (l *KeyLocation) String() string {
+	return fmt.Sprintf("region %s,startKey:%s,endKey:%s", l.Region.String(), kv.StrKey(l.StartKey), kv.StrKey(l.EndKey))
 }
 
 // LocateKey searches for the region and range that the key is located.

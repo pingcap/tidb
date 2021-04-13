@@ -44,7 +44,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	scanner, err := txn.NewScanner([]byte("a"), nil, 10, false)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
-		c.Assert([]byte{ch}, BytesEquals, []byte(scanner.Key()))
+		c.Assert([]byte{ch}, BytesEquals, scanner.Key())
 		c.Assert(scanner.Next(), IsNil)
 	}
 	c.Assert(scanner.Valid(), IsFalse)
@@ -52,7 +52,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	scanner, err = txn.NewScanner([]byte("a"), []byte("i"), 10, false)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('h'); ch++ {
-		c.Assert([]byte{ch}, BytesEquals, []byte(scanner.Key()))
+		c.Assert([]byte{ch}, BytesEquals, scanner.Key())
 		c.Assert(scanner.Next(), IsNil)
 	}
 	c.Assert(scanner.Valid(), IsFalse)
