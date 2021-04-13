@@ -1,0 +1,48 @@
+goos: darwin
+goarch: amd64
+pkg: github.com/pingcap/tidb/expression
+BenchmarkVectorizedBuiltinArithmeticFunc
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  435975	      2731 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  411513	      2732 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  420106	      2737 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  430065	      2773 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  426912	      2740 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  435936	      2747 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  431798	      2744 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  422716	      2768 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  435495	      2745 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  421038	      2735 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  423950	      2760 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  413349	      2816 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  425253	      2811 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  430316	      2823 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  428163	      2776 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  427286	      2755 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  427602	      2732 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  429700	      2731 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  433785	      2734 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       	  427335	      2744 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52660	     22831 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52341	     22599 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52525	     22745 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52056	     22735 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52507	     23127 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   51025	     23056 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52479	     22889 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52981	     22844 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   51936	     22714 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52665	     22795 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   51884	     23301 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   50869	     23426 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   51266	     23405 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   51236	     23347 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   51199	     23330 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   51411	     22976 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52450	     22643 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52274	     22781 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52393	     22685 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    	   52678	     22781 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok	github.com/pingcap/tidb/expression	222.095s

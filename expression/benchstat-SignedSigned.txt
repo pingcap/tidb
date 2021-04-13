@@ -1,0 +1,11 @@
+name                                                                             old time/op    new time/op    delta
+VectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8       4.64µs ± 1%    4.42µs ± 1%  -4.59%  (p=0.000 n=19+20)
+VectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8    32.8µs ± 1%    29.6µs ± 2%  -9.76%  (p=0.000 n=20+20)
+
+name                                                                             old alloc/op   new alloc/op   delta
+VectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8        0.00B          0.00B         ~     (all equal)
+VectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8     0.00B          0.00B         ~     (all equal)
+
+name                                                                             old allocs/op  new allocs/op  delta
+VectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-VecBuiltinFunc-8         0.00           0.00         ~     (all equal)
+VectorizedBuiltinArithmeticFunc/builtinArithmeticPlusIntSig-NonVecBuiltinFunc-8      0.00           0.00         ~     (all equal)

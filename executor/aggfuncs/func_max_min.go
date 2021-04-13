@@ -36,52 +36,45 @@ type Deque struct {
 	cmpFunc func(i, j interface{}) int
 }
 
-// PushFront pushes Idx and Item(wrapped in Pair) to the front of Deque
-func (d *Deque) PushFront(idx uint64, item interface{}) {
-	d.Items = append([]Pair{{item, idx}}, d.Items...)
-}
-
 // PushBack pushes Idx and Item(wrapped in Pair) to the end of Deque
 func (d *Deque) PushBack(idx uint64, item interface{}) {
 	d.Items = append(d.Items, Pair{item, idx})
 }
 
 // PopFront pops an Item from the front of Deque
-func (d *Deque) PopFront() (interface{}, error) {
+func (d *Deque) PopFront() error {
 	if len(d.Items) <= 0 {
-		return nil, errors.New("Pop front when Deque is empty")
+		return errors.New("Pop front when Deque is empty")
 	}
-	res := d.Items[0]
 	d.Items = d.Items[1:]
-	return res, nil
+	return nil
 }
 
 // PopBack pops an Item from the end of Deque
-func (d *Deque) PopBack() (interface{}, error) {
+func (d *Deque) PopBack() error {
 	i := len(d.Items) - 1
 	if i < 0 {
-		return nil, errors.New("Pop back when Deque is empty")
+		return errors.New("Pop back when Deque is empty")
 	}
-	res := d.Items[i]
 	d.Items = d.Items[:i]
-	return res, nil
+	return nil
 }
 
-// Back returns the element at the end of Deque
-func (d *Deque) Back() (Pair, error) {
+// Back returns the element at the end of Deque, and whether reached end of deque
+func (d *Deque) Back() (Pair, bool) {
 	i := len(d.Items) - 1
 	if i < 0 {
-		return Pair{}, errors.New("Cannot get back when Deque is empty")
+		return Pair{}, true
 	}
-	return d.Items[i], nil
+	return d.Items[i], false
 }
 
-// Front returns the element at the front of Deque
-func (d *Deque) Front() (Pair, error) {
+// Front returns the element at the front of Deque, and whether reached end of deque
+func (d *Deque) Front() (Pair, bool) {
 	if len(d.Items) <= 0 {
-		return Pair{}, errors.New("Cannot get front when Deque is empty")
+		return Pair{}, true
 	}
-	return d.Items[0], nil
+	return d.Items[0], false
 }
 
 // IsEmpty returns if Deque is empty
@@ -95,7 +88,7 @@ type Pair struct {
 	Idx  uint64
 }
 
-// Reset Deque
+// Reset resets the deque for a MaxMinSlidingWindowAggFunc
 func (d *Deque) Reset() {
 	d.Items = d.Items[:0]
 }
@@ -103,12 +96,12 @@ func (d *Deque) Reset() {
 // Dequeue pops out element from the front, if element's index is out of boundary, i.e. the leftmost element index
 func (d *Deque) Dequeue(boundary uint64) error {
 	for !d.IsEmpty() {
-		frontEle, err := d.Front()
-		if err != nil {
-			return err
+		frontEle, isEnd:= d.Front()
+		if isEnd {
+			return errors.New("Dequeue empty deque")
 		}
 		if frontEle.Idx <= boundary {
-			_, err := d.PopFront()
+			err := d.PopFront()
 			if err != nil {
 				return err
 			}
@@ -122,16 +115,16 @@ func (d *Deque) Dequeue(boundary uint64) error {
 // Enqueue put Item at the back of queue, while popping any element that is lesser element in queue
 func (d *Deque) Enqueue(idx uint64, item interface{}) error {
 	for !d.IsEmpty() {
-		pair, err := d.Back()
-		if err != nil {
-			return err
+		pair, isEnd := d.Back()
+		if isEnd {
+			return errors.New("Dequeue empty deque")
 		}
 
-		bigger := d.cmpFunc(item, pair.Item) >= 0
-		// 1. if Deque aims for finding max and Item is bigger than element at back
-		// 2. if Deque aims for finding min and Item is smaller than element at back
-		if bigger && d.IsMax || !bigger && !d.IsMax {
-			_, err := d.PopBack()
+		cmp := d.cmpFunc(item, pair.Item)
+		// 1. if Deque aims for finding max and Item is equal or bigger than element at back
+		// 2. if Deque aims for finding min and Item is equal or smaller than element at back
+		if cmp >= 0 && d.IsMax || cmp <= 0 && !d.IsMax {
+			err := d.PopBack()
 			if err != nil {
 				return err
 			}
@@ -341,7 +334,7 @@ func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 			return 0, err
 		}
 	}
-	if val, err := p.deque.Front(); err == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(int64)
 		p.isNull = false
 	} else {
@@ -372,7 +365,7 @@ func (e *maxMin4IntSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, las
 			return err
 		}
 	}
-	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(int64)
 		p.isNull = false
 	} else {
@@ -478,7 +471,7 @@ func (e *maxMin4UintSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			return 0, err
 		}
 	}
-	if val, err := p.deque.Front(); err == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(uint64)
 		p.isNull = false
 	} else {
@@ -508,7 +501,7 @@ func (e *maxMin4UintSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, la
 			return err
 		}
 	}
-	if val, err := p.deque.Front(); err == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(uint64)
 		p.isNull = false
 	} else {
@@ -615,7 +608,7 @@ func (e *maxMin4Float32Sliding) UpdatePartialResult(sctx sessionctx.Context, row
 			return 0, err
 		}
 	}
-	if val, err := p.deque.Front(); err == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(float32)
 		p.isNull = false
 	} else {
@@ -645,7 +638,7 @@ func (e *maxMin4Float32Sliding) Slide(sctx sessionctx.Context, rows []chunk.Row,
 			return err
 		}
 	}
-	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(float32)
 		p.isNull = false
 	} else {
@@ -750,7 +743,7 @@ func (e *maxMin4Float64Sliding) UpdatePartialResult(sctx sessionctx.Context, row
 			return 0, err
 		}
 	}
-	if val, err := p.deque.Front(); err == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(float64)
 		p.isNull = false
 	} else {
@@ -780,7 +773,7 @@ func (e *maxMin4Float64Sliding) Slide(sctx sessionctx.Context, rows []chunk.Row,
 			return err
 		}
 	}
-	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(float64)
 		p.isNull = false
 	} else {
@@ -902,7 +895,7 @@ func (e *maxMin4DecimalSliding) UpdatePartialResult(sctx sessionctx.Context, row
 			return 0, err
 		}
 	}
-	if val, err := p.deque.Front(); err == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(types.MyDecimal)
 		p.isNull = false
 	} else {
@@ -932,7 +925,7 @@ func (e *maxMin4DecimalSliding) Slide(sctx sessionctx.Context, rows []chunk.Row,
 			return err
 		}
 	}
-	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(types.MyDecimal)
 		p.isNull = false
 	} else {
@@ -1050,7 +1043,7 @@ func (e *maxMin4StringSliding) UpdatePartialResult(sctx sessionctx.Context, rows
 			return 0, err
 		}
 	}
-	if val, err := p.deque.Front(); err == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(string)
 		p.isNull = false
 	} else {
@@ -1080,7 +1073,7 @@ func (e *maxMin4StringSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, 
 			return err
 		}
 	}
-	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(string)
 		p.isNull = false
 	} else {
@@ -1188,7 +1181,7 @@ func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			return 0, err
 		}
 	}
-	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(types.Time)
 		p.isNull = false
 	} else {
@@ -1218,7 +1211,7 @@ func (e *maxMin4TimeSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, la
 			return err
 		}
 	}
-	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(types.Time)
 		p.isNull = false
 	} else {
@@ -1326,7 +1319,7 @@ func (e *maxMin4DurationSliding) UpdatePartialResult(sctx sessionctx.Context, ro
 			return 0, err
 		}
 	}
-	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(types.Duration)
 		p.isNull = false
 	} else {
@@ -1356,7 +1349,7 @@ func (e *maxMin4DurationSliding) Slide(sctx sessionctx.Context, rows []chunk.Row
 			return err
 		}
 	}
-	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+	if val, isEnd := p.deque.Front(); !isEnd {
 		p.val = val.Item.(types.Duration)
 		p.isNull = false
 	} else {
