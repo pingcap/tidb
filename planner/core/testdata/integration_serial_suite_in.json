@@ -11,8 +11,8 @@
   {
     "name": "TestPushDownToTiFlashWithKeepOrder",
     "cases": [
-      "explain format = 'brief' select max(a) from t",
-      "explain format = 'brief' select min(a) from t"
+      "explain select max(a) from t",
+      "explain select min(a) from t"
     ]
   },
   {
