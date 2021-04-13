@@ -33,7 +33,7 @@ const (
 	// Prompt is the prompt for telemetry owner manager.
 	Prompt = "telemetry"
 	// ReportInterval is the interval of the report.
-	ReportInterval = 24 * time.Hour
+	ReportInterval = 6 * time.Hour
 )
 
 const (
@@ -47,7 +47,8 @@ func getTelemetryGlobalVariable(ctx sessionctx.Context) (bool, error) {
 	return variable.TiDBOptOn(val), err
 }
 
-func isTelemetryEnabled(ctx sessionctx.Context) (bool, error) {
+// IsTelemetryEnabled check whether telemetry enabled.
+func IsTelemetryEnabled(ctx sessionctx.Context) (bool, error) {
 	if !config.GetGlobalConfig().EnableTelemetry {
 		return false, nil
 	}
@@ -63,7 +64,7 @@ func PreviewUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (stri
 	if etcdClient == nil {
 		return "", nil
 	}
-	if enabled, err := isTelemetryEnabled(ctx); err != nil || !enabled {
+	if enabled, err := IsTelemetryEnabled(ctx); err != nil || !enabled {
 		return "", err
 	}
 
@@ -88,7 +89,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 		// silently ignore
 		return false, nil
 	}
-	enabled, err := isTelemetryEnabled(ctx)
+	enabled, err := IsTelemetryEnabled(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -108,6 +109,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 	}
 
 	data := generateTelemetryData(ctx, trackingID)
+	postReportTelemetryData()
 
 	rawJSON, err := json.Marshal(data)
 	if err != nil {

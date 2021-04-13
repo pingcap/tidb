@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -50,7 +49,6 @@ type SplitIndexRegionExec struct {
 	lower          []types.Datum
 	upper          []types.Datum
 	num            int
-	handleCols     core.HandleCols
 	valueLists     [][]types.Datum
 	splitIdxKeys   [][]byte
 
@@ -238,12 +236,11 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64
 	}
 
 	if bytes.Compare(lowerIdxKey, upperIdxKey) >= 0 {
-		lowerStr, err1 := datumSliceToString(e.lower)
-		upperStr, err2 := datumSliceToString(e.upper)
-		if err1 != nil || err2 != nil {
-			return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, e.lower, e.upper)
-		}
-		return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, lowerStr, upperStr)
+		lowerStr := datumSliceToString(e.lower)
+		upperStr := datumSliceToString(e.upper)
+		errMsg := fmt.Sprintf("Split index `%v` region lower value %v should less than the upper value %v",
+			e.indexInfo.Name, lowerStr, upperStr)
+		return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	return getValuesList(lowerIdxKey, upperIdxKey, e.num, keys), nil
 }
@@ -304,12 +301,12 @@ func getUint64FromBytes(bs []byte, pad byte) uint64 {
 	return binary.BigEndian.Uint64(buf)
 }
 
-func datumSliceToString(ds []types.Datum) (string, error) {
+func datumSliceToString(ds []types.Datum) string {
 	str := "("
 	for i, d := range ds {
 		s, err := d.ToString()
 		if err != nil {
-			return str, err
+			return fmt.Sprintf("%v", ds)
 		}
 		if i > 0 {
 			str += ","
@@ -317,7 +314,7 @@ func datumSliceToString(ds []types.Datum) (string, error) {
 		str += s
 	}
 	str += ")"
-	return str, nil
+	return str
 }
 
 // SplitTableRegionExec represents a split table regions executor.
@@ -547,7 +544,8 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 		lowerRecordID := e.lower[0].GetUint64()
 		upperRecordID := e.upper[0].GetUint64()
 		if upperRecordID <= lowerRecordID {
-			return 0, 0, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+			errMsg := fmt.Sprintf("lower value %v should less than the upper value %v", lowerRecordID, upperRecordID)
+			return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
 		step = int64((upperRecordID - lowerRecordID) / uint64(e.num))
 		lowerValue = int64(lowerRecordID)
@@ -555,13 +553,15 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 		lowerRecordID := e.lower[0].GetInt64()
 		upperRecordID := e.upper[0].GetInt64()
 		if upperRecordID <= lowerRecordID {
-			return 0, 0, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+			errMsg := fmt.Sprintf("lower value %v should less than the upper value %v", lowerRecordID, upperRecordID)
+			return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
-		step = (upperRecordID - lowerRecordID) / int64(e.num)
+		step = int64(uint64(upperRecordID-lowerRecordID) / uint64(e.num))
 		lowerValue = lowerRecordID
 	}
 	if step < minRegionStepValue {
-		return 0, 0, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
+		errMsg := fmt.Sprintf("the region size is too small, expected at least %d, but got %d", step, minRegionStepValue)
+		return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	return lowerValue, step, nil
 }
@@ -596,14 +596,11 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int
 		return nil, err
 	}
 	if lowerHandle.Compare(upperHandle) >= 0 {
-		lowerStr, err1 := datumSliceToString(e.lower)
-		upperStr, err2 := datumSliceToString(e.upper)
-		if err1 != nil || err2 != nil {
-			return nil, errors.Errorf("Split table `%v` region lower value %v should less than the upper value %v",
-				e.tableInfo.Name.O, e.lower, e.upper)
-		}
-		return nil, errors.Errorf("Split table `%v` region lower value %v should less than the upper value %v",
+		lowerStr := datumSliceToString(e.lower)
+		upperStr := datumSliceToString(e.upper)
+		errMsg := fmt.Sprintf("Split table `%v` region lower value %v should less than the upper value %v",
 			e.tableInfo.Name.O, lowerStr, upperStr)
+		return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	low := tablecodec.EncodeRecordKey(recordPrefix, lowerHandle)
 	up := tablecodec.EncodeRecordKey(recordPrefix, upperHandle)

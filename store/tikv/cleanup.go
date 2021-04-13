@@ -40,7 +40,7 @@ func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batc
 		Keys:         batch.mutations.GetKeys(),
 		StartVersion: c.startTS,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
-	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
+	resp, err := c.store.SendReq(bo, req, batch.region, ReadTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}

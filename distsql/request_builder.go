@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -144,8 +145,8 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 		builder.Request.Tp = kv.ReqTypeAnalyze
 		builder.Request.Data, builder.err = ana.Marshal()
 		builder.Request.NotFillCache = true
-		builder.Request.IsolationLevel = kv.RC
-		builder.Request.Priority = kv.PriorityLow
+		builder.Request.IsolationLevel = tikvstore.RC
+		builder.Request.Priority = tikvstore.PriorityLow
 	}
 
 	return builder
@@ -198,24 +199,24 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	return builder
 }
 
-func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
+func (builder *RequestBuilder) getIsolationLevel() tikvstore.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
-		return kv.RC
+		return tikvstore.RC
 	}
-	return kv.SI
+	return tikvstore.SI
 }
 
 func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 	switch sv.StmtCtx.Priority {
 	case mysql.NoPriority, mysql.DelayedPriority:
-		return kv.PriorityNormal
+		return tikvstore.PriorityNormal
 	case mysql.LowPriority:
-		return kv.PriorityLow
+		return tikvstore.PriorityLow
 	case mysql.HighPriority:
-		return kv.PriorityHigh
+		return tikvstore.PriorityHigh
 	}
-	return kv.PriorityNormal
+	return tikvstore.PriorityNormal
 }
 
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
