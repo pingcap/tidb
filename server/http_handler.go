@@ -309,6 +309,20 @@ func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 		colName := col.Name.String()
 		vals, ok := values[colName]
 		if !ok {
+			vals, ok := values[colName+"__hex"]
+			if ok && len(vals) == 1 {
+				b, err := hex.DecodeString(vals[0])
+				if err != nil {
+					return nil, err
+				}
+				bDatum := types.NewBytesDatum(b)
+				cDatum, err := bDatum.ConvertTo(sc, &col.FieldType)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				data[i] = cDatum
+				continue
+			}
 			return nil, errors.BadRequestf("Missing value for index column %s.", colName)
 		}
 
