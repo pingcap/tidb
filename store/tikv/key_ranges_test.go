@@ -15,7 +15,7 @@ package tikv
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type testKeyRangesSuite struct {
