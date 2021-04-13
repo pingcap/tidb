@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -73,11 +72,11 @@ func (s *testScanSuite) beginTxn(c *C) *tikv.KVTxn {
 	return txn
 }
 
-func (s *testScanSuite) makeKey(i int) tidbkv.Key {
+func (s *testScanSuite) makeKey(i int) []byte {
 	var key []byte
 	key = append(key, s.recordPrefix...)
 	key = append(key, []byte(fmt.Sprintf("%10d", i))...)
-	return tidbkv.Key(key)
+	return key
 }
 
 func (s *testScanSuite) makeValue(i int) []byte {
@@ -89,16 +88,16 @@ func (s *testScanSuite) TestScan(c *C) {
 		for i := 0; i < rowNum; i++ {
 			k := scan.Key()
 			expectedKey := s.makeKey(i)
-			if ok := bytes.Equal([]byte(k), []byte(expectedKey)); !ok {
+			if ok := bytes.Equal(k, expectedKey); !ok {
 				logutil.BgLogger().Error("bytes equal check fail",
 					zap.Int("i", i),
 					zap.Int("rowNum", rowNum),
-					zap.Stringer("obtained key", k),
-					zap.Stringer("obtained val", tidbkv.Key(scan.Value())),
-					zap.Stringer("expected", expectedKey),
+					zap.String("obtained key", kv.StrKey(k)),
+					zap.String("obtained val", kv.StrKey(scan.Value())),
+					zap.String("expected", kv.StrKey(expectedKey)),
 					zap.Bool("keyOnly", keyOnly))
 			}
-			c.Assert([]byte(k), BytesEquals, []byte(expectedKey))
+			c.Assert(k, BytesEquals, expectedKey)
 			if !keyOnly {
 				v := scan.Value()
 				c.Assert(v, BytesEquals, s.makeValue(i))
