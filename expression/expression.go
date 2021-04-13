@@ -1006,11 +1006,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.JSONLength:
 		return true
 	case ast.Substr, ast.Substring:
-		switch sf.Function.PbCode() {
+		switch function.Function.PbCode() {
 		case
 			tipb.ScalarFuncSig_Substring2ArgsUTF8,
 			tipb.ScalarFuncSig_Substring3ArgsUTF8:
-			ret = true
+			return true
 		}
 	case ast.Cast:
 		switch function.Function.PbCode() {
@@ -1020,33 +1020,24 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastDecimalAsTime,
 			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime:
 			return true
-		default:
-			return false
 		}
 	case ast.DateAdd:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
 			return true
-		default:
-			return false
 		}
 	case ast.Round:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundDec:
 			return true
-		default:
-			return false
 		}
 	case ast.Extract:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_ExtractDatetime:
 			return true
-		default:
-			return false
 		}
-	default:
-		return false
 	}
+	return false
 }
 
 func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
