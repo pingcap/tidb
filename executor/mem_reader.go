@@ -23,6 +23,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -322,8 +323,19 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 	if err != nil {
 		return err
 	}
+	tmp := ctx.GetSessionVars().TemporaryTable
 	for _, rg := range kvRanges {
 		iter := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
+		if tmp != nil {
+			snapIter, err := tmp.MemDB.(*unionstore.MemDB).Iter(rg.StartKey, rg.EndKey)
+			if err != nil {
+				return err
+			}
+			iter, err = unionstore.NewUnionIter(iter, snapIter, false)
+			if err != nil {
+				return err
+			}
+		}
 		for ; iter.Valid(); err = iter.Next() {
 			if err != nil {
 				return err
