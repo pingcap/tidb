@@ -481,6 +481,8 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, errors.Trace(err)
 		}
 		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		return setCollation(s, CollationServer, val)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TimeZone, Value: "SYSTEM", IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -513,12 +515,16 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: Timestamp, Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterValid(normalizedValue, CharacterSetFilesystem)
+	}, SetSession: func(s *SessionVars, val string) error {
+		return setCharset(s, CharacterSetFilesystem, val)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if _, err := collate.GetCollationByName(normalizedValue); err != nil {
 			return normalizedValue, errors.Trace(err)
 		}
 		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		return setCollation(s, CollationDatabase, val)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: AutoIncrementIncrement, Value: strconv.FormatInt(DefAutoIncrementIncrement, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint16, AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
 		// AutoIncrementIncrement is valid in [1, 65535].
@@ -532,6 +538,8 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetClient, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterValid(normalizedValue, CharacterSetClient)
+	}, SetSession: func(s *SessionVars, val string) error {
+		return setCharset(s, CharacterSetClient, val)
 	}},
 	{Scope: ScopeNone, Name: Port, Value: "4000", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint16},
 	{Scope: ScopeNone, Name: LowerCaseTableNames, Value: "2"},
@@ -541,6 +549,8 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		}
 		return checkCharacterValid(normalizedValue, "")
+	}, SetSession: func(s *SessionVars, val string) error {
+		return setCharset(s, CharacterSetResults, val)
 	}},
 	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 5.7 compatible"},
 	{Scope: ScopeGlobal | ScopeSession, Name: TxnIsolation, Value: "REPEATABLE-READ", Type: TypeEnum, PossibleValues: []string{"READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -570,6 +580,8 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, errors.Trace(err)
 		}
 		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		return setCollation(s, CollationConnection, val)
 	}},
 	{Scope: ScopeNone, Name: Version, Value: mysql.ServerVersion},
 	{Scope: ScopeGlobal | ScopeSession, Name: AutoCommit, Value: BoolOn, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -582,6 +594,8 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharsetDatabase, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterValid(normalizedValue, CharsetDatabase)
+	}, SetSession: func(s *SessionVars, val string) error {
+		return setCharset(s, CharsetDatabase, val)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TxReadOnly, Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: TransactionReadOnly, Value: "0"},
@@ -612,9 +626,13 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: Socket, Value: "/tmp/myssock"},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetConnection, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterValid(normalizedValue, CharacterSetConnection)
+	}, SetSession: func(s *SessionVars, val string) error {
+		return setCharset(s, CharacterSetConnection, val)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterValid(normalizedValue, CharacterSetServer)
+	}, SetSession: func(s *SessionVars, val string) error {
+		return setCharset(s, CharacterSetServer, val)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: MaxAllowedPacket, Value: "67108864", Type: TypeUnsigned, MinValue: 1024, MaxValue: MaxOfMaxAllowedPacket, AutoConvertOutOfRange: true},
 	{Scope: ScopeSession, Name: WarningCount, Value: "0", ReadOnly: true},

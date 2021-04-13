@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -47,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -1371,59 +1369,9 @@ func (s *SessionVars) ClearStmtVars() {
 // Validation has already been performed, and the values have been normalized.
 // i.e. oN / on / 1 => ON
 func (s *SessionVars) SetSystemVar(name string, val string) error {
-	switch name {
-	case CollationConnection, CollationDatabase, CollationServer:
-		coll, err := collate.GetCollationByName(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
-			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
-			if err != nil {
-				return err
-			}
-		}
-		switch name {
-		case CollationConnection:
-			s.systems[CollationConnection] = coll.Name
-			s.systems[CharacterSetConnection] = coll.CharsetName
-		case CollationDatabase:
-			s.systems[CollationDatabase] = coll.Name
-			s.systems[CharsetDatabase] = coll.CharsetName
-		case CollationServer:
-			s.systems[CollationServer] = coll.Name
-			s.systems[CharacterSetServer] = coll.CharsetName
-		}
-		val = coll.Name
-	case CharacterSetConnection, CharacterSetClient, CharacterSetResults,
-		CharacterSetServer, CharsetDatabase, CharacterSetFilesystem:
-		if val == "" {
-			if name == CharacterSetResults {
-				s.systems[CharacterSetResults] = ""
-				return nil
-			}
-			return ErrWrongValueForVar.GenWithStackByArgs(name, "NULL")
-		}
-		cht, coll, err := charset.GetCharsetInfo(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
-			cht, coll = charset.GetDefaultCharsetAndCollate()
-		}
-		switch name {
-		case CharacterSetConnection:
-			s.systems[CollationConnection] = coll
-			s.systems[CharacterSetConnection] = cht
-		case CharsetDatabase:
-			s.systems[CollationDatabase] = coll
-			s.systems[CharsetDatabase] = cht
-		case CharacterSetServer:
-			s.systems[CollationServer] = coll
-			s.systems[CharacterSetServer] = cht
-		}
-		val = cht
-	default:
-		sv := GetSysVar(name)
-		if err := sv.SetSessionFromHook(s, val); err != nil {
-			return err
-		}
+	sv := GetSysVar(name)
+	if err := sv.SetSessionFromHook(s, val); err != nil {
+		return err
 	}
 	s.systems[name] = val
 	return nil
