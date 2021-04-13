@@ -24,44 +24,44 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-// NewDeque inits a new Deque
-func NewDeque(isMax bool, cmpFunc func(i, j interface{}) int) *Deque {
-	return &Deque{[]Pair{}, isMax, cmpFunc}
+// NewDeque inits a new MinMaxDeque
+func NewDeque(isMax bool, cmpFunc func(i, j interface{}) int) *MinMaxDeque {
+	return &MinMaxDeque{[]Pair{}, isMax, cmpFunc}
 }
 
-// Deque is an array based double end queue
-type Deque struct {
+// MinMaxDeque is an array based double end queue
+type MinMaxDeque struct {
 	Items   []Pair
 	IsMax   bool
 	cmpFunc func(i, j interface{}) int
 }
 
-// PushBack pushes Idx and Item(wrapped in Pair) to the end of Deque
-func (d *Deque) PushBack(idx uint64, item interface{}) {
+// PushBack pushes Idx and Item(wrapped in Pair) to the end of MinMaxDeque
+func (d *MinMaxDeque) PushBack(idx uint64, item interface{}) {
 	d.Items = append(d.Items, Pair{item, idx})
 }
 
-// PopFront pops an Item from the front of Deque
-func (d *Deque) PopFront() error {
+// PopFront pops an Item from the front of MinMaxDeque
+func (d *MinMaxDeque) PopFront() error {
 	if len(d.Items) <= 0 {
-		return errors.New("Pop front when Deque is empty")
+		return errors.New("Pop front when MinMaxDeque is empty")
 	}
 	d.Items = d.Items[1:]
 	return nil
 }
 
-// PopBack pops an Item from the end of Deque
-func (d *Deque) PopBack() error {
+// PopBack pops an Item from the end of MinMaxDeque
+func (d *MinMaxDeque) PopBack() error {
 	i := len(d.Items) - 1
 	if i < 0 {
-		return errors.New("Pop back when Deque is empty")
+		return errors.New("Pop back when MinMaxDeque is empty")
 	}
 	d.Items = d.Items[:i]
 	return nil
 }
 
-// Back returns the element at the end of Deque, and whether reached end of deque
-func (d *Deque) Back() (Pair, bool) {
+// Back returns the element at the end of MinMaxDeque, and whether reached end of deque
+func (d *MinMaxDeque) Back() (Pair, bool) {
 	i := len(d.Items) - 1
 	if i < 0 {
 		return Pair{}, true
@@ -69,34 +69,34 @@ func (d *Deque) Back() (Pair, bool) {
 	return d.Items[i], false
 }
 
-// Front returns the element at the front of Deque, and whether reached end of deque
-func (d *Deque) Front() (Pair, bool) {
+// Front returns the element at the front of MinMaxDeque, and whether reached end of deque
+func (d *MinMaxDeque) Front() (Pair, bool) {
 	if len(d.Items) <= 0 {
 		return Pair{}, true
 	}
 	return d.Items[0], false
 }
 
-// IsEmpty returns if Deque is empty
-func (d *Deque) IsEmpty() bool {
+// IsEmpty returns if MinMaxDeque is empty
+func (d *MinMaxDeque) IsEmpty() bool {
 	return len(d.Items) == 0
 }
 
-// Pair pairs items and their indices in Deque
+// Pair pairs items and their indices in MinMaxDeque
 type Pair struct {
 	Item interface{}
 	Idx  uint64
 }
 
 // Reset resets the deque for a MaxMinSlidingWindowAggFunc
-func (d *Deque) Reset() {
+func (d *MinMaxDeque) Reset() {
 	d.Items = d.Items[:0]
 }
 
 // Dequeue pops out element from the front, if element's index is out of boundary, i.e. the leftmost element index
-func (d *Deque) Dequeue(boundary uint64) error {
+func (d *MinMaxDeque) Dequeue(boundary uint64) error {
 	for !d.IsEmpty() {
-		frontEle, isEnd:= d.Front()
+		frontEle, isEnd := d.Front()
 		if isEnd {
 			return errors.New("Dequeue empty deque")
 		}
@@ -113,7 +113,7 @@ func (d *Deque) Dequeue(boundary uint64) error {
 }
 
 // Enqueue put Item at the back of queue, while popping any element that is lesser element in queue
-func (d *Deque) Enqueue(idx uint64, item interface{}) error {
+func (d *MinMaxDeque) Enqueue(idx uint64, item interface{}) error {
 	for !d.IsEmpty() {
 		pair, isEnd := d.Back()
 		if isEnd {
@@ -121,8 +121,8 @@ func (d *Deque) Enqueue(idx uint64, item interface{}) error {
 		}
 
 		cmp := d.cmpFunc(item, pair.Item)
-		// 1. if Deque aims for finding max and Item is equal or bigger than element at back
-		// 2. if Deque aims for finding min and Item is equal or smaller than element at back
+		// 1. if MinMaxDeque aims for finding max and Item is equal or bigger than element at back
+		// 2. if MinMaxDeque aims for finding min and Item is equal or smaller than element at back
 		if cmp >= 0 && d.IsMax || cmp <= 0 && !d.IsMax {
 			err := d.PopBack()
 			if err != nil {
@@ -160,7 +160,7 @@ const (
 	// DefPartialResult4MaxMinSetSize is the size of partialResult4MaxMinSet
 	DefPartialResult4MaxMinSetSize = int64(unsafe.Sizeof(partialResult4MaxMinSet{}))
 	// DefMaxMinDequeSize is the size of maxMinHeap
-	DefMaxMinDequeSize = int64(unsafe.Sizeof(Deque{}))
+	DefMaxMinDequeSize = int64(unsafe.Sizeof(MinMaxDeque{}))
 )
 
 type partialResult4MaxMinInt struct {
@@ -170,49 +170,49 @@ type partialResult4MaxMinInt struct {
 	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
 	isNull bool
 	// deque is used for recording max/mins inside current window with sliding algorithm
-	deque *Deque
+	deque *MinMaxDeque
 }
 
 type partialResult4MaxMinUint struct {
 	val    uint64
 	isNull bool
-	deque  *Deque
+	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinDecimal struct {
 	val    types.MyDecimal
 	isNull bool
-	deque  *Deque
+	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinFloat32 struct {
 	val    float32
 	isNull bool
-	deque  *Deque
+	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinFloat64 struct {
 	val    float64
 	isNull bool
-	deque  *Deque
+	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinTime struct {
 	val    types.Time
 	isNull bool
-	deque  *Deque
+	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinDuration struct {
 	val    types.Duration
 	isNull bool
-	deque  *Deque
+	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinString struct {
 	val    string
 	isNull bool
-	deque  *Deque
+	deque  *MinMaxDeque
 }
 
 type partialResult4MaxMinJSON struct {
@@ -326,7 +326,7 @@ func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		if isNull {
 			continue
 		}
-		// Deque needs the absolute position of each element, here i only denotes the relative position in rowsInGroup.
+		// MinMaxDeque needs the absolute position of each element, here i only denotes the relative position in rowsInGroup.
 		// To get the absolute position, we need to add offset of e.start, which represents the absolute index of start
 		// of window.
 		err = p.deque.Enqueue(uint64(i)+e.start, input)
