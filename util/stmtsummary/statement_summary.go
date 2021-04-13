@@ -228,8 +228,8 @@ type StmtExecInfo struct {
 	ExecRetryCount uint
 	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
-	util.ExecDetails
-	Prepared bool
+	TiKVExecDetails util.ExecDetails
+	Prepared        bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -845,9 +845,9 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.execRetryCount += sei.ExecRetryCount
 		ssElement.execRetryTime += sei.ExecRetryTime
 	}
-	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.ExecDetails.WaitKVRespDuration))
-	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.ExecDetails.WaitPDRespDuration))
-	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.ExecDetails.BackoffDuration))
+	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitKVRespDuration))
+	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
+	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
 	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
 }
 

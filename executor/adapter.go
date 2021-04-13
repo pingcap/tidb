@@ -1152,7 +1152,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		PlanInBinding:   sessVars.FoundInBinding,
 		ExecRetryCount:  a.retryCount,
 		StmtExecDetails: stmtDetail,
-		ExecDetails:     tikvExecDetail,
+		TiKVExecDetails: tikvExecDetail,
 		Prepared:        a.isPreparedStmt,
 	}
 	if a.retryCount > 0 {
