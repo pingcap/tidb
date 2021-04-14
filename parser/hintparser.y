@@ -104,6 +104,7 @@ import (
 	hintUseCascades           "USE_CASCADES"
 	hintNthPlan               "NTH_PLAN"
 	hintLimitToCop            "LIMIT_TO_COP"
+	hintForceIndex            "FORCE_INDEX"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -554,6 +555,7 @@ SupportedIndexLevelOptimizerHintName:
 	"USE_INDEX"
 |	"IGNORE_INDEX"
 |	"USE_INDEX_MERGE"
+|	"FORCE_INDEX"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -642,6 +644,7 @@ Identifier:
 |	"TIME_RANGE"
 |	"USE_CASCADES"
 |	"NTH_PLAN"
+|	"FORCE_INDEX"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"
