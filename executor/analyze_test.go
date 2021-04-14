@@ -236,6 +236,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
+	c.Skip("unstable")
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer func() {
@@ -509,6 +510,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 }
 
 func (s *testSerialSuite2) TestFastAnalyze4GlobalStats(c *C) {
+	c.Skip("unstable")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
@@ -743,6 +745,7 @@ func (s *testSuite10) TestFailedAnalyzeRequest(c *C) {
 }
 
 func (s *testSuite1) TestExtractTopN(c *C) {
+	c.Skip("unstable")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
