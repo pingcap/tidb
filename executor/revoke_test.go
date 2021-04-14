@@ -84,7 +84,7 @@ func (s *testSuite1) TestRevokeTableScope(c *C) {
 
 	// Make sure all the table privs for new user is Y.
 	res := tk.MustQuery(`SELECT Table_priv FROM mysql.tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`)
-	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter,Show View"))
+	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter,Create View,Show View"))
 
 	// Revoke each priv from the user.
 	for _, v := range mysql.AllTablePrivs {
@@ -94,8 +94,15 @@ func (s *testSuite1) TestRevokeTableScope(c *C) {
 		c.Assert(rows, HasLen, 1)
 		row := rows[0]
 		c.Assert(row, HasLen, 1)
-		p := fmt.Sprintf("%v", row[0])
-		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Equals, -1)
+		op := mysql.Priv2SetStr[v]
+		found := false
+		for _, v := range strings.Split(fmt.Sprintf("%v", row[0]), ",") {
+			if v == op {
+				found = true
+				break
+			}
+		}
+		c.Assert(found, IsFalse)
 	}
 
 	// Revoke all table scope privs.
