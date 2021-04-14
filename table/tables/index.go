@@ -16,7 +16,6 @@ package tables
 import (
 	"context"
 	"io"
-	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -177,7 +176,6 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 
 	// save the key buffer to reuse.
 	writeBufs.IndexKeyBuf = key
-	if c.needRestoredData
 	idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, opt.Untouched, indexedValues, h, c.phyTblID, handleRestoreData)
 	if err != nil {
 		return nil, err

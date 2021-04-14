@@ -1665,10 +1665,10 @@ func (s *testIntegrationSerialSuite) TestIndexMergePartialScansClusteredIndex(c 
 	tk.MustExec("insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);")
 	const queryTemplate = "select /*+ use_index_merge(t) */ %s from t where %s order by a, b;"
 	projections := [][]string{{"a"}, {"b"}, {"c"}, {"a", "b"}, {"b", "c"}, {"c", "a"}, {"b", "a", "c"}}
-	cases := []struct{
+	cases := []struct {
 		condition string
-		expected []string
-	} {
+		expected  []string
+	}{
 		{
 			// 3 table scans
 			"a < 2 or a < 10 or a > 11", []string{"1", "100"},
@@ -1700,7 +1700,7 @@ func (s *testIntegrationSerialSuite) TestIndexMergePartialScansClusteredIndex(c 
 			tk.HasPlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
-				row := strings.Repeat(datum + " ", len(p))
+				row := strings.Repeat(datum+" ", len(p))
 				expected = append(expected, row[:len(row)-1])
 			}
 			tk.MustQuery(query).Check(testkit.Rows(expected...))
@@ -1717,10 +1717,10 @@ func (s *testIntegrationSerialSuite) TestIndexMergePartialScansTiDBRowID(c *C) {
 	tk.MustExec("insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);")
 	const queryTemplate = "select /*+ use_index_merge(t) */ %s from t where %s order by a;"
 	projections := [][]string{{"a"}, {"b"}, {"c"}, {"a", "b"}, {"b", "c"}, {"c", "a"}, {"b", "a", "c"}}
-	cases := []struct{
+	cases := []struct {
 		condition string
-		expected []string
-	} {
+		expected  []string
+	}{
 		{
 			// 3 index scans
 			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
@@ -1752,7 +1752,7 @@ func (s *testIntegrationSerialSuite) TestIndexMergePartialScansTiDBRowID(c *C) {
 			tk.HasPlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
-				row := strings.Repeat(datum + " ", len(p))
+				row := strings.Repeat(datum+" ", len(p))
 				expected = append(expected, row[:len(row)-1])
 			}
 			tk.MustQuery(query).Check(testkit.Rows(expected...))
@@ -1769,10 +1769,10 @@ func (s *testIntegrationSerialSuite) TestIndexMergePartialScansPKIsHandle(c *C) 
 	tk.MustExec("insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);")
 	const queryTemplate = "select /*+ use_index_merge(t) */ %s from t where %s order by b;"
 	projections := [][]string{{"a"}, {"b"}, {"c"}, {"a", "b"}, {"b", "c"}, {"c", "a"}, {"b", "a", "c"}}
-	cases := []struct{
+	cases := []struct {
 		condition string
-		expected []string
-	} {
+		expected  []string
+	}{
 		{
 			// 3 index scans
 			"b < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
@@ -1800,7 +1800,7 @@ func (s *testIntegrationSerialSuite) TestIndexMergePartialScansPKIsHandle(c *C) 
 			tk.HasPlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
-				row := strings.Repeat(datum + " ", len(p))
+				row := strings.Repeat(datum+" ", len(p))
 				expected = append(expected, row[:len(row)-1])
 			}
 			tk.MustQuery(query).Check(testkit.Rows(expected...))
