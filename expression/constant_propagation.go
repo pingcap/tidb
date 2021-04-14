@@ -533,6 +533,9 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 // 'expression(..., outerCol, ...)' does not reference columns outside children schemas of join node.
 // Derived new expressions must be appended into join condition, not filter condition.
 func (s *propOuterJoinConstSolver) propagateColumnEQ() {
+	if s.nullSensitive {
+		return
+	}
 	visited := make([]bool, 2*len(s.joinConds)+len(s.filterConds))
 	s.unionSet = disjointset.NewIntSet(len(s.columns))
 	var outerCol, innerCol *Column
@@ -553,9 +556,6 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			// `select *, t1.a in (select t2.b from t t2) from t t1`
 			// rows with t2.b is null would impact whether LeftOuterSemiJoin should output 0 or null if there
 			// is no row satisfying t2.b = t1.a
-			if s.nullSensitive {
-				continue
-			}
 			childCol := s.innerSchema.RetrieveColumn(innerCol)
 			if !mysql.HasNotNullFlag(childCol.RetType.Flag) {
 				notNullExpr := BuildNotNullExpr(s.ctx, childCol)
