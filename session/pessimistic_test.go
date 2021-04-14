@@ -2119,6 +2119,7 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 }
 
 func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
+	c.Skip("unstable")
 	// TODO: implement commit_ts calculation in unistore
 	if !*withTiKV {
 		return
