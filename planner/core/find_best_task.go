@@ -884,16 +884,6 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	tablePlan PhysicalPlan,
 	partialCost float64, err error) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
-	if ds.tableInfo.IsCommonHandle {
-		commonHandle := ds.handleCols.(*CommonHandleCols)
-		for _, col := range commonHandle.columns {
-			if ts.schema.ColumnIndex(col) == -1 {
-				ts.Schema().Append(col)
-				ts.Columns = append(ts.Columns, col.ToInfo())
-				needExtraProj = true
-			}
-		}
-	}
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false, false)
 	sessVars := ds.ctx.GetSessionVars()
 	overwritePartialTableScanSchema(ds, ts)
