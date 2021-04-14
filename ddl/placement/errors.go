@@ -24,4 +24,10 @@ var (
 	ErrUnsupportedConstraint = errors.New("unsupported label constraint")
 	// ErrConflictingConstraints is from constraints.go.
 	ErrConflictingConstraints = errors.New("conflicting label constraints")
+	// ErrInvalidConstraintsMapcnt is from rule.go.
+	ErrInvalidConstraintsMapcnt = errors.New("label constraints in map syntax have invalid replicas")
+	// ErrInvalidConstraintsFormat is from rule.go.
+	ErrInvalidConstraintsFormat = errors.New("invalid label constraints format")
+	// ErrInvalidConstraintsRelicas is from rule.go.
+	ErrInvalidConstraintsRelicas = errors.New("label constraints with invalid REPLICAS")
 )

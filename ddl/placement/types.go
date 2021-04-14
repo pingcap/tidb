@@ -22,42 +22,6 @@ import (
 // After all, placement rules are communicated using an HTTP API. Loose
 //  coupling is a good feature.
 
-// PeerRoleType is the expected peer type of the placement rule.
-type PeerRoleType string
-
-const (
-	// Voter can either match a leader peer or follower peer.
-	Voter PeerRoleType = "voter"
-	// Leader matches a leader.
-	Leader PeerRoleType = "leader"
-	// Follower matches a follower.
-	Follower PeerRoleType = "follower"
-	// Learner matches a learner.
-	Learner PeerRoleType = "learner"
-)
-
-// Rule is the placement rule. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
-type Rule struct {
-	GroupID          string       `json:"group_id"`
-	ID               string       `json:"id"`
-	Index            int          `json:"index,omitempty"`
-	Override         bool         `json:"override,omitempty"`
-	StartKeyHex      string       `json:"start_key"`
-	EndKeyHex        string       `json:"end_key"`
-	Role             PeerRoleType `json:"role"`
-	Count            int          `json:"count"`
-	LabelConstraints Constraints  `json:"label_constraints,omitempty"`
-	LocationLabels   []string     `json:"location_labels,omitempty"`
-	IsolationLevel   string       `json:"isolation_level,omitempty"`
-}
-
-// Clone is used to duplicate a RuleOp for safe modification.
-func (r *Rule) Clone() *Rule {
-	n := &Rule{}
-	*n = *r
-	return n
-}
-
 // Bundle is a group of all rules and configurations. It is used to support rule cache.
 type Bundle struct {
 	ID       string  `json:"group_id"`
