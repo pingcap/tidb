@@ -236,6 +236,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
+	c.Skip("unstable")
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer func() {
