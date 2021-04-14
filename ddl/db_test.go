@@ -6664,18 +6664,22 @@ func (s *testSerialSuite) TestTruncateAllPartitions(c *C) {
 }
 
 func (s *testSerialSuite) TestIssue23872(c *C) {
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists test_create_table;")
-	defer func() {
-		tk.MustExec("drop table if exists test_create_table;")
-	}()
+	defer tk.MustExec("drop table if exists test_create_table;")
 	_, err := tk.Exec("create table test_create_table(id smallint,id1 int, primary key (id));")
 	c.Assert(err, IsNil)
 	rs, err := tk.Exec("select * from test_create_table;")
 	c.Assert(err, IsNil)
 	cols := rs.Fields()
 	expectFlag := uint16(mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag)
-	c.Assert(cols[0].Column.Flag, Equals, expectFlag)
+	c.Assert(cols[0].Column.Flag, Equals, uint(expectFlag))
+	_, err = tk.Exec("create table t(a int default 1, primary key(a));")
+	c.Assert(err, IsNil)
+	defer tk.MustExec("drop table if exists t;")
+	rs1, err := tk.Exec("select * from t;")
+	c.Assert(err, IsNil)
+	cols1 := rs1.Fields()
+	c.Assert(cols1[0].Column.Flag, Equals, uint(expectFlag))
 }
