@@ -129,7 +129,7 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
-					buf.AppendBytes(types.NewBinaryLiteralFromUint((uint64)(i64s[i]), -1))
+					buf.AppendBytes(types.NewBinaryLiteralFromUint(uint64(i64s[i]), -1))
 				}
 			}
 			// TODO: recycle all old Columns returned here.
@@ -262,7 +262,7 @@ func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.Fiel
 		return nil
 	}
 	if fieldType.Tp == mysql.TypeBit {
-		output.AppendBytes(colID, types.NewBinaryLiteralFromUint((uint64)(res), -1))
+		output.AppendBytes(colID, types.NewBinaryLiteralFromUint(uint64(res), -1))
 		return nil
 	}
 	if mysql.HasUnsignedFlag(fieldType.Flag) {
