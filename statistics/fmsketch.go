@@ -93,6 +93,24 @@ func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) 
 	return nil
 }
 
+// InsertRowValue inserts multi-column values to the sketch.
+func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.Datum) error {
+	b := make([]byte, 0, 8)
+	for _, v := range values {
+		b, err := codec.EncodeValue(sc, b, v)
+		if err != nil {
+			return err
+		}
+		s.hashFunc.Reset()
+		_, err = s.hashFunc.Write(b)
+		if err != nil {
+			return err
+		}
+	}
+	s.insertHashValue(s.hashFunc.Sum64())
+	return nil
+}
+
 func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize int) (*FMSketch, int64, error) {
 	s := NewFMSketch(maxSize)
 	for _, value := range values {
