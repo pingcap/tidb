@@ -38,17 +38,17 @@ const (
 
 // Rule is the placement rule. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
 type Rule struct {
-	GroupID          string            `json:"group_id"`
-	ID               string            `json:"id"`
-	Index            int               `json:"index,omitempty"`
-	Override         bool              `json:"override,omitempty"`
-	StartKeyHex      string            `json:"start_key"`
-	EndKeyHex        string            `json:"end_key"`
-	Role             PeerRoleType      `json:"role"`
-	Count            int               `json:"count"`
+	GroupID          string       `json:"group_id"`
+	ID               string       `json:"id"`
+	Index            int          `json:"index,omitempty"`
+	Override         bool         `json:"override,omitempty"`
+	StartKeyHex      string       `json:"start_key"`
+	EndKeyHex        string       `json:"end_key"`
+	Role             PeerRoleType `json:"role"`
+	Count            int          `json:"count"`
 	LabelConstraints []Constraint `json:"label_constraints,omitempty"`
-	LocationLabels   []string          `json:"location_labels,omitempty"`
-	IsolationLevel   string            `json:"isolation_level,omitempty"`
+	LocationLabels   []string     `json:"location_labels,omitempty"`
+	IsolationLevel   string       `json:"isolation_level,omitempty"`
 }
 
 // Clone is used to duplicate a RuleOp for safe modification.
