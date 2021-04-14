@@ -587,6 +587,9 @@ func (w *worker) countForPanic(job *model.Job) {
 	// If run DDL job panic, just cancel the DDL jobs.
 	if job.State == model.JobStateRollingback {
 		job.State = model.JobStateCancelled
+		msg := fmt.Sprintf("DDL job cancelled by panic in rollingback, error msg: %s", terror.ToSQLError(job.Error).Message)
+		job.Error = terror.GetErrClass(job.Error).Synthesize(terror.ErrCode(job.Error.Code()), msg)
+		logutil.Logger(w.logCtx).Warn(msg)
 	} else {
 		job.State = model.JobStateCancelling
 	}
