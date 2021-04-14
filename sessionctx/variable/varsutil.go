@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -111,7 +110,14 @@ func int32ToBoolStr(i int32) string {
 	return BoolOff
 }
 
-func checkCharacterValid(normalizedValue string, argName string) (string, error) {
+func checkCollation(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	if _, err := collate.GetCollationByName(normalizedValue); err != nil {
+		return normalizedValue, errors.Trace(err)
+	}
+	return normalizedValue, nil
+}
+
+func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
 		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
 	}
@@ -120,56 +126,6 @@ func checkCharacterValid(normalizedValue string, argName string) (string, error)
 		return normalizedValue, errors.Trace(err)
 	}
 	return cht, nil
-}
-
-func setCollation(s *SessionVars, name string, val string) error {
-	coll, err := collate.GetCollationByName(val)
-	if err != nil { // should not be required because validation has already been performed.
-		logutil.BgLogger().Warn(err.Error())
-		coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
-		if err != nil {
-			return err
-		}
-	}
-	switch name {
-	case CollationConnection:
-		s.systems[CollationConnection] = coll.Name
-		s.systems[CharacterSetConnection] = coll.CharsetName
-	case CollationDatabase:
-		s.systems[CollationDatabase] = coll.Name
-		s.systems[CharsetDatabase] = coll.CharsetName
-	case CollationServer:
-		s.systems[CollationServer] = coll.Name
-		s.systems[CharacterSetServer] = coll.CharsetName
-	}
-	return nil
-}
-
-func setCharset(s *SessionVars, name string, val string) error {
-	if val == "" {
-		if name == CharacterSetResults {
-			s.systems[CharacterSetResults] = ""
-			return nil
-		}
-		return ErrWrongValueForVar.GenWithStackByArgs(name, "NULL")
-	}
-	cht, coll, err := charset.GetCharsetInfo(val)
-	if err != nil {
-		logutil.BgLogger().Warn(err.Error())
-		cht, coll = charset.GetDefaultCharsetAndCollate()
-	}
-	switch name {
-	case CharacterSetConnection:
-		s.systems[CollationConnection] = coll
-		s.systems[CharacterSetConnection] = cht
-	case CharsetDatabase:
-		s.systems[CollationDatabase] = coll
-		s.systems[CharsetDatabase] = cht
-	case CharacterSetServer:
-		s.systems[CollationServer] = coll
-		s.systems[CharacterSetServer] = cht
-	}
-	return nil
 }
 
 // GetSessionSystemVar gets a system variable.

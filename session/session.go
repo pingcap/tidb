@@ -356,7 +356,7 @@ func (s *session) SetCollation(coID int) error {
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
-	return s.sessionVars.SetSystemVar(variable.CollationConnection, co)
+	return s.sessionVars.SetSystemVar(variable.CollationConnection, co) // skip validation
 }
 
 func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {

@@ -235,20 +235,35 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	return nil
 }
 
+// Implement the fallback rules of collation, trying to never return an
+// error but instead substitute defaults.
+func fallbackCollation(cs, co string) (string, string) {
+	if _, err := collate.GetCollationByName(co); err != nil {
+		// The collation was invalid, try and validate the default
+		// collation for the charset.
+		if tmp, err := charset.GetDefaultCollation(cs); err == nil {
+			if coll, err := collate.GetCollationByName(tmp); err == nil {
+				co = coll.Name
+			}
+		}
+	}
+	// If validation now passes return the charset + collation
+	// Otherwise return the server defaults.
+	if coll, err := collate.GetCollationByName(co); err == nil {
+		return coll.CharsetName, coll.Name
+	}
+	return charset.CharsetUTF8MB4, charset.CollationUTF8MB4
+}
+
 func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
+	cs, co = fallbackCollation(cs, co) // clean the values
+	var coll *charset.Collation
 	var err error
-	if len(co) == 0 {
-		if co, err = charset.GetDefaultCollation(cs); err != nil {
-			return err
-		}
-	} else {
-		var coll *charset.Collation
-		if coll, err = collate.GetCollationByName(co); err != nil {
-			return err
-		}
-		if coll.CharsetName != cs {
-			return charset.ErrCollationCharsetMismatch.GenWithStackByArgs(coll.Name, cs)
-		}
+	if coll, err = collate.GetCollationByName(co); err != nil {
+		return err
+	}
+	if coll.CharsetName != cs {
+		return charset.ErrCollationCharsetMismatch.GenWithStackByArgs(coll.Name, cs)
 	}
 	sessionVars := e.ctx.GetSessionVars()
 	if isSetName {
@@ -273,6 +288,7 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	if err != nil {
 		return err
 	}
+	csDb, coDb = fallbackCollation(csDb, coDb) // clean the values
 	err = sessionVars.SetSystemVar(variable.CharacterSetConnection, csDb)
 	if err != nil {
 		return errors.Trace(err)

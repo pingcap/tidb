@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -46,6 +47,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -564,7 +566,18 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 		// Since we have checked the charset, the dbCollate here shouldn't be "".
 		dbCollate = getDefaultCollate(dbinfo.Charset)
 	}
-	return sessionVars.SetSystemVar(variable.CollationDatabase, dbCollate)
+
+	// Since the Collate function is text, we should validate the value before setting it
+	// If it is invalid, switch to the default.
+	coll, err := collate.GetCollationByName(dbCollate)
+	if err != nil {
+		logutil.BgLogger().Warn(err.Error())
+		coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
+		if err != nil { // should not fail
+			return err
+		}
+	}
+	return sessionVars.SetSystemVar(variable.CollationDatabase, coll.Name)
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
