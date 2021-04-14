@@ -590,6 +590,7 @@ func (w *worker) countForPanic(job *model.Job) {
 		msg := fmt.Sprintf("DDL job cancelled by panic in rollingback, error msg: %s", terror.ToSQLError(job.Error).Message)
 		job.Error = terror.GetErrClass(job.Error).Synthesize(terror.ErrCode(job.Error.Code()), msg)
 		logutil.Logger(w.logCtx).Warn(msg)
+		return
 	} else {
 		job.State = model.JobStateCancelling
 	}
