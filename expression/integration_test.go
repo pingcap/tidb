@@ -8962,7 +8962,7 @@ func (s *testIntegrationSuite) TestClusteredIndexCorCol(c *C) {
 	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str = t1.c_str and t2.c_int = 10 order by t2.c_str limit 1) x from t1;").Check(testkit.Rows("<nil>", "goofy mestorf"))
 }
 
-func (s *testIntegrationSuite) TestEnumPushdown(c *C) {
+func (s *testIntegrationSuite) TestEnumPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -9020,6 +9020,22 @@ func (s *testIntegrationSuite) TestEnumPushdown(c *C) {
 		Check(testkit.Rows("c", "b", "a"))
 	tk.MustQuery("select c_enum from t group by c_enum order by c_enum").
 		Check(testkit.Rows("c", "b", "a"))
+
+	// no index
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(e enum('c','b','a'))")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	tk.MustQuery("select e from t where e > 'b'").
+		Check(testkit.Rows("c"))
+	tk.MustQuery("select e from t where e > 2").
+		Check(testkit.Rows("a"))
+
+	// enable index
+	//tk.MustExec("alter table t add index idx(e)")
+	//tk.MustQuery("select e from t where e > 'b'").
+	//	Check(testkit.Rows("c"))
+	//tk.MustQuery("select e from t where e > 2").
+	//	Check(testkit.Rows("a"))
 }
 
 func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {
