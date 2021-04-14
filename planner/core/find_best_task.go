@@ -823,12 +823,9 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		var scan PhysicalPlan
 		var partialCost float64
 		if partPath.IsTablePath() {
-			scan, partialCost, err = ds.convertToPartialTableScan(prop, partPath)
+			scan, partialCost = ds.convertToPartialTableScan(prop, partPath)
 		} else {
 			scan, partialCost = ds.convertToPartialIndexScan(prop, partPath)
-		}
-		if err != nil {
-			return nil, err
 		}
 		scans = append(scans, scan)
 		totalCost += partialCost
