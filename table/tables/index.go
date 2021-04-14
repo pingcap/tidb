@@ -83,10 +83,10 @@ func (c *indexIter) Next() (indexData []types.Datum, h kv.Handle, err error) {
 
 // index is the data structure for index data in the KV store.
 type index struct {
-	idxInfo             *model.IndexInfo
-	tblInfo             *model.TableInfo
-	prefix              kv.Key
-	phyTblID            int64
+	idxInfo  *model.IndexInfo
+	tblInfo  *model.TableInfo
+	prefix   kv.Key
+	phyTblID int64
 	// initNeedRestoreData is used to initialize `needRestoredData` in `index.Create()`.
 	// This routine cannot be done in `NewIndex()` because `needRestoreData` relies on `NewCollationEnabled()` and
 	// the collation global variable is initialized *after* `NewIndex()`.
