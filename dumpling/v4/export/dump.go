@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/br/pkg/summary"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	pclog "github.com/pingcap/log"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -766,12 +767,16 @@ func runSteps(d *Dumper, steps ...func(*Dumper) error) error {
 
 func initLogger(d *Dumper) error {
 	conf := d.conf
-	var logger log.Logger
+	var (
+		logger log.Logger
+		err    error
+		props  *pclog.ZapProperties
+	)
+	// conf.Logger != nil means dumpling is used as a library
 	if conf.Logger != nil {
 		logger = log.NewAppLogger(conf.Logger)
 	} else {
-		var err error
-		logger, err = log.InitAppLogger(&log.Config{
+		logger, props, err = log.InitAppLogger(&log.Config{
 			Level:  conf.LogLevel,
 			File:   conf.LogFile,
 			Format: conf.LogFormat,
@@ -779,6 +784,7 @@ func initLogger(d *Dumper) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		pclog.ReplaceGlobals(logger.Logger, props)
 		cli.LogLongVersion(logger)
 	}
 	d.tctx = d.tctx.WithLogger(logger)
