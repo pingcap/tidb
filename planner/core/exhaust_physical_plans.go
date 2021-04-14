@@ -1031,7 +1031,9 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
-			cop.extraHandleCol, cop.needExtraProj = ts.appendExtraHandleCol(ds)
+			var needExtraProj bool
+			cop.extraHandleCol, needExtraProj = ts.appendExtraHandleCol(ds)
+			cop.needExtraProj = cop.needExtraProj || needExtraProj
 		}
 		if cop.needExtraProj {
 			cop.originSchema = ds.schema
