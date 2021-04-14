@@ -112,8 +112,6 @@ type MemBuffer interface {
 	GetFlags(Key) (tikvstore.KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
 	SetWithFlags(Key, []byte, ...tikvstore.FlagsOp) error
-	// UpdateFlags update the flags associated with key.
-	UpdateFlags(Key, ...tikvstore.FlagsOp)
 	// DeleteWithFlags delete key with the given KeyFlags
 	DeleteWithFlags(Key, ...tikvstore.FlagsOp) error
 
