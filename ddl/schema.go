@@ -167,7 +167,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		for _, ID := range append(oldIDs, dbInfo.ID) {
 			oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
 			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
+				bundles = append(bundles, placement.NewBundle(ID))
 			}
 		}
 		err := infosync.PutRuleBundles(context.TODO(), bundles)

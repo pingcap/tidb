@@ -30,4 +30,14 @@ var (
 	ErrInvalidConstraintsFormat = errors.New("invalid label constraints format")
 	// ErrInvalidConstraintsRelicas is from rule.go.
 	ErrInvalidConstraintsRelicas = errors.New("label constraints with invalid REPLICAS")
+	// ErrInvalidBundleID is from bundle.go.
+	ErrInvalidBundleID = errors.New("invalid bundle ID")
+	// ErrInvalidBundleIDFormat is from bundle.go.
+	ErrInvalidBundleIDFormat = errors.New("invalid bundle ID format")
+	// ErrLeaderReplicasMustOne is from bundle.go.
+	ErrLeaderReplicasMustOne = errors.New("REPLICAS must be 1 if ROLE=leader")
+	// ErrMissingRoleField is from bundle.go.
+	ErrMissingRoleField = errors.New("the ROLE field is not specified")
+	// ErrNoRulesToDrop is from bundle.go.
+	ErrNoRulesToDrop = errors.New("no rule of such role to drop")
 )

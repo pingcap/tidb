@@ -1891,7 +1891,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 		return
 	}
 	// Notify PD to drop the placement rules, even if there may be no placement rules.
-	bundles := []*placement.Bundle{placement.BuildPlacementDropBundle(pid)}
+	bundles := []*placement.Bundle{placement.NewBundle(pid)}
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
 	return
 }
