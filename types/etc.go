@@ -108,9 +108,7 @@ func IsNonBinaryStr(ft *FieldType) bool {
 // NeedRestoredData returns if a type needs restored data.
 // If the type is char and the collation is _bin, NeedRestoredData() returns false.
 func NeedRestoredData(ft *FieldType) bool {
-	if collate.NewCollationEnabled() &&
-		IsNonBinaryStr(ft) &&
-		!(collate.IsBinCollation(ft.Collate) && !IsTypeVarchar(ft.Tp)) {
+	if IsNonBinaryStr(ft) && !(collate.IsBinCollation(ft.Collate) && !IsTypeVarchar(ft.Tp)) {
 		return true
 	}
 	return false
