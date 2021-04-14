@@ -17,7 +17,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	mysql "github.com/pingcap/tidb/errno"
+	mysql "github.com/pingcap/tidb/store/tikv/errno"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
