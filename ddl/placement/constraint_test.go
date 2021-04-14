@@ -59,7 +59,7 @@ func (t *testConstraintSuite) TestNew(c *C) {
 			},
 		},
 		{
-			name:  "disabllow tiflash",
+			name:  "disallow tiflash",
 			input: "+engine=Tiflash",
 			err:   ErrUnsupportedConstraint,
 		},
