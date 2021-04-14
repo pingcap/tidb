@@ -603,7 +603,13 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	tk.MustExec("FLUSH PRIVILEGES")
 }
 
+<<<<<<< HEAD
 func (s *testSuite3) TestDropPartitionStats(c *C) {
+=======
+func (s *testSerialSuite) TestDropPartitionStats(c *C) {
+	c.Skip("unstable")
+	// Use the testSerialSuite to fix the unstable test
+>>>>>>> 46aca1ad0... session, executor: skip some frequent unstable test cases (#24003)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (
