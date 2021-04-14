@@ -150,14 +150,22 @@ func (s *testClientSuite) TestCollapseResolveLock(c *C) {
 	// Collapse ResolveLock.
 	resolveLockReq := buildResolveLockReq(1, 10, 20, nil)
 	wg.Add(1)
+	var errorWg sync.WaitGroup
+	var err error
+	errorWg.Add(1)
 	go func() {
-		_, err := client.SendRequest(ctx, "", resolveLockReq, time.Second)
-		c.Assert(err, IsNil)
+		errorWg.Done()
+		_, err = client.SendRequest(ctx, "", resolveLockReq, time.Second)
 	}()
+	errorWg.Wait()
+	c.Assert(err, IsNil)
+	errorWg.Add(1)
 	go func() {
-		_, err := client.SendRequest(ctx, "", resolveLockReq, time.Second)
-		c.Assert(err, IsNil)
+		errorWg.Done()
+		_, err = client.SendRequest(ctx, "", resolveLockReq, time.Second)
 	}()
+	errorWg.Wait()
+	c.Assert(err, IsNil)
 	time.Sleep(300 * time.Millisecond)
 	wg.Done()
 	req := <-reqCh
@@ -171,14 +179,20 @@ func (s *testClientSuite) TestCollapseResolveLock(c *C) {
 	// Don't collapse ResolveLockLite.
 	resolveLockLiteReq := buildResolveLockReq(1, 10, 20, [][]byte{[]byte("foo")})
 	wg.Add(1)
+	errorWg.Add(1)
 	go func() {
-		_, err := client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
-		c.Assert(err, IsNil)
+		errorWg.Done()
+		_, err = client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
 	}()
+	errorWg.Wait()
+	c.Assert(err, IsNil)
+	errorWg.Add(1)
 	go func() {
-		_, err := client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
-		c.Assert(err, IsNil)
+		errorWg.Done()
+		_, err = client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
 	}()
+	errorWg.Wait()
+	c.Assert(err, IsNil)
 	time.Sleep(300 * time.Millisecond)
 	wg.Done()
 	for i := 0; i < 2; i++ {
@@ -191,14 +205,20 @@ func (s *testClientSuite) TestCollapseResolveLock(c *C) {
 		{Txn: 10, Status: 20},
 	})
 	wg.Add(1)
+	errorWg.Add(1)
 	go func() {
-		_, err := client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
-		c.Assert(err, IsNil)
+		errorWg.Done()
+		_, err = client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
 	}()
+	errorWg.Wait()
+	c.Assert(err, IsNil)
+	errorWg.Add(1)
 	go func() {
-		_, err := client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
-		c.Assert(err, IsNil)
+		errorWg.Done()
+		_, err = client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
 	}()
+	errorWg.Wait()
+	c.Assert(err, IsNil)
 	time.Sleep(300 * time.Millisecond)
 	wg.Done()
 	for i := 0; i < 2; i++ {
@@ -208,18 +228,27 @@ func (s *testClientSuite) TestCollapseResolveLock(c *C) {
 
 	// Mixed
 	wg.Add(1)
+	errorWg.Add(1)
 	go func() {
-		_, err := client.SendRequest(ctx, "", resolveLockReq, time.Second)
-		c.Assert(err, IsNil)
+		errorWg.Done()
+		_, err = client.SendRequest(ctx, "", resolveLockReq, time.Second)
 	}()
+	errorWg.Wait()
+	c.Assert(err, IsNil)
+	errorWg.Add(1)
 	go func() {
-		_, err := client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
-		c.Assert(err, IsNil)
+		errorWg.Done()
+		_, err = client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
 	}()
+	errorWg.Wait()
+	c.Assert(err, IsNil)
+	errorWg.Add(1)
 	go func() {
-		_, err := client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
-		c.Assert(err, IsNil)
+		errorWg.Done()
+		_, err = client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
 	}()
+	errorWg.Wait()
+	c.Assert(err, IsNil)
 	time.Sleep(300 * time.Millisecond)
 	wg.Done()
 	for i := 0; i < 3; i++ {

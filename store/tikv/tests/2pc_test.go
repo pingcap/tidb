@@ -756,7 +756,6 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	txn1.DelOption(kv.Pessimistic)
 	s.store.ClearTxnLatches()
 	_, err := txn1.Get(context.Background(), k1)
-	// to fix: key not exist
 	c.Assert(err, NotNil)
 	err = txn1.GetMemBuffer().SetWithFlags(k1, []byte{0}, kv.SetPresumeKeyNotExists)
 	c.Assert(err, IsNil)
