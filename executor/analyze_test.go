@@ -235,8 +235,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65559))
 }
 
-func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
-	
+func (s *testSerialSuite2) TestAnalyzeIndexExtractTopN(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer func() {
