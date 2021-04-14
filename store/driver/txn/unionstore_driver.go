@@ -130,10 +130,6 @@ func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) er
 	return m.MemDB.SetWithFlags(key, value, ops...)
 }
 
-func (m *memBuffer) UpdateFlags(key kv.Key, ops ...kv.FlagsOp) {
-	m.MemDB.UpdateFlags(key, ops...)
-}
-
 // Iter creates an Iterator positioned on the first entry that k <= entry's key.
 // If such entry is not found, it returns an invalid Iterator with no error.
 // It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
