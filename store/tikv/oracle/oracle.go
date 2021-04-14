@@ -142,11 +142,8 @@ func GoTimeToTS(t time.Time) uint64 {
 	return uint64(ts)
 }
 
-// MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
-// We use it to abort the transaction to guarantee GC worker will not influence it.
-const MaxTxnTimeUse = 24 * 60 * 60 * 1000
-
-// GoTimeToLowerLimitStartTS returns the min start_ts of the uncommitted transaction. Here commit means txn.Commit.
-func GoTimeToLowerLimitStartTS(now time.Time) uint64 {
-	return GoTimeToTS(now.Add(-time.Duration(MaxTxnTimeUse) * time.Millisecond))
+// GoTimeToLowerLimitStartTS returns the min start_ts of the uncommitted transaction.
+// maxTxnTimeUse means the max time a Txn May use (in ms) from its begin to commit.
+func GoTimeToLowerLimitStartTS(now time.Time, maxTxnTimeUse int64) uint64 {
+	return GoTimeToTS(now.Add(-time.Duration(maxTxnTimeUse) * time.Millisecond))
 }
