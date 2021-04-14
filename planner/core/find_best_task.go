@@ -44,8 +44,8 @@ const (
 	SelectionFactor = 0.8
 	distinctFactor  = 0.8
 
-	// When scan row count is small, the performance gap between asc and
-	// desc is not big. So we can use scanFactor to build suitable plan.
+	// If the actual row count is much more than the limit count, the unordered scan may cost much more than keep order.
+	// So when a limit exists, we don't apply the DescScanFactor.
 	smallScanThreshold = 10000
 )
 
@@ -1813,8 +1813,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}
 	if isMatchProp {
 		ts.Desc = prop.SortItems[0].Desc
-		// When the rowCount is small, the performance gap between scan and desc scan is not big.
-		if prop.SortItems[0].Desc && rowCount >= smallScanThreshold {
+		if prop.SortItems[0].Desc && prop.ExpectedCnt >= smallScanThreshold {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		ts.KeepOrder = true
@@ -1866,8 +1865,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {
 		is.Desc = prop.SortItems[0].Desc
-		// When the rowCount is small, the performance gap between scan and desc scan is not big.
-		if prop.SortItems[0].Desc && rowCount >= smallScanThreshold {
+		if prop.SortItems[0].Desc && prop.ExpectedCnt >= smallScanThreshold {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		is.KeepOrder = true
