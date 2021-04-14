@@ -38,8 +38,8 @@ type Config struct {
 }
 
 // InitAppLogger inits the wrapped logger from config.
-func InitAppLogger(cfg *Config) (Logger, error) {
-	logger, _, err := pclog.InitLogger(&pclog.Config{
+func InitAppLogger(cfg *Config) (Logger, *pclog.ZapProperties, error) {
+	logger, props, err := pclog.InitLogger(&pclog.Config{
 		Level: cfg.Level,
 		File: pclog.FileLogConfig{
 			Filename:   cfg.File,
@@ -50,9 +50,9 @@ func InitAppLogger(cfg *Config) (Logger, error) {
 		Format: cfg.Format,
 	})
 	if err != nil {
-		return appLogger, errors.Trace(err)
+		return appLogger, props, errors.Trace(err)
 	}
-	return Logger{logger.WithOptions(zap.AddStacktrace(zap.DPanicLevel))}, nil
+	return Logger{logger.WithOptions(zap.AddStacktrace(zap.DPanicLevel))}, props, nil
 }
 
 // NewAppLogger returns the wrapped logger from config.

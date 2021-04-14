@@ -20,7 +20,7 @@ var appLogger log.Logger
 
 func TestT(t *testing.T) {
 	initColTypeRowReceiverMap()
-	logger, err := log.InitAppLogger(&log.Config{
+	logger, _, err := log.InitAppLogger(&log.Config{
 		Level:  "info",
 		File:   "",
 		Format: "text",
