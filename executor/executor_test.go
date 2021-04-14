@@ -320,7 +320,6 @@ func (s *testSuiteP1) TestShow(c *C) {
 	c.Assert(len(tk.MustQuery("show master status").Rows()), Equals, 1)
 	tk.MustQuery("show create database test_show").Check(testkit.Rows("test_show CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
-		"Alter Tables To alter the table",
 		"Alter routine Functions,Procedures To alter or drop stored functions/procedures",
 		"Create Databases,Tables,Indexes To create new databases and tables",
 		"Create routine Databases To use CREATE FUNCTION/PROCEDURE",
@@ -6993,6 +6992,45 @@ func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 			"alter user {user_sensitive@% password = ***};",
 			"create user {user_sensitive@% password = ***};",
 			"set password for user user_sensitive@%;",
+		))
+}
+
+func (s *testSlowQuery) TestSlowQueryPrepared(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+
+	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	c.Assert(err, IsNil)
+	f.Close()
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+		tk.MustExec("set tidb_redact_log=0;")
+		config.StoreGlobalConfig(originCfg)
+		os.Remove(newCfg.Log.SlowQueryFile)
+	}()
+	err = logutil.InitLogger(newCfg.Log.ToLogConfig())
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	tk.MustExec(`prepare mystmt1 from 'select sleep(?), 1';`)
+	tk.MustExec("SET @num = 0.01;")
+	tk.MustExec("execute mystmt1 using @num;")
+	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
+		"where query like 'select%sleep%' order by time desc limit 1").
+		Check(testkit.Rows(
+			"select sleep(?), 1 [arguments: 0.01];",
+		))
+
+	tk.MustExec("set tidb_redact_log=1;")
+	tk.MustExec(`prepare mystmt2 from 'select sleep(?), 2';`)
+	tk.MustExec("execute mystmt2 using @num;")
+	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
+		"where query like 'select%sleep%' order by time desc limit 1").
+		Check(testkit.Rows(
+			"select `sleep` ( ? ) , ?;",
 		))
 }
 

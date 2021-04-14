@@ -172,7 +172,7 @@ func rewriteBitFunc(ctx sessionctx.Context, funcType string, arg expression.Expr
 
 // wrapCastFunction will wrap a cast if the targetTp is not equal to the arg's.
 func wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
-	if arg.GetType() == targetTp {
+	if arg.GetType().Equal(targetTp) {
 		return arg
 	}
 	return expression.BuildCastFunction(ctx, arg, targetTp)
