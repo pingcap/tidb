@@ -1656,6 +1656,197 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
+func (s *testIntegrationSerialSuite) TestIndexMergePartialScansClusteredIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, primary key (a, b) clustered, key idx_c(c));")
+	tk.MustExec("insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);")
+	const queryTemplate = "select /*+ use_index_merge(t) */ %s from t where %s order by a, b;"
+	projections := [][]string{{"a"}, {"b"}, {"c"}, {"a", "b"}, {"b", "c"}, {"c", "a"}, {"b", "a", "c"}}
+	cases := []struct{
+		condition string
+		expected []string
+	} {
+		{
+			// 3 table scans
+			"a < 2 or a < 10 or a > 11", []string{"1", "100"},
+		},
+		{
+			// 3 index scans
+			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
+		},
+		{
+			// 1 table scan + 1 index scan
+			"a < 2 or c > 10000", []string{"1"},
+		},
+		{
+			// 2 table scans + 1 index scan
+			"a < 2 or a > 88 or c > 10000", []string{"1", "100"},
+		},
+		{
+			// 2 table scans + 2 index scans
+			"a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1", []string{"1", "10", "100"},
+		},
+		{
+			// 3 table scans + 2 index scans
+			"a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1", []string{"1", "10", "100"},
+		},
+	}
+	for _, p := range projections {
+		for _, ca := range cases {
+			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
+			tk.HasPlan(query, "IndexMerge")
+			expected := make([]string, 0, len(ca.expected))
+			for _, datum := range ca.expected {
+				row := strings.Repeat(datum + " ", len(p))
+				expected = append(expected, row[:len(row)-1])
+			}
+			tk.MustQuery(query).Check(testkit.Rows(expected...))
+		}
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestIndexMergePartialScansTiDBRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, unique key (a, b), key idx_c(c));")
+	tk.MustExec("insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);")
+	const queryTemplate = "select /*+ use_index_merge(t) */ %s from t where %s order by a;"
+	projections := [][]string{{"a"}, {"b"}, {"c"}, {"a", "b"}, {"b", "c"}, {"c", "a"}, {"b", "a", "c"}}
+	cases := []struct{
+		condition string
+		expected []string
+	} {
+		{
+			// 3 index scans
+			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
+		},
+		{
+			// 2 index scans
+			"c < 10 or a < 2", []string{"1"},
+		},
+		{
+			// 1 table scan + 1 index scan
+			"_tidb_rowid < 2 or c > 10000", []string{"1"},
+		},
+		{
+			// 2 table scans + 1 index scan
+			"_tidb_rowid < 2 or _tidb_rowid < 10 or c > 11", []string{"1", "10", "100"},
+		},
+		{
+			// 1 table scans + 3 index scans
+			"_tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1", []string{"1", "10", "100"},
+		},
+		{
+			// 1 table scans + 4 index scans
+			"_tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1", []string{"1", "10", "100"},
+		},
+	}
+	for _, p := range projections {
+		for _, ca := range cases {
+			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
+			tk.HasPlan(query, "IndexMerge")
+			expected := make([]string, 0, len(ca.expected))
+			for _, datum := range ca.expected {
+				row := strings.Repeat(datum + " ", len(p))
+				expected = append(expected, row[:len(row)-1])
+			}
+			tk.MustQuery(query).Check(testkit.Rows(expected...))
+		}
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestIndexMergePartialScansPKIsHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, primary key (a), unique key (b), key idx_c(c));")
+	tk.MustExec("insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);")
+	const queryTemplate = "select /*+ use_index_merge(t) */ %s from t where %s order by b;"
+	projections := [][]string{{"a"}, {"b"}, {"c"}, {"a", "b"}, {"b", "c"}, {"c", "a"}, {"b", "a", "c"}}
+	cases := []struct{
+		condition string
+		expected []string
+	} {
+		{
+			// 3 index scans
+			"b < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
+		},
+		{
+			// 1 table scan + 1 index scan
+			"a < 2 or c > 10000", []string{"1"},
+		},
+		{
+			// 2 table scans + 1 index scan
+			"a < 2 or a < 10 or b > 11", []string{"1", "100"},
+		},
+		{
+			// 1 table scans + 3 index scans
+			"a < 2 or b >= 10 or c > 100 or c < 1", []string{"1", "10", "100"},
+		},
+		{
+			// 3 table scans + 2 index scans
+			"a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1", []string{"1", "10", "100"},
+		},
+	}
+	for _, p := range projections {
+		for _, ca := range cases {
+			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
+			tk.HasPlan(query, "IndexMerge")
+			expected := make([]string, 0, len(ca.expected))
+			for _, datum := range ca.expected {
+				row := strings.Repeat(datum + " ", len(p))
+				expected = append(expected, row[:len(row)-1])
+			}
+			tk.MustQuery(query).Check(testkit.Rows(expected...))
+		}
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestIssue23919(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	// Test for the minimal reproducible case.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, index(a), index(b)) partition by hash (a) partitions 2;")
+	tk.MustExec("insert into t values (1, 5);")
+	tk.MustQuery("select /*+ use_index_merge( t ) */ * from t where a in (3) or b in (5) order by a;").
+		Check(testkit.Rows("1 5"))
+
+	// Test for the original case.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`CREATE TABLE t (
+  col_5 text NOT NULL,
+  col_6 tinyint(3) unsigned DEFAULT NULL,
+  col_7 float DEFAULT '4779.165058537128',
+  col_8 smallint(6) NOT NULL DEFAULT '-24790',
+  col_9 date DEFAULT '2031-01-15',
+  col_37 int(11) DEFAULT '1350204687',
+  PRIMARY KEY (col_5(6),col_8) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY idx_6 (col_9,col_7,col_8),
+  KEY idx_8 (col_8,col_6,col_5(6),col_9,col_7),
+  KEY idx_9 (col_9,col_7,col_8)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE ( col_8 ) (
+  PARTITION p0 VALUES LESS THAN (-17650),
+  PARTITION p1 VALUES LESS THAN (-13033),
+  PARTITION p2 VALUES LESS THAN (2521),
+  PARTITION p3 VALUES LESS THAN (7510)
+);`)
+	tk.MustExec("insert into t values ('', NULL, 6304.0146, -24790, '2031-01-15', 1350204687);")
+	tk.MustQuery("select  var_samp(col_7) aggCol from (select  /*+ use_index_merge( t ) */ * from t where " +
+		"t.col_9 in ( '2002-06-22' ) or t.col_5 in ( 'PkfzI'  ) or t.col_8 in ( -24874 ) and t.col_6 > null and " +
+		"t.col_5 > 'r' and t.col_9 in ( '1979-09-04' ) and t.col_7 < 8143.667552769195 or " +
+		"t.col_5 in ( 'iZhfEjRWci' , 'T' , ''  ) or t.col_9 <> '1976-09-11' and t.col_7 = 8796.436181615773 and " +
+		"t.col_8 = 7372 order by col_5,col_8  ) ordered_tbl group by col_6;").Check(testkit.Rows("<nil>"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue16407(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
