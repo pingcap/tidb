@@ -830,3 +830,20 @@ func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
 		"└─Selection_6 1.00 cop[tikv]  eq(test.t2.b, 2)",
 		"  └─TableFullScan_5 5.00 cop[tikv] table:t2 keep order:false"))
 }
+
+func (s *testStatsSuite) TestRangeStepOverflow(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col datetime)")
+	tk.MustExec("insert into t values('3580-05-26 07:16:48'),('4055-03-06 22:27:16'),('4862-01-26 07:16:54')")
+	h := s.do.StatsHandle()
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	tk.MustExec("analyze table t")
+	// Trigger the loading of column stats.
+	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+	// Must execute successfully after loading the column stats.
+	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
+}
