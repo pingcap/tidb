@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/security"
+	"github.com/pingcap/tidb/util/sem"
 	"go.uber.org/zap"
 )
 
@@ -84,8 +84,8 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	tblLowerName := strings.ToLower(table)
 	// If SEM is enabled and the user does not have the RESTRICTED_TABLES_ADMIN privilege
 	// There are some hard rules which overwrite system tables and schemas as read-only at most.
-	if security.IsEnabled() && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
-		if security.IsInvisibleTable(dbLowerName, tblLowerName) {
+	if sem.IsEnabled() && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
+		if sem.IsInvisibleTable(dbLowerName, tblLowerName) {
 			return false
 		}
 		if util.IsMemOrSysDB(dbLowerName) {
@@ -414,8 +414,8 @@ func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string
 	}
 	// If SEM is enabled, respect hard rules about certain schemas being invisible
 	// Before checking if the user has permissions granted to them.
-	if security.IsEnabled() && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
-		if security.IsInvisibleSchema(db) {
+	if sem.IsEnabled() && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
+		if sem.IsInvisibleSchema(db) {
 			return false
 		}
 	}

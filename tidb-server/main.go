@@ -59,7 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/profile"
-	"github.com/pingcap/tidb/util/security"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
@@ -533,8 +533,8 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ", "))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
 
-	if cfg.Experimental.EnableEnhancedSecurity {
-		security.Enable()
+	if cfg.Security.EnableSEM {
+		sem.Enable()
 	}
 
 	// For CI environment we default enable prepare-plan-cache.

@@ -1138,7 +1138,7 @@ In aggregated query without GROUP BY, expression #%d of SELECT list contains non
 
 ["planner:8132"]
 error = '''
-feature '%s' is not supported when security enhanced mode is enabled
+Feature '%s' is not supported when security enhanced mode is enabled
 '''
 
 ["privilege:1141"]

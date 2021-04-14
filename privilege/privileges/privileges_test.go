@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/security"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -1324,8 +1324,8 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedTables(c *C) {
 	mustExec(c, urootSe, "SET tidb_enable_dynamic_privileges=1")
 	c.Assert(urootSe.Auth(&auth.UserIdentity{Username: "uroot", Hostname: "%"}, nil, nil), IsTrue)
 
-	security.Enable()
-	defer security.Disable()
+	sem.Enable()
+	defer sem.Disable()
 
 	_, err := urootSe.ExecuteInternal(context.Background(), "use metrics_schema")
 	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'uroot'@'%' to database 'metrics_schema'")

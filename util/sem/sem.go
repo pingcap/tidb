@@ -11,13 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package security
+package sem
 
 import (
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
@@ -59,23 +59,27 @@ const (
 	restrictedPriv        = "RESTRICTED_"
 )
 
+var (
+	semEnabled int32
+)
+
 // Enable enables SEM. This is intended to be used by the test-suite.
 // Dynamic configuration by users may be a security risk.
 func Enable() {
-	config.GetGlobalConfig().Experimental.EnableEnhancedSecurity = true
+	atomic.StoreInt32(&semEnabled, 1)
 	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.BoolOn)
 }
 
 // Disable disables SEM. This is intended to be used by the test-suite.
 // Dynamic configuration by users may be a security risk.
 func Disable() {
-	config.GetGlobalConfig().Experimental.EnableEnhancedSecurity = false
+	atomic.StoreInt32(&semEnabled, 0)
 	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.BoolOff)
 }
 
 // IsEnabled checks if Security Enhanced Mode (SEM) is enabled
 func IsEnabled() bool {
-	return config.GetGlobalConfig().Experimental.EnableEnhancedSecurity
+	return atomic.LoadInt32(&semEnabled) == 1
 }
 
 // IsInvisibleSchema returns true if the dbName needs to be hidden

@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/pingcap/tidb/util/security"
+	"github.com/pingcap/tidb/util/sem"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -1203,7 +1203,7 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
-	if security.IsEnabled() && node.Tp == ast.ShowConfig {
+	if sem.IsEnabled() && node.Tp == ast.ShowConfig {
 		p.err = ErrNotSupportedWithSem.GenWithStackByArgs("SHOW CONFIG")
 	}
 	if node.DBName == "" {

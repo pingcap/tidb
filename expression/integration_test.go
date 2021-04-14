@@ -48,7 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/security"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -9110,14 +9110,14 @@ func (s *testIntegrationSuite) TestVitessHashMatchesVitessShards(c *C) {
 
 func (s *testIntegrationSuite) TestSecurityEnhancedMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	security.Enable()
-	defer security.Disable()
+	sem.Enable()
+	defer sem.Disable()
 
 	// When SEM is enabled these features are restricted to all users
 	// regardless of what privileges they have available.
 
 	_, err := tk.Exec("SHOW CONFIG")
-	c.Assert(err.Error(), Equals, "[planner:8132]feature 'SHOW CONFIG' is not supported when security enhanced mode is enabled")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'SHOW CONFIG' is not supported when security enhanced mode is enabled")
 	_, err = tk.Exec("SELECT 1 INTO OUTFILE '/tmp/aaaa'")
-	c.Assert(err.Error(), Equals, "[planner:8132]feature 'SELECT INTO' is not supported when security enhanced mode is enabled")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'SELECT INTO' is not supported when security enhanced mode is enabled")
 }
