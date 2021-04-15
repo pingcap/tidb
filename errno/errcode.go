@@ -994,6 +994,7 @@ const (
 	ErrJSONObjectKeyTooLong                = 8129
 	ErrMultiStatementDisabled              = 8130
 	ErrPartitionStatsMissing               = 8131
+	ErrNotSupportedWithSem                 = 8132
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
