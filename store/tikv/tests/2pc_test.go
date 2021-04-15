@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tidbkv "github.com/pingcap/tidb/kv"
+	drivertxn "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -1032,6 +1033,7 @@ func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
 	noValueIndexKey := []byte("t00000001_i000000002")
 	c.Assert(tablecodec.IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue), IsTrue)
 	txn := s.begin(c)
+	txn.SetOption(kv.KVFilter, drivertxn.TiDBKVFilter{})
 	err := txn.Set(untouchedIndexKey, untouchedIndexValue)
 	c.Assert(err, IsNil)
 	lockCtx := &tidbkv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now(), LockWaitTime: tidbkv.LockNoWait}

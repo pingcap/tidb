@@ -32,7 +32,7 @@ type tikvTxn struct {
 
 // NewTiKVTxn returns a new Transaction.
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
-	txn.SetOption(tikvstore.KVFilter, kvFilter{})
+	txn.SetOption(tikvstore.KVFilter, TiDBKVFilter{})
 	return &tikvTxn{txn, make(map[int64]*model.TableInfo)}
 }
 
@@ -143,9 +143,9 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
 }
 
-type kvFilter struct{}
+type TiDBKVFilter struct{}
 
 // IsUnnecessaryKeyValue defines which kinds of KV pairs from TiDB needn't be committed.
-func (f kvFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
+func (f TiDBKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
 	return tablecodec.IsUntouchedIndexKValue(key, value)
 }
