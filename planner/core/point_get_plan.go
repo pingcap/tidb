@@ -71,6 +71,7 @@ type PointGetPlan struct {
 	LockWaitTime       int64
 	partitionColumnPos int
 	Columns            []*model.ColumnInfo
+	cost               float64
 }
 
 type nameValuePair struct {
@@ -82,6 +83,16 @@ type nameValuePair struct {
 // Schema implements the Plan interface.
 func (p *PointGetPlan) Schema() *expression.Schema {
 	return p.schema
+}
+
+// Cost implements PhysicalPlan interface
+func (p *PointGetPlan) Cost() float64 {
+	return p.cost
+}
+
+// SetCost implements PhysicalPlan interface
+func (p *PointGetPlan) SetCost(cost float64) {
+	p.cost = cost
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
@@ -262,6 +273,18 @@ type BatchPointGetPlan struct {
 	Lock             bool
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo
+	cost             float64
+
+}
+
+// Cost implements PhysicalPlan interface
+func (p *BatchPointGetPlan) Cost() float64 {
+	return p.cost
+}
+
+// SetCost implements PhysicalPlan interface
+func (p *BatchPointGetPlan) SetCost(cost float64) {
+	p.cost = cost
 }
 
 // Clone implements PhysicalPlan interface.
