@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/types"
 )
 
 type columnPruner struct {
@@ -70,6 +71,15 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) er
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
+	}
+	if len(p.Exprs) == 0 {
+		p.schema.Append(&expression.Column{
+			RetType: types.NewFieldType(mysql.TypeLong),
+		})
+		p.Exprs = append(p.Exprs, &expression.Constant{
+			Value:   types.NewDatum(1),
+			RetType: types.NewFieldType(mysql.TypeLong),
+		})
 	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
