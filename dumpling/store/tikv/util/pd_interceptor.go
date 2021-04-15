@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package execdetails
+package util
 
 import (
 	"context"
@@ -28,9 +28,9 @@ var (
 )
 
 func recordPDWaitTime(ctx context.Context, start time.Time) {
-	stmtExec := ctx.Value(StmtExecDetailKey)
+	stmtExec := ctx.Value(ExecDetailsKey)
 	if stmtExec != nil {
-		detail := stmtExec.(*StmtExecDetails)
+		detail := stmtExec.(*ExecDetails)
 		atomic.AddInt64(&detail.WaitPDRespDuration, int64(time.Since(start)))
 	}
 }
