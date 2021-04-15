@@ -1524,6 +1524,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
 			return &mppTask{}, nil
 		}
+		for _, col := range ts.schema.Columns {
+			if col.VirtualExpr != nil {
+				return &mppTask{}, nil
+			}
+		}
 		mppTask := &mppTask{
 			p:      ts,
 			cst:    cost,
