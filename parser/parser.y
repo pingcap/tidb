@@ -216,6 +216,7 @@ import (
 	rank              "RANK"
 	read              "READ"
 	realType          "REAL"
+	recursive         "RECURSIVE"
 	references        "REFERENCES"
 	regexpKwd         "REGEXP"
 	release           "RELEASE"
@@ -896,6 +897,8 @@ import (
 	ShutdownStmt           "SHUTDOWN statement"
 	CreateViewSelectOpt    "Select/Union/Except/Intersect statement in CREATE VIEW ... AS SELECT"
 	BindableStmt           "Statement that can be created binding on"
+	SelectStmtNoWith       "Select statement with CTE clause"
+	UpdateStmtNoWith       "Update statement with CTE clause"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
@@ -927,6 +930,8 @@ import (
 	ColumnNameOrUserVariableList           "column name or user variable list"
 	ColumnList                             "column list"
 	ColumnNameListOpt                      "column name list opt"
+	IdentList                              "identifier list"
+	IdentListWithParenOpt                  "column name list opt with parentheses"
 	ColumnNameOrUserVarListOpt             "column name or user vairiabe list opt"
 	ColumnNameOrUserVarListOptWithBrackets "column name or user variable list opt with brackets"
 	ColumnSetValue                         "insert statement set value by column name"
@@ -936,6 +941,7 @@ import (
 	ColumnOptionList                       "column definition option list"
 	VirtualOrStored                        "indicate generated column is stored or not"
 	ColumnOptionListOpt                    "optional column definition option list"
+	CommonTableExpr                        "Common table expression"
 	CompletionTypeWithinTransaction        "overwrite system variable completion_type within current transaction"
 	ConnectionOption                       "single connection options"
 	ConnectionOptionList                   "connection options for CREATE USER statement"
@@ -1180,6 +1186,8 @@ import (
 	WhenClause                             "When clause"
 	WhenClauseList                         "When clause list"
 	WithClustered                          "With Clustered Index Enabled"
+	WithClause                             "With Clause"
+	WithList                               "With list"
 	WithReadLockOpt                        "With Read Lock opt"
 	WithGrantOptionOpt                     "With Grant Option opt"
 	WithValidation                         "with validation"
@@ -1358,6 +1366,8 @@ import (
 %precedence stringLit
 %precedence lowerThanSetKeyword
 %precedence set
+%precedence selectKwd
+%precedence lowerThanSelectStmt
 %precedence lowerThanInsertValues
 %precedence insertValues
 %precedence lowerThanCreateTableSelect
@@ -2767,6 +2777,26 @@ ColumnNameListOpt:
 	}
 |	ColumnNameList
 
+IdentListWithParenOpt:
+	/* EMPTY */
+	{
+		$$ = []model.CIStr{}
+	}
+|	'(' IdentList ')'
+	{
+		$$ = $2
+	}
+
+IdentList:
+	Identifier
+	{
+		$$ = []model.CIStr{model.NewCIStr($1)}
+	}
+|	IdentList ',' Identifier
+	{
+		$$ = append($1.([]model.CIStr), model.NewCIStr($3))
+	}
+
 ColumnNameOrUserVarListOpt:
 	/* EMPTY */
 	{
@@ -4175,6 +4205,18 @@ DeleteWithUsingStmt:
 DeleteFromStmt:
 	DeleteWithoutUsingStmt
 |	DeleteWithUsingStmt
+|	WithClause DeleteWithoutUsingStmt
+	{
+		d := $2.(*ast.DeleteStmt)
+		d.With = $1.(*ast.WithClause)
+		$$ = d
+	}
+|	WithClause DeleteWithUsingStmt
+	{
+		d := $2.(*ast.DeleteStmt)
+		d.With = $1.(*ast.WithClause)
+		$$ = d
+	}
 
 DatabaseSym:
 	"DATABASE"
@@ -7840,6 +7882,15 @@ RepeatableOpt:
 	}
 
 SelectStmt:
+	SelectStmtNoWith
+|	WithClause SelectStmtNoWith
+	{
+		st := $2.(*ast.SelectStmt)
+		st.With = $1.(*ast.WithClause)
+		$$ = st
+	}
+
+SelectStmtNoWith:
 	SelectStmtBasic WhereClauseOptional OrderByOptional SelectStmtLimitOpt SelectLockOpt SelectStmtIntoOption
 	{
 		st := $1.(*ast.SelectStmt)
@@ -7958,6 +8009,43 @@ SelectStmt:
 			st.SelectIntoOpt = $6.(*ast.SelectIntoOption)
 		}
 		$$ = st
+	}
+
+WithClause:
+	"WITH" WithList
+	{
+		$$ = $2
+	}
+|	"WITH" recursive WithList
+	{
+		ws := $3.(*ast.WithClause)
+		ws.IsRecursive = true
+		$$ = ws
+	}
+
+WithList:
+	WithList ',' CommonTableExpr
+	{
+		ws := $1.(*ast.WithClause)
+		ws.CTEs = append(ws.CTEs, $3.(*ast.CommonTableExpression))
+		$$ = ws
+	}
+|	CommonTableExpr
+	{
+		ws := &ast.WithClause{}
+		ws.CTEs = make([]*ast.CommonTableExpression, 0, 4)
+		ws.CTEs = append(ws.CTEs, $1.(*ast.CommonTableExpression))
+		$$ = ws
+	}
+
+CommonTableExpr:
+	Identifier IdentListWithParenOpt "AS" SubSelect
+	{
+		cte := &ast.CommonTableExpression{}
+		cte.Name = model.NewCIStr($1)
+		cte.ColNameList = $2.([]model.CIStr)
+		cte.Query = $4.(*ast.SubqueryExpr)
+		$$ = cte
 	}
 
 FromDual:
@@ -11405,6 +11493,15 @@ StringNameOrBRIEOptionKeyword:
  * See https://dev.mysql.com/doc/refman/5.7/en/update.html
  ***********************************************************************************/
 UpdateStmt:
+	UpdateStmtNoWith
+|	WithClause UpdateStmtNoWith
+	{
+		u := $2.(*ast.UpdateStmt)
+		u.With = $1.(*ast.WithClause)
+		$$ = u
+	}
+
+UpdateStmtNoWith:
 	"UPDATE" TableOptimizerHintsOpt PriorityOpt IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
 	{
 		var refs *ast.Join
