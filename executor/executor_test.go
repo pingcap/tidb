@@ -1512,6 +1512,12 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	tk.MustExec("create table t(a int, b decimal(6, 3))")
 	tk.MustExec("insert into t values(1, 1.000)")
 	tk.MustQuery("select count(distinct a), sum(distinct a), avg(distinct a) from (select a from t union all select b from t) tmp;").Check(testkit.Rows("1 1.000 1.0000000"))
+
+	// #issue 23832
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bit(20), b float, c double, d int)")
+	tk.MustExec("insert into t values(10, 10, 10, 10), (1, -1, 2, -2), (2, -2, 1, 1), (2, 1.1, 2.1, 10.1)")
+	tk.MustQuery("select a from t union select 10 order by a").Check(testkit.Rows("1", "2", "10"))
 }
 
 func (s *testSuite2) TestUnionLimit(c *C) {
@@ -6992,6 +6998,45 @@ func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 			"alter user {user_sensitive@% password = ***};",
 			"create user {user_sensitive@% password = ***};",
 			"set password for user user_sensitive@%;",
+		))
+}
+
+func (s *testSlowQuery) TestSlowQueryPrepared(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+
+	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	c.Assert(err, IsNil)
+	f.Close()
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+		tk.MustExec("set tidb_redact_log=0;")
+		config.StoreGlobalConfig(originCfg)
+		os.Remove(newCfg.Log.SlowQueryFile)
+	}()
+	err = logutil.InitLogger(newCfg.Log.ToLogConfig())
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	tk.MustExec(`prepare mystmt1 from 'select sleep(?), 1';`)
+	tk.MustExec("SET @num = 0.01;")
+	tk.MustExec("execute mystmt1 using @num;")
+	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
+		"where query like 'select%sleep%' order by time desc limit 1").
+		Check(testkit.Rows(
+			"select sleep(?), 1 [arguments: 0.01];",
+		))
+
+	tk.MustExec("set tidb_redact_log=1;")
+	tk.MustExec(`prepare mystmt2 from 'select sleep(?), 2';`)
+	tk.MustExec("execute mystmt2 using @num;")
+	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
+		"where query like 'select%sleep%' order by time desc limit 1").
+		Check(testkit.Rows(
+			"select `sleep` ( ? ) , ?;",
 		))
 }
 
