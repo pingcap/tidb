@@ -205,23 +205,23 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		res  map[*types.FieldType]interface{}
 	}{
 		{[]interface{}{"a"}, map[*types.FieldType]interface{}{
-			types.NewFieldType(mysql.TypeLonglong):   int64(0),
-			types.NewFieldType(mysql.TypeDouble):     0.0,
-			types.NewFieldType(mysql.TypeString):     "中",
+			types.NewFieldType(mysql.TypeLonglong): int64(0),
+			types.NewFieldType(mysql.TypeDouble):   0.0,
+			types.NewFieldType(mysql.TypeString):   "中",
 			// Error: bad number
 			//types.NewFieldType(mysql.TypeNewDecimal): nil,
 		}},
 		{[]interface{}{"b"}, map[*types.FieldType]interface{}{
-			types.NewFieldType(mysql.TypeLonglong):   int64(0),
-			types.NewFieldType(mysql.TypeDouble):     0.0,
-			types.NewFieldType(mysql.TypeString):     "文字符chuan",
+			types.NewFieldType(mysql.TypeLonglong): int64(0),
+			types.NewFieldType(mysql.TypeDouble):   0.0,
+			types.NewFieldType(mysql.TypeString):   "文字符chuan",
 			// Error: bad number
 			//types.NewFieldType(mysql.TypeNewDecimal): nil,
 		}},
 		{[]interface{}{"c"}, map[*types.FieldType]interface{}{
-			types.NewFieldType(mysql.TypeLonglong):   int64(0),
-			types.NewFieldType(mysql.TypeDouble):     0.0,
-			types.NewFieldType(mysql.TypeString):     "",
+			types.NewFieldType(mysql.TypeLonglong): int64(0),
+			types.NewFieldType(mysql.TypeDouble):   0.0,
+			types.NewFieldType(mysql.TypeString):   "",
 			// Error: bad number
 			//types.NewFieldType(mysql.TypeNewDecimal): nil,
 		}},
