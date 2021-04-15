@@ -323,7 +323,7 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 		seVars := e.ctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, e.lockWaitTime)
 		lockCtx.ReturnValues = true
-		lockCtx.Values = map[string]kv.ReturnedValue{}
+		lockCtx.Values = map[string]tikvstore.ReturnedValue{}
 		err := doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
 			return err
