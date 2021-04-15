@@ -690,10 +690,10 @@ const (
 type ttlManager struct {
 	state   ttlManagerState
 	ch      chan struct{}
-	lockCtx *tidbkv.LockCtx
+	lockCtx *kv.LockCtx
 }
 
-func (tm *ttlManager) run(c *twoPhaseCommitter, lockCtx *tidbkv.LockCtx) {
+func (tm *ttlManager) run(c *twoPhaseCommitter, lockCtx *kv.LockCtx) {
 	// Run only once.
 	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateUninitialized), uint32(stateRunning)) {
 		return
@@ -1279,7 +1279,7 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 	c.doingAmend = true
 	defer func() { c.doingAmend = false }()
 	if keysNeedToLock.Len() > 0 {
-		lCtx := &tidbkv.LockCtx{
+		lCtx := &kv.LockCtx{
 			Killed:        c.lockCtx.Killed,
 			ForUpdateTS:   c.forUpdateTS,
 			LockWaitTime:  c.lockCtx.LockWaitTime,
