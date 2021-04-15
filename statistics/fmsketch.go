@@ -60,6 +60,9 @@ func (s *FMSketch) Copy() *FMSketch {
 
 // NDV returns the ndv of the sketch.
 func (s *FMSketch) NDV() int64 {
+	if s == nil {
+		return 0
+	}
 	return int64(s.mask+1) * int64(len(s.hashset))
 }
 
