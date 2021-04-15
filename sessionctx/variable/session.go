@@ -411,6 +411,12 @@ type SessionVars struct {
 		value string
 	}
 
+	// mppTaskIDAllocator is used to allocate mpp task id for a session.
+	mppTaskIDAllocator struct {
+		lastTS uint64
+		taskID int64
+	}
+
 	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
 	Status uint16
 
@@ -820,6 +826,18 @@ type SessionVars struct {
 
 	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
 	EnableDynamicPrivileges bool
+}
+
+// AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
+// startTs is different.
+func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
+	if s.mppTaskIDAllocator.lastTS == startTS {
+		s.mppTaskIDAllocator.taskID++
+		return s.mppTaskIDAllocator.taskID
+	}
+	s.mppTaskIDAllocator.lastTS = startTS
+	s.mppTaskIDAllocator.taskID = 1
+	return 1
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -1354,97 +1372,6 @@ func (s *SessionVars) ClearStmtVars() {
 // i.e. oN / on / 1 => ON
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
-	case TxnIsolationOneShot:
-		switch val {
-		case "SERIALIZABLE", "READ-UNCOMMITTED":
-			skipIsolationLevelCheck, err := GetSessionSystemVar(s, TiDBSkipIsolationLevelCheck)
-			returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(val)
-			if err != nil {
-				returnErr = err
-			}
-			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
-				return returnErr
-			}
-			// SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
-			// 1. tx_isolation
-			// 2. transaction_isolation
-			// The following if condition is used to deduplicate two same warnings.
-			if name == "transaction_isolation" {
-				s.StmtCtx.AppendWarning(returnErr)
-			}
-		}
-		s.txnIsolationLevelOneShot.state = oneShotSet
-		s.txnIsolationLevelOneShot.value = val
-	case TiDBEnableWindowFunction:
-		s.EnableWindowFunction = TiDBOptOn(val)
-	case TiDBEnableStrictDoubleTypeCheck:
-		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
-	case TiDBEnableVectorizedExpression:
-		s.EnableVectorizedExpression = TiDBOptOn(val)
-	case TiDBOptJoinReorderThreshold:
-		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
-	case TiDBSlowQueryFile:
-		s.SlowQueryFile = val
-	case TiDBEnableFastAnalyze:
-		s.EnableFastAnalyze = TiDBOptOn(val)
-	case TiDBWaitSplitRegionFinish:
-		s.WaitSplitRegionFinish = TiDBOptOn(val)
-	case TiDBWaitSplitRegionTimeout:
-		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeout))
-	case TiDBExpensiveQueryTimeThreshold:
-		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
-	case TiDBTxnMode:
-		s.TxnMode = strings.ToUpper(val)
-	case TiDBRowFormatVersion:
-		formatVersion := int(tidbOptInt64(val, DefTiDBRowFormatV1))
-		if formatVersion == DefTiDBRowFormatV1 {
-			s.RowEncoder.Enable = false
-		} else if formatVersion == DefTiDBRowFormatV2 {
-			s.RowEncoder.Enable = true
-		}
-	case TiDBLowResolutionTSO:
-		s.LowResolutionTSO = TiDBOptOn(val)
-	case TiDBEnableIndexMerge:
-		s.SetEnableIndexMerge(TiDBOptOn(val))
-	case TiDBEnableNoopFuncs:
-		s.EnableNoopFuncs = TiDBOptOn(val)
-	case TiDBReplicaRead:
-		if strings.EqualFold(val, "follower") {
-			s.SetReplicaRead(tikvstore.ReplicaReadFollower)
-		} else if strings.EqualFold(val, "leader-and-follower") {
-			s.SetReplicaRead(tikvstore.ReplicaReadMixed)
-		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
-			s.SetReplicaRead(tikvstore.ReplicaReadLeader)
-		}
-	case TiDBAllowRemoveAutoInc:
-		s.AllowRemoveAutoInc = TiDBOptOn(val)
-	// It's a global variable, but it also wants to be cached in server.
-	case TiDBMaxDeltaSchemaCount:
-		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
-	case TiDBUsePlanBaselines:
-		s.UsePlanBaselines = TiDBOptOn(val)
-	case TiDBEvolvePlanBaselines:
-		s.EvolvePlanBaselines = TiDBOptOn(val)
-	case TiDBEnableExtendedStats:
-		s.EnableExtendedStats = TiDBOptOn(val)
-	case TiDBIsolationReadEngines:
-		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
-		for _, engine := range strings.Split(val, ",") {
-			switch engine {
-			case kv.TiKV.Name():
-				s.IsolationReadEngines[kv.TiKV] = struct{}{}
-			case kv.TiFlash.Name():
-				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
-			case kv.TiDB.Name():
-				s.IsolationReadEngines[kv.TiDB] = struct{}{}
-			}
-		}
-	case TiDBStoreLimit:
-		tikvstore.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
-	case TiDBMetricSchemaStep:
-		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
-	case TiDBMetricSchemaRangeDuration:
-		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 	case CollationConnection, CollationDatabase, CollationServer:
 		coll, err := collate.GetCollationByName(val)
 		if err != nil {

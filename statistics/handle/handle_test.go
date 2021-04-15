@@ -1523,14 +1523,12 @@ partition by range (a) (
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=1")
 	err := tk.ExecToErr("analyze table t") // try to build global-stats on ver1
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[stats]: some partition level statistics are not in statistics version 2, please set tidb_analyze_version to 2 and analyze the this table")
+	c.Assert(err, IsNil)
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	err = tk.ExecToErr("analyze table t partition p1") // only analyze p1 to let it in ver2 while p0 is in ver1
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[stats]: some partition level statistics are not in statistics version 2, please set tidb_analyze_version to 2 and analyze the this table")
+	c.Assert(err, IsNil)
 
 	tk.MustExec("analyze table t") // both p0 and p1 are in ver2
 	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 3)
@@ -1629,6 +1627,42 @@ func (s *testSerialStatsSuite) TestDDLPartition4GlobalStats(c *C) {
 	// The result for the globalStats.count will be right now
 	globalStats = h.GetTableStats(tableInfo)
 	c.Assert(globalStats.Count, Equals, int64(7))
+}
+
+func (s *testStatsSuite) TestMergeGlobalTopN(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_analyze_version=2;")
+	tk.MustExec("set @@session.tidb_partition_prune_mode='dynamic';")
+	tk.MustExec(`create table t (a int, b int, key(b)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+	);`)
+	tk.MustExec("insert into t values(1, 1), (1, 1), (1, 1), (1, 1), (2, 2), (2, 2), (3, 3), (3, 3), (3, 3), " +
+		"(11, 11), (11, 11), (11, 11), (12, 12), (12, 12), (12, 12), (13, 3), (13, 3);")
+	tk.MustExec("analyze table t with 2 topn;")
+	// The top2 values in partition p0 are 1(count = 4) and 3(count = 3).
+	tk.MustQuery("show stats_topn where table_name = 't' and column_name = 'b' and partition_name = 'p0';").Check(testkit.Rows(
+		("test t p0 b 0 1 4"),
+		("test t p0 b 0 3 3"),
+		("test t p0 b 1 1 4"),
+		("test t p0 b 1 3 3")))
+	// The top2 values in partition p1 are 11(count = 3) and 12(count = 3).
+	tk.MustQuery("show stats_topn where table_name = 't' and column_name = 'b' and partition_name = 'p1';").Check(testkit.Rows(
+		("test t p1 b 0 11 3"),
+		("test t p1 b 0 12 3"),
+		("test t p1 b 1 11 3"),
+		("test t p1 b 1 12 3")))
+	// The top2 values in global are 1(count = 4) and 3(count = 5).
+	// Notice: The value 3 does not appear in the topN structure of partition one.
+	// But we can still use the histogram to calculate its accurate value.
+	tk.MustQuery("show stats_topn where table_name = 't' and column_name = 'b' and partition_name = 'global';").Check(testkit.Rows(
+		("test t global b 0 1 4"),
+		("test t global b 0 3 5"),
+		("test t global b 1 1 4"),
+		("test t global b 1 3 5")))
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
@@ -2347,4 +2381,138 @@ func (s *testStatsSuite) TestShowExtendedStats4DropColumn(c *C) {
 	tk.MustExec("alter table t add column b int")
 	rows = tk.MustQuery("show stats_extended").Rows()
 	c.Assert(len(rows), Equals, 0)
+}
+
+func (s *testStatsSuite) TestGlobalStatsNDV(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`CREATE TABLE t ( a int, key(a) )
+	PARTITION BY RANGE (a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20),
+    PARTITION p2 VALUES LESS THAN (30),
+    PARTITION p3 VALUES LESS THAN (40))`)
+
+	checkNDV := func(ndvs ...int) { // g, p0, ..., p3
+		tk.MustExec("analyze table t")
+		rs := tk.MustQuery(`show stats_histograms where is_index=1`).Rows()
+		c.Assert(len(rs), Equals, 5)
+		for i, ndv := range ndvs {
+			c.Assert(rs[i][6].(string), Equals, fmt.Sprintf("%v", ndv))
+		}
+	}
+
+	// all partitions are empty
+	checkNDV(0, 0, 0, 0, 0)
+
+	// p0 has data while others are empty
+	tk.MustExec("insert into t values (1), (2), (3)")
+	checkNDV(3, 3, 0, 0, 0)
+
+	// p0, p1, p2 have data while p3 is empty
+	tk.MustExec("insert into t values (11), (12), (13), (21), (22), (23)")
+	checkNDV(9, 3, 3, 3, 0)
+
+	// all partitions are not empty
+	tk.MustExec("insert into t values (31), (32), (33), (34)")
+	checkNDV(13, 3, 3, 3, 4)
+
+	// insert some duplicated records
+	tk.MustExec("insert into t values (31), (33), (34)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	checkNDV(13, 3, 3, 3, 4)
+}
+
+func (s *testStatsSuite) TestGlobalStatsIndexNDV(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	checkNDV := func(tbl string, g int, ps ...int) { // g, p0, ..., p3
+		tk.MustExec("analyze table " + tbl)
+		rs := tk.MustQuery(fmt.Sprintf(`show stats_histograms where is_index=1 and table_name='%v'`, tbl)).Rows()
+		c.Assert(len(rs), Equals, 1+len(ps))                      // 1(global) + number of partitions
+		c.Assert(rs[0][6].(string), Equals, fmt.Sprintf("%v", g)) // global
+		for i, ndv := range ps {
+			c.Assert(rs[i+1][6].(string), Equals, fmt.Sprintf("%v", ndv))
+		}
+	}
+
+	// int
+	tk.MustExec("drop table if exists tint")
+	tk.MustExec(`CREATE TABLE tint ( a int, b int, key(b) )
+	PARTITION BY RANGE (a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20))`)
+	tk.MustExec("insert into tint values (1, 1), (1, 2), (1, 3)") // p0.b: [1, 2, 3], p1.b: []
+	checkNDV("tint", 3, 3, 0)
+	tk.MustExec("insert into tint values (11, 1), (11, 2), (11, 3)") // p0.b: [1, 2, 3], p1.b: [1, 2, 3]
+	checkNDV("tint", 3, 3, 3)
+	tk.MustExec("insert into tint values (11, 4), (11, 5), (11, 6)") // p0.b: [1, 2, 3], p1.b: [1, 2, 3, 4, 5, 6]
+	checkNDV("tint", 6, 3, 6)
+	tk.MustExec("insert into tint values (1, 4), (1, 5), (1, 6), (1, 7), (1, 8)") // p0.b: [1, 2, 3, 4, 5, 6, 7, 8], p1.b: [1, 2, 3, 4, 5, 6]
+	checkNDV("tint", 8, 8, 6)
+
+	// double
+	tk.MustExec("drop table if exists tdouble")
+	tk.MustExec(`CREATE TABLE tdouble ( a int, b double, key(b) )
+	PARTITION BY RANGE (a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20))`)
+	tk.MustExec("insert into tdouble values (1, 1.1), (1, 2.2), (1, 3.3)") // p0.b: [1, 2, 3], p1.b: []
+	checkNDV("tdouble", 3, 3, 0)
+	tk.MustExec("insert into tdouble values (11, 1.1), (11, 2.2), (11, 3.3)") // p0.b: [1, 2, 3], p1.b: [1, 2, 3]
+	checkNDV("tdouble", 3, 3, 3)
+	tk.MustExec("insert into tdouble values (11, 4.4), (11, 5.5), (11, 6.6)") // p0.b: [1, 2, 3], p1.b: [1, 2, 3, 4, 5, 6]
+	checkNDV("tdouble", 6, 3, 6)
+	tk.MustExec("insert into tdouble values (1, 4.4), (1, 5.5), (1, 6.6), (1, 7.7), (1, 8.8)") // p0.b: [1, 2, 3, 4, 5, 6, 7, 8], p1.b: [1, 2, 3, 4, 5, 6]
+	checkNDV("tdouble", 8, 8, 6)
+
+	// decimal
+	tk.MustExec("drop table if exists tdecimal")
+	tk.MustExec(`CREATE TABLE tdecimal ( a int, b decimal(30, 15), key(b) )
+	PARTITION BY RANGE (a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20))`)
+	tk.MustExec("insert into tdecimal values (1, 1.1), (1, 2.2), (1, 3.3)") // p0.b: [1, 2, 3], p1.b: []
+	checkNDV("tdecimal", 3, 3, 0)
+	tk.MustExec("insert into tdecimal values (11, 1.1), (11, 2.2), (11, 3.3)") // p0.b: [1, 2, 3], p1.b: [1, 2, 3]
+	checkNDV("tdecimal", 3, 3, 3)
+	tk.MustExec("insert into tdecimal values (11, 4.4), (11, 5.5), (11, 6.6)") // p0.b: [1, 2, 3], p1.b: [1, 2, 3, 4, 5, 6]
+	checkNDV("tdecimal", 6, 3, 6)
+	tk.MustExec("insert into tdecimal values (1, 4.4), (1, 5.5), (1, 6.6), (1, 7.7), (1, 8.8)") // p0.b: [1, 2, 3, 4, 5, 6, 7, 8], p1.b: [1, 2, 3, 4, 5, 6]
+	checkNDV("tdecimal", 8, 8, 6)
+
+	// string
+	tk.MustExec("drop table if exists tstring")
+	tk.MustExec(`CREATE TABLE tstring ( a int, b varchar(30), key(b) )
+	PARTITION BY RANGE (a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20))`)
+	tk.MustExec("insert into tstring values (1, '111'), (1, '222'), (1, '333')") // p0.b: [1, 2, 3], p1.b: []
+	checkNDV("tstring", 3, 3, 0)
+	tk.MustExec("insert into tstring values (11, '111'), (11, '222'), (11, '333')") // p0.b: [1, 2, 3], p1.b: [1, 2, 3]
+	checkNDV("tstring", 3, 3, 3)
+	tk.MustExec("insert into tstring values (11, '444'), (11, '555'), (11, '666')") // p0.b: [1, 2, 3], p1.b: [1, 2, 3, 4, 5, 6]
+	checkNDV("tstring", 6, 3, 6)
+	tk.MustExec("insert into tstring values (1, '444'), (1, '555'), (1, '666'), (1, '777'), (1, '888')") // p0.b: [1, 2, 3, 4, 5, 6, 7, 8], p1.b: [1, 2, 3, 4, 5, 6]
+	checkNDV("tstring", 8, 8, 6)
+
+	// datetime
+	tk.MustExec("drop table if exists tdatetime")
+	tk.MustExec(`CREATE TABLE tdatetime ( a int, b datetime, key(b) )
+	PARTITION BY RANGE (a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20))`)
+	tk.MustExec("insert into tdatetime values (1, '2001-01-01'), (1, '2002-01-01'), (1, '2003-01-01')") // p0.b: [1, 2, 3], p1.b: []
+	checkNDV("tdatetime", 3, 3, 0)
+	tk.MustExec("insert into tdatetime values (11, '2001-01-01'), (11, '2002-01-01'), (11, '2003-01-01')") // p0.b: [1, 2, 3], p1.b: [1, 2, 3]
+	checkNDV("tdatetime", 3, 3, 3)
+	tk.MustExec("insert into tdatetime values (11, '2004-01-01'), (11, '2005-01-01'), (11, '2006-01-01')") // p0.b: [1, 2, 3], p1.b: [1, 2, 3, 4, 5, 6]
+	checkNDV("tdatetime", 6, 3, 6)
+	tk.MustExec("insert into tdatetime values (1, '2004-01-01'), (1, '2005-01-01'), (1, '2006-01-01'), (1, '2007-01-01'), (1, '2008-01-01')") // p0.b: [1, 2, 3, 4, 5, 6, 7, 8], p1.b: [1, 2, 3, 4, 5, 6]
+	checkNDV("tdatetime", 8, 8, 6)
 }
