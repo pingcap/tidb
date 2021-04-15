@@ -72,6 +72,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) er
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
+	// Here we add a constant 1 to avoid Projection operator is eliminated.(#23887)
 	if len(p.Exprs) == 0 {
 		p.schema.Append(&expression.Column{
 			RetType: types.NewFieldType(mysql.TypeLong),
