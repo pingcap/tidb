@@ -346,8 +346,8 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			lockCnt++
 		} else {
 			value = it.Value()
-			isUnnecessaryKV := filter != nil && filter.IsUnnecessaryKeyValue(key, value, flags)
 			if len(value) > 0 {
+				isUnnecessaryKV := filter != nil && filter.IsUnnecessaryKeyValue(key, value, flags)
 				if isUnnecessaryKV {
 					if !flags.HasLocked() {
 						continue
