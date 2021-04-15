@@ -3013,7 +3013,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	e.tableRequest.CollectRangeCounts = &collectTable
 	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	// Do not collect the feedback when the table is the partition table.
-	if collectIndex && tbl.Meta().Partition != nil {
+	if collectIndex && tbl.Meta().GetPartitionInfo() != nil {
 		collectIndex = false
 	}
 	if !collectIndex {
