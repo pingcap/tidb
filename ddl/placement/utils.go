@@ -15,7 +15,6 @@ package placement
 
 import (
 	"encoding/hex"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -107,11 +106,6 @@ func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
 		}
 	}
 	return constraints, nil
-}
-
-// GroupID accepts a tableID or whatever integer, and encode the integer into a valid GroupID for PD.
-func GroupID(id int64) string {
-	return fmt.Sprintf("%s%d", BundleIDPrefix, id)
 }
 
 // ObjectIDFromGroupID extracts the db/table/partition ID from the group ID
