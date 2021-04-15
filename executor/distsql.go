@@ -135,14 +135,6 @@ func closeAll(objs ...Closeable) error {
 	return nil
 }
 
-// handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
-func handleIsExtra(col *expression.Column) bool {
-	if col != nil && col.ID == model.ExtraHandleID {
-		return true
-	}
-	return false
-}
-
 // rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
 // by substitute correlated column with the constant.
 func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
@@ -296,7 +288,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return err
 	}
-	e.result.Fetch(ctx)
 	return nil
 }
 
@@ -362,6 +353,7 @@ const (
 	getHandleFromTable
 )
 
+// nolint:structcheck
 type checkIndexValue struct {
 	idxColTps  []*types.FieldType
 	idxTblCols []*table.Column
@@ -486,7 +478,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	if err != nil {
 		return err
 	}
-	result.Fetch(ctx)
 	worker := &indexWorker{
 		idxLookup:       e,
 		workCh:          workCh,
@@ -925,9 +916,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			}
 			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
 		}
-		if tp == getHandleFromTable {
-			tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
-		}
+		tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
 		handleEncoded, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, datums...)
 		if err != nil {
 			return nil, err

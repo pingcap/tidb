@@ -301,6 +301,9 @@ type LogicalPlan interface {
 
 	// rollBackTaskMap roll back all taskMap's logs after TimeStamp TS.
 	rollBackTaskMap(TS uint64)
+
+	// canPushToCop check if we might push this plan to a specific store.
+	canPushToCop(store kv.StoreType) bool
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -403,7 +406,7 @@ func (p *basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
-// ExplainInfo implements Plan interface.
+// ExplainNormalizedInfo implements PhysicalPlan interface.
 func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
 	return ""
 }

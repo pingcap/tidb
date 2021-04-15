@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -199,7 +200,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	c.Assert(gotRows, DeepEquals, expected)
 
 	// Test table primary key is not integer.
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table local_binlog2 (name varchar(64) primary key, age int)")
 	tk.MustExec("insert local_binlog2 values ('abc', 16), ('def', 18)")
 	tk.MustExec("delete from local_binlog2 where name = 'def'")
@@ -268,14 +269,15 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 		binlog.MutationType_Insert,
 	})
 
-	// Test cannot build clustered index tables when binlog client exists.
-	tk.MustExec("create table local_clustered_index (c1 varchar(255) primary key clustered);")
-	warnMsg := "Warning 1105 cannot build clustered index table because the binlog is ON"
-	tk.MustQuery("show warnings;").Check(testkit.Rows(warnMsg))
+	// Cannot create common clustered index table when binlog client exists.
+	errMsg := "[ddl:8200]Cannot create clustered index table when the binlog is ON"
+	tk.MustGetErrMsg("create table local_clustered_index (c1 varchar(255) primary key clustered);", errMsg)
+	// Create int clustered index table when binlog client exists.
+	tk.MustExec("create table local_clustered_index (c1 bigint primary key clustered);")
 	tk.MustQuery("select tidb_pk_type from information_schema.tables where table_name = 'local_clustered_index' and table_schema = 'test';").
-		Check(testkit.Rows("NON-CLUSTERED"))
+		Check(testkit.Rows("CLUSTERED"))
 	tk.MustExec("drop table if exists local_clustered_index;")
-	// Test clustered index tables will not write binlog.
+	// Test common clustered index tables will not write binlog.
 	tk.Se.GetSessionVars().BinlogClient = nil
 	tk.MustExec("create table local_clustered_index (c1 varchar(255) primary key clustered);")
 	tk.MustQuery("select tidb_pk_type from information_schema.tables where table_name = 'local_clustered_index' and table_schema = 'test';").
@@ -414,9 +416,9 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 }
 
 func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit"), IsNil)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
