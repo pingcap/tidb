@@ -1342,6 +1342,7 @@ var defaultSysVars = []*SysVar{
 		s.TiDBEnableExchangePartition = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeNone, Name: TiDBEnableEnhancedSecurity, Value: BoolOff, Type: TypeBool},
 
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: BoolOn, Type: TypeBool},
