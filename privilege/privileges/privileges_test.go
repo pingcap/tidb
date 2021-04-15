@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -1307,4 +1308,36 @@ func (s *testPrivilegeSuite) TestDynamicGrantOption(c *C) {
 
 	c.Assert(se2.Auth(&auth.UserIdentity{Username: "varuser2", Hostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se2, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedTables(c *C) {
+	// This provides an integration test of the tests in util/security/security_test.go
+	cloudAdminSe := newSession(c, s.store, s.dbName)
+	mustExec(c, cloudAdminSe, "CREATE USER cloudadmin")
+	mustExec(c, cloudAdminSe, "SET tidb_enable_dynamic_privileges=1")
+	mustExec(c, cloudAdminSe, "GRANT RESTRICTED_TABLES_ADMIN, SELECT ON *.* to cloudadmin")
+	mustExec(c, cloudAdminSe, "GRANT CREATE ON mysql.* to cloudadmin")
+	mustExec(c, cloudAdminSe, "CREATE USER uroot")
+	mustExec(c, cloudAdminSe, "GRANT ALL ON *.* to uroot WITH GRANT OPTION") // A "MySQL" all powerful user.
+	c.Assert(cloudAdminSe.Auth(&auth.UserIdentity{Username: "cloudadmin", Hostname: "%"}, nil, nil), IsTrue)
+	urootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, urootSe, "SET tidb_enable_dynamic_privileges=1")
+	c.Assert(urootSe.Auth(&auth.UserIdentity{Username: "uroot", Hostname: "%"}, nil, nil), IsTrue)
+
+	sem.Enable()
+	defer sem.Disable()
+
+	_, err := urootSe.ExecuteInternal(context.Background(), "use metrics_schema")
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'uroot'@'%' to database 'metrics_schema'")
+
+	_, err = urootSe.ExecuteInternal(context.Background(), "SELECT * FROM metrics_schema.uptime")
+	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'uroot'@'%' for table 'uptime'")
+
+	_, err = urootSe.ExecuteInternal(context.Background(), "CREATE TABLE mysql.abcd (a int)")
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'uroot'@'%' for table 'abcd'")
+
+	mustExec(c, cloudAdminSe, "USE metrics_schema")
+	mustExec(c, cloudAdminSe, "SELECT * FROM metrics_schema.uptime")
+	mustExec(c, cloudAdminSe, "CREATE TABLE mysql.abcd (a int)")
+
 }

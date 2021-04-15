@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -61,7 +60,7 @@ func (s *KVStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter boo
 			zap.Int("split key count", len(keys)),
 			zap.Int("batch count", len(batches)),
 			zap.Uint64("first batch, region ID", batches[0].regionID.id),
-			zap.Stringer("first split key", tidbkv.Key(batches[0].keys[0])))
+			zap.String("first split key", kv.StrKey(batches[0].keys[0])))
 	}
 	if len(batches) == 1 {
 		resp := s.batchSendSingleRegion(bo, batches[0], scatter, tableID)
@@ -160,7 +159,7 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 	}
 	logutil.BgLogger().Info("batch split regions complete",
 		zap.Uint64("batch region ID", batch.regionID.id),
-		zap.Stringer("first at", tidbkv.Key(batch.keys[0])),
+		zap.String("first at", kv.StrKey(batch.keys[0])),
 		zap.String("first new region left", newRegionLeft),
 		zap.Int("new region count", len(spResp.Regions)))
 
@@ -172,14 +171,14 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 		if err = s.scatterRegion(bo, r.Id, tableID); err == nil {
 			logutil.BgLogger().Info("batch split regions, scatter region complete",
 				zap.Uint64("batch region ID", batch.regionID.id),
-				zap.Stringer("at", tidbkv.Key(batch.keys[i])),
+				zap.String("at", kv.StrKey(batch.keys[i])),
 				zap.Stringer("new region left", logutil.Hex(r)))
 			continue
 		}
 
 		logutil.BgLogger().Info("batch split regions, scatter region failed",
 			zap.Uint64("batch region ID", batch.regionID.id),
-			zap.Stringer("at", tidbkv.Key(batch.keys[i])),
+			zap.String("at", kv.StrKey(batch.keys[i])),
 			zap.Stringer("new region left", logutil.Hex(r)),
 			zap.Error(err))
 		if batchResp.err == nil {
