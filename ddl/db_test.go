@@ -6647,9 +6647,7 @@ func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) 
 	tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0';")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit"), IsNil)
-	}()
+	defer c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit"), IsNil)
 
 	_, err := tk.Exec("alter table test_add_index_after_add_col add unique index cc(c);")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '0' for key 'cc'")
