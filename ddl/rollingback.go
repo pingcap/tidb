@@ -450,9 +450,9 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 					fmt.Sprintf("DDL job rollback, error msg: %s", terror.ToSQLError(job.Error).Message))
 			}
 		} else {
-			// job canceling meet other error.
+			// A job canceling meet other error.
 			//
-			// Once `convertJob2RollbackJob` meets error, the job state can't be set as `JobStateRollingback` since
+			// Once `convertJob2RollbackJob` meets an error, the job state can't be set as `JobStateRollingback` since
 			// job state and args may not be correctly overwritten. The job will be fetched to run with the cancelling
 			// state again. So we should check the error count here.
 			if err1 := loadDDLVars(w); err1 != nil {
@@ -460,9 +460,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 			}
 			errorCount := variable.GetDDLErrorCountLimit()
 			if job.ErrorCount > errorCount {
-				msg := fmt.Sprintf("job being converted to rollback job errors and error count beyond the limitation %d, cancelled", errorCount)
-				logutil.Logger(w.logCtx).Warn(msg)
-				job.Error = toTError(errors.New(msg))
+				logutil.Logger(w.logCtx).Warn("[ddl] rollback DDL job error count exceed the limit, cancelled it now", zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", errorCount))
+				job.Error = toTError(errors.New(fmt.Sprintf(fmt.Sprintf(" rollback DDL job error count exceed the limit %d, cancelled it now", errorCount))))
 				job.State = model.JobStateCancelled
 			}
 		}
