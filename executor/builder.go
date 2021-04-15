@@ -2677,6 +2677,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 	if v.StoreType == kv.TiFlash {
+		sctx.IsTiFlash.Store(true)
 		partsExecutor := make([]Executor, 0, len(partitions))
 		for _, part := range partitions {
 			exec, err := buildNoRangeTableReader(b, v)
