@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -116,8 +116,6 @@ type MemBuffer interface {
 	GetFlags(Key) (tikvstore.KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
 	SetWithFlags(Key, []byte, ...tikvstore.FlagsOp) error
-	// UpdateFlags update the flags associated with key.
-	UpdateFlags(Key, ...tikvstore.FlagsOp)
 	// DeleteWithFlags delete key with the given KeyFlags
 	DeleteWithFlags(Key, ...tikvstore.FlagsOp) error
 
@@ -210,7 +208,7 @@ type LockCtx struct {
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
-	Stats                 *execdetails.LockKeysDetails
+	Stats                 *util.LockKeysDetails
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
