@@ -541,6 +541,12 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if pi == nil {
 		return ds, nil
 	}
+	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.allConds, the condition
+	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
+	// TODO: there may be a better way to push down Not once for all.
+	for i, cond := range ds.allConds {
+		ds.allConds[i] = expression.PushDownNot(ds.ctx, cond)
+	}
 	// Try to locate partition directly for hash partition.
 	switch pi.Type {
 	case model.PartitionTypeRange:
@@ -653,6 +659,10 @@ func (or partitionRangeOR) union(x partitionRangeOR) partitionRangeOR {
 }
 
 func (or partitionRangeOR) simplify() partitionRangeOR {
+	// if the length of the `or` is zero. We should return early.
+	if len(or) == 0 {
+		return or
+	}
 	// Make the ranges order by start.
 	sort.Sort(or)
 	sorted := or

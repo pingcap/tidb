@@ -532,6 +532,9 @@ const (
 	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
+
+	// TiDBEnableDynamicPrivileges enables MySQL 8.0 compatible dynamic privileges (experimental).
+	TiDBEnableDynamicPrivileges = "tidb_enable_dynamic_privileges"
 )
 
 // TiDB vars that have only global scope
