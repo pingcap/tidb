@@ -381,7 +381,7 @@ func (evictedHistory *evictedInfoHistory) AddEvictedInfo(begintime int64, endtim
 		evictedHistory.Add(begintime, endtime, 0)
 	}
 	if evictedHistory.element[evictedHistory.tail].beginTime != begintime {
-		if len(evictedHistory.element) < evictedHistory.maxCount {
+		if len(evictedHistory.element) <= evictedHistory.maxCount {
 			evictedHistory.Add(begintime, endtime, 0)
 			evictedHistory.tail = len(evictedHistory.element) - 1
 		} else {
@@ -422,13 +422,7 @@ func (evictedHistory *evictedInfoHistory) Add(begintime, endtime int64, evictedC
 
 func (ssMap *stmtSummaryByDigestMap) ToEvictedInfo() [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(ssMap.currentInfo.element))
-	//if ssMap.evictedInfo.evictedCount != 0 {
-	//	rows = append(rows, types.MakeDatums(
-	//		types.NewTime(types.FromGoTime(time.Unix(ssMap.evictedInfo.beginTime, 0)), mysql.TypeTimestamp, 0),
-	//		types.NewTime(types.FromGoTime(time.Unix(ssMap.evictedInfo.endTime, 0)), mysql.TypeTimestamp, 0),
-	//		ssMap.evictedInfo.evictedCount,
-	//	))
-	//}
+	// TODO:Keep Order By Evicted Time
 	for _, v := range ssMap.currentInfo.element {
 		row := types.MakeDatums(
 			types.NewTime(types.FromGoTime(time.Unix(v.beginTime, 0)), mysql.TypeTimestamp, 0),
@@ -572,8 +566,7 @@ func (ssMap *stmtSummaryByDigestMap) SetMaxEvictedCount(value string, inSession 
 	ssMap.Lock()
 	defer ssMap.Unlock()
 	ssMap.currentInfo.maxCount = int(capacity)
-	// OverFlow
-	if len(ssMap.currentInfo.element) >= ssMap.currentInfo.maxCount {
+	if len(ssMap.currentInfo.element) > ssMap.currentInfo.maxCount {
 		ssMap.currentInfo.element = make([]stmtSummaryEvictedInfo, 0, ssMap.currentInfo.maxCount)
 	}
 
