@@ -214,6 +214,13 @@ func (txn *KVTxn) IsPessimistic() bool {
 	return txn.us.GetOption(kv.Pessimistic) != nil
 }
 
+func (txn *KVTxn) getKVFilter() KVFilter {
+	if filter := txn.us.GetOption(kv.KVFilter); filter != nil {
+		return filter.(KVFilter)
+	}
+	return nil
+}
+
 // Commit commits the transaction operations to KV store.
 func (txn *KVTxn) Commit(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
