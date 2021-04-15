@@ -85,8 +85,8 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 
 	// Simulate a large txn (holding a pk lock with large TTL).
 	// Secondary lock 200ms, primary lock 100s
-	mocktikv.MustPrewriteOK(c, s.mvccStore, mocktikv.PutMutations("primary", "value"), "primary", tso, 100000)
-	mocktikv.MustPrewriteOK(c, s.mvccStore, mocktikv.PutMutations(string(key), "value"), "primary", tso, 200)
+	c.Assert(mocktikv.MustPrewrite(s.mvccStore, mocktikv.PutMutations("primary", "value"), "primary", tso, 100000), IsTrue)
+	c.Assert(mocktikv.MustPrewrite(s.mvccStore, mocktikv.PutMutations(string(key), "value"), "primary", tso, 200), IsTrue)
 
 	// Simulate the action of reading meet the lock of a large txn.
 	// The lock of the large transaction should not block read.
