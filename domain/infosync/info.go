@@ -557,7 +557,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	now := time.Unix(0, oracle.ExtractPhysical(currentVer.Ver)*1e6)
-	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now,tikv.MaxTxnTimeUse)
+	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
 
 	minStartTS := oracle.GoTimeToTS(now)
 	for _, info := range pl {
