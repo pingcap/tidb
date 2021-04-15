@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/store/tikv/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -81,7 +81,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.Cl
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
+	pdCli = util.InterceptedPDClient{Client: pdCli}
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
 
 	tlsConfig, err := security.ToTLSConfig()
