@@ -1011,14 +1011,14 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	_, err = se.ExecuteInternal(context.Background(), "drop table information_schema.tables")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 
 	// Test performance_schema.
 	mustExec(c, se, `select * from performance_schema.events_statements_summary_by_digest`)
 	_, err = se.ExecuteInternal(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "DELETE command denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "create table performance_schema.t(a int)")
@@ -1030,7 +1030,7 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	_, err = se.ExecuteInternal(context.Background(), "drop table metrics_schema.tidb_query_duration")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "update metrics_schema.tidb_query_duration set instance = 'tst'")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "delete from metrics_schema.tidb_query_duration")
 	c.Assert(strings.Contains(err.Error(), "DELETE command denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "create table metric_schema.t(a int)")
@@ -1046,9 +1046,9 @@ func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_admin", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err := se.ExecuteInternal(context.Background(), "ADMIN SHOW DDL JOBS")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "ADMIN CHECK TABLE t")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "ADMIN SHOW DDL JOBS")
