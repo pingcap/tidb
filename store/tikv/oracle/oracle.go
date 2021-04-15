@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
@@ -55,8 +55,11 @@ type TxnScope struct {
 
 // GetTxnScope gets oracle.TxnScope from config
 func GetTxnScope() TxnScope {
-	isGlobal, location := config.GetTxnScopeFromConfig()
-	if isGlobal {
+	location := ""
+	if cfg := config.GetGlobalConfig(); cfg != nil {
+		location = cfg.TxnScope
+	}
+	if len(location) == 0 {
 		return NewGlobalTxnScope()
 	}
 	return NewLocalTxnScope(location)

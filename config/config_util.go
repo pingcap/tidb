@@ -26,6 +26,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	tikvcfg "github.com/pingcap/tidb/store/tikv/config"
 )
 
 // CloneConf deeply clones this config.
@@ -169,9 +170,9 @@ func GetTxnScopeFromConfig() (bool, string) {
 		}
 		failpoint.Return(true, globalTxnScope)
 	})
-	v, ok := GetGlobalConfig().Labels["zone"]
-	if ok && len(v) > 0 {
-		return false, v
+
+	if kvcfg := tikvcfg.GetGlobalConfig(); kvcfg != nil && len(kvcfg.TxnScope) > 0 {
+		return false, kvcfg.TxnScope
 	}
 	return true, globalTxnScope
 }

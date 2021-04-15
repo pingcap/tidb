@@ -50,6 +50,7 @@ type Config struct {
 	OpenTracingEnable     bool
 	Path                  string
 	EnableForwarding      bool
+	TxnScope              string
 }
 
 // DefaultConfig returns the default configuration.
@@ -65,6 +66,7 @@ func DefaultConfig() Config {
 		OpenTracingEnable:     false,
 		Path:                  "",
 		EnableForwarding:      false,
+		TxnScope:              "",
 	}
 }
 
