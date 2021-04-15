@@ -9153,3 +9153,15 @@ func (s *testIntegrationSuite) TestIssue23889(c *C) {
 	tk.MustQuery("SELECT ( test_decimal . `col_decimal` , test_decimal . `col_decimal` )  IN ( select * from test_t ) as field1 FROM  test_decimal;").Check(
 		testkit.Rows("<nil>", "0"))
 }
+
+func (s *testIntegrationSuite) TestIssue23312(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_group_concat;")
+	tk.MustExec("CREATE TABLE `test_group_concat`(`col1` float GENERATED ALWAYS AS ((`col102` + 10)) STORED NOT NULL,`col102` float,PRIMARY KEY (`col1`) USING BTREE)")
+	tk.MustExec("INSERT INTO `test_group_concat` VALUES (DEFAULT, 3.36769e38);")
+	tk.MustExec("INSERT INTO `test_group_concat` VALUES (DEFAULT, 3.18374e38);")
+	tk.MustQuery("select GROUP_CONCAT(col1) from test_group_concat;").Check(
+		testkit.Rows("3.18374e38,3.36769e38"))
+}
