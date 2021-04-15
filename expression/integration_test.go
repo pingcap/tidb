@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -3706,7 +3707,8 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec(`insert into t2 values(1, 1.1, "2017-08-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
 
 	result = tk.MustQuery("select coalesce(NULL, a), coalesce(NULL, b, a), coalesce(c, NULL, a, b), coalesce(d, NULL), coalesce(d, c), coalesce(NULL, NULL, e, 1), coalesce(f), coalesce(1, a, b, c, d, e, f) from t2")
-	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef 21 1", time.Now().In(tk.Se.GetSessionVars().Location()).Format("2006-01-02"))))
+	// coalesce(col_bit) is not same with MySQL, because it's a bug of MySQL(https://bugs.mysql.com/bug.php?id=103289&thanks=4)
+	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x15 1", time.Now().In(tk.Se.GetSessionVars().Location()).Format("2006-01-02"))))
 
 	// nullif
 	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
@@ -9105,4 +9107,49 @@ func (s *testIntegrationSuite) TestVitessHashMatchesVitessShards(c *C) {
 	tk.MustExec("update t set computed_shard =  (vitess_hash(customer_id) >> 56);")
 	tk.MustQuery("select customer_id, id, hex(expected_shard), hex(computed_shard) from t where expected_shard <> computed_shard").
 		Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestSecurityEnhancedMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	sem.Enable()
+	defer sem.Disable()
+
+	// When SEM is enabled these features are restricted to all users
+	// regardless of what privileges they have available.
+
+	_, err := tk.Exec("SHOW CONFIG")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'SHOW CONFIG' is not supported when security enhanced mode is enabled")
+	_, err = tk.Exec("SELECT 1 INTO OUTFILE '/tmp/aaaa'")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'SELECT INTO' is not supported when security enhanced mode is enabled")
+
+}
+
+func (s *testIntegrationSuite) TestIssue23925(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int primary key, b set('Alice','Bob') DEFAULT NULL);")
+	tk.MustExec("insert into t value(1,'Bob');")
+	tk.MustQuery("select max(b) + 0 from t group by a;").Check(testkit.Rows("2"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b set('Alice','Bob') DEFAULT NULL);")
+	tk.MustExec("insert into t value(1,'Bob');")
+	tk.MustQuery("select max(b) + 0 from t group by a;").Check(testkit.Rows("2"))
+}
+
+func (s *testIntegrationSuite) TestIssue23889(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_decimal,test_t;")
+	tk.MustExec("create table test_decimal(col_decimal decimal(10,0));")
+	tk.MustExec("insert into test_decimal values(null),(8);")
+	tk.MustExec("create table test_t(a int(11), b decimal(32,0));")
+	tk.MustExec("insert into test_t values(1,4),(2,4),(5,4),(7,4),(9,4);")
+
+	tk.MustQuery("SELECT ( test_decimal . `col_decimal` , test_decimal . `col_decimal` )  IN ( select * from test_t ) as field1 FROM  test_decimal;").Check(
+		testkit.Rows("<nil>", "0"))
 }

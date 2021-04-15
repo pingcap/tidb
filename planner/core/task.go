@@ -64,9 +64,11 @@ type copTask struct {
 	indexPlanFinished bool
 	// keepOrder indicates if the plan scans data by order.
 	keepOrder bool
-	// doubleReadNeedProj means an extra prune is needed because
-	// in double read case, it may output one more column for handle(row id).
-	doubleReadNeedProj bool
+	// needExtraProj means an extra prune is needed because
+	// in double read / index merge cases, they may output one more column for handle(row id).
+	needExtraProj bool
+	// originSchema is the target schema to be projected to when needExtraProj is true.
+	originSchema *expression.Schema
 
 	extraHandleCol   *expression.Column
 	commonHandleCols []*expression.Column
@@ -559,12 +561,19 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	return task
 }
 
-// for different decimal scale and precision, tiflash uses different underlying type.
-// Here we check the scale and precision to decide whether conversion is a must.
-func needDecimalConvert(tp *types.FieldType, rtp *types.FieldType) bool {
+// TiDB only require that the types fall into the same catalog but TiFlash require the type to be exactly the same, so
+// need to check if the conversion is a must
+func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
+	if tp.Tp != rtp.Tp {
+		return true
+	}
+	if tp.Tp != mysql.TypeNewDecimal {
+		return false
+	}
 	if tp.Decimal != rtp.Decimal {
 		return true
 	}
+	// for Decimal type, TiFlash have 4 different impl based on the required precision
 	if tp.Flen >= 0 && tp.Flen <= 9 && rtp.Flen >= 0 && rtp.Flen <= 9 {
 		return false
 	}
@@ -581,22 +590,31 @@ func needDecimalConvert(tp *types.FieldType, rtp *types.FieldType) bool {
 }
 
 func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool, bool) {
-	lExtend := 0
-	rExtend := 0
-	cDec := rType.Decimal
-	if lType.Decimal < rType.Decimal {
-		lExtend = rType.Decimal - lType.Decimal
-	} else if lType.Decimal > rType.Decimal {
-		rExtend = lType.Decimal - rType.Decimal
-		cDec = lType.Decimal
+	commonType := types.AggFieldType([]*types.FieldType{lType, rType})
+	if commonType.Tp == mysql.TypeNewDecimal {
+		lExtend := 0
+		rExtend := 0
+		cDec := rType.Decimal
+		if lType.Decimal < rType.Decimal {
+			lExtend = rType.Decimal - lType.Decimal
+		} else if lType.Decimal > rType.Decimal {
+			rExtend = lType.Decimal - rType.Decimal
+			cDec = lType.Decimal
+		}
+		lLen, rLen := lType.Flen+lExtend, rType.Flen+rExtend
+		cLen := mathutil.Max(lLen, rLen)
+		cLen = mathutil.Min(65, cLen)
+		commonType.Decimal = cDec
+		commonType.Flen = cLen
+	} else if needConvert(lType, commonType) || needConvert(rType, commonType) {
+		if mysql.IsIntegerType(commonType.Tp) {
+			// If the target type is int, both TiFlash and Mysql only support cast to Int64
+			// so we need to promote the type to Int64
+			commonType.Tp = mysql.TypeLonglong
+			commonType.Flen = mysql.MaxIntWidth
+		}
 	}
-	lLen, rLen := lType.Flen+lExtend, rType.Flen+rExtend
-	cLen := mathutil.Max(lLen, rLen)
-	cLen = mathutil.Min(65, cLen)
-	cType := types.NewFieldType(mysql.TypeNewDecimal)
-	cType.Decimal = cDec
-	cType.Flen = cLen
-	return cType, needDecimalConvert(lType, cType), needDecimalConvert(rType, cType)
+	return commonType, needConvert(lType, commonType), needConvert(rType, commonType)
 }
 
 func getProj(ctx sessionctx.Context, p PhysicalPlan) *PhysicalProjection {
@@ -623,8 +641,9 @@ func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.C
 	return col
 }
 
-// If the join key's type are decimal and needs conversion, we will add a projection below the join or exchanger if exists.
-func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppTask, *mppTask) {
+// TiFlash join require that join key has exactly the same type, while TiDB only guarantee the join key is the same catalog,
+// so if the join key type is not exactly the same, we need add a projection below the join or exchanger if exists.
+func (p *PhysicalHashJoin) convertJoinKeyForTiFlashIfNeed(lTask, rTask *mppTask) (*mppTask, *mppTask) {
 	lp := lTask.p
 	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
 		lp = lp.Children()[0].Children()[0]
@@ -642,18 +661,16 @@ func (p *PhysicalHashJoin) convertDecimalKeyIfNeed(lTask, rTask *mppTask) (*mppT
 	for i, eqFunc := range p.EqualConditions {
 		lKey := eqFunc.GetArgs()[0].(*expression.Column)
 		rKey := eqFunc.GetArgs()[1].(*expression.Column)
-		if lKey.RetType.Tp == mysql.TypeNewDecimal && rKey.RetType.Tp == mysql.TypeNewDecimal {
-			cType, lConvert, rConvert := negotiateCommonType(lKey.RetType, rKey.RetType)
-			if lConvert {
-				lMask[i] = true
-				cTypes[i] = cType
-				lChanged = true
-			}
-			if rConvert {
-				rMask[i] = true
-				cTypes[i] = cType
-				rChanged = true
-			}
+		cType, lConvert, rConvert := negotiateCommonType(lKey.RetType, rKey.RetType)
+		if lConvert {
+			lMask[i] = true
+			cTypes[i] = cType
+			lChanged = true
+		}
+		if rConvert {
+			rMask[i] = true
+			cTypes[i] = cType
+			rChanged = true
 		}
 	}
 	if !lChanged && !rChanged {
@@ -728,7 +745,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		return invalidTask
 	}
 	if p.mppShuffleJoin {
-		lTask, rTask = p.convertDecimalKeyIfNeed(lTask, rTask)
+		lTask, rTask = p.convertJoinKeyForTiFlashIfNeed(lTask, rTask)
 	}
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
@@ -868,8 +885,8 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
 		newTask.cst += sortCPUCost
 	}
-	if t.doubleReadNeedProj {
-		schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
+	if t.needExtraProj {
+		schema := t.originSchema
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
 		proj.SetChildren(p)
@@ -933,6 +950,13 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		p.PartitionInfo = t.partitionInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
+		if t.needExtraProj {
+			schema := t.originSchema
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.idxMergePartPlans[0].SelectBlockOffset(), nil)
+			proj.SetSchema(schema)
+			proj.SetChildren(p)
+			newTask.p = proj
+		}
 		return newTask
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
@@ -1691,13 +1715,13 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 					cop.finishIndexPlan()
 					partialAgg.SetChildren(cop.tablePlan)
 					cop.tablePlan = partialAgg
-					// If doubleReadNeedProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
+					// If needExtraProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
 					// the schema is the same as the original DataSource schema.
 					// However, we pushed down the agg here, the partial agg was placed on the top of tablePlan, and the final
 					// agg will be placed above the PhysicalIndexLookUpReader, and the schema will be set correctly for them.
 					// If we add the projection again, the projection will be between the PhysicalIndexLookUpReader and
 					// the partial agg, and the schema will be broken.
-					cop.doubleReadNeedProj = false
+					cop.needExtraProj = false
 				} else {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
@@ -1825,13 +1849,13 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 					cop.finishIndexPlan()
 					partialAgg.SetChildren(cop.tablePlan)
 					cop.tablePlan = partialAgg
-					// If doubleReadNeedProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
+					// If needExtraProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
 					// the schema is the same as the original DataSource schema.
 					// However, we pushed down the agg here, the partial agg was placed on the top of tablePlan, and the final
 					// agg will be placed above the PhysicalIndexLookUpReader, and the schema will be set correctly for them.
 					// If we add the projection again, the projection will be between the PhysicalIndexLookUpReader and
 					// the partial agg, and the schema will be broken.
-					cop.doubleReadNeedProj = false
+					cop.needExtraProj = false
 				} else {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
