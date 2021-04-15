@@ -972,7 +972,7 @@ func (b *builtinGetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if v, ok := sessionVars.Users[varName]; ok {
-		if v.Kind() != types.KindInt64 {
+		if v.Kind() != types.KindInt64 && v.Kind() != types.KindUint64 {
 			v, err = v.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
 			if err != nil {
 				return 0, true, err
