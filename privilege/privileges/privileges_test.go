@@ -842,6 +842,12 @@ func (s *testPrivilegeSuite) TestRevokePrivileges(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
 	mustExec(c, se, "REVOKE ALL ON mysql.* FROM withoutgrant")
+
+	// For issue https://github.com/pingcap/tidb/issues/23850
+	mustExec(c, se, "CREATE USER u4")
+	mustExec(c, se, "GRANT ALL ON *.* TO u4 WITH GRANT OPTION")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost", AuthUsername: "u4", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "REVOKE ALL ON *.* FROM CURRENT_USER()")
 }
 
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
