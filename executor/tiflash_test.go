@@ -191,8 +191,18 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustQuery("select count(*) k, t2.a/2 m from t2 group by t2.a / 2 order by m").Check(testkit.Rows("1 0.5000", "1 1.0000", "1 1.5000"))
 	tk.MustQuery("select count(*) k, t2.a div 2 from t2 group by t2.a div 2 order by k").Check(testkit.Rows("1 0", "2 1"))
 
+	// test task id for same start ts.
+	tk.MustExec("begin")
 	tk.MustQuery("select count(*) from ( select * from t2 group by a, b) A group by A.b").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(*) from t1 where t1.a+100 > ( select count(*) from t2 where t1.a=t2.a and t1.b=t2.b) group by t1.b").Check(testkit.Rows("4"))
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	ts := txn.StartTS()
+	taskID := tk.Se.GetSessionVars().AllocMPPTaskID(ts)
+	c.Assert(taskID, Equals, int64(6))
+	tk.MustExec("commit")
+	taskID = tk.Se.GetSessionVars().AllocMPPTaskID(ts + 1)
+	c.Assert(taskID, Equals, int64(1))
 
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(3)`)
 	// all the data is related to one store, so there are three tasks.
@@ -211,6 +221,8 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustQuery("select t1.c1 from t t1 join t t2 on t1.c1 = t2.c1 order by t1.c1").Check(testkit.Rows("1.00000", "1.00001", "1.00010"))
 	tk.MustQuery("select t1.c1 from t t1 join t t2 on t1.c1 = t2.c3 order by t1.c1").Check(testkit.Rows("1.00000", "1.00000", "1.00010"))
 	tk.MustQuery("select t1.c4 from t t1 join t t2 on t1.c4 = t2.c3 order by t1.c4").Check(testkit.Rows("1.0000", "1.0000", "1.0001"))
+	// let this query choose hash join
+	tk.MustQuery("select /*+ nth_plan(2) */ t1.c1 from t t1 join t t2 on t1.c1 = t2.c3 order by t1.c1").Check(testkit.Rows("1.00000", "1.00000", "1.00010"))
 }
 
 func (s *tiflashTestSuite) TestInjectExtraProj(c *C) {
