@@ -918,7 +918,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdCop:
 		r := req.Cop()
-		if err := session.checkRequestContext(reqCtx); err != nil {
+		if err := session.CheckRequestContext(reqCtx); err != nil {
 			resp.Resp = &coprocessor.Response{RegionError: err}
 			return resp, nil
 		}
@@ -949,7 +949,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			}
 		})
 		r := req.BatchCop()
-		if err := session.checkRequestContext(reqCtx); err != nil {
+		if err := session.CheckRequestContext(reqCtx); err != nil {
 			resp.Resp = &tikvrpc.BatchCopStreamResponse{
 				Tikv_BatchCoprocessorClient: &mockBathCopErrClient{Error: err},
 				BatchResponse: &coprocessor.BatchResponse{
@@ -977,7 +977,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp = batchResp
 	case tikvrpc.CmdCopStream:
 		r := req.Cop()
-		if err := session.checkRequestContext(reqCtx); err != nil {
+		if err := session.CheckRequestContext(reqCtx); err != nil {
 			resp.Resp = &tikvrpc.CopStreamResponse{
 				Tikv_CoprocessorStreamClient: &mockCopStreamErrClient{Error: err},
 				Response: &coprocessor.Response{
