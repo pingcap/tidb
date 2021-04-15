@@ -43,9 +43,9 @@ func (s *testRollingBackSuite) TestCancelAddIndexJobError(c *C) {
 	tk.MustExec("insert into t_cancel_add_index values(1),(2),(3)")
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit=3")
 
-	failpoint.Enable("github.com/pingcap/tidb/ddl/mockConvertAddIdxJob2RollbackJobError", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockConvertAddIdxJob2RollbackJobError", `return(true)`), IsNil)
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/ddl/mockConvertAddIdxJob2RollbackJobError")
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockConvertAddIdxJob2RollbackJobError"), IsNil)
 	}()
 
 	tbl := testGetTableByName(c, tk.Se, "test", "t_cancel_add_index")
@@ -72,6 +72,7 @@ func (s *testRollingBackSuite) TestCancelAddIndexJobError(c *C) {
 			chk := res.NewChunk()
 			if err := res.Next(context.Background(), chk); err != nil {
 				checkErr = err
+				return
 			}
 			if err := res.Close(); err != nil {
 				checkErr = err
@@ -97,5 +98,4 @@ func (s *testRollingBackSuite) TestCancelAddIndexJobError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(job.ErrorCount, Equals, int64(4))
 	c.Assert(job.Error.Error(), Equals, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")
-
 }

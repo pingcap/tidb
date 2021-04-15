@@ -444,7 +444,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		job.ErrorCount++
 
 		if errCancelledDDLJob.Equal(err) {
-			// job is normally cancelled.
+			// The job is normally cancelled.
 			if !job.Error.Equal(errCancelledDDLJob) {
 				job.Error = terror.GetErrClass(job.Error).Synthesize(terror.ErrCode(job.Error.Code()),
 					fmt.Sprintf("DDL job rollback, error msg: %s", terror.ToSQLError(job.Error).Message))
@@ -461,7 +461,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 			errorCount := variable.GetDDLErrorCountLimit()
 			if job.ErrorCount > errorCount {
 				logutil.Logger(w.logCtx).Warn("[ddl] rollback DDL job error count exceed the limit, cancelled it now", zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", errorCount))
-				job.Error = toTError(errors.New(fmt.Sprintf(fmt.Sprintf("rollback DDL job error count exceed the limit %d, cancelled it now", errorCount))))
+				job.Error = toTError(errors.Errorf("rollback DDL job error count exceed the limit %d, cancelled it now", errorCount))
 				job.State = model.JobStateCancelled
 			}
 		}
