@@ -2099,7 +2099,7 @@
     ]
   },
   {
-    "Name": "TestMppAggWithJoin",
+    "Name": "TestMppAggTopNWithJoin",
     "Cases": [
       {
         "SQL": "desc format = 'brief' select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
@@ -2249,6 +2249,39 @@
           "                  │             └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
           "                  └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
           "                    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select * from t join t t1 on t.id = t1.id order by t.value limit 1",
+        "Plan": [
+          "TopN 1.00 root  test.t.value, offset:0, count:1",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 batchCop[tiflash]  test.t.value, offset:0, count:1",
+          "      └─HashJoin 12487.50 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "        ├─ExchangeReceiver(Build) 9990.00 batchCop[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
+          "        │     └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
+          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select count(*) from (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 20) v group by v.v1",
+        "Plan": [
+          "HashAgg 20.00 root  group by:test.t.value, funcs:count(1)->Column#7",
+          "└─TopN 20.00 root  test.t.value, offset:0, count:20",
+          "  └─TableReader 20.00 root  data:ExchangeSender",
+          "    └─ExchangeSender 20.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 20.00 batchCop[tiflash]  test.t.value, offset:0, count:20",
+          "        └─HashJoin 12487.50 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "          ├─ExchangeReceiver(Build) 9990.00 batchCop[tiflash]  ",
+          "          │ └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "          │   └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
+          "          │     └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "          └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]

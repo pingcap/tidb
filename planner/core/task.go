@@ -1225,6 +1225,9 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			copTask.tablePlan = pushedDownTopN
 		}
 		copTask.addCost(pushedDownTopN.GetCost(inputCount, false))
+	} else if mppTask, ok := t.(*mppTask); ok {
+			pushedDownTopN := p.getPushedDownTopN(mppTask.p)
+			mppTask.p = pushedDownTopN
 	}
 	rootTask := t.convertToRootTask(p.ctx)
 	rootTask.addCost(p.GetCost(rootTask.count(), true))

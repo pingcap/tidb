@@ -990,10 +990,10 @@
       {
         "SQL": "select * from t1 order by a, b limit 1",
         "Plan": [
-          "Limit_10 1.00 root  offset:0, count:1",
-          "└─TableReader_20 1.00 root  data:Limit_19",
-          "  └─Limit_19 1.00 cop[tikv]  offset:0, count:1",
-          "    └─TableFullScan_18 1.00 cop[tikv] table:t1 keep order:true"
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─TableReader_21 1.00 root  data:Limit_20",
+          "  └─Limit_20 1.00 cop[tikv]  offset:0, count:1",
+          "    └─TableFullScan_19 1.00 cop[tikv] table:t1 keep order:true"
         ],
         "Res": [
           "1 111 1.1000000000 11"

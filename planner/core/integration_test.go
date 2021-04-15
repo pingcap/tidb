@@ -358,6 +358,8 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+
 	var input []string
 	var output []struct {
 		SQL  string
@@ -395,6 +397,7 @@ func (s *testIntegrationSerialSuite) TestPushDownToTiFlashWithKeepOrder(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -3000,7 +3003,7 @@ func (s *testIntegrationSerialSuite) TestMppJoinDecimal(c *C) {
 	}
 }
 
-func (s *testIntegrationSerialSuite) TestMppAggWithJoin(c *C) {
+func (s *testIntegrationSerialSuite) TestMppAggTopNWithJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
