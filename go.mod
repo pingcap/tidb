@@ -13,7 +13,7 @@ require (
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
-	github.com/dgraph-io/ristretto v0.0.1
+	github.com/dgraph-io/ristretto v0.0.3
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
 	github.com/fatih/color v1.10.0 // indirect
 	github.com/fsouza/fake-gcs-server v1.17.0 // indirect
@@ -59,7 +59,6 @@ require (
 	github.com/shirou/gopsutil v3.21.2+incompatible
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
-	github.com/stretchr/testify v1.6.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d
 	github.com/twmb/murmur3 v1.1.3

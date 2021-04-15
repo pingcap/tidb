@@ -321,7 +321,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backo
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
 	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
-	var regionInfos []*coprocessor.RegionInfo
+	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.copTasks))
 	for _, task := range task.copTasks {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
 			RegionId: task.task.region.GetID(),
