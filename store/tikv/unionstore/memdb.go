@@ -80,17 +80,17 @@ func newMemDB() *MemDB {
 // Staging create a new staging buffer inside the MemBuffer.
 // Subsequent writes will be temporarily stored in this new staging buffer.
 // When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
-func (db *MemDB) Staging() tidbkv.StagingHandle {
+func (db *MemDB) Staging() int {
 	db.Lock()
 	defer db.Unlock()
 
 	db.stages = append(db.stages, db.vlog.checkpoint())
-	return tidbkv.StagingHandle(len(db.stages))
+	return len(db.stages)
 }
 
 // Release publish all modifications in the latest staging buffer to upper level.
-func (db *MemDB) Release(h tidbkv.StagingHandle) {
-	if int(h) != len(db.stages) {
+func (db *MemDB) Release(h int) {
+	if h != len(db.stages) {
 		// This should never happens in production environment.
 		// Use panic to make debug easier.
 		panic("cannot release staging buffer")
@@ -98,22 +98,22 @@ func (db *MemDB) Release(h tidbkv.StagingHandle) {
 
 	db.Lock()
 	defer db.Unlock()
-	if int(h) == 1 {
+	if h == 1 {
 		tail := db.vlog.checkpoint()
 		if !db.stages[0].isSamePosition(&tail) {
 			db.dirty = true
 		}
 	}
-	db.stages = db.stages[:int(h)-1]
+	db.stages = db.stages[:h-1]
 }
 
 // Cleanup cleanup the resources referenced by the StagingHandle.
 // If the changes are not published by `Release`, they will be discarded.
-func (db *MemDB) Cleanup(h tidbkv.StagingHandle) {
-	if int(h) > len(db.stages) {
+func (db *MemDB) Cleanup(h int) {
+	if h > len(db.stages) {
 		return
 	}
-	if int(h) < len(db.stages) {
+	if h < len(db.stages) {
 		// This should never happens in production environment.
 		// Use panic to make debug easier.
 		panic("cannot cleanup staging buffer")
@@ -121,7 +121,7 @@ func (db *MemDB) Cleanup(h tidbkv.StagingHandle) {
 
 	db.Lock()
 	defer db.Unlock()
-	cp := &db.stages[int(h)-1]
+	cp := &db.stages[h-1]
 	if !db.vlogInvalid {
 		curr := db.vlog.checkpoint()
 		if !curr.isSamePosition(cp) {
@@ -129,7 +129,7 @@ func (db *MemDB) Cleanup(h tidbkv.StagingHandle) {
 			db.vlog.truncate(cp)
 		}
 	}
-	db.stages = db.stages[:int(h)-1]
+	db.stages = db.stages[:h-1]
 }
 
 // Reset resets the MemBuffer to initial states.
