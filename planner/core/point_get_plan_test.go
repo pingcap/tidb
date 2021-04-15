@@ -599,8 +599,6 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 		res.Check(testkit.Rows(output[i].Res...))
 	}
 }
-<<<<<<< HEAD
-=======
 
 func (s *testPointGetSuite) TestIssue18042(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
