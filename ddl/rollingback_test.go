@@ -84,7 +84,7 @@ func (s *testRollingBackSuite) TestCancelAddIndexJobError(c *C) {
 	_, err := tk.Exec("alter table t_cancel_add_index add index idx(a)")
 	c.Assert(err, NotNil)
 	c.Assert(checkErr, IsNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1] rollback DDL job error count exceed the limit 3, cancelled it now")
+	c.Assert(err.Error(), Equals, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")
 
 	// Verification of the history job state.
 	var job *model.Job
@@ -96,6 +96,6 @@ func (s *testRollingBackSuite) TestCancelAddIndexJobError(c *C) {
 	})
 	c.Assert(err, IsNil)
 	c.Assert(job.ErrorCount, Equals, int64(4))
-	c.Assert(job.Error.Error(), Equals, "[ddl:-1] rollback DDL job error count exceed the limit 3, cancelled it now")
+	c.Assert(job.Error.Error(), Equals, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")
 
 }
