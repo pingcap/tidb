@@ -363,6 +363,8 @@ type Security struct {
 	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
+	// EnableSEM prevents SUPER users from having full access.
+	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -666,6 +668,7 @@ var defaultConf = Config{
 	EnableGlobalIndex:          false,
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
+		EnableSEM:                   false,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
