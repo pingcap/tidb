@@ -143,6 +143,7 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
 }
 
+// TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.
 type TiDBKVFilter struct{}
 
 // IsUnnecessaryKeyValue defines which kinds of KV pairs from TiDB needn't be committed.
