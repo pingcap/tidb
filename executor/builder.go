@@ -80,7 +80,6 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
-	mppTaskID        int64
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -2360,6 +2359,12 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		}
 	}
 
+	// Use the probe table's collation.
+	for i, col := range v.OuterHashKeys {
+		outerTypes[col.Index] = outerTypes[col.Index].Clone()
+		outerTypes[col.Index].Collate = innerTypes[v.InnerHashKeys[i].Index].Collate
+	}
+
 	var (
 		outerFilter           []expression.Expression
 		leftTypes, rightTypes []*types.FieldType
@@ -2624,7 +2629,6 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		allocTaskID:  &b.mppTaskID,
 	}
 	return gather
 }
@@ -3862,7 +3866,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	if len(pkCols) == 0 {
 		pkCols = tables.TryGetCommonPkColumnIds(tbl)
 		if len(pkCols) == 0 {
-			pkCols = []int64{0}
+			pkCols = []int64{-1}
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
