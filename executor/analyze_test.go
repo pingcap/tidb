@@ -45,7 +45,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
+	"go.uber.org/zap"
 )
 
 var _ = Suite(&testFastAnalyze{})
@@ -281,10 +283,14 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 		cms.InsertBytes(prefixKey)
 		cms.CalcDefaultValForAnalyze(2)
 	}
+	logutil.BgLogger().Warn(">>> debug", zap.Int("len(tbl.Indices)", len(tbl.Indices)))
 	for _, idx := range tbl.Indices {
+		logutil.BgLogger().Warn(">>> debug", zap.Int("len(idx.Histogram.Buckets)", len(idx.Histogram.Buckets)))
 		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
 		c.Assert(err, IsNil)
 		c.Assert(ok, IsTrue)
+		logutil.BgLogger().Warn(">>> debug", zap.Bool("idx.CMSketch==nil", idx.CMSketch == nil))
+		logutil.BgLogger().Warn(">>> debug", zap.Uint64("idx.CMSketch.TotalCount()", idx.CMSketch.TotalCount()))
 		c.Assert(idx.CMSketch.Equal(cms), IsTrue)
 		c.Assert(idx.TopN.Equal(topn), IsTrue)
 	}
