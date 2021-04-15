@@ -374,6 +374,56 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestVerboseExplain(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("create table t3(a int, b int, index c(b))")
+	tk.MustExec("insert into t1 values(1,2)")
+	tk.MustExec("insert into t1 values(3,4)")
+	tk.MustExec("insert into t1 values(5,6)")
+	tk.MustExec("insert into t2 values(1,2)")
+	tk.MustExec("insert into t2 values(3,4)")
+	tk.MustExec("insert into t2 values(5,6)")
+	tk.MustExec("insert into t3 values(1,2)")
+	tk.MustExec("insert into t3 values(3,4)")
+	tk.MustExec("insert into t3 values(5,6)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t1" || tblInfo.Name.L == "t2" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSerialSuite) TestPushDownToTiFlashWithKeepOrder(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
