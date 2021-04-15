@@ -218,7 +218,7 @@ func initMetrics(namespace, subsystem string) {
 			Subsystem: subsystem,
 			Name:      "tikv_small_read_duration",
 			Help:      "Read time of TiKV small read.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 74h
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 28), // 0.5ms ~ 74h
 		})
 
 	TiKVLargeReadThroughput = prometheus.NewHistogram(

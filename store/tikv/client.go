@@ -17,6 +17,7 @@ package tikv
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"io"
 	"math"
 	"runtime/trace"
@@ -372,7 +373,30 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
-			return sendBatchRequest(ctx, addr, req.ForwardedHost, connArray.batchConn, batchReq, timeout)
+			resp, err := sendBatchRequest(ctx, addr, req.ForwardedHost, connArray.batchConn, batchReq, timeout)
+			if err != nil {
+				return nil, err
+			}
+			execDetail := &kvrpcpb.ExecDetailsV2{}
+			var affectRow int
+			switch r := resp.Resp.(type) {
+			case kvrpcpb.GetResponse:
+				execDetail = r.ExecDetailsV2
+				affectRow = len(r.Value)
+			case kvrpcpb.BatchGetResponse:
+				execDetail = r.ExecDetailsV2
+				affectRow = len(r.Pairs)
+			}
+			if execDetail != nil {
+				readByte := float64(execDetail.GetScanDetailV2().GetReadBytes())
+				readTime := float64(execDetail.GetTimeDetail().GetKvReadWallTimeMs())
+				if readByte < 1*1024*1024 && affectRow < 20 {
+					metrics.TiKVSmallReadDuration.Observe(readTime)
+				} else {
+					metrics.TiKVLargeReadThroughput.Observe(readByte / readTime)
+				}
+			}
+			return resp, nil
 		}
 	}
 

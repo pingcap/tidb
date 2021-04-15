@@ -16,6 +16,7 @@ package tikvrpc
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"sync/atomic"
 	"time"
 
@@ -28,12 +29,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/metrics"
-)
-
-var (
-	TiKVSmallReadDuration   = metrics.TiKVSmallReadDuration
-	TiKVLargeReadThroughput = metrics.TiKVLargeReadThroughput
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -936,9 +931,9 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		readByte := float64(execDetail.GetScanDetailV2().GetReadBytes())
 		readTime := float64(execDetail.GetTimeDetail().GetKvReadWallTimeMs())
 		if readByte < 1*1024*1024 && affectRow < 20 {
-			TiKVSmallReadDuration.Observe(readTime)
+			metrics.TiKVSmallReadDuration.Observe(readTime)
 		} else {
-			TiKVLargeReadThroughput.Observe(readByte / readTime)
+			metrics.TiKVLargeReadThroughput.Observe(readByte / readTime)
 		}
 	}
 	if err != nil {
