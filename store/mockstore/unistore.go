@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/store/tikv/util"
 )
 
 func newUnistore(opts *mockOptions) (kv.Storage, error) {
@@ -33,7 +33,7 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 	opts.clusterInspector(cluster)
-	pdClient = execdetails.InterceptedPDClient{
+	pdClient = util.InterceptedPDClient{
 		Client: pdClient,
 	}
 
@@ -113,7 +113,7 @@ func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transacti
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 // if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 func (s *mockStorage) GetSnapshot(ver kv.Version) kv.Snapshot {
-	return s.KVStore.GetSnapshot(ver.Ver)
+	return driver.NewSnapshot(s.KVStore.GetSnapshot(ver.Ver))
 }
 
 // CurrentVersion returns current max committed version with the given txnScope (local or global).

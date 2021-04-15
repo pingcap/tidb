@@ -36,6 +36,7 @@ type AnalyzeJob struct {
 	JobInfo       string
 	RowCount      int64
 	StartTime     time.Time
+	EndTime       time.Time
 	State         string
 	updateTime    time.Time
 }
@@ -126,6 +127,7 @@ func (job *AnalyzeJob) Finish(meetError bool) {
 		job.State = finished
 	}
 	job.updateTime = time.Now()
+	job.EndTime = job.updateTime
 	job.Mutex.Unlock()
 }
 

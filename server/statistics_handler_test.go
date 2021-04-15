@@ -255,18 +255,3 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	dbt.Check(modifyCount, Equals, int64(3))
 	dbt.Check(count, Equals, int64(4))
 }
-
-func (ds *testDumpStatsSuite) clearData(c *C, path string) {
-	db, err := sql.Open("mysql", ds.getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer func() {
-		err := db.Close()
-		c.Assert(err, IsNil)
-	}()
-
-	dbt := &DBTest{c, db}
-	dbt.mustExec("drop database tidb")
-	dbt.mustExec("truncate table mysql.stats_meta")
-	dbt.mustExec("truncate table mysql.stats_histograms")
-	dbt.mustExec("truncate table mysql.stats_buckets")
-}
