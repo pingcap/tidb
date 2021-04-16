@@ -568,10 +568,10 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 
 	// MySQL timestamp value doesn't allow month=0 or day=0.
-	t, err := types.ParseTimestamp(sc, "2016-12-00 00:00:00")
+	_, err := types.ParseTimestamp(sc, "2016-12-00 00:00:00")
 	c.Assert(err, NotNil)
 
-	t, err = types.ParseTimestamp(sc, "2010-10-10 10:11:11")
+	t, err := types.ParseTimestamp(sc, "2010-10-10 10:11:11")
 	c.Assert(err, IsNil)
 	_, err = t.ToPackedUint()
 	c.Assert(err, IsNil)
