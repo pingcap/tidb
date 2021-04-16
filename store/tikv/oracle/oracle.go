@@ -166,6 +166,7 @@ func CompareTS(tsoOne, tsoTwo uint64) int {
 	}
 	return -1
 }
+
 // GoTimeToLowerLimitStartTS returns the min start_ts of the uncommitted transaction.
 // maxTxnTimeUse means the max time a Txn May use (in ms) from its begin to commit.
 func GoTimeToLowerLimitStartTS(now time.Time, maxTxnTimeUse int64) uint64 {
