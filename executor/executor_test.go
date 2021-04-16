@@ -4442,6 +4442,11 @@ func (s *testSuite6) TestUpdateJoin(c *C) {
 	tk.MustExec("insert into t7 values (5, 1, 'a')")
 	tk.MustExec("update t6, t7 set t6.v = t7.v where t6.id = t7.id and t7.x = 5")
 	tk.MustQuery("select v from t6").Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int primary key, v int, gv int GENERATED ALWAYS AS (v * 2) STORED)")
+	tk.MustExec("create table t2(id int, v int)")
+	tk.MustExec("update t1 tt1 inner join (select count(t1.id) a, t1.id from t1 left join t2 on t1.id = t2.id group by t1.id) x on tt1.id = x.id set tt1.v = tt1.v + x.a")
 }
 
 func (s *testSuite3) TestMaxOneRow(c *C) {
@@ -5543,6 +5548,22 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	result := tk.MustQuery("explain analyze select count(distinct b) from t")
 	c.Assert(result.Rows()[2][4], Equals, "table:t")
 	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
+}
+
+func (s *testSuiteP2) TestIssue23567(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	oriProbability := statistics.FeedbackProbability.Load()
+	statistics.FeedbackProbability.Store(1.0)
+	defer func() { statistics.FeedbackProbability.Store(oriProbability) }()
+	failpoint.Enable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect", `return("")`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned, b int, primary key(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("analyze table t")
+	// The SQL should not panic.
+	tk.MustQuery("select count(distinct b) from t")
+	failpoint.Disable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect")
 }
 
 func (s *testSuite) TestSummaryFailedUpdate(c *C) {
@@ -8055,4 +8076,91 @@ func (s *testSuiteP1) TestIssue22941(c *C) {
 
 	rs = tk.MustQuery(`SELECT  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
 	rs.Check(testkit.Rows("<nil> 1 0"))
+}
+
+func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int key, b int)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput", "return(true)"), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput")
+		c.Assert(err, IsNil)
+	}()
+
+	mustExec := func(sql string) {
+		tk.MustExec(sql)
+		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().InTxn())
+	}
+	errExec := func(sql string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().InTxn())
+	}
+
+	// Test insert in small txn
+	mustExec("insert into t values (1,3),(2,4)")
+	writeSLI := tk.Se.GetTxnWriteThroughputSLI()
+	c.Assert(writeSLI.IsInvalid(), Equals, false)
+	c.Assert(writeSLI.IsSmallTxn(), Equals, true)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test insert ... select ... from
+	mustExec("insert into t select b, a from t")
+	c.Assert(writeSLI.IsInvalid(), Equals, true)
+	c.Assert(writeSLI.IsSmallTxn(), Equals, true)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: true, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test for delete
+	mustExec("delete from t")
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 4, writeSize: 76, readKeys: 0, writeKeys: 4, writeTime: 1s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test insert not in small txn
+	mustExec("begin")
+	for i := 0; i < 20; i++ {
+		mustExec(fmt.Sprintf("insert into t values (%v,%v)", i, i))
+		c.Assert(writeSLI.IsSmallTxn(), Equals, true)
+	}
+	// The statement which affect rows is 0 shouldn't record into time.
+	mustExec("select count(*) from t")
+	mustExec("select * from t")
+	mustExec("insert into t values (20,20)")
+	c.Assert(writeSLI.IsSmallTxn(), Equals, false)
+	mustExec("commit")
+	c.Assert(writeSLI.IsInvalid(), Equals, false)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 21, writeSize: 609, readKeys: 0, writeKeys: 21, writeTime: 22s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test invalid when transaction has replace ... select ... from ... statement.
+	mustExec("delete from t")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+	mustExec("begin")
+	mustExec("insert into t values (1,3),(2,4)")
+	mustExec("replace into t select b, a from t")
+	mustExec("commit")
+	c.Assert(writeSLI.IsInvalid(), Equals, true)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: true, affectRow: 4, writeSize: 116, readKeys: 0, writeKeys: 4, writeTime: 3s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test clean last failed transaction information.
+	err := failpoint.Disable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput")
+	c.Assert(err, IsNil)
+	mustExec("begin")
+	mustExec("insert into t values (1,3),(2,4)")
+	errExec("commit")
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput", "return(true)"), IsNil)
+	mustExec("begin")
+	mustExec("insert into t values (5, 6)")
+	mustExec("commit")
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 1, writeSize: 29, readKeys: 0, writeKeys: 1, writeTime: 2s")
+
+	// Test for reset
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s")
 }
