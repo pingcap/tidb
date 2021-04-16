@@ -591,9 +591,8 @@ func (w *worker) countForPanic(job *model.Job) {
 		job.Error = terror.GetErrClass(job.Error).Synthesize(terror.ErrCode(job.Error.Code()), msg)
 		logutil.Logger(w.logCtx).Warn(msg)
 		return
-	} else {
-		job.State = model.JobStateCancelling
 	}
+	job.State = model.JobStateCancelling
 	job.ErrorCount++
 
 	// Load global DDL variables.
