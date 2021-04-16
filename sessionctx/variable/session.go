@@ -831,7 +831,7 @@ type SessionVars struct {
 }
 
 type TemporaryTable struct {
-	TableIDs map[int64]struct{}
+	Tables interface{} // map[string]table.Table
 	MemDB interface{}
 }
 

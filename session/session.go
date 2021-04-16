@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -513,8 +514,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	var memDB *unionstore.MemDB
 	var stage kv.StagingHandle
 	if s.sessionVars.TemporaryTable != nil {
+		tables := s.sessionVars.TemporaryTable.Tables.(map[string]table.Table)
 		// Handle temporary table.
-		for tid, _ := range s.sessionVars.TemporaryTable.TableIDs {
+		for _, tbl := range tables {
+			tid := tbl.Meta().ID
 			seekKey := tablecodec.EncodeTablePrefix(tid)
 			endKey := tablecodec.EncodeTablePrefix(tid + 1)
 			memBuffer := s.txn.GetMemBuffer()
@@ -2666,13 +2669,13 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 	is := domain.GetDomain(s).InfoSchema()
 	// Override the infoschema if the session has temporary table.
-	// if s.sessionVars.TemporaryTable != nil {
-	// 	fmt.Println("temporary table is not nil!!")
-	// 	is = &infoschema.TemporarySchema{
-	// 		InfoSchema: is,
-	// 		Temp: s.sessionVars.TemporaryTable.Tables.(map[string]table.Table),
-	// 	}
-	// }
+	if s.sessionVars.TemporaryTable != nil {
+		fmt.Println("temporary table is not nil!!")
+		is = &infoschema.TemporarySchema{
+			InfoSchema: is,
+			Temp: s.sessionVars.TemporaryTable.Tables.(map[string]table.Table),
+		}
+	}
 
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,

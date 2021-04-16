@@ -183,6 +183,7 @@ func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value [
 func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
 	// Check if DB exists.
 	dbKey := m.dbKey(dbID)
+	fmt.Println("gen auto table id === db", dbID, dbKey)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return 0, errors.Trace(err)
 	}

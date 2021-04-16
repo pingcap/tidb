@@ -18,6 +18,7 @@
 package tables
 
 import (
+	"fmt"
 	"context"
 	"math"
 	"strconv"
@@ -309,6 +310,17 @@ func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
+func addTemporaryTableID(txn kv.Transaction, id int64) {
+	fmt.Println("add temporary table id =====", id)
+	if option := txn.GetOption(tikvstore.TemporaryTable); option != nil {
+		option.(map[int64]struct{})[id] = struct{}{}
+	} else {
+		m := make(map[int64]struct{})
+		m[id] = struct{}{}
+		txn.SetOption(tikvstore.TemporaryTable, m)
+	}
+}
+
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
@@ -316,6 +328,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
+	}
+	if meta := t.Meta(); meta.IsTemporary {
+		addTemporaryTableID(txn, meta.ID)
 	}
 
 	memBuffer := txn.GetMemBuffer()
@@ -589,6 +604,11 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return nil, err
+	}
+	if meta := t.Meta(); meta.IsTemporary {
+		addTemporaryTableID(txn, meta.ID)
+	} else {
+		fmt.Println("not temporary table ", meta.ID)
 	}
 
 	var opt table.AddRecordOpt
@@ -988,7 +1008,15 @@ func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
-	err := t.removeRowData(ctx, h)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	if meta := t.Meta(); meta.IsTemporary {
+		addTemporaryTableID(txn, meta.ID)
+	}
+
+	err = t.removeRowData(ctx, h)
 	if err != nil {
 		return err
 	}
@@ -1312,6 +1340,7 @@ func AllocHandle(ctx context.Context, sctx sessionctx.Context, t table.Table) (k
 
 func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
+	fmt.Println("=!!!!! table info ===", meta, meta.ID)
 	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, meta.ID, n, 1, 1)
 	if err != nil {
 		return 0, 0, err

@@ -277,9 +277,6 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-
-	fmt.Println(" commit ----- mutation length", committer.mutations.Len())
-
 	if committer.mutations.Len() == 0 {
 		return nil
 	}

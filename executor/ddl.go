@@ -24,9 +24,12 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -203,24 +206,28 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 }
 
 func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
-	// tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, "", "")
-	// if err != nil {
-	// 	return err
-	// }
+	tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, "", "")
+	if err != nil {
+		return err
+	}
 
 	dom := domain.GetDomain(e.ctx)
 	sessVars := e.ctx.GetSessionVars()
-	temp := sessVars.TemporaryTable
-	if temp == nil {
+	if sessVars.TemporaryTable == nil {
 		us := unionstore.NewUnionStore(nil)
 		memDB := us.GetMemBuffer()
 		sessVars.TemporaryTable = &variable.TemporaryTable{
-			TableIDs: make(map[int64]struct{}),
+			Tables: make(map[string]table.Table),
 			MemDB: memDB,
 		}
 	}
 
-	err := kv.RunInNewTxn(context.Background(), dom.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+	dbInfo, succ := dom.InfoSchema().SchemaByName(model.NewCIStr("mysql"))
+	if !succ {
+		panic("mysql database not exist!")
+	}
+
+	err = kv.RunInNewTxn(context.Background(), dom.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
 		// m := meta.NewMeta(txn)
 		// dbInfo := model.DBInfo{
 		// 	ID: 0,
@@ -231,24 +238,34 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		// 	return errors.Trace(err)
 		// }
 		// return nil
+
 		m := meta.NewMeta(txn)
 		tblID, err := m.GenGlobalID()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// tbInfo.ID = tblID
-		// tbInfo.State = model.StatePublic
-		// if err := m.CreateTableOrView(0, tbInfo); err != nil {
-		// 	return errors.Trace(err)
-		// }
+		tbInfo.ID = tblID
+		tbInfo.State = model.StatePublic
 
-		sessVars.TemporaryTable.TableIDs[tblID] = struct{}{}
+		if err := m.CreateTableOrView(dbInfo.ID, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 
+	fmt.Println("allocator db id ==", dbInfo.ID)
+	allocs := autoid.NewAllocatorsFromTblInfo(dom.Store(), dbInfo.ID, tbInfo)
+	tbl, err := tables.TableFromMeta(allocs, tbInfo)
+	if err != nil {
+		return err
+	}
+
+	tables := sessVars.TemporaryTable.Tables.(map[string]table.Table)
+	tables[tbInfo.Name.L] = tbl
 	fmt.Println("in create table execute ... set session temporary table")
 
 	// temp = &variable.TemporaryTable{

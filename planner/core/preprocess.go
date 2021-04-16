@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
@@ -1111,12 +1112,38 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		currentDB := p.ctx.GetSessionVars().CurrentDB
-		if currentDB == "" {
-			p.err = errors.Trace(ErrNoDB)
-			return
+		// currentDB := p.ctx.GetSessionVars().CurrentDB
+		// if currentDB == "" {
+		// 	p.err = errors.Trace(ErrNoDB)
+		// 	return
+		// }
+
+		sessVars := p.ctx.GetSessionVars()
+		// Take the temporary table into consideration.
+		if sessVars.TemporaryTable != nil {
+			tables := sessVars.TemporaryTable.Tables.(map[string]table.Table)
+			_, exist := tables[tn.Name.L]
+			if exist {
+				tn.Schema = model.NewCIStr("mysql")
+				fmt.Println("change table schema to mysql ===")
+			}
+		// }
+		// if len(sessVars.TemporaryTable) > 0 {
+		// 	realName, exist := sessVars.TemporaryTable[tn.Name.L]
+		// 	if exist {
+		// 		tn.Schema = model.NewCIStr("mysql")
+		// 		tn.Name = model.NewCIStr(realName)
+		// 	}
+		} else {
+			currentDB := p.ctx.GetSessionVars().CurrentDB
+			if currentDB == "" {
+				p.err = errors.Trace(ErrNoDB)
+				return
+			}
+			tn.Schema = model.NewCIStr(currentDB)
+
+			// tn.Schema = model.NewCIStr(currentDB)
 		}
-		tn.Schema = model.NewCIStr(currentDB)
 	}
 	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.

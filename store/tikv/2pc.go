@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -343,6 +344,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		key := it.Key()
 		// The temporary table data should never be committed.
 		if c.temporaryTable != nil && temporaryTableKey(c.temporaryTable, key) {
+			fmt.Println("skip 2pc key ====", key)
 			continue
 		}
 		flags := it.Flags()
@@ -1670,6 +1672,7 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 
 func getTxnTemporaryTable(txn *KVTxn) map[int64]struct{} {
 	if pri := txn.us.GetOption(kv.TemporaryTable); pri != nil {
+		fmt.Println("in txn option temporary table not nil!!!!")
 		return pri.(map[int64]struct{})
 	}
 	return nil
