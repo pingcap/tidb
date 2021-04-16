@@ -4545,11 +4545,23 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	r.Check(testkit.Rows("0 0 0 0"))
 
 	_, err = tk.Exec("set session transaction read only;")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("start transaction read only;")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("set tidb_enable_noop_functions=1")
 	c.Assert(err, IsNil)
+
+	tk.MustExec("set session transaction read only;")
+	tk.MustExec("start transaction read only;")
+
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("1 0 1 0"))
 	_, err = tk.Exec("set global transaction read only;")
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
+	tk.MustExec("set global tidb_enable_noop_functions=1;")
+	tk.MustExec("set global transaction read only;")
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("1 1 1 1"))
 
@@ -4559,6 +4571,10 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err, IsNil)
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("0 0 0 0"))
+
+	// reset
+	tk.MustExec("set tidb_enable_noop_functions=0")
+	tk.MustExec("set global tidb_enable_noop_functions=1")
 
 	_, err = tk.Exec("set @@global.max_user_connections='';")
 	c.Assert(err, NotNil)
@@ -9152,4 +9168,18 @@ func (s *testIntegrationSuite) TestIssue23889(c *C) {
 
 	tk.MustQuery("SELECT ( test_decimal . `col_decimal` , test_decimal . `col_decimal` )  IN ( select * from test_t ) as field1 FROM  test_decimal;").Check(
 		testkit.Rows("<nil>", "0"))
+}
+
+func (s *testIntegrationSuite) TestRefineArgNullValues(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, a int)")
+	tk.MustExec("create table s(a int)")
+	tk.MustExec("insert into s values(1),(2)")
+
+	tk.MustQuery("select t.id = 1.234 from t right join s on t.a = s.a").Check(testkit.Rows(
+		"<nil>",
+		"<nil>",
+	))
 }
