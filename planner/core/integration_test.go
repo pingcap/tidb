@@ -371,6 +371,44 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func (s *testIntegrationSerialSuite) TestPushDownToTiFlashWithKeepOrder(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b varchar(20))")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSerialSuite) TestMPPJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2716,10 +2754,17 @@ func (s *testIntegrationSuite) TestIssue22199(c *C) {
 func (s *testIntegrationSuite) TestIssue22892(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 5;")
 	tk.MustExec("insert into t1 values (0);")
 	tk.MustQuery("select * from t1 where a not between 1 and 2;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int) partition by hash (a) partitions 5;")
+	tk.MustExec("insert into t2 values (0);")
+	tk.MustQuery("select * from t2 where a not between 1 and 2;").Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
@@ -3025,4 +3070,41 @@ func (s *testIntegrationSuite) TestIndexMergeTableFilter(c *C) {
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10)").Check(testkit.Rows(
 		"10 1 1 10",
 	))
+}
+
+func (s *testIntegrationSuite) TestIndexMergeClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 float, c2 int, c3 int, primary key (c1) /*T![clustered_index] CLUSTERED */, key idx_1 (c2), key idx_2 (c3))")
+	tk.MustExec("insert into t values(1.0,1,2),(2.0,2,1),(3.0,1,1),(4.0,2,2)")
+	tk.MustQuery("select /*+ use_index_merge(t) */ c3 from t where c3 = 1 or c2 = 1").Sort().Check(testkit.Rows(
+		"1",
+		"1",
+		"2",
+	))
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (a int, b int, c int, primary key (a,b) /*T![clustered_index] CLUSTERED */, key idx_c(c))")
+	tk.MustExec("insert into t values (0,1,2)")
+	tk.MustQuery("select /*+ use_index_merge(t) */ c from t where c > 10 or a < 1").Check(testkit.Rows(
+		"2",
+	))
+}
+
+func (s *testIntegrationSuite) TestIssue23736(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("create table t0(a int, b int, c int as (a + b) virtual, unique index (c) invisible);")
+	tk.MustExec("create table t1(a int, b int, c int as (a + b) virtual);")
+	tk.MustExec("insert into t0(a, b) values (12, -1), (8, 7);")
+	tk.MustExec("insert into t1(a, b) values (12, -1), (8, 7);")
+	tk.MustQuery("select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2;").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ stream_agg() */ count(1) from t1 where c > 10 and b < 2;").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t0")
+	tk.MustExec("insert into t0(a, b) values (5, 1);")
+	tk.MustQuery("select /*+ nth_plan(3) */ count(1) from t0 where c > 10 and b < 2;").Check(testkit.Rows("0"))
+
+	// Should not use invisible index
+	c.Assert(tk.MustUseIndex("select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2", "c"), IsFalse)
 }

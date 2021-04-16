@@ -191,8 +191,18 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustQuery("select count(*) k, t2.a/2 m from t2 group by t2.a / 2 order by m").Check(testkit.Rows("1 0.5000", "1 1.0000", "1 1.5000"))
 	tk.MustQuery("select count(*) k, t2.a div 2 from t2 group by t2.a div 2 order by k").Check(testkit.Rows("1 0", "2 1"))
 
+	// test task id for same start ts.
+	tk.MustExec("begin")
 	tk.MustQuery("select count(*) from ( select * from t2 group by a, b) A group by A.b").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(*) from t1 where t1.a+100 > ( select count(*) from t2 where t1.a=t2.a and t1.b=t2.b) group by t1.b").Check(testkit.Rows("4"))
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	ts := txn.StartTS()
+	taskID := tk.Se.GetSessionVars().AllocMPPTaskID(ts)
+	c.Assert(taskID, Equals, int64(6))
+	tk.MustExec("commit")
+	taskID = tk.Se.GetSessionVars().AllocMPPTaskID(ts + 1)
+	c.Assert(taskID, Equals, int64(1))
 
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(3)`)
 	// all the data is related to one store, so there are three tasks.
@@ -211,6 +221,8 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustQuery("select t1.c1 from t t1 join t t2 on t1.c1 = t2.c1 order by t1.c1").Check(testkit.Rows("1.00000", "1.00001", "1.00010"))
 	tk.MustQuery("select t1.c1 from t t1 join t t2 on t1.c1 = t2.c3 order by t1.c1").Check(testkit.Rows("1.00000", "1.00000", "1.00010"))
 	tk.MustQuery("select t1.c4 from t t1 join t t2 on t1.c4 = t2.c3 order by t1.c4").Check(testkit.Rows("1.0000", "1.0000", "1.0001"))
+	// let this query choose hash join
+	tk.MustQuery("select /*+ nth_plan(2) */ t1.c1 from t t1 join t t2 on t1.c1 = t2.c3 order by t1.c1").Check(testkit.Rows("1.00000", "1.00000", "1.00010"))
 }
 
 func (s *tiflashTestSuite) TestInjectExtraProj(c *C) {
@@ -435,4 +447,37 @@ func (s *tiflashTestSuite) TestMppApply(c *C) {
 	tk.MustQuery("select /*+ agg_to_cop(), hash_agg()*/ count(*) from x1 where a >= any (select a from x2 where x1.a = x2.a) order by 1;").Check(testkit.Rows("3"))
 	// table range scan with correlated access conditions
 	tk.MustQuery("select /*+ agg_to_cop(), hash_agg()*/ count(*) from x1 where b > any (select x2.a from x2 where x1.a = x2.a);").Check(testkit.Rows("2"))
+}
+
+func (s *tiflashTestSuite) TestTiFlashVirtualColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("create table t1 (a bit(4), b bit(4), c bit(4) generated always as (a) virtual)")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t1")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t1(a,b) values(b'01',b'01'),(b'10',b'10'),(b'11',b'11')")
+
+	tk.MustExec("create table t2 (a int, b int, c int generated always as (a) virtual)")
+	tk.MustExec("alter table t2 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "t2")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t2(a,b) values(1,1),(2,2),(3,3)")
+
+	tk.MustExec("create table t3 (a bit(4), b bit(4), c bit(4) generated always as (b'01'+b'10') virtual)")
+	tk.MustExec("alter table t3 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "t3")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t3(a,b) values(b'01',b'01'),(b'10',b'10'),(b'11',b'11')")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+
+	tk.MustQuery("select /*+ hash_agg() */ count(*) from t1 where c > b'01'").Check(testkit.Rows("2"))
+	tk.MustQuery("select /*+ hash_agg() */ count(*) from t2 where c > 1").Check(testkit.Rows("2"))
+	tk.MustQuery("select /*+ hash_agg() */ count(*) from t3 where c > b'01'").Check(testkit.Rows("3"))
 }
