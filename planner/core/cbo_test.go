@@ -1098,7 +1098,7 @@ func (s *testAnalyzeSuite) TestBatchPointGetTablePartition(c *C) {
 		"2 1",
 	))
 	testKit.MustQuery("explain format = 'brief' select * from t3 where a = 1 and b in (1,2)").Check(testkit.Rows(
-		"PartitionUnion 4.00 root  ",
+		"PartitionUnion 0.04 root  ",
 		"├─Batch_Point_Get 2.00 root table:t3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 		"└─Batch_Point_Get 2.00 root table:t3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
@@ -1136,7 +1136,7 @@ func (s *testAnalyzeSuite) TestBatchPointGetTablePartition(c *C) {
 		"2 1",
 	))
 	testKit.MustQuery("explain format = 'brief' select * from t4 where a = 1 and b in (1,2)").Check(testkit.Rows(
-		"PartitionUnion 4.00 root  ",
+		"PartitionUnion 0.04 root  ",
 		"├─TableReader 2.00 root  data:TableRangeScan",
 		"│ └─TableRangeScan 2.00 cop[tikv] table:t4, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
 		"└─TableReader 2.00 root  data:TableRangeScan",
