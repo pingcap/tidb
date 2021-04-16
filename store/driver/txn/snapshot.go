@@ -15,6 +15,7 @@ package txn
 
 import (
 	"context"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -25,10 +26,15 @@ type tikvSnapshot struct {
 	*tikv.KVSnapshot
 }
 
+// NewSnapshot creates a kv.Snapshot with tikv.KVSnapshot.
+func NewSnapshot(snapshot *tikv.KVSnapshot) kv.Snapshot {
+	return &tikvSnapshot{snapshot}
+}
+
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	data, err := s.KVSnapshot.BatchGet(ctx, keys)
+	data, err := s.KVSnapshot.BatchGet(ctx, toTiKVKeys(keys))
 	return data, extractKeyErr(err)
 }
 
@@ -54,4 +60,14 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 		return nil, errors.Trace(err)
 	}
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
+}
+
+func toTiKVKeys(keys []kv.Key) [][]byte {
+	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
+	return bytesKeys
+}
+
+func toKVKeys(keys [][]byte) []kv.Key {
+	kvKeys := *(*[]kv.Key)(unsafe.Pointer(&keys))
+	return kvKeys
 }

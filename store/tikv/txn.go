@@ -35,9 +35,12 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
 )
+
+// MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
+// We use it to abort the transaction to guarantee GC worker will not influence it.
+const MaxTxnTimeUse = 24 * 60 * 60 * 1000
 
 // SchemaAmender is used by pessimistic transactions to amend commit mutations for schema change during 2pc.
 type SchemaAmender interface {
@@ -68,6 +71,8 @@ type KVTxn struct {
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info tidbkv.TxnInfo, err error)
+
+	binlog BinlogExecutor
 }
 
 func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
@@ -124,7 +129,7 @@ func (txn *KVTxn) GetVars() *tidbkv.Variables {
 }
 
 // Get implements transaction interface.
-func (txn *KVTxn) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
+func (txn *KVTxn) Get(ctx context.Context, k []byte) ([]byte, error) {
 	ret, err := txn.us.Get(ctx, k)
 	if tidbkv.IsErrNotFound(err) {
 		return nil, err
@@ -136,21 +141,26 @@ func (txn *KVTxn) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
 	return ret, nil
 }
 
+// NewBufferBatchGetter creates a new BufferBatchGetter.
+func NewBufferBatchGetter(buffer unionstore.BatchBufferGetter, middleCache unionstore.Getter, snapshot unionstore.BatchGetter) *unionstore.BufferBatchGetter {
+	return unionstore.NewBufferBatchGetter(buffer, middleCache, snapshot)
+}
+
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 // Do not use len(value) == 0 or value == nil to represent non-exist.
 // If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
-func (txn *KVTxn) BatchGet(ctx context.Context, keys []tidbkv.Key) (map[string][]byte, error) {
+func (txn *KVTxn) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	return tidbkv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
+	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
 }
 
 // Set sets the value for key k as v into kv store.
 // v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
-func (txn *KVTxn) Set(k tidbkv.Key, v []byte) error {
+func (txn *KVTxn) Set(k []byte, v []byte) error {
 	txn.setCnt++
 	return txn.us.GetMemBuffer().Set(k, v)
 }
@@ -164,17 +174,17 @@ func (txn *KVTxn) String() string {
 // If such entry is not found, it returns an invalid Iterator with no error.
 // It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 // The Iterator must be Closed after use.
-func (txn *KVTxn) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
+func (txn *KVTxn) Iter(k []byte, upperBound []byte) (unionstore.Iterator, error) {
 	return txn.us.Iter(k, upperBound)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (txn *KVTxn) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
+func (txn *KVTxn) IterReverse(k []byte) (unionstore.Iterator, error) {
 	return txn.us.IterReverse(k)
 }
 
 // Delete removes the entry for key k from kv store.
-func (txn *KVTxn) Delete(k tidbkv.Key) error {
+func (txn *KVTxn) Delete(k []byte) error {
 	return txn.us.GetMemBuffer().Delete(k)
 }
 
@@ -206,6 +216,13 @@ func (txn *KVTxn) DelOption(opt int) {
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
 	return txn.us.GetOption(kv.Pessimistic) != nil
+}
+
+func (txn *KVTxn) getKVFilter() KVFilter {
+	if filter := txn.us.GetOption(kv.KVFilter); filter != nil {
+		return filter.(KVFilter)
+	}
+	return nil
 }
 
 // Commit commits the transaction operations to KV store.
@@ -262,9 +279,9 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	}
 
 	defer func() {
-		ctxValue := ctx.Value(execdetails.CommitDetailCtxKey)
+		ctxValue := ctx.Value(util.CommitDetailCtxKey)
 		if ctxValue != nil {
-			commitDetail := ctxValue.(**execdetails.CommitDetails)
+			commitDetail := ctxValue.(**util.CommitDetails)
 			if *commitDetail != nil {
 				(*commitDetail).TxnRetry++
 			} else {
@@ -382,7 +399,7 @@ func (txn *KVTxn) onCommitted(err error) {
 
 // LockKeys tries to lock the entries with the keys in KV store.
 // lockWaitTime in ms, except that tidbkv.LockAlwaysWait(0) means always wait lock, tidbkv.LockNowait(-1) means nowait lock
-func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInput ...tidbkv.Key) error {
+func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...[]byte) error {
 	// Exclude keys that are already locked.
 	var err error
 	keys := make([][]byte, 0, len(keysInput))
@@ -405,9 +422,9 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 		}
 		if lockCtx.Stats != nil {
 			lockCtx.Stats.TotalTime = time.Since(startTime)
-			ctxValue := ctx.Value(execdetails.LockKeysDetailCtxKey)
+			ctxValue := ctx.Value(util.LockKeysDetailCtxKey)
 			if ctxValue != nil {
-				lockKeysDetail := ctxValue.(**execdetails.LockKeysDetails)
+				lockKeysDetail := ctxValue.(**util.LockKeysDetails)
 				*lockKeysDetail = lockCtx.Stats
 			}
 		}
@@ -433,7 +450,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 		if lockCtx.ReturnValues && locked {
 			// An already locked key can not return values, we add an entry to let the caller get the value
 			// in other ways.
-			lockCtx.Values[string(key)] = tidbkv.ReturnedValue{AlreadyLocked: true}
+			lockCtx.Values[string(key)] = kv.ReturnedValue{AlreadyLocked: true}
 		}
 	}
 	if len(keys) == 0 {
@@ -460,7 +477,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 			assignedPrimaryKey = true
 		}
 
-		lockCtx.Stats = &execdetails.LockKeysDetails{
+		lockCtx.Stats = &util.LockKeysDetails{
 			LockKeys: int32(len(keys)),
 		}
 		bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
@@ -632,4 +649,14 @@ func (txn *KVTxn) GetMemBuffer() *unionstore.MemDB {
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *KVTxn) GetSnapshot() *KVSnapshot {
 	return txn.snapshot
+}
+
+// SetBinlogExecutor sets the method to perform binlong synchronization.
+func (txn *KVTxn) SetBinlogExecutor(binlog BinlogExecutor) {
+	txn.binlog = binlog
+}
+
+// GetClusterID returns store's cluster id.
+func (txn *KVTxn) GetClusterID() uint64 {
+	return txn.store.clusterID
 }

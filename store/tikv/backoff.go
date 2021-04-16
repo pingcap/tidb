@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -356,9 +356,9 @@ func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err err
 	}
 	b.backoffTimes[typ]++
 
-	stmtExec := b.ctx.Value(execdetails.StmtExecDetailKey)
+	stmtExec := b.ctx.Value(util.ExecDetailsKey)
 	if stmtExec != nil {
-		detail := stmtExec.(*execdetails.StmtExecDetails)
+		detail := stmtExec.(*util.ExecDetails)
 		atomic.AddInt64(&detail.BackoffDuration, int64(realSleep)*int64(time.Millisecond))
 		atomic.AddInt64(&detail.BackoffCount, 1)
 	}

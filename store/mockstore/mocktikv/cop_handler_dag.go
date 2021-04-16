@@ -245,9 +245,9 @@ func (h coprHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		kvRanges:       ranges,
 		colIDs:         ctx.evalCtx.colIDs,
 		startTS:        startTS,
-		isolationLevel: h.isolationLevel,
-		resolvedLocks:  h.resolvedLocks,
-		mvccStore:      h.mvccStore,
+		isolationLevel: h.GetIsolationLevel(),
+		resolvedLocks:  h.GetResolvedLocks(),
+		mvccStore:      h.GetMVCCStore(),
 		execDetail:     new(execDetail),
 		rd:             rd,
 	}
@@ -298,9 +298,9 @@ func (h coprHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		kvRanges:       ranges,
 		colsLen:        len(columns),
 		startTS:        startTS,
-		isolationLevel: h.isolationLevel,
-		resolvedLocks:  h.resolvedLocks,
-		mvccStore:      h.mvccStore,
+		isolationLevel: h.GetIsolationLevel(),
+		resolvedLocks:  h.GetResolvedLocks(),
+		mvccStore:      h.GetMVCCStore(),
 		hdStatus:       hdStatus,
 		execDetail:     new(execDetail),
 		colInfos:       colInfos,
@@ -834,16 +834,16 @@ func (h coprHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan
 		}
 
 		upperKey := kran.GetEnd()
-		if bytes.Compare(upperKey, h.rawStartKey) <= 0 {
+		if bytes.Compare(upperKey, h.GetRawStartKey()) <= 0 {
 			continue
 		}
 		lowerKey := kran.GetStart()
-		if len(h.rawEndKey) != 0 && bytes.Compare(lowerKey, h.rawEndKey) >= 0 {
+		if len(h.GetRawEndKey()) != 0 && bytes.Compare(lowerKey, h.GetRawEndKey()) >= 0 {
 			break
 		}
 		var kvr kv.KeyRange
-		kvr.StartKey = maxStartKey(lowerKey, h.rawStartKey)
-		kvr.EndKey = minEndKey(upperKey, h.rawEndKey)
+		kvr.StartKey = maxStartKey(lowerKey, h.GetRawStartKey())
+		kvr.EndKey = minEndKey(upperKey, h.GetRawEndKey())
 		kvRanges = append(kvRanges, kvr)
 	}
 	if descScan {
