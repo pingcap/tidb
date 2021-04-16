@@ -14,6 +14,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -176,6 +177,11 @@ type Config struct {
 	// EnableTCP4Only enables net.Listen("tcp4",...)
 	// Note that: it can make lvs with toa work and thus tidb can get real client ip.
 	EnableTCP4Only bool `toml:"enable-tcp4-only" json:"enable-tcp4-only"`
+	// The client will forward the requests through the follower
+	// if one of the following conditions happens:
+	// 1. there is a network partition problem between TiDB and PD leader.
+	// 2. there is a network partition problem between TiDB and TiKV leader.
+	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -201,6 +207,7 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 		StoresRefreshInterval: c.StoresRefreshInterval,
 		OpenTracingEnable:     c.OpenTracing.Enable,
 		Path:                  c.Path,
+		EnableForwarding:      c.EnableForwarding,
 	}
 }
 
@@ -528,7 +535,7 @@ type Experimental struct {
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable global kill.
-	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
+	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -661,6 +668,7 @@ var defaultConf = Config{
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
 	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
+	EnableForwarding:             defTiKVCfg.EnableForwarding,
 }
 
 var (
@@ -700,6 +708,7 @@ var deprecatedConfig = map[string]struct{}{
 	"experimental.allow-auto-random": {},
 	"enable-redact-log":              {}, // use variable tidb_redact_log instead
 	"tikv-client.copr-cache.enable":  {},
+	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -982,3 +991,44 @@ const (
 	OOMActionCancel = "cancel"
 	OOMActionLog    = "log"
 )
+
+/// hideConfig is used to filter a single line of config for hiding.
+var hideConfig = []string{
+	"index-usage-sync-lease",
+}
+
+// HideConfig is used to filter the configs that needs to be hidden.
+func HideConfig(s string) string {
+	configs := strings.Split(s, "\n")
+	hideMap := make([]bool, len(configs))
+	for i, c := range configs {
+		for _, hc := range hideConfig {
+			if strings.Contains(c, hc) {
+				hideMap[i] = true
+				break
+			}
+		}
+	}
+	var buf bytes.Buffer
+	for i, c := range configs {
+		if hideMap[i] {
+			continue
+		}
+		if i != 0 {
+			buf.WriteString("\n")
+		}
+		buf.WriteString(c)
+	}
+	return buf.String()
+}
+
+// ContainHiddenConfig checks whether it contains the configuration that needs to be hidden.
+func ContainHiddenConfig(s string) bool {
+	s = strings.ToLower(s)
+	for _, hc := range hideConfig {
+		if strings.Contains(s, hc) {
+			return true
+		}
+	}
+	return false
+}

@@ -804,7 +804,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 }
 
 // genIndexKeyStr generates index content string representation.
-func (t *TableCommon) genIndexKeyStr(colVals []types.Datum) (string, error) {
+func genIndexKeyStr(colVals []types.Datum) (string, error) {
 	// Pass pre-composed error to txn.
 	strVals := make([]string, 0, len(colVals))
 	for _, cv := range colVals {
@@ -839,14 +839,14 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 		}
 		var dupErr error
 		if !skipCheck && v.Meta().Unique {
-			entryKey, err := t.genIndexKeyStr(indexVals)
+			entryKey, err := genIndexKeyStr(indexVals)
 			if err != nil {
 				return nil, err
 			}
 			idxMeta := v.Meta()
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
 		}
-		rsData := TryGetHandleRestoredDataWrapper(t, r, nil)
+		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
 		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
@@ -908,7 +908,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			}
 			continue
 		}
-		if col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType) {
+		if col.IsCommonHandleColumn(meta) && !types.NeedRestoredData(&col.FieldType) {
 			if containFullCol, idxInHandle := containFullColInHandle(meta, col); containFullCol {
 				dtBytes := h.EncodedCol(idxInHandle)
 				_, dt, err := codec.DecodeOne(dtBytes)
@@ -935,7 +935,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType)) {
+		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.NeedRestoredData(&col.FieldType)) {
 			if _, isPrefix := prefixCols[col.ID]; !isPrefix {
 				continue
 			}
@@ -1155,11 +1155,11 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
-	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil)
+	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil, idx.Meta())
 	if _, err := idx.Create(ctx, txn, vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
-			entryKey, err1 := t.genIndexKeyStr(vals)
+			entryKey, err1 := genIndexKeyStr(vals)
 			if err1 != nil {
 				// if genIndexKeyStr failed, return the original error.
 				return err
@@ -1411,7 +1411,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 				continue
 			}
 			canSkip := idxCol.Length == types.UnspecifiedLength
-			canSkip = canSkip && !types.CommonHandleNeedRestoredData(&col.FieldType)
+			canSkip = canSkip && !types.NeedRestoredData(&col.FieldType)
 			return canSkip
 		}
 	}
@@ -1447,13 +1447,13 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 	return nil
 }
 
-// CheckHandleExists check whether recordID key exists. if not exists, return nil,
+// CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore check whether recordID key or unique index key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
-func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, data []types.Datum) error {
+func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, newRow []types.Datum, modified []bool) error {
 	physicalTableID := t.Meta().ID
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
-		pid, err := pt.locatePartition(sctx, info, data)
+		pid, err := pt.locatePartition(sctx, info, newRow)
 		if err != nil {
 			return err
 		}
@@ -1464,15 +1464,59 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 	if err != nil {
 		return err
 	}
-	// Check key exists.
-	prefix := tablecodec.GenTableRecordPrefix(physicalTableID)
-	recordKey := tablecodec.EncodeRecordKey(prefix, recordID)
-	_, err = txn.Get(ctx, recordKey)
-	if err == nil {
-		handleStr := getDuplicateErrorHandleString(t, recordID, data)
-		return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
-	} else if !kv.ErrNotExist.Equal(err) {
-		return err
+
+	// Check primary key exists.
+	{
+		prefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+		recordKey := tablecodec.EncodeRecordKey(prefix, recordID)
+		_, err = txn.Get(ctx, recordKey)
+		if err == nil {
+			handleStr := getDuplicateErrorHandleString(t, recordID, newRow)
+			return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
+		} else if !kv.ErrNotExist.Equal(err) {
+			return err
+		}
+	}
+
+	// Check unique key exists.
+	{
+		shouldSkipIgnoreCheck := func(idx table.Index) bool {
+			if !IsIndexWritable(idx) || !idx.Meta().Unique || (t.Meta().IsCommonHandle && idx.Meta().Primary) {
+				return true
+			}
+			for _, c := range idx.Meta().Columns {
+				if modified[c.Offset] {
+					return false
+				}
+			}
+			return true
+		}
+
+		for _, idx := range t.Indices() {
+			if shouldSkipIgnoreCheck(idx) {
+				continue
+			}
+			newVals, err := idx.FetchValues(newRow, nil)
+			if err != nil {
+				return err
+			}
+			key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, newVals, recordID, nil)
+			if err != nil {
+				return err
+			}
+			_, err = txn.Get(ctx, key)
+			if kv.IsErrNotFound(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			entryKey, err := genIndexKeyStr(newVals)
+			if err != nil {
+				return err
+			}
+			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name.String())
+		}
 	}
 	return nil
 }
@@ -1695,47 +1739,56 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 }
 
 // TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.
-func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap map[int64]types.Datum) []types.Datum {
+func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
 	if !collate.NewCollationEnabled() || !t.Meta().IsCommonHandle || t.Meta().CommonHandleVersion == 0 {
 		return nil
 	}
-
-	useIDMap := false
-	if len(rowMap) > 0 {
-		useIDMap = true
-	}
-
-	var datum types.Datum
 	rsData := make([]types.Datum, 0, 4)
-	pkCols := TryGetCommonPkColumns(t)
-	for _, col := range pkCols {
-		if !types.NeedRestoredData(&col.FieldType) {
+	pkIdx := FindPrimaryIndex(t.Meta())
+	for _, pkIdxCol := range pkIdx.Columns {
+		pkCol := t.Meta().Columns[pkIdxCol.Offset]
+		if !types.NeedRestoredData(&pkCol.FieldType) {
 			continue
 		}
-		if collate.IsBinCollation(col.Collate) {
-			if useIDMap {
-				datum = rowMap[col.ID]
-			} else {
-				datum = row[col.Offset]
+		var datum types.Datum
+		if len(rowMap) > 0 {
+			datum = rowMap[pkCol.ID]
+		} else {
+			datum = row[pkCol.Offset]
+		}
+		// Try to truncate index values.
+		// Says that primary key(a (8)),
+		// For index t(a), don't truncate the value.
+		// For index t(a(9)), truncate to a(9).
+		// For index t(a(7)), truncate to a(8).
+		truncateTargetCol := pkIdxCol
+		for _, idxCol := range idx.Columns {
+			if idxCol.Offset == pkCol.Offset {
+				truncateTargetCol = maxIndexLen(pkIdxCol, idxCol)
+				break
 			}
+		}
+		tablecodec.TruncateIndexValue(&datum, truncateTargetCol, pkCol)
+		if collate.IsBinCollation(pkCol.Collate) {
 			rsData = append(rsData, types.NewIntDatum(stringutil.GetTailSpaceCount(datum.GetString())))
 		} else {
-			if useIDMap {
-				rsData = append(rsData, rowMap[col.ID])
-			} else {
-				rsData = append(rsData, row[col.Offset])
-			}
+			rsData = append(rsData, datum)
 		}
 	}
-
-	for _, idx := range t.Meta().Indices {
-		if idx.Primary {
-			tablecodec.TruncateIndexValues(t.Meta(), idx, rsData)
-			break
-		}
-	}
-
 	return rsData
+}
+
+func maxIndexLen(idxA, idxB *model.IndexColumn) *model.IndexColumn {
+	if idxA.Length == types.UnspecifiedLength {
+		return idxA
+	}
+	if idxB.Length == types.UnspecifiedLength {
+		return idxB
+	}
+	if idxA.Length > idxB.Length {
+		return idxA
+	}
+	return idxB
 }
 
 func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
