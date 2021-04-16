@@ -41,7 +41,7 @@ type Constraint struct {
 	Values []string     `json:"values,omitempty"`
 }
 
-// NewConstraint will create a Constraint from string
+// NewConstraint will create a Constraint from a string.
 func NewConstraint(label string) (Constraint, error) {
 	r := Constraint{}
 

@@ -63,7 +63,7 @@ func (t *testConstraintSuite) TestNew(c *C) {
 			input: "+engine=Tiflash",
 			err:   ErrUnsupportedConstraint,
 		},
-		// invald
+		// invalid
 		{
 			name:  "invalid length",
 			input: ",,,",
