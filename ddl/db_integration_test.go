@@ -1229,7 +1229,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	job.ID, err = t.GenGlobalID()
 	c.Assert(err, IsNil)
 	job.Version = 1
-	job.StartTS = txn.StartTS()
+	job.CreateTS = txn.StartTS()
 
 	// Simulate old TiDB init the add index job, old TiDB will not init the model.Job.ReorgMeta field,
 	// if we set job.SnapshotVer here, can simulate the behavior.

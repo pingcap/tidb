@@ -476,6 +476,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		tableName = getTableName(e.is, job.TableID)
 	}
 
+	createTime := ts2Time(job.CreateTS)
 	startTime := ts2Time(job.StartTS)
 	finishTime := ts2Time(finishTS)
 
@@ -492,13 +493,14 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(5, job.SchemaID)
 	req.AppendInt64(6, job.TableID)
 	req.AppendInt64(7, job.RowCount)
-	req.AppendTime(8, startTime)
+	req.AppendTime(8, createTime)
+	req.AppendTime(9, startTime)
 	if finishTS > 0 {
-		req.AppendTime(9, finishTime)
+		req.AppendTime(10, finishTime)
 	} else {
-		req.AppendNull(9)
+		req.AppendNull(10)
 	}
-	req.AppendString(10, job.State.String())
+	req.AppendString(11, job.State.String())
 }
 
 func ts2Time(timestamp uint64) types.Time {

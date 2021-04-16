@@ -412,7 +412,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
-		SnapshotTS:    job.StartTS,
+		SnapshotTS:    job.CreateTS,
 		CurAutoIncID:  autoIncID,
 		CurAutoRandID: autoRandID,
 	}
@@ -424,7 +424,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 func (e *DDLExec) getTableAutoIDsFromSnapshot(job *model.Job) (autoIncID, autoRandID int64, err error) {
 	// Get table original autoIDs before table drop.
 	dom := domain.GetDomain(e.ctx)
-	m, err := dom.GetSnapshotMeta(job.StartTS)
+	m, err := dom.GetSnapshotMeta(job.CreateTS)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -452,13 +452,13 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 	}
 
 	// Check GC safe point for getting snapshot infoSchema.
-	err = gcutil.ValidateSnapshot(e.ctx, job.StartTS)
+	err = gcutil.ValidateSnapshot(e.ctx, job.CreateTS)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// Get the snapshot infoSchema before drop table.
-	snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
+	snapInfo, err := dom.GetSnapshotInfoSchema(job.CreateTS)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -478,7 +478,7 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
 		// Check GC safe point for getting snapshot infoSchema.
-		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
+		err := gcutil.ValidateSnapshotWithGCSafePoint(job.CreateTS, gcSafePoint)
 		if err != nil {
 			return false, err
 		}
@@ -486,7 +486,7 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 			continue
 		}
 
-		snapMeta, err := dom.GetSnapshotMeta(job.StartTS)
+		snapMeta, err := dom.GetSnapshotMeta(job.CreateTS)
 		if err != nil {
 			return false, err
 		}
@@ -587,7 +587,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
-		SnapshotTS:    job.StartTS,
+		SnapshotTS:    job.CreateTS,
 		CurAutoIncID:  autoIncID,
 		CurAutoRandID: autoRandID,
 	}

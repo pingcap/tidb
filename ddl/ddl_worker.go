@@ -269,7 +269,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		for i, task := range tasks {
 			job := task.job
 			job.Version = currentVersion
-			job.StartTS = txn.StartTS()
+			job.CreateTS = txn.StartTS()
 			job.ID = ids[i]
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
@@ -684,6 +684,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
+	job.StartTS = t.StartTS
 	if job.IsFinished() {
 		return
 	}
