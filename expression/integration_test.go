@@ -8002,6 +8002,7 @@ func (s *testIntegrationSuite) TestIssue19892(c *C) {
 		tk.MustExec("UPDATE IGNORE dd SET c = '2000-01-00 00:00:00'")
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2000-01-00 00:00:00'"))
 		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+	}
 }
 
 func (s *testIntegrationSuite2) TestCastCoer(c *C) {
