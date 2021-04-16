@@ -16,6 +16,7 @@ package mockstore
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 )
@@ -33,5 +34,5 @@ func newMockTikvStore(opt *mockOptions) (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewMockStorage(kvstore), nil
+	return mockstorage.NewMockStorage(kvstore), nil
 }
