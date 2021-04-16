@@ -16,7 +16,6 @@ package mocktikv
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"strconv"
 	"sync"
@@ -31,9 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // For gofail injection.
@@ -553,48 +550,6 @@ func (h kvHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.S
 	return resp
 }
 
-func drainRowsFromExecutor(ctx context.Context, e executor, req *tipb.DAGRequest) (tipb.Chunk, error) {
-	var chunk tipb.Chunk
-	for {
-		row, err := e.Next(ctx)
-		if err != nil {
-			return chunk, errors.Trace(err)
-		}
-		if row == nil {
-			return chunk, nil
-		}
-		for _, offset := range req.OutputOffsets {
-			chunk.RowsData = append(chunk.RowsData, row[offset]...)
-		}
-	}
-}
-
-type coprHandler struct {
-	*Session
-}
-
-func (h coprHandler) handleBatchCopRequest(ctx context.Context, req *coprocessor.BatchRequest) (*mockBatchCopDataClient, error) {
-	client := &mockBatchCopDataClient{}
-	for _, ri := range req.Regions {
-		cop := coprocessor.Request{
-			Tp:      kv.ReqTypeDAG,
-			Data:    req.Data,
-			StartTs: req.StartTs,
-			Ranges:  ri.Ranges,
-		}
-		_, exec, dagReq, err := h.buildDAGExecutor(&cop)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		chunk, err := drainRowsFromExecutor(ctx, exec, dagReq)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		client.chunks = append(client.chunks, chunk)
-	}
-	return client, nil
-}
-
 // Client is a client that sends RPC.
 // This is same with tikv.Client, define again for avoid circle import.
 type Client interface {
@@ -604,13 +559,20 @@ type Client interface {
 	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
 }
 
+// CoprRPCHandler is the interface to handle coprocessor RPC commands.
+type CoprRPCHandler interface {
+	HandleCmdCop(reqCtx *kvrpcpb.Context, session *Session, r *coprocessor.Request) *coprocessor.Response
+	HandleBatchCop(ctx context.Context, reqCtx *kvrpcpb.Context, session *Session, r *coprocessor.BatchRequest, timeout time.Duration) (*tikvrpc.BatchCopStreamResponse, error)
+	HandleCopStream(ctx context.Context, reqCtx *kvrpcpb.Context, session *Session, r *coprocessor.Request, timeout time.Duration) (*tikvrpc.CopStreamResponse, error)
+	Close()
+}
+
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
 // a rpc client at tikv's side.
 type RPCClient struct {
-	Cluster       *Cluster
-	MvccStore     MVCCStore
-	streamTimeout chan *tikvrpc.Lease
-	done          chan struct{}
+	Cluster     *Cluster
+	MvccStore   MVCCStore
+	coprHandler CoprRPCHandler
 	// rpcCli uses to redirects RPC request to TiDB rpc server, It is only use for test.
 	// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
 	// sync.Once uses to avoid concurrency initialize rpcCli.
@@ -621,14 +583,10 @@ type RPCClient struct {
 // NewRPCClient creates an RPCClient.
 // Note that close the RPCClient may close the underlying MvccStore.
 func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
-	ch := make(chan *tikvrpc.Lease, 1024)
-	done := make(chan struct{})
-	go tikvrpc.CheckStreamTimeoutLoop(ch, done)
 	return &RPCClient{
-		Cluster:       cluster,
-		MvccStore:     mvccStore,
-		streamTimeout: ch,
-		done:          done,
+		Cluster:     cluster,
+		MvccStore:   mvccStore,
+		coprHandler: newCoprRPCHandler(),
 	}
 }
 
@@ -917,25 +875,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdPhysicalScanLock:
 		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdCop:
-		r := req.Cop()
-		if err := session.checkRequestContext(reqCtx); err != nil {
-			resp.Resp = &coprocessor.Response{RegionError: err}
-			return resp, nil
+		if c.coprHandler == nil {
+			return nil, errors.New("unimplemented")
 		}
 		session.rawStartKey = MvccKey(session.startKey).Raw()
 		session.rawEndKey = MvccKey(session.endKey).Raw()
-		var res *coprocessor.Response
-		switch r.GetTp() {
-		case kv.ReqTypeDAG:
-			res = coprHandler{session}.handleCopDAGRequest(r)
-		case kv.ReqTypeAnalyze:
-			res = coprHandler{session}.handleCopAnalyzeRequest(r)
-		case kv.ReqTypeChecksum:
-			res = coprHandler{session}.handleCopChecksumRequest(r)
-		default:
-			panic(fmt.Sprintf("unknown coprocessor request type: %v", r.GetTp()))
-		}
-		resp.Resp = res
+		resp.Resp = c.coprHandler.HandleCmdCop(reqCtx, session, req.Cop())
 	case tikvrpc.CmdBatchCop:
 		failpoint.Inject("BatchCopCancelled", func(value failpoint.Value) {
 			if value.(bool) {
@@ -948,65 +893,24 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 				failpoint.Return(nil, errors.New("rpc error"))
 			}
 		})
-		r := req.BatchCop()
-		if err := session.checkRequestContext(reqCtx); err != nil {
-			resp.Resp = &tikvrpc.BatchCopStreamResponse{
-				Tikv_BatchCoprocessorClient: &mockBathCopErrClient{Error: err},
-				BatchResponse: &coprocessor.BatchResponse{
-					OtherError: err.Message,
-				},
-			}
-			return resp, nil
+		if c.coprHandler == nil {
+			return nil, errors.New("unimplemented")
 		}
-		ctx1, cancel := context.WithCancel(ctx)
-		batchCopStream, err := coprHandler{session}.handleBatchCopRequest(ctx1, r)
-		if err != nil {
-			cancel()
-			return nil, errors.Trace(err)
-		}
-		batchResp := &tikvrpc.BatchCopStreamResponse{Tikv_BatchCoprocessorClient: batchCopStream}
-		batchResp.Lease.Cancel = cancel
-		batchResp.Timeout = timeout
-		c.streamTimeout <- &batchResp.Lease
-
-		first, err := batchResp.Recv()
+		batchResp, err := c.coprHandler.HandleBatchCop(ctx, reqCtx, session, req.BatchCop(), timeout)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		batchResp.BatchResponse = first
 		resp.Resp = batchResp
 	case tikvrpc.CmdCopStream:
-		r := req.Cop()
-		if err := session.checkRequestContext(reqCtx); err != nil {
-			resp.Resp = &tikvrpc.CopStreamResponse{
-				Tikv_CoprocessorStreamClient: &mockCopStreamErrClient{Error: err},
-				Response: &coprocessor.Response{
-					RegionError: err,
-				},
-			}
-			return resp, nil
+		if c.coprHandler == nil {
+			return nil, errors.New("unimplemented")
 		}
 		session.rawStartKey = MvccKey(session.startKey).Raw()
 		session.rawEndKey = MvccKey(session.endKey).Raw()
-		ctx1, cancel := context.WithCancel(ctx)
-		copStream, err := coprHandler{session}.handleCopStream(ctx1, r)
-		if err != nil {
-			cancel()
-			return nil, errors.Trace(err)
-		}
-
-		streamResp := &tikvrpc.CopStreamResponse{
-			Tikv_CoprocessorStreamClient: copStream,
-		}
-		streamResp.Lease.Cancel = cancel
-		streamResp.Timeout = timeout
-		c.streamTimeout <- &streamResp.Lease
-
-		first, err := streamResp.Recv()
+		streamResp, err := c.coprHandler.HandleCopStream(ctx, reqCtx, session, req.Cop(), timeout)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		streamResp.Response = first
 		resp.Resp = streamResp
 	case tikvrpc.CmdMvccGetByKey:
 		r := req.MvccGetByKey()
@@ -1053,7 +957,9 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 // Close closes the client.
 func (c *RPCClient) Close() error {
-	close(c.done)
+	if c.coprHandler != nil {
+		c.coprHandler.Close()
+	}
 
 	var err error
 	if c.MvccStore != nil {

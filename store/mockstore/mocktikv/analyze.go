@@ -41,7 +41,7 @@ func (h coprHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coproces
 	if req.GetTp() != kv.ReqTypeAnalyze {
 		return resp
 	}
-	if err := h.checkRequestContext(req.GetContext()); err != nil {
+	if err := h.CheckRequestContext(req.GetContext()); err != nil {
 		resp.RegionError = err
 		return resp
 	}
