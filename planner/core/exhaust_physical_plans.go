@@ -2041,7 +2041,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 	disableAggPushDownToCop(la.children[0])
 	join := la.GetHashJoin(prop)
-	var columns []*expression.Column
+	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
 		columns = append(columns, &colColumn.Column)
 	}

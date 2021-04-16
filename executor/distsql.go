@@ -742,11 +742,11 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, count uint64) (
 	handles []kv.Handle, retChk *chunk.Chunk, scannedKeys uint64, err error) {
-	var handleOffset []int
 	numColsWithoutPid := chk.NumCols()
 	if w.idxLookup.index.Global {
 		numColsWithoutPid = numColsWithoutPid - 1
 	}
+	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
 	for i := range w.idxLookup.handleCols {
 		handleOffset = append(handleOffset, numColsWithoutPid-len(w.idxLookup.handleCols)+i)
 	}
