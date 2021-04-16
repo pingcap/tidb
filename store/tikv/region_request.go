@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/execdetails"
 )
 
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
@@ -96,7 +95,7 @@ func (r *RegionRequestRuntimeStats) String() string {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k.String(), v.Count, execdetails.FormatDuration(time.Duration(v.Consume))))
+		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k.String(), v.Count, util.FormatDuration(time.Duration(v.Consume))))
 	}
 	return buf.String()
 }
@@ -253,11 +252,11 @@ func (s *RegionRequestSender) SendReqCtx(
 			}
 		case "requestTiDBStoreError":
 			if et == tikvrpc.TiDB {
-				failpoint.Return(nil, nil, ErrTiKVServerTimeout)
+				failpoint.Return(nil, nil, kv.ErrTiKVServerTimeout)
 			}
 		case "requestTiFlashError":
 			if et == tikvrpc.TiFlash {
-				failpoint.Return(nil, nil, ErrTiFlashServerTimeout)
+				failpoint.Return(nil, nil, kv.ErrTiFlashServerTimeout)
 			}
 		}
 	})
@@ -302,7 +301,7 @@ func (s *RegionRequestSender) SendReqCtx(
 
 		// recheck whether the session/query is killed during the Next()
 		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
-			return nil, nil, ErrQueryInterrupted
+			return nil, nil, kv.ErrQueryInterrupted
 		}
 		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
 			if val.(bool) {
@@ -530,7 +529,7 @@ func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 		return nil
 	}
 	metrics.TiKVStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
-	return ErrTokenLimit.GenWithStackByArgs(st.storeID)
+	return kv.ErrTokenLimit.GenWithStackByArgs(st.storeID)
 
 }
 
@@ -556,7 +555,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	if errors.Cause(err) == context.Canceled {
 		return errors.Trace(err)
 	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
-		return ErrTiDBShuttingDown
+		return kv.ErrTiDBShuttingDown
 	}
 	if status.Code(errors.Cause(err)) == codes.Canceled {
 		select {
@@ -672,6 +671,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
 		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
+		s.regionCache.InvalidateCachedRegion(ctx.Region)
 		return true, nil
 	}
 

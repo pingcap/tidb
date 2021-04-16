@@ -365,7 +365,6 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
 		allFms[i] = make([]*statistics.FMSketch, 0, partitionNum)
 	}
-	statsVer := sc.GetSessionVars().AnalyzeVersion
 
 	for _, partitionID := range partitionIDs {
 		h.mu.Lock()
@@ -397,10 +396,6 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			}
 			err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
 			return
-		}
-		statistics.CheckAnalyzeVerOnTable(partitionStats, &statsVer)
-		if statsVer != statistics.Version2 { // global-stats only support stats-ver2
-			return nil, fmt.Errorf("[stats]: some partition level statistics are not in statistics version 2, please set tidb_analyze_version to 2 and analyze the this table")
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			ID := tableInfo.Columns[i].ID
@@ -436,7 +431,10 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		// Because after merging TopN, some numbers will be left.
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
-		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], uint32(opts[ast.AnalyzeOptNumTopN]))
+		globalStats.TopN[i], popedTopN, allHg[i], err = statistics.MergePartTopN2GlobalTopN(sc.GetSessionVars().StmtCtx, allTopN[i], uint32(opts[ast.AnalyzeOptNumTopN]), allHg[i], isIndex == 1)
+		if err != nil {
+			return
+		}
 
 		// Merge histogram
 		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], popedTopN, int64(opts[ast.AnalyzeOptNumBuckets]), isIndex == 1)
@@ -444,37 +442,23 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			return
 		}
 
-		// Update NDV of global-level stats
-		if isIndex == 0 {
-			// For the column stats, we should merge the FMSketch first. And use the FMSketch to calculate the new NDV.
-			// merge FMSketch
-			globalStats.Fms[i] = allFms[i][0].Copy()
-			for j := 1; j < partitionNum; j++ {
-				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
-			}
-
-			// update the NDV
-			globalStatsNDV := globalStats.Fms[i].NDV()
-			if globalStatsNDV > globalStats.Count {
-				globalStatsNDV = globalStats.Count
-			}
-			globalStats.Hg[i].NDV = globalStatsNDV
-		} else {
-			// For the index stats, we get the final NDV by accumulating the NDV of each bucket in the index histogram.
-			globalStatsNDV := int64(0)
-			for j := range globalStats.Hg[i].Buckets {
-				globalStatsNDV += globalStats.Hg[i].Buckets[j].NDV
-				// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-				globalStats.Hg[i].Buckets[j].NDV = 0
-			}
-			globalStats.Hg[i].NDV = globalStatsNDV
-
-			// hg.NDV still includes TopN although TopN is not included by hg.Buckets
-			// TODO: remove the line below after fixing the meaning of hg.NDV
-			if globalStats.TopN[i] != nil { // if analyze with 0 topN, topN is nil here
-				globalStats.Hg[i].NDV += int64(len(globalStats.TopN[i].TopN))
-			}
+		// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
+		for j := range globalStats.Hg[i].Buckets {
+			globalStats.Hg[i].Buckets[j].NDV = 0
 		}
+
+		// Update NDV of global-level stats
+		globalStats.Fms[i] = allFms[i][0].Copy()
+		for j := 1; j < partitionNum; j++ {
+			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+		}
+
+		// update the NDV
+		globalStatsNDV := globalStats.Fms[i].NDV()
+		if globalStatsNDV > globalStats.Count {
+			globalStatsNDV = globalStats.Count
+		}
+		globalStats.Hg[i].NDV = globalStatsNDV
 	}
 	return
 }
@@ -742,7 +726,11 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag}
+			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 1, histID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fmSketch, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag}
 			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 		}
 		break
@@ -1002,6 +990,9 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 				return err
 			}
 		}
+	}
+	if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
+		return err
 	}
 	if fmSketch != nil {
 		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, isIndex, hg.ID, fmSketch); err != nil {

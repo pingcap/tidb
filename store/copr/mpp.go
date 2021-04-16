@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
@@ -59,7 +60,8 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 	if req.KeyRanges == nil {
 		return c.selectAllTiFlashStore(), nil
 	}
-	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), tikv.NewKeyRanges(req.KeyRanges), kv.TiFlash)
+	ranges := toTiKVKeyRanges(req.KeyRanges)
+	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), ranges, kv.TiFlash)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -223,7 +225,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		if sender.GetRPCError() != nil {
 			logutil.BgLogger().Error("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()))
 			// we return timeout to trigger tikv's fallback
-			m.sendError(tikv.ErrTiFlashServerTimeout)
+			m.sendError(tikvstore.ErrTiFlashServerTimeout)
 			return
 		}
 	} else {
@@ -233,7 +235,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	if err != nil {
 		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()))
 		// we return timeout to trigger tikv's fallback
-		m.sendError(tikv.ErrTiFlashServerTimeout)
+		m.sendError(tikvstore.ErrTiFlashServerTimeout)
 		return
 	}
 
@@ -246,7 +248,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
-			m.sendError(tikv.ErrTiFlashServerTimeout)
+			m.sendError(tikvstore.ErrTiFlashServerTimeout)
 			return
 		}
 	})
@@ -309,7 +311,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	if err != nil {
 		logutil.BgLogger().Error("establish mpp connection meet error", zap.String("error", err.Error()))
 		// we return timeout to trigger tikv's fallback
-		m.sendError(tikv.ErrTiFlashServerTimeout)
+		m.sendError(tikvstore.ErrTiFlashServerTimeout)
 		return
 	}
 
@@ -341,7 +343,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 				}
 			}
-			m.sendError(tikv.ErrTiFlashServerTimeout)
+			m.sendError(tikvstore.ErrTiFlashServerTimeout)
 			return
 		}
 	}
@@ -396,7 +398,7 @@ func (m *mppIterator) nextImpl(ctx context.Context) (resp *mppResponse, ok bool,
 			return
 		case <-ticker.C:
 			if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
-				err = tikv.ErrQueryInterrupted
+				err = tikvstore.ErrQueryInterrupted
 				exit = true
 				return
 			}

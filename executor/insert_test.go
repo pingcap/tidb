@@ -238,6 +238,7 @@ func (s *testSuite10) TestPaddingCommonHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
 	tk.MustExec(`insert into t1 set c1 = 0.1`)
 	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
@@ -331,6 +332,16 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t (a year);`)
 	_, err = tk.Exec(`insert into t values(2156);`)
 	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
+}
+
+func (s *testSuite3) TestInsertValueForCastDecimalField(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a decimal(15,2));`)
+	tk.MustExec(`insert into t1 values (1111111111111.01);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`1111111111111.01`))
+	tk.MustQuery(`select cast(a as decimal) from t1;`).Check(testkit.Rows(`9999999999`))
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {

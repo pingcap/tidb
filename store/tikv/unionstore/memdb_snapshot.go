@@ -14,13 +14,11 @@
 package unionstore
 
 import (
-	"context"
-
 	tidbkv "github.com/pingcap/tidb/kv"
 )
 
 // SnapshotGetter returns a Getter for a snapshot of MemBuffer.
-func (db *MemDB) SnapshotGetter() tidbkv.Getter {
+func (db *MemDB) SnapshotGetter() Getter {
 	return &memdbSnapGetter{
 		db: db,
 		cp: db.getSnapshot(),
@@ -28,9 +26,9 @@ func (db *MemDB) SnapshotGetter() tidbkv.Getter {
 }
 
 // SnapshotIter returns a Iterator for a snapshot of MemBuffer.
-func (db *MemDB) SnapshotIter(start, end tidbkv.Key) tidbkv.Iterator {
+func (db *MemDB) SnapshotIter(start, end []byte) Iterator {
 	it := &memdbSnapIter{
-		memdbIterator: &memdbIterator{
+		MemdbIterator: &MemdbIterator{
 			db:    db,
 			start: start,
 			end:   end,
@@ -53,7 +51,7 @@ type memdbSnapGetter struct {
 	cp memdbCheckpoint
 }
 
-func (snap *memdbSnapGetter) Get(_ context.Context, key tidbkv.Key) ([]byte, error) {
+func (snap *memdbSnapGetter) Get(key []byte) ([]byte, error) {
 	x := snap.db.traverse(key, false)
 	if x.isNull() {
 		return nil, tidbkv.ErrNotExist
@@ -70,7 +68,7 @@ func (snap *memdbSnapGetter) Get(_ context.Context, key tidbkv.Key) ([]byte, err
 }
 
 type memdbSnapIter struct {
-	*memdbIterator
+	*MemdbIterator
 	value []byte
 	cp    memdbCheckpoint
 }
@@ -82,7 +80,7 @@ func (i *memdbSnapIter) Value() []byte {
 func (i *memdbSnapIter) Next() error {
 	i.value = nil
 	for i.Valid() {
-		if err := i.memdbIterator.Next(); err != nil {
+		if err := i.MemdbIterator.Next(); err != nil {
 			return err
 		}
 		if i.setValue() {

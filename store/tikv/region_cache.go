@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,8 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/ddl/placement"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -446,16 +445,11 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 	failpoint.Inject("assertStoreLabels", func(val failpoint.Value) {
 		if len(opts) > 0 {
-			value := val.(string)
-			v := ""
+			kv := strings.Split(val.(string), "_")
 			for _, label := range options.labels {
-				if label.Key == placement.DCLabelKey {
-					v = label.Value
-					break
+				if label.Key == kv[0] && label.Value != kv[1] {
+					panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", kv[0], kv[1]))
 				}
-			}
-			if v != value {
-				panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", v, value))
 			}
 		}
 	})
@@ -597,14 +591,19 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 // KeyLocation is the region and range that a key is located.
 type KeyLocation struct {
 	Region   RegionVerID
-	StartKey tidbkv.Key
-	EndKey   tidbkv.Key
+	StartKey []byte
+	EndKey   []byte
 }
 
 // Contains checks if key is in [StartKey, EndKey).
 func (l *KeyLocation) Contains(key []byte) bool {
 	return bytes.Compare(l.StartKey, key) <= 0 &&
 		(bytes.Compare(key, l.EndKey) < 0 || len(l.EndKey) == 0)
+}
+
+// String implements fmt.Stringer interface.
+func (l *KeyLocation) String() string {
+	return fmt.Sprintf("region %s,startKey:%s,endKey:%s", l.Region.String(), kv.StrKey(l.StartKey), kv.StrKey(l.EndKey))
 }
 
 // LocateKey searches for the region and range that the key is located.
@@ -1768,6 +1767,12 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 	}
 }
 
+// A quick and dirty solution to find out whether an err is caused by StoreNotFound.
+// todo: A better solution, maybe some err-code based error handling?
+func isStoreNotFoundError(err error) bool {
+	return strings.Contains(err.Error(), "invalid store ID") && strings.Contains(err.Error(), "not found")
+}
+
 // reResolve try to resolve addr for store that need check. Returns false if the region is in tombstone state or is
 // deleted.
 func (s *Store) reResolve(c *RegionCache) (bool, error) {
@@ -1778,16 +1783,20 @@ func (s *Store) reResolve(c *RegionCache) (bool, error) {
 	} else {
 		metrics.RegionCacheCounterWithGetStoreOK.Inc()
 	}
-	if err != nil {
+	// `err` here can mean either "load Store from PD failed" or "store not found"
+	// If load Store from PD is successful but PD didn't find the store
+	// the err should be handled by next `if` instead of here
+	if err != nil && !isStoreNotFoundError(err) {
 		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
 		return false, err
 	}
-	if store == nil || store.State == metapb.StoreState_Tombstone {
+	if store == nil {
 		// store has be removed in PD, we should invalidate all regions using those store.
 		logutil.BgLogger().Info("invalidate regions in removed store",
 			zap.Uint64("store", s.storeID), zap.String("add", s.addr))
 		atomic.AddUint32(&s.epoch, 1)
+		atomic.StoreUint64(&s.state, uint64(deleted))
 		metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		return false, nil
 	}

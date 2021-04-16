@@ -183,13 +183,6 @@ type DBTest struct {
 	db *sql.DB
 }
 
-func (dbt *DBTest) fail(method, query string, err error) {
-	if len(query) > 300 {
-		query = "[query too large to print]"
-	}
-	dbt.Fatalf("Error on %s %s: %s", method, query, err.Error())
-}
-
 func (dbt *DBTest) mustPrepare(query string) *sql.Stmt {
 	stmt, err := dbt.db.Prepare(query)
 	dbt.Assert(err, IsNil, Commentf("Prepare %s", query))
@@ -1618,7 +1611,7 @@ func (cli *testServerClient) runTestIssue3662(c *C) {
 		config.DBName = "non_existing_schema"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1636,7 +1629,7 @@ func (cli *testServerClient) runTestIssue3680(c *C) {
 		config.User = "non_existing_user"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1683,7 +1676,7 @@ func (cli *testServerClient) runTestIssue3682(c *C) {
 		config.DBName = "non_existing_schema"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1869,7 +1862,7 @@ func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverride
 	dsn := cli.getDSN(overrider)
 	db, err := sql.Open("mysql", dsn)
 	t.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		t.Assert(err, IsNil)
 	}()
@@ -1883,7 +1876,7 @@ func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverride
 func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider, errorNoRollback bool) error {
 	db, err := sql.Open("mysql", cli.getDSN(overrider))
 	t.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		t.Assert(err, IsNil)
 	}()
@@ -1977,6 +1970,54 @@ func (cli *testServerClient) waitUntilServerOnline() {
 	if retry == retryTime {
 		log.Fatal("failed to connect HTTP status in every 10 ms", zap.Int("retryTime", retryTime))
 	}
+}
+
+func (cli *testServerClient) runTestInitConnect(c *C) {
+
+	cli.runTests(c, nil, func(dbt *DBTest) {
+		dbt.mustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());SET @a=1;"`)
+		dbt.mustExec(`CREATE USER init_nonsuper`)
+		dbt.mustExec(`CREATE USER init_super`)
+		dbt.mustExec(`GRANT SELECT, INSERT, DROP ON test.* TO init_nonsuper`)
+		dbt.mustExec(`GRANT SELECT, INSERT, DROP, SUPER ON *.* TO init_super`)
+		dbt.mustExec(`CREATE TABLE ts (a TIMESTAMP)`)
+	})
+
+	// test init_nonsuper
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "init_nonsuper"
+	}, func(dbt *DBTest) {
+		rows := dbt.mustQuery(`SELECT @a`)
+		c.Assert(rows.Next(), IsTrue)
+		var a int
+		err := rows.Scan(&a)
+		c.Assert(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		c.Assert(rows.Close(), IsNil)
+	})
+
+	// test init_super
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "init_super"
+	}, func(dbt *DBTest) {
+		rows := dbt.mustQuery(`SELECT IFNULL(@a,"")`)
+		c.Assert(rows.Next(), IsTrue)
+		var a string
+		err := rows.Scan(&a)
+		c.Assert(err, IsNil)
+		dbt.Check(a, Equals, "") // null
+		c.Assert(rows.Close(), IsNil)
+		// change the init-connect to invalid.
+		dbt.mustExec(`SET GLOBAL init_connect="invalidstring"`)
+	})
+
+	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "init_nonsuper"
+	}))
+	c.Assert(err, IsNil, Commentf("Error connecting")) // doesn't fail because of lazy loading
+	defer db.Close()                                   // may already be closed
+	_, err = db.Exec("SELECT 1")                       // fails because of init sql
+	c.Assert(err, NotNil)
 }
 
 // Client errors are only incremented when using the TiDB Server protocol,

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // For gofail injection.
@@ -553,48 +552,6 @@ func (h kvHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.S
 	return resp
 }
 
-func drainRowsFromExecutor(ctx context.Context, e executor, req *tipb.DAGRequest) (tipb.Chunk, error) {
-	var chunk tipb.Chunk
-	for {
-		row, err := e.Next(ctx)
-		if err != nil {
-			return chunk, errors.Trace(err)
-		}
-		if row == nil {
-			return chunk, nil
-		}
-		for _, offset := range req.OutputOffsets {
-			chunk.RowsData = append(chunk.RowsData, row[offset]...)
-		}
-	}
-}
-
-type coprHandler struct {
-	*Session
-}
-
-func (h coprHandler) handleBatchCopRequest(ctx context.Context, req *coprocessor.BatchRequest) (*mockBatchCopDataClient, error) {
-	client := &mockBatchCopDataClient{}
-	for _, ri := range req.Regions {
-		cop := coprocessor.Request{
-			Tp:      kv.ReqTypeDAG,
-			Data:    req.Data,
-			StartTs: req.StartTs,
-			Ranges:  ri.Ranges,
-		}
-		_, exec, dagReq, err := h.buildDAGExecutor(&cop)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		chunk, err := drainRowsFromExecutor(ctx, exec, dagReq)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		client.chunks = append(client.chunks, chunk)
-	}
-	return client, nil
-}
-
 // Client is a client that sends RPC.
 // This is same with tikv.Client, define again for avoid circle import.
 type Client interface {
@@ -918,7 +875,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdCop:
 		r := req.Cop()
-		if err := session.checkRequestContext(reqCtx); err != nil {
+		if err := session.CheckRequestContext(reqCtx); err != nil {
 			resp.Resp = &coprocessor.Response{RegionError: err}
 			return resp, nil
 		}
@@ -949,7 +906,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			}
 		})
 		r := req.BatchCop()
-		if err := session.checkRequestContext(reqCtx); err != nil {
+		if err := session.CheckRequestContext(reqCtx); err != nil {
 			resp.Resp = &tikvrpc.BatchCopStreamResponse{
 				Tikv_BatchCoprocessorClient: &mockBathCopErrClient{Error: err},
 				BatchResponse: &coprocessor.BatchResponse{
@@ -977,7 +934,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp = batchResp
 	case tikvrpc.CmdCopStream:
 		r := req.Cop()
-		if err := session.checkRequestContext(reqCtx); err != nil {
+		if err := session.CheckRequestContext(reqCtx); err != nil {
 			resp.Resp = &tikvrpc.CopStreamResponse{
 				Tikv_CoprocessorStreamClient: &mockCopStreamErrClient{Error: err},
 				Response: &coprocessor.Response{

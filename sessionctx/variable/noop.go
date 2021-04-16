@@ -23,6 +23,24 @@ import (
 // but changing them has no effect on behavior.
 
 var noopSysVars = []*SysVar{
+	// It is unsafe to pretend that any variation of "read only" is enabled when the server
+	// does not support it. It is possible that these features will be supported in future,
+	// but until then...
+	{Scope: ScopeGlobal | ScopeSession, Name: TxReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TransactionReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
+	}},
+	{Scope: ScopeGlobal, Name: OfflineMode, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkReadOnly(vars, normalizedValue, originalValue, scope, true)
+	}},
+	{Scope: ScopeGlobal, Name: SuperReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
+	}},
+	{Scope: ScopeGlobal, Name: serverReadOnly, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
+	}},
 	{Scope: ScopeGlobal, Name: ConnectTimeout, Value: "10", Type: TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheWlockInvalidate, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "sql_buffer_result", Value: BoolOff, IsHintUpdatable: true},
@@ -75,14 +93,14 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "range_alloc_block_size", Value: "4096", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "have_rtree_keys", Value: "YES"},
 	{Scope: ScopeGlobal, Name: "innodb_old_blocks_pct", Value: "37"},
-	{Scope: ScopeGlobal, Name: "innodb_file_format", Value: "Antelope"},
+	{Scope: ScopeGlobal, Name: "innodb_file_format", Value: "Barracuda", Type: TypeEnum, PossibleValues: []string{"Antelope", "Barracuda"}},
+	{Scope: ScopeGlobal, Name: "innodb_default_row_format", Value: "dynamic", Type: TypeEnum, PossibleValues: []string{"redundant", "compact", "dynamic"}},
 	{Scope: ScopeGlobal, Name: "innodb_compression_failure_threshold_pct", Value: "5"},
 	{Scope: ScopeNone, Name: "performance_schema_events_waits_history_long_size", Value: "10000"},
 	{Scope: ScopeGlobal, Name: "innodb_checksum_algorithm", Value: "innodb"},
 	{Scope: ScopeNone, Name: "innodb_ft_sort_pll_degree", Value: "2"},
 	{Scope: ScopeNone, Name: "thread_stack", Value: "262144"},
 	{Scope: ScopeGlobal, Name: "relay_log_info_repository", Value: "FILE"},
-	{Scope: ScopeGlobal, Name: SuperReadOnly, Value: "0", Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_delayed_threads", Value: "20"},
 	{Scope: ScopeNone, Name: "protocol_version", Value: "10"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "new", Value: BoolOff},
@@ -111,11 +129,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InnodbLogCompressedPages, Value: "1"},
 	{Scope: ScopeNone, Name: "skip_networking", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_monitor_reset", Value: ""},
-	{Scope: ScopeNone, Name: "have_ssl", Value: "DISABLED"},
-	{Scope: ScopeNone, Name: "have_openssl", Value: "DISABLED"},
-	{Scope: ScopeNone, Name: "ssl_ca", Value: ""},
-	{Scope: ScopeNone, Name: "ssl_cert", Value: ""},
-	{Scope: ScopeNone, Name: "ssl_key", Value: ""},
 	{Scope: ScopeNone, Name: "ssl_cipher", Value: ""},
 	{Scope: ScopeNone, Name: "tls_version", Value: "TLSv1,TLSv1.1,TLSv1.2"},
 	{Scope: ScopeGlobal, Name: InnodbPrintAllDeadlocks, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
@@ -128,7 +141,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_file_format_max", Value: "Antelope"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "debug", Value: ""},
 	{Scope: ScopeGlobal, Name: "log_warnings", Value: "1"},
-	{Scope: ScopeGlobal, Name: OfflineMode, Value: "0", Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbStrictMode, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "innodb_rollback_segments", Value: "128"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "join_buffer_size", Value: "262144", IsHintUpdatable: true},
@@ -143,7 +155,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_file_format_check", Value: "1"},
 	{Scope: ScopeNone, Name: "myisam_mmap_size", Value: "18446744073709551615"},
 	{Scope: ScopeNone, Name: "innodb_buffer_pool_instances", Value: "8"},
-	{Scope: ScopeGlobal | ScopeSession, Name: BlockEncryptionMode, Value: "aes-128-ecb"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_length_for_sort_data", Value: "1024", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "character_set_system", Value: "utf8"},
 	{Scope: ScopeGlobal, Name: InnodbOptimizeFullTextOnly, Value: "0"},
@@ -151,7 +162,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheType, Value: BoolOff, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "DEMAND"}},
 	{Scope: ScopeNone, Name: "innodb_rollback_on_timeout", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "query_alloc_block_size", Value: "8192"},
-	{Scope: ScopeGlobal | ScopeSession, Name: InitConnect, Value: ""},
 	{Scope: ScopeNone, Name: "have_compress", Value: "YES"},
 	{Scope: ScopeNone, Name: "thread_concurrency", Value: "10"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "query_prealloc_size", Value: "8192"},
@@ -254,7 +264,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "event_scheduler", Value: BoolOff},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_deferred_constraints", Value: ""},
 	{Scope: ScopeGlobal, Name: "log_syslog_include_pid", Value: ""},
-	{Scope: ScopeSession, Name: "last_insert_id", Value: ""},
 	{Scope: ScopeNone, Name: "innodb_ft_cache_size", Value: "8000000"},
 	{Scope: ScopeGlobal, Name: InnodbDisableSortFileCache, Value: "0"},
 	{Scope: ScopeGlobal, Name: "log_error_verbosity", Value: ""},
@@ -293,7 +302,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: LogBinTrustFunctionCreators, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "innodb_write_io_threads", Value: "4"},
 	{Scope: ScopeGlobal, Name: "mysql_native_password_proxy_users", Value: ""},
-	{Scope: ScopeGlobal, Name: serverReadOnly, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "large_page_size", Value: "0"},
 	{Scope: ScopeNone, Name: "table_open_cache_instances", Value: "1"},
 	{Scope: ScopeGlobal, Name: InnodbStatsPersistent, Value: BoolOn, Type: TypeBool, AutoConvertNegativeBool: true},
@@ -346,7 +354,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "ignore_builtin_innodb", Value: "0"},
 	{Scope: ScopeGlobal, Name: "slow_query_log_file", Value: "/usr/local/mysql/data/localhost-slow.log"},
 	{Scope: ScopeGlobal, Name: "innodb_thread_sleep_delay", Value: "10000"},
-	{Scope: ScopeNone, Name: "license", Value: "Apache License 2.0"},
 	{Scope: ScopeGlobal, Name: "innodb_ft_aux_table", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLWarnings, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: KeepFilesOnCreate, Value: BoolOff, Type: TypeBool},
