@@ -480,7 +480,4 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(
-		"1",
-	))
 }
