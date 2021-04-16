@@ -56,7 +56,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
-	// return &tikvSnapshot{txn.KVTxn.GetSnapshot()}
 	return txn.KVTxn.GetSnapshot()
 }
 
