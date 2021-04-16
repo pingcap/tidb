@@ -104,15 +104,6 @@ func (c *Constraint) Restore() (string, error) {
 	return sb.String(), nil
 }
 
-// String implements fmt.Stringer interface.
-func (c *Constraint) String() string {
-	str, err := c.Restore()
-	if err != nil {
-		panic(err)
-	}
-	return str
-}
-
 // ConstraintCompatibility is the return type of CompatibleWith.
 type ConstraintCompatibility byte
 
