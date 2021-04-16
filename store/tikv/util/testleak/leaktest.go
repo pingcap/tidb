@@ -32,18 +32,12 @@ func interestingGoroutines() (gs []string) {
 	buf := make([]byte, 2<<20)
 	buf = buf[:runtime.Stack(buf, true)]
 	ignoreList := []string{
-		"created by github.com/pingcap/tidb.init",
 		"testing.RunTests",
 		"check.(*resultTracker).start",
 		"check.(*suiteRunner).runFunc",
 		"check.(*suiteRunner).parallelRun",
 		"localstore.(*dbStore).scheduler",
-		"ddl.(*ddl).start",
-		"ddl.(*delRange).startEmulator",
-		"domain.NewDomain",
 		"testing.(*T).Run",
-		"domain.(*Domain).LoadPrivilegeLoop",
-		"domain.(*Domain).UpdateTableStatsLoop",
 		"testing.Main(",
 		"runtime.goexit",
 		"created by runtime.gc",
