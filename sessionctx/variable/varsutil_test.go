@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -257,7 +257,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, string(bVal))
+	c.Assert(val, Equals, config.HideConfig(string(bVal)))
 
 	err = SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("1"))
 	c.Assert(err, IsNil)
@@ -434,19 +434,19 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "follower")
-	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
 	err = SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader")
-	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadLeader)
 	err = SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader-and-follower"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader-and-follower")
-	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadMixed)
+	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadMixed)
 
 	err = SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("ON"))
 	c.Assert(err, IsNil)
@@ -620,7 +620,7 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 	}
 
 	for _, t := range tests {
-		_, err := ValidateSetSystemVar(v, t.key, t.value, ScopeGlobal)
+		_, err := GetSysVar(t.key).Validate(v, t.value, ScopeGlobal)
 		if t.error {
 			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
 		} else {
@@ -674,7 +674,7 @@ func (s *testVarsutilSuite) TestValidateStmtSummary(c *C) {
 	}
 
 	for _, t := range tests {
-		_, err := ValidateSetSystemVar(v, t.key, t.value, t.scope)
+		_, err := GetSysVar(t.key).Validate(v, t.value, t.scope)
 		if t.error {
 			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
 		} else {

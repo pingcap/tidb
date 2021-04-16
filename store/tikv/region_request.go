@@ -32,13 +32,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/execdetails"
 )
 
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
@@ -97,7 +95,7 @@ func (r *RegionRequestRuntimeStats) String() string {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k.String(), v.Count, execdetails.FormatDuration(time.Duration(v.Consume))))
+		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k.String(), v.Count, util.FormatDuration(time.Duration(v.Consume))))
 	}
 	return buf.String()
 }
@@ -184,7 +182,7 @@ func (s *RegionRequestSender) SetRPCError(err error) {
 
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, kv.TiKV)
+	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, tikvrpc.TiKV)
 	return resp, err
 }
 
@@ -192,22 +190,22 @@ func (s *RegionRequestSender) getRPCContext(
 	bo *Backoffer,
 	req *tikvrpc.Request,
 	regionID RegionVerID,
-	sType kv.StoreType,
+	et tikvrpc.EndpointType,
 	opts ...StoreSelectorOption,
 ) (*RPCContext, error) {
-	switch sType {
-	case kv.TiKV:
+	switch et {
+	case tikvrpc.TiKV:
 		var seed uint32
 		if req.ReplicaReadSeed != nil {
 			seed = *req.ReplicaReadSeed
 		}
 		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed, opts...)
-	case kv.TiFlash:
-		return s.regionCache.GetTiFlashRPCContext(bo, regionID)
-	case kv.TiDB:
+	case tikvrpc.TiFlash:
+		return s.regionCache.GetTiFlashRPCContext(bo, regionID, true)
+	case tikvrpc.TiDB:
 		return &RPCContext{Addr: s.storeAddr}, nil
 	default:
-		return nil, errors.Errorf("unsupported storage type: %v", sType)
+		return nil, errors.Errorf("unsupported storage type: %v", et)
 	}
 }
 
@@ -217,7 +215,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	req *tikvrpc.Request,
 	regionID RegionVerID,
 	timeout time.Duration,
-	sType kv.StoreType,
+	et tikvrpc.EndpointType,
 	opts ...StoreSelectorOption,
 ) (
 	resp *tikvrpc.Response,
@@ -253,12 +251,12 @@ func (s *RegionRequestSender) SendReqCtx(
 				bo.vars.Hook("callBackofferHook", bo.vars)
 			}
 		case "requestTiDBStoreError":
-			if sType == kv.TiDB {
-				failpoint.Return(nil, nil, ErrTiKVServerTimeout)
+			if et == tikvrpc.TiDB {
+				failpoint.Return(nil, nil, kv.ErrTiKVServerTimeout)
 			}
 		case "requestTiFlashError":
-			if sType == kv.TiFlash {
-				failpoint.Return(nil, nil, ErrTiFlashServerTimeout)
+			if et == tikvrpc.TiFlash {
+				failpoint.Return(nil, nil, kv.ErrTiFlashServerTimeout)
 			}
 		}
 	})
@@ -269,7 +267,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
 
-		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType, opts...)
+		rpcCtx, err = s.getRPCContext(bo, req, regionID, et, opts...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -303,7 +301,7 @@ func (s *RegionRequestSender) SendReqCtx(
 
 		// recheck whether the session/query is killed during the Next()
 		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
-			return nil, nil, ErrQueryInterrupted
+			return nil, nil, kv.ErrQueryInterrupted
 		}
 		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
 			if val.(bool) {
@@ -386,7 +384,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		return nil, false, errors.Trace(e)
 	}
 	// judge the store limit switch.
-	if limit := storeutil.StoreLimit.Load(); limit > 0 {
+	if limit := kv.StoreLimit.Load(); limit > 0 {
 		if err := s.getStoreToken(rpcCtx.Store, limit); err != nil {
 			return nil, false, err
 		}
@@ -496,7 +494,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		if err != nil {
 			result = "fail"
 		}
-		metrics.TiKVForwardRequestCounter.WithLabelValues(fromStore, toStore, result).Inc()
+		metrics.TiKVForwardRequestCounter.WithLabelValues(fromStore, toStore, req.Type.String(), result).Inc()
 	}
 
 	if err != nil {
@@ -531,7 +529,7 @@ func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 		return nil
 	}
 	metrics.TiKVStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
-	return ErrTokenLimit.GenWithStackByArgs(st.storeID)
+	return kv.ErrTokenLimit.GenWithStackByArgs(st.storeID)
 
 }
 
@@ -557,7 +555,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	if errors.Cause(err) == context.Canceled {
 		return errors.Trace(err)
 	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
-		return ErrTiDBShuttingDown
+		return kv.ErrTiDBShuttingDown
 	}
 	if status.Code(errors.Cause(err)) == codes.Canceled {
 		select {
@@ -579,7 +577,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
-	if ctx.Store != nil && ctx.Store.storeType == TiFlash {
+	if ctx.Store != nil && ctx.Store.storeType == tikvrpc.TiFlash {
 		err = bo.Backoff(BoTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctx: %v, try next peer later", err, ctx))
 	} else {
 		err = bo.Backoff(BoTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
@@ -655,7 +653,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			// the Raft group is in an election, but it's possible that the peer is
 			// isolated and removed from the Raft group. So it's necessary to reload
 			// the region from PD.
-			s.regionCache.InvalidateCachedRegion(ctx.Region)
+			s.regionCache.InvalidateCachedRegionWithReason(ctx.Region, NoLeader)
 			if err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
 				return false, errors.Trace(err)
 			}
@@ -673,6 +671,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
 		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
+		s.regionCache.InvalidateCachedRegion(ctx.Region)
 		return true, nil
 	}
 
@@ -690,7 +689,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		logutil.BgLogger().Warn("tikv reports `ServerIsBusy` retry later",
 			zap.String("reason", regionErr.GetServerIsBusy().GetReason()),
 			zap.Stringer("ctx", ctx))
-		if ctx != nil && ctx.Store != nil && ctx.Store.storeType == TiFlash {
+		if ctx != nil && ctx.Store != nil && ctx.Store.storeType == tikvrpc.TiFlash {
 			err = bo.Backoff(boTiFlashServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
 		} else {
 			err = bo.Backoff(boTiKVServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))

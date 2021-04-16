@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
@@ -569,8 +571,14 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// If `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND` is the first statement in TxnCtx, we should
 	// always create a new Txn instead of reusing it.
-	if s.ReadOnly && s.Bound != nil {
-		return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
+	if s.ReadOnly {
+		enableNoopFuncs := e.ctx.GetSessionVars().EnableNoopFuncs
+		if !enableNoopFuncs && s.Bound == nil {
+			return expression.ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+		}
+		if s.Bound != nil {
+			return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
+		}
 	}
 
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
@@ -601,10 +609,10 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		return err
 	}
 	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		txn.SetOption(kv.Pessimistic, true)
+		txn.SetOption(tikvstore.Pessimistic, true)
 	}
 	if s.CausalConsistencyOnly {
-		txn.SetOption(kv.GuaranteeLinearizability, false)
+		txn.SetOption(tikvstore.GuaranteeLinearizability, false)
 	}
 	return nil
 }
@@ -1131,6 +1139,15 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			failedUsers = append(failedUsers, user.String())
 			break
 		}
+
+		// delete relationship from mysql.global_grants
+		sql.Reset()
+		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, "global_grants", user.Hostname, user.Username)
+		if _, err = sqlExecutor.ExecuteInternal(context.TODO(), sql.String()); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			break
+		}
+
 		//TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 

@@ -29,15 +29,16 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/prometheus/client_golang/prometheus"
 	zap "go.uber.org/zap"
 )
@@ -99,6 +100,9 @@ type twoPhaseCommitter struct {
 	useOnePC          uint32
 	onePCCommitTS     uint64
 
+	hasTriedAsyncCommit bool
+	hasTriedOnePC       bool
+
 	// doingAmend means the amend prewrite is ongoing.
 	doingAmend bool
 
@@ -106,13 +110,13 @@ type twoPhaseCommitter struct {
 }
 
 type memBufferMutations struct {
-	storage kv.MemBuffer
-	handles []kv.MemKeyHandle
+	storage *unionstore.MemDB
+	handles []unionstore.MemKeyHandle
 }
 
-func newMemBufferMutations(sizeHint int, storage kv.MemBuffer) *memBufferMutations {
+func newMemBufferMutations(sizeHint int, storage *unionstore.MemDB) *memBufferMutations {
 	return &memBufferMutations{
-		handles: make([]kv.MemKeyHandle, 0, sizeHint),
+		handles: make([]unionstore.MemKeyHandle, 0, sizeHint),
 		storage: storage,
 	}
 }
@@ -153,7 +157,7 @@ func (m *memBufferMutations) Slice(from, to int) CommitterMutations {
 	}
 }
 
-func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, handle kv.MemKeyHandle) {
+func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, handle unionstore.MemKeyHandle) {
 	aux := uint16(op) << 1
 	if isPessimisticLock {
 		aux |= 1
@@ -299,17 +303,21 @@ func newTwoPhaseCommitter(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, err
 			ch: make(chan struct{}),
 		},
 		isPessimistic: txn.IsPessimistic(),
-		binlog: &binlogExecutor{
-			txn: txn,
-		},
+		binlog:        txn.binlog,
 	}, nil
 }
 
-func (c *twoPhaseCommitter) extractKeyExistsErr(err *ErrKeyExist) error {
+func (c *twoPhaseCommitter) extractKeyExistsErr(err *kv.ErrKeyExist) error {
 	if !c.txn.us.HasPresumeKeyNotExists(err.GetKey()) {
 		return errors.Errorf("session %d, existErr for key:%s should not be nil", c.sessionID, err.GetKey())
 	}
 	return errors.Trace(err)
+}
+
+// KVFilter is a filter that filters out unnecessary KV pairs.
+type KVFilter interface {
+	// IsUnnecessaryKeyValue returns whether this KV pair should be committed.
+	IsUnnecessaryKeyValue(key, value []byte, flags kv.KeyFlags) bool
 }
 
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
@@ -320,6 +328,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	sizeHint := txn.us.GetMemBuffer().Len()
 	c.mutations = newMemBufferMutations(sizeHint, memBuf)
 	c.isPessimistic = txn.IsPessimistic()
+	filter := txn.getKVFilter()
 
 	var err error
 	for it := memBuf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
@@ -338,10 +347,14 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		} else {
 			value = it.Value()
 			if len(value) > 0 {
-				if tablecodec.IsUntouchedIndexKValue(key, value) {
+				isUnnecessaryKV := filter != nil && filter.IsUnnecessaryKeyValue(key, value, flags)
+				if isUnnecessaryKV {
 					if !flags.HasLocked() {
 						continue
 					}
+					// If the key was locked before, we should prewrite the lock even if
+					// the KV needn't be committed according to the filter. Otherwise, we
+					// were forgetting removing pessimistic locks added before.
 					op = pb.Op_Lock
 					lockCnt++
 				} else {
@@ -384,8 +397,8 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 	c.txnSize = size
 
-	if size > int(kv.TxnTotalSizeLimit) {
-		return kv.ErrTxnTooLarge.GenWithStackByArgs(size)
+	if size > int(tidbkv.TxnTotalSizeLimit) {
+		return tidbkv.ErrTxnTooLarge.GenWithStackByArgs(size)
 	}
 	const logEntryCount = 10000
 	const logSize = 4 * 1024 * 1024 // 4MB
@@ -412,7 +425,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		return errors.Trace(err)
 	}
 
-	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: c.mutations.Len()}
+	commitDetail := &util.CommitDetails{WriteSize: size, WriteKeys: c.mutations.Len()}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
 	c.hasNoNeedCommitKeys = checkCnt > 0
@@ -784,7 +797,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		resp, err := store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -800,7 +813,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 			continue
 		}
 		if resp.Resp == nil {
-			return 0, errors.Trace(ErrBodyMissing)
+			return 0, errors.Trace(kv.ErrBodyMissing)
 		}
 		cmdResp := resp.Resp.(*pb.TxnHeartBeatResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
@@ -951,6 +964,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			c.mu.RUnlock()
 			if !committed && !undetermined {
 				c.cleanup(ctx)
+				metrics.TwoPCTxnCounterError.Inc()
+			} else {
+				metrics.TwoPCTxnCounterOk.Inc()
 			}
 			c.txn.commitTS = c.commitTS
 			if binlogSkipped {
@@ -973,11 +989,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	if c.checkAsyncCommit() {
 		commitTSMayBeCalculated = true
 		c.setAsyncCommit(true)
+		c.hasTriedAsyncCommit = true
 	}
 	// Check if 1PC is enabled.
 	if c.checkOnePC() {
 		commitTSMayBeCalculated = true
 		c.setOnePC(true)
+		c.hasTriedOnePC = true
 	}
 	// If we want to use async commit or 1PC and also want linearizability across
 	// all nodes, we have to make sure the commit TS of this transaction is greater
@@ -1139,7 +1157,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 	atomic.StoreUint64(&c.commitTS, commitTS)
 
-	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) {
+	if c.store.oracle.IsExpired(c.startTS, MaxTxnTimeUse, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) {
 		err = errors.Errorf("session %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.sessionID, c.startTS, c.commitTS)
 		return err
@@ -1188,7 +1206,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	return c.commitTxn(ctx, commitDetail)
 }
 
-func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdetails.CommitDetails) error {
+func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *util.CommitDetails) error {
 	c.txn.GetMemBuffer().DiscardValues()
 	start := time.Now()
 
@@ -1286,7 +1304,7 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 			err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, &keysNeedToLock)
 			if err != nil {
 				// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
-				if terror.ErrorEqual(kv.ErrWriteConflict, err) {
+				if _, ok := errors.Cause(err).(*kv.ErrWriteConflict); ok {
 					newForUpdateTSVer, err := c.store.CurrentTimestamp(oracle.GlobalTxnScope)
 					if err != nil {
 						return errors.Trace(err)
@@ -1358,7 +1376,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 	return false, nil
 }
 
-func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *execdetails.CommitDetails) (uint64, error) {
+func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *util.CommitDetails) (uint64, error) {
 	start := time.Now()
 	logutil.Event(ctx, "start get commit ts")
 	commitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
@@ -1446,7 +1464,7 @@ func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 }
 
 func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
-	return c.txn.us.GetOption(kv.BinlogInfo) != nil
+	return c.binlog != nil
 }
 
 // TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's
@@ -1639,7 +1657,7 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 		}
 	}
 	close(exitCh)
-	metrics.TiKVTokenWaitDuration.Observe(batchExe.tokenWaitDuration.Seconds())
+	metrics.TiKVTokenWaitDuration.Observe(float64(batchExe.tokenWaitDuration.Nanoseconds()))
 	return err
 }
 
@@ -1669,12 +1687,12 @@ func PriorityToPB(pri int) pb.CommandPri {
 	}
 }
 
-func (c *twoPhaseCommitter) setDetail(d *execdetails.CommitDetails) {
+func (c *twoPhaseCommitter) setDetail(d *util.CommitDetails) {
 	atomic.StorePointer(&c.detail, unsafe.Pointer(d))
 }
 
-func (c *twoPhaseCommitter) getDetail() *execdetails.CommitDetails {
-	return (*execdetails.CommitDetails)(atomic.LoadPointer(&c.detail))
+func (c *twoPhaseCommitter) getDetail() *util.CommitDetails {
+	return (*util.CommitDetails)(atomic.LoadPointer(&c.detail))
 }
 
 func (c *twoPhaseCommitter) setUndeterminedErr(err error) {

@@ -50,8 +50,10 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1783,12 +1785,12 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 	c.Assert(err, NotNil)
 	// Check error type and error message
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(1, 1): [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
 	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2): [kv:1062]Duplicate entry '2' for key 'val'")
+	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'val'")
 
 	// Test for https://github.com/pingcap/tidb/issues/463
 	tk.MustExec("drop table test;")
@@ -2619,13 +2621,13 @@ func (s *testSessionSuite3) TestSetTransactionIsolationOneShot(c *C) {
 
 	// Check isolation level is set to read committed.
 	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
-		c.Assert(req.IsolationLevel, Equals, kv.SI)
+		c.Assert(req.IsolationLevel, Equals, tikvstore.SI)
 	})
 	tk.Se.Execute(ctx, "select * from t where k = 1")
 
 	// Check it just take effect for one time.
 	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
-		c.Assert(req.IsolationLevel, Equals, kv.SI)
+		c.Assert(req.IsolationLevel, Equals, tikvstore.SI)
 	})
 	tk.Se.Execute(ctx, "select * from t where k = 1")
 
@@ -2726,9 +2728,9 @@ func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	tk1.MustExec("begin")
 	tk2.MustExec("update no_retry set id = id + 1")
 	tk1.MustExec("update no_retry set id = id + 1")
-	c.Assert(tikv.MockRetryableErrorResp.Enable(`return(true)`), IsNil)
+	c.Assert(tikvutil.MockRetryableErrorResp.Enable(`return(true)`), IsNil)
 	_, err := tk1.Se.Execute(context.Background(), "commit")
-	tikv.MockRetryableErrorResp.Disable()
+	tikvutil.MockRetryableErrorResp.Disable()
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))
@@ -3057,11 +3059,11 @@ func (s *testSessionSuite2) TestReplicaRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadLeader)
 	tk.MustExec("set @@tidb_replica_read = 'follower';")
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
 	tk.MustExec("set @@tidb_replica_read = 'leader';")
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadLeader)
 }
 
 func (s *testSessionSuite3) TestIsolationRead(c *C) {
@@ -3146,12 +3148,12 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetEnableCascadesPlanner(), IsTrue)
 
 	// Test READ_CONSISTENT_REPLICA hint
-	tk.Se.GetSessionVars().SetReplicaRead(kv.ReplicaReadLeader)
+	tk.Se.GetSessionVars().SetReplicaRead(tikvstore.ReplicaReadLeader)
 	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA() */ 1;")
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
 	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA(), READ_CONSISTENT_REPLICA() */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
 }
 
 func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
@@ -4167,6 +4169,15 @@ func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	_, err = tk.Exec("SET GLOBAL tidb_gc_run_interval = '11mins'")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_gc_run_interval'") // wrong format
 
+}
+
+func (s *testSessionSerialSuite) TestGlobalVarCollationServer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@global.collation_server=utf8mb4_general_ci")
+	tk.MustQuery("show global variables like 'collation_server'").Check(testkit.Rows("collation_server utf8mb4_general_ci"))
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustQuery("show global variables like 'collation_server'").Check(testkit.Rows("collation_server utf8mb4_general_ci"))
+	tk.MustQuery("show variables like 'collation_server'").Check(testkit.Rows("collation_server utf8mb4_general_ci"))
 }
 
 func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {

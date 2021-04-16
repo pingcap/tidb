@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -139,28 +138,9 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 	if e.corColInAccess {
 		ts := e.plans[0].(*plannercore.PhysicalTableScan)
-		access := ts.AccessCondition
-		if e.table.Meta().IsCommonHandle {
-			pkIdx := tables.FindPrimaryIndex(ts.Table)
-			idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
-			for _, cond := range access {
-				newCond, err1 := expression.SubstituteCorCol2Constant(cond)
-				if err1 != nil {
-					return err1
-				}
-				access = append(access, newCond)
-			}
-			res, err := ranger.DetachCondAndBuildRangeForIndex(e.ctx, access, idxCols, idxColLens)
-			if err != nil {
-				return err
-			}
-			e.ranges = res.Ranges
-		} else {
-			pkTP := ts.Table.GetPkColInfo().FieldType
-			e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
-			if err != nil {
-				return err
-			}
+		e.ranges, err = ts.ResolveCorrelatedColumns()
+		if err != nil {
+			return err
 		}
 	}
 
@@ -173,7 +153,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
-	firstPartRanges, secondPartRanges := distsql.SplitRangesBySign(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
+	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -227,7 +207,7 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
-// buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
+// buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResult returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
@@ -262,7 +242,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
 	return result, nil
 }
 
