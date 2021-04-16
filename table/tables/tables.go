@@ -98,10 +98,6 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
-	return tableFromMeta(allocs, tblInfo, false)
-}
-
-func tableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, temporary bool) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -143,12 +139,6 @@ func tableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, temporary
 
 	var t TableCommon
 	initTableCommon(&t, tblInfo, tblInfo.ID, columns, allocs)
-	if temporary {
-		var ret temporaryTable
-		ret.TableCommon = t
-		return &ret, nil
-	}
-
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
 			return nil, err
@@ -319,16 +309,6 @@ func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
-func addTemporaryTableID(txn kv.Transaction, id int64) {
-	if option := txn.GetOption(tikvstore.TemporaryTable); option != nil {
-		option.(map[int64]struct{})[id] = struct{}{}
-	} else {
-		m := make(map[int64]struct{})
-		m[id] = struct{}{}
-		txn.SetOption(tikvstore.TemporaryTable, m)
-	}
-}
-
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
@@ -337,11 +317,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return err
 	}
-	return t.updateRecordWithTxn(ctx, txn, sctx, h, oldData, newData, touched)
-}
 
-func (t *TableCommon) updateRecordWithTxn(ctx context.Context, txn kv.Transaction, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
-	var err error
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
@@ -614,10 +590,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	if err != nil {
 		return nil, err
 	}
-	return t.addRecordWithTxn(sctx, txn, r, opts...)
-}
 
-func (t *TableCommon) addRecordWithTxn(sctx sessionctx.Context, txn kv.Transaction, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	var opt table.AddRecordOpt
 	for _, fn := range opts {
 		fn.ApplyOn(&opt)
@@ -1015,15 +988,7 @@ func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	if meta := t.Meta(); meta.IsTemporary {
-		addTemporaryTableID(txn, meta.ID)
-	}
-
-	err = t.removeRowData(ctx, h)
+	err := t.removeRowData(ctx, h)
 	if err != nil {
 		return err
 	}

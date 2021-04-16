@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/klauspost/cpuid"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -410,6 +409,12 @@ type SessionVars struct {
 	txnIsolationLevelOneShot struct {
 		state txnIsolationLevelOneShotState
 		value string
+	}
+
+	// mppTaskIDAllocator is used to allocate mpp task id for a session.
+	mppTaskIDAllocator struct {
+		lastTS uint64
+		taskID int64
 	}
 
 	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
@@ -828,6 +833,18 @@ type SessionVars struct {
 type TemporaryTable struct {
 	TableIDs map[int64]struct{}
 	MemDB interface{}
+}
+
+// AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
+// startTs is different.
+func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
+	if s.mppTaskIDAllocator.lastTS == startTS {
+		s.mppTaskIDAllocator.taskID++
+		return s.mppTaskIDAllocator.taskID
+	}
+	s.mppTaskIDAllocator.lastTS = startTS
+	s.mppTaskIDAllocator.taskID = 1
+	return 1
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -1500,93 +1517,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.systems[CharacterSetServer] = cht
 		}
 		val = cht
-	case TiDBSlowLogThreshold:
-		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
-	case TiDBRecordPlanInSlowLog:
-		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
-	case TiDBEnableSlowLog:
-		config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
-	case TiDBQueryLogMaxLen:
-		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
-	case TiDBCheckMb4ValueInUTF8:
-		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
-	case TiDBFoundInPlanCache:
-		s.FoundInPlanCache = TiDBOptOn(val)
-	case TiDBFoundInBinding:
-		s.FoundInBinding = TiDBOptOn(val)
-	case TiDBEnableCollectExecutionInfo:
-		oldConfig := config.GetGlobalConfig()
-		newValue := TiDBOptOn(val)
-		if oldConfig.EnableCollectExecutionInfo != newValue {
-			newConfig := *oldConfig
-			newConfig.EnableCollectExecutionInfo = newValue
-			config.StoreGlobalConfig(&newConfig)
-		}
-	case SQLSelectLimit:
-		result, err := strconv.ParseUint(val, 10, 64)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		s.SelectLimit = result
-	case TiDBAllowAutoRandExplicitInsert:
-		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
-	case TiDBPartitionPruneMode:
-		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
-	case TiDBEnableParallelApply:
-		s.EnableParallelApply = TiDBOptOn(val)
-	case TiDBSlowLogMasking:
-		// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
-		return s.SetSystemVar(TiDBRedactLog, val)
-	case TiDBRedactLog:
-		s.EnableRedactLog = TiDBOptOn(val)
-		errors.RedactLogEnabled.Store(s.EnableRedactLog)
-	case TiDBShardAllocateStep:
-		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
-	case TiDBEnableChangeColumnType:
-		s.EnableChangeColumnType = TiDBOptOn(val)
-	case TiDBEnableChangeMultiSchema:
-		s.EnableChangeMultiSchema = TiDBOptOn(val)
-	case TiDBEnablePointGetCache:
-		s.EnablePointGetCache = TiDBOptOn(val)
-	case TiDBEnableAlterPlacement:
-		s.EnableAlterPlacement = TiDBOptOn(val)
-	case TiDBEnableAmendPessimisticTxn:
-		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
-	case TiDBTxnScope:
-		switch val {
-		case oracle.GlobalTxnScope:
-			s.TxnScope = oracle.NewGlobalTxnScope()
-		case oracle.LocalTxnScope:
-			s.TxnScope = oracle.GetTxnScope()
-		default:
-			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
-		}
-	case TiDBMemoryUsageAlarmRatio:
-		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
-	case TiDBEnableRateLimitAction:
-		s.EnabledRateLimitAction = TiDBOptOn(val)
-	case TiDBEnableAsyncCommit:
-		s.EnableAsyncCommit = TiDBOptOn(val)
-	case TiDBEnable1PC:
-		s.Enable1PC = TiDBOptOn(val)
-	case TiDBGuaranteeLinearizability:
-		s.GuaranteeLinearizability = TiDBOptOn(val)
-	case TiDBAnalyzeVersion:
-		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
-	case TiDBEnableIndexMergeJoin:
-		s.EnableIndexMergeJoin = TiDBOptOn(val)
-	case TiDBTrackAggregateMemoryUsage:
-		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
-	case TiDBEnableExchangePartition:
-		s.TiDBEnableExchangePartition = TiDBOptOn(val)
-	case TiDBAllowFallbackToTiKV:
-		s.AllowFallbackToTiKV = make(map[kv.StoreType]struct{})
-		for _, engine := range strings.Split(val, ",") {
-			switch engine {
-			case kv.TiFlash.Name():
-				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
-			}
-		}
 	default:
 		sv := GetSysVar(name)
 		if err := sv.SetSessionFromHook(s, val); err != nil {

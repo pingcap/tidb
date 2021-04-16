@@ -232,7 +232,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
 		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
-		SetTemporaryTableFlag(e.table.Type() == table.TemporaryTable).
 		Build()
 	if err != nil {
 		return nil, err
@@ -243,7 +242,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
 	return result, nil
 }
 

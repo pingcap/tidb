@@ -16,9 +16,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"path/filepath"
-	"os"
-	"math/rand"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -31,10 +28,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -209,120 +202,82 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 	return err
 }
 
-func temporaryTableDirPath(connID uint64) string {
-	p := filepath.Join(os.TempDir(), "tidb_temporary_table", fmt.Sprintf("%d_%d_%d", connID, rand.Intn(256), os.Getpid()))
-	return p
-}
+func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
+	// tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, "", "")
+	// if err != nil {
+	// 	return err
+	// }
 
-func temporaryTableCreateStore(sessVars *variable.SessionVars) (kv.Storage, string, error) {
-	for retry := 0; retry < 5; retry++ {
-		dir := temporaryTableDirPath(sessVars.ConnectionID)
-		s, err := store.New("unistore://" + dir)
-		if err == nil {
-			return s, dir, nil
-		}
-	}
-	return nil, "", errors.New("create temporary table failed")
-}
-
-func (e *DDLExec) executeCreateTemporaryTable(s *ast.CreateTableStmt) error {
-	tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, "", "")
-	if err != nil {
-		return err
-	}
-	if tbInfo.Partition != nil {
-		return errors.New("temporary partition table is not supported yet")
-	}
-
+	dom := domain.GetDomain(e.ctx)
 	sessVars := e.ctx.GetSessionVars()
 	temp := sessVars.TemporaryTable
 	if temp == nil {
-		s, dir, err := temporaryTableCreateStore(sessVars)
-		if err != nil {
-			return err
+		us := unionstore.NewUnionStore(nil)
+		memDB := us.GetMemBuffer()
+		sessVars.TemporaryTable = &variable.TemporaryTable{
+			TableIDs: make(map[int64]struct{}),
+			MemDB: memDB,
 		}
-
-		err = kv.RunInNewTxn(context.Background(), s, true, func(ctx context.Context, txn kv.Transaction) error {
-			m := meta.NewMeta(txn)
-			dbInfo := model.DBInfo{
-				ID: 0,
-				Name: model.NewCIStr("temporary"),
-				State: model.StatePublic,
-			}
-			if err := m.CreateDatabase(&dbInfo); err != nil {
-				return errors.Trace(err)
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-
-		temp = &variable.TemporaryTable{
-			Tables:make(map[string]table.Table),
-			Storage: s,
-			DirPath: dir,
-		}
-		sessVars.TemporaryTable = temp
 	}
 
-	tablesMap := temp.Tables.(map[string]table.Table)
-	if _, ok := tablesMap[tbInfo.Name.L]; ok {
-		return errors.New("duplicated table")
-	}
-
-	err = kv.RunInNewTxn(context.Background(), temp.Storage, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), dom.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		// m := meta.NewMeta(txn)
+		// dbInfo := model.DBInfo{
+		// 	ID: 0,
+		// 	Name: model.NewCIStr("temporary"),
+		// 	State: model.StatePublic,
+		// }
+		// if err := m.CreateDatabase(&dbInfo); err != nil {
+		// 	return errors.Trace(err)
+		// }
+		// return nil
 		m := meta.NewMeta(txn)
 		tblID, err := m.GenGlobalID()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbInfo.ID = tblID
-		tbInfo.State = model.StatePublic
-		if err := m.CreateTableOrView(0, tbInfo); err != nil {
-			return errors.Trace(err)
-		}
+		// tbInfo.ID = tblID
+		// tbInfo.State = model.StatePublic
+		// if err := m.CreateTableOrView(0, tbInfo); err != nil {
+		// 	return errors.Trace(err)
+		// }
+
+		sessVars.TemporaryTable.TableIDs[tblID] = struct{}{}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	
-	allocs := autoid.NewAllocatorsFromTblInfo(temp.Storage, 0, tbInfo)
-	tbl, err := tables.TemporaryTableFromMeta(allocs, tbInfo)
-	if err != nil {
-		return err
-	}
-	tablesMap[tbInfo.Name.L] = tbl
+
+	fmt.Println("in create table execute ... set session temporary table")
+
+	// temp = &variable.TemporaryTable{
+	// 	Tables:make(map[int64]struct{}),
+	// 	MemDB: unionstore.NewMemDB(),
+	// }
+	// sessVars.TemporaryTable = temp
+
+	// tablesMap := temp.Tables.(map[string]table.Table)
+	// if _, ok := tablesMap[tbInfo.Name.L]; ok {
+	// 	return errors.New("duplicated table")
+	// }
+
+
 	return nil
 }
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
-	if s.IsTemporary {
-		return e.executeCreateTemporaryTable(s)
+	if s.TemporaryKeyword != ast.TemporaryNone && s.Partition != nil {
+		return errors.New("temporary partition table is not supported")
 	}
-	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
-	if err == nil && s.TemporaryKeyword == ast.TemporarySession {
-		sessVars := e.ctx.GetSessionVars()
-		if sessVars.TemporaryTable == nil {
-			us := unionstore.NewUnionStore(nil)
-			memDB := us.GetMemBuffer()
-			sessVars.TemporaryTable = &variable.TemporaryTable{
-				TableIDs: make(map[int64]struct{}),
-				MemDB: memDB,
-			}
-		}
 
-		// Get the new created table.
-		is := domain.GetDomain(e.ctx).InfoSchema()
-		tbl, err := is.TableByName(s.Table.Schema, s.Table.Name)
-		if err != nil {
-			return err
-		}
-		sessVars.TemporaryTable.TableIDs[tbl.Meta().ID] = struct{}{}
-		fmt.Println("in create table execute ... set session temporary table")
+	switch s.TemporaryKeyword {
+	case ast.TemporarySession:
+		return e.createSessionTemporaryTable(s)
 	}
-	return err
+
+	// Create normal table or global temporary table.
+	return domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {

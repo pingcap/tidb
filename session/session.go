@@ -50,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/table"
+	// "github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
@@ -450,14 +450,6 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.sessionVars.SetInTxn(false)
 	}()
 
-	if tmpTable := s.sessionVars.TemporaryTable; tmpTable != nil {
-		if tmpTable.Txn != nil {
-			fmt.Println("temporary table not null ... size of the txn is ==", tmpTable.Txn.Size(), tmpTable.Txn.Len())
-			tmpTable.Txn.Commit(ctx)
-			tmpTable.Txn = nil
-		}
-	}
-
 	if s.txn.IsReadOnly() {
 		return nil
 	}
@@ -551,8 +543,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		}
 	}
 
-	ctx = sessionctx.SetCommitCtx(ctx, s)
-	err = s.txn.Commit(ctx)
+	err = s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 
 	// The problem is, the commit operation on tikv and temporary table must be success or fail at the same time.
 	if err == nil && memDB != nil {
@@ -637,8 +628,8 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	var commitDetail *execdetails.CommitDetails
-	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	var commitDetail *tikvutil.CommitDetails
+	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
@@ -2675,14 +2666,14 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 	is := domain.GetDomain(s).InfoSchema()
 	// Override the infoschema if the session has temporary table.
-	if s.sessionVars.TemporaryTable != nil {
-		fmt.Println("temporary table is not nil!!")
-		is = &infoschema.TemporarySchema{
-			InfoSchema: is,
-			Temp: s.sessionVars.TemporaryTable.Tables.(map[string]table.Table),
-		}
-	}
-	
+	// if s.sessionVars.TemporaryTable != nil {
+	// 	fmt.Println("temporary table is not nil!!")
+	// 	is = &infoschema.TemporarySchema{
+	// 		InfoSchema: is,
+	// 		Temp: s.sessionVars.TemporaryTable.Tables.(map[string]table.Table),
+	// 	}
+	// }
+
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
@@ -2716,8 +2707,8 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
 func (s *session) RefreshTxnCtx(ctx context.Context) error {
-	var commitDetail *execdetails.CommitDetails
-	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	var commitDetail *tikvutil.CommitDetails
+	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommit(ctx)
 	if commitDetail != nil {
 		s.GetSessionVars().StmtCtx.MergeExecDetails(nil, commitDetail)

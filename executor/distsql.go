@@ -278,7 +278,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
 		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
-		SetTemporaryTableFlag(e.table.Type() == table.TemporaryTable).
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -289,7 +288,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return err
 	}
-	e.result.Fetch(ctx)
 	return nil
 }
 
@@ -469,7 +467,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(tracker).
 		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
-		SetTemporaryTableFlag(e.table.Type() == table.TemporaryTable).
 		Build()
 	if err != nil {
 		return err
@@ -481,7 +478,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	if err != nil {
 		return err
 	}
-	result.Fetch(ctx)
 	worker := &indexWorker{
 		idxLookup:       e,
 		workCh:          workCh,
