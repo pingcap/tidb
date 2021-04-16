@@ -1611,7 +1611,7 @@ func (cli *testServerClient) runTestIssue3662(c *C) {
 		config.DBName = "non_existing_schema"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1629,7 +1629,7 @@ func (cli *testServerClient) runTestIssue3680(c *C) {
 		config.User = "non_existing_user"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1676,7 +1676,7 @@ func (cli *testServerClient) runTestIssue3682(c *C) {
 		config.DBName = "non_existing_schema"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1862,7 +1862,7 @@ func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverride
 	dsn := cli.getDSN(overrider)
 	db, err := sql.Open("mysql", dsn)
 	t.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		t.Assert(err, IsNil)
 	}()
@@ -1876,7 +1876,7 @@ func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverride
 func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider, errorNoRollback bool) error {
 	db, err := sql.Open("mysql", cli.getDSN(overrider))
 	t.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		t.Assert(err, IsNil)
 	}()
