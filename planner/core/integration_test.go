@@ -1803,9 +1803,6 @@ func (s *testIntegrationSuite) TestIssue22105(c *C) {
 	}
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSuite) TestReorderSimplifiedOuterJoins(c *C) {
-=======
 func (s *testIntegrationSerialSuite) TestLimitIndexLookUpKeepOrder(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1827,8 +1824,7 @@ func (s *testIntegrationSerialSuite) TestLimitIndexLookUpKeepOrder(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestDecorrelateInnerJoinInSubquery(c *C) {
->>>>>>> f23e34965... planner: change descScanFactor to scanFactor when rowCount is small. (#23972)
+func (s *testIntegrationSuite) TestReorderSimplifiedOuterJoins(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
