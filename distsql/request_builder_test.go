@@ -39,6 +39,7 @@ import (
 )
 
 var _ = Suite(&testSuite{})
+var _ = SerialSuites(&testSerialSuite{})
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -47,7 +48,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testSuite{})
+type testSerialSuite struct{ testSuite }
 
 type testSuite struct {
 	sctx sessionctx.Context

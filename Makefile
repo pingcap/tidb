@@ -306,8 +306,9 @@ tools/bin/ineffassign:tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
 
-tools/bin/errdoc-gen: go.mod
-	$(GO) build -o $@ github.com/pingcap/tiup/components/errdoc/errdoc-gen
+tools/bin/errdoc-gen: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.21.0
@@ -321,3 +322,13 @@ vectorized-bench:
 			-bench=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-run=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-args "$(VB_FUNC)"
+
+testpkg: failpoint-enable
+ifeq ("$(pkg)", "")
+	@echo "Require pkg parameter"
+else
+	@echo "Running unit test for github.com/pingcap/tidb/$(pkg)"
+	@export log_level=fatal; export TZ='Asia/Shanghai'; \
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
+endif
+	@$(FAILPOINT_DISABLE)

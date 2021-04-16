@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
@@ -154,9 +155,22 @@ func (ts *TiDBStatement) Reset() {
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
 	//TODO close at tidb level
-	err := ts.ctx.session.DropPreparedStmt(ts.id)
-	if err != nil {
-		return err
+	if ts.ctx.GetSessionVars().TxnCtx != nil && ts.ctx.GetSessionVars().TxnCtx.CouldRetry {
+		err := ts.ctx.session.DropPreparedStmt(ts.id)
+		if err != nil {
+			return err
+		}
+	} else {
+		if core.PreparedPlanCacheEnabled() {
+			preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
+			preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
+			if !ok {
+				return errors.Errorf("invalid CachedPrepareStmt type")
+			}
+			ts.ctx.session.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
+				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
+		}
+		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
 
@@ -243,40 +257,23 @@ func (tc *TiDBContext) WarningCount() uint16 {
 	return tc.session.GetSessionVars().StmtCtx.WarningCount()
 }
 
-// Execute implements QueryCtx Execute method.
-func (tc *TiDBContext) Execute(ctx context.Context, sql string) (rs []ResultSet, err error) {
-	rsList, err := tc.session.Execute(ctx, sql)
+// ExecuteStmt implements QueryCtx interface.
+func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
+	rs, err := tc.session.ExecuteStmt(ctx, stmt)
 	if err != nil {
-		return
+		return nil, err
 	}
-	if len(rsList) == 0 { // result ok
-		return
+	if rs == nil {
+		return nil, nil
 	}
-	rs = make([]ResultSet, len(rsList))
-	for i := 0; i < len(rsList); i++ {
-		rs[i] = &tidbResultSet{
-			recordSet: rsList[i],
-		}
-	}
-	return
+	return &tidbResultSet{
+		recordSet: rs,
+	}, nil
 }
 
-// ExecuteInternal implements QueryCtx ExecuteInternal method.
-func (tc *TiDBContext) ExecuteInternal(ctx context.Context, sql string) (rs []ResultSet, err error) {
-	rsList, err := tc.session.ExecuteInternal(ctx, sql)
-	if err != nil {
-		return
-	}
-	if len(rsList) == 0 { // result ok
-		return
-	}
-	rs = make([]ResultSet, len(rsList))
-	for i := 0; i < len(rsList); i++ {
-		rs[i] = &tidbResultSet{
-			recordSet: rsList[i],
-		}
-	}
-	return
+// Parse implements QueryCtx interface.
+func (tc *TiDBContext) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+	return tc.session.Parse(ctx, sql)
 }
 
 // SetSessionManager implements the QueryCtx interface.

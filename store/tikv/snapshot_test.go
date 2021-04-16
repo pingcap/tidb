@@ -315,6 +315,6 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	c.Assert(err, IsNil)
 	snapshot.recordBackoffInfo(bo)
 	snapshot.recordBackoffInfo(bo)
-	expect := "Get:{num_rpc:4, total_time:2.002s},txnLockFast_backoff:{num:2, total_time:60 ms}"
+	expect := "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}"
 	c.Assert(snapshot.mu.stats.String(), Equals, expect)
 }

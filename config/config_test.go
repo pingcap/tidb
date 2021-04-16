@@ -192,6 +192,7 @@ mem-quota-query = 10000
 max-index-length = 3080
 skip-register-to-dashboard = true
 [performance]
+txn-entry-size-limit=1000
 txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
@@ -222,6 +223,7 @@ engines = ["tiflash"]
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")
 
+	c.Assert(conf.Performance.TxnEntrySizeLimit, Equals, uint64(1000))
 	// Test that the value will be overwritten by the config file.
 	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
 	c.Assert(conf.AlterPrimaryKey, Equals, true)

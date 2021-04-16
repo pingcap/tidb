@@ -561,8 +561,16 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	go func() {
-		failpoint.Inject("AsyncRollBackSleep", func() {
-			time.Sleep(100 * time.Millisecond)
+		failpoint.Inject("AsyncRollBackSleep", func(sleepTimeMS failpoint.Value) {
+			if tmp, ok := sleepTimeMS.(int); ok {
+				if tmp < 10000 {
+					logutil.Logger(ctx).Info("[failpoint] sleep before trigger asyncPessimisticRollback", zap.Int("sleep ms", tmp))
+					time.Sleep(time.Duration(tmp) * time.Millisecond)
+				} else {
+					logutil.Logger(ctx).Info("[failpoint] async rollback return")
+					failpoint.Return()
+				}
+			}
 		})
 		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), CommitterMutations{keys: keys})
 		if err != nil {

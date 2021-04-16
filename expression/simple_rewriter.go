@@ -175,7 +175,7 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 			if idx == -1 {
 				idx = i
 			} else {
-				return -1, errNonUniq.GenWithStackByArgs(name.String(), "field list")
+				return -1, errNonUniq.GenWithStackByArgs(astCol.String(), "field list")
 			}
 		}
 	}
@@ -297,6 +297,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			arg.GetType().Collate = v.Collate
 		}
 		sr.stack[len(sr.stack)-1].SetCoercibility(CoercibilityExplicit)
+		sr.stack[len(sr.stack)-1].SetCharsetAndCollation(arg.GetType().Charset, arg.GetType().Collate)
 	default:
 		sr.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false

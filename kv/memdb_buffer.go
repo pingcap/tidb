@@ -27,7 +27,7 @@ import (
 // memDbBuffer implements the MemBuffer interface.
 type memDbBuffer struct {
 	sandbox         *memdb.Sandbox
-	entrySizeLimit  int
+	entrySizeLimit  uint64
 	bufferLenLimit  uint64
 	bufferSizeLimit uint64
 }
@@ -43,7 +43,7 @@ type memDbIter struct {
 func NewMemDbBuffer() MemBuffer {
 	return &memDbBuffer{
 		sandbox:         memdb.NewSandbox(),
-		entrySizeLimit:  TxnEntrySizeLimit,
+		entrySizeLimit:  atomic.LoadUint64(&TxnEntrySizeLimit),
 		bufferSizeLimit: atomic.LoadUint64(&TxnTotalSizeLimit),
 	}
 }
@@ -98,7 +98,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 	if len(v) == 0 {
 		return errors.Trace(ErrCannotSetNilValue)
 	}
-	if len(k)+len(v) > m.entrySizeLimit {
+	if uint64(len(k)+len(v)) > m.entrySizeLimit {
 		return ErrEntryTooLarge.GenWithStackByArgs(m.entrySizeLimit, len(k)+len(v))
 	}
 
@@ -140,7 +140,7 @@ func (m *memDbBuffer) Len() int {
 func (m *memDbBuffer) NewStagingBuffer() MemBuffer {
 	return &memDbBuffer{
 		sandbox:         m.sandbox.Derive(),
-		entrySizeLimit:  TxnEntrySizeLimit,
+		entrySizeLimit:  m.entrySizeLimit,
 		bufferSizeLimit: m.bufferSizeLimit - uint64(m.sandbox.Size()),
 	}
 }

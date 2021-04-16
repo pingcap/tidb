@@ -54,11 +54,21 @@ var (
 	_ builtinFunc = &builtinIfJSONSig{}
 )
 
+func maxlen(lhsFlen, rhsFlen int) int {
+	// -1 indicates that the length is unknown, such as the case for expressions.
+	if lhsFlen < 0 || rhsFlen < 0 {
+		return mysql.MaxRealWidth
+	}
+	return mathutil.Max(lhsFlen, rhsFlen)
+}
+
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
 func InferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 	resultFieldType := &types.FieldType{}
 	if lhs.Tp == mysql.TypeNull {
 		*resultFieldType = *rhs
+		// If any of arg is NULL, result type need unset NotNullFlag.
+		types.SetTypeFlag(&resultFieldType.Flag, mysql.NotNullFlag, false)
 		// If both arguments are NULL, make resulting type BINARY(0).
 		if rhs.Tp == mysql.TypeNull {
 			resultFieldType.Tp = mysql.TypeString
@@ -67,6 +77,7 @@ func InferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 		}
 	} else if rhs.Tp == mysql.TypeNull {
 		*resultFieldType = *lhs
+		types.SetTypeFlag(&resultFieldType.Flag, mysql.NotNullFlag, false)
 	} else {
 		resultFieldType = types.AggFieldType([]*types.FieldType{lhs, rhs})
 		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &resultFieldType.Flag)
@@ -111,9 +122,10 @@ func InferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 			if lhs.Decimal != types.UnspecifiedLength {
 				rhsFlen -= rhs.Decimal
 			}
-			resultFieldType.Flen = mathutil.Max(lhsFlen, rhsFlen) + resultFieldType.Decimal + 1
+			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.Decimal + 1   // account for -1 len fields
+			resultFieldType.Flen = mathutil.Min(flen, mysql.MaxDecimalWidth) // make sure it doesn't overflow
 		} else {
-			resultFieldType.Flen = mathutil.Max(lhs.Flen, rhs.Flen)
+			resultFieldType.Flen = maxlen(lhs.Flen, rhs.Flen)
 		}
 	}
 	// Fix decimal for int and string.
@@ -164,6 +176,9 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	fieldTp := types.AggFieldType(fieldTps)
+	// Here we turn off NotNullFlag. Because if all when-clauses are false,
+	// the result of case-when expr is NULL.
+	types.SetTypeFlag(&fieldTp.Flag, mysql.NotNullFlag, false)
 	tp := fieldTp.EvalType()
 
 	if tp == types.ETInt {

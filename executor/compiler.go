@@ -218,17 +218,36 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			}
 		}
 	case *ast.CreateBindingStmt:
+		var resNode ast.ResultSetNode
 		if x.OriginSel != nil {
-			originSelect := x.OriginSel.(*ast.SelectStmt)
-			dbLabels := getDbFromResultNode(originSelect.From.TableRefs)
+			switch n := x.OriginSel.(type) {
+			case *ast.SelectStmt:
+				resNode = n.From.TableRefs
+			case *ast.DeleteStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.UpdateStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.InsertStmt:
+				resNode = n.Table.TableRefs
+			}
+			dbLabels := getDbFromResultNode(resNode)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
 
 		if len(dbLabelSet) == 0 && x.HintedSel != nil {
-			hintedSelect := x.HintedSel.(*ast.SelectStmt)
-			dbLabels := getDbFromResultNode(hintedSelect.From.TableRefs)
+			switch n := x.HintedSel.(type) {
+			case *ast.SelectStmt:
+				resNode = n.From.TableRefs
+			case *ast.DeleteStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.UpdateStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.InsertStmt:
+				resNode = n.Table.TableRefs
+			}
+			dbLabels := getDbFromResultNode(resNode)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}

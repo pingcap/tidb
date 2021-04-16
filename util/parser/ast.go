@@ -14,7 +14,10 @@
 package parser
 
 import (
+	"strings"
+
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 )
 
 // GetDefaultDB checks if all columns in the AST have explicit DBName. If not, return specified DBName.
@@ -44,4 +47,19 @@ func (i *implicitDatabase) Enter(in ast.Node) (out ast.Node, skipChildren bool) 
 
 func (i *implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
+}
+
+// RestoreWithDefaultDB returns restore strings for StmtNode with defaultDB
+func RestoreWithDefaultDB(node ast.StmtNode, defaultDB string) string {
+	var sb strings.Builder
+	// Three flags for restore with default DB:
+	// 1. RestoreStringSingleQuotes specifies to use single quotes to surround the string;
+	// 2. RestoreSpacesAroundBinaryOperation specifies to add space around binary operation;
+	// 3. RestoreStringWithoutDefaultCharset specifies to not print default charset before string;
+	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutDefaultCharset, &sb)
+	ctx.DefaultDB = defaultDB
+	if err := node.Restore(ctx); err != nil {
+		return ""
+	}
+	return sb.String()
 }

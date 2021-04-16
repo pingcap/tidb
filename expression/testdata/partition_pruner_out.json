@@ -46,9 +46,9 @@
       {
         "SQL": "explain select * from t1 left join t2 on t1.id = 1 and t2.a = 2 where t2.id = 7",
         "Result": [
-          "HashJoin_9 1.00 root  CARTESIAN inner join",
-          "├─Point_Get_12(Build) 1.00 root table:t2, partition:p9, index:PRIMARY(id, a) ",
-          "└─Point_Get_11(Probe) 1.00 root table:t1, partition:p1 handle:1"
+          "HashJoin_10 1.00 root  CARTESIAN inner join",
+          "├─Point_Get_13(Build) 1.00 root table:t2, partition:p9, index:PRIMARY(id, a) ",
+          "└─Point_Get_12(Probe) 1.00 root table:t1, partition:p1 handle:1"
         ]
       },
       {

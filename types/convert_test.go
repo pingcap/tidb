@@ -970,7 +970,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		{`[]`, 0},
 		{`3`, 3},
 		{`-3`, -3},
-		{`4.5`, 5},
+		{`4.5`, 4},
 		{`true`, 1},
 		{`false`, 0},
 		{`null`, 0},

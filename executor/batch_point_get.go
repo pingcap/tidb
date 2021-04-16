@@ -157,15 +157,20 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var batchGetter kv.BatchGetter = snapshot
 	if sessVars.InTxn() {
-		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+		if e.lock {
+			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+		} else {
+			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
+		}
 	}
 
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
+	rc := e.ctx.GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{})
-		keys := make([]kv.Key, 0, len(e.idxVals))
+		toFetchIndexKeys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
 			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
 			idxKey, hasNull, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, physID)
@@ -180,29 +185,42 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				continue
 			}
 			dedup[s] = struct{}{}
-			keys = append(keys, idxKey)
+			toFetchIndexKeys = append(toFetchIndexKeys, idxKey)
 		}
 		if e.keepOrder {
-			sort.Slice(keys, func(i int, j int) bool {
+			sort.Slice(toFetchIndexKeys, func(i int, j int) bool {
 				if e.desc {
-					return keys[i].Cmp(keys[j]) > 0
+					return toFetchIndexKeys[i].Cmp(toFetchIndexKeys[j]) > 0
 				}
-				return keys[i].Cmp(keys[j]) < 0
+				return toFetchIndexKeys[i].Cmp(toFetchIndexKeys[j]) < 0
 			})
 		}
-		indexKeys = keys
+
+		// lock all keys in repeatable read isolation.
+		// for read consistency, only lock exist keys,
+		// indexKeys will be generated after getting handles.
+		if !rc {
+			indexKeys = toFetchIndexKeys
+		} else {
+			indexKeys = make([]kv.Key, 0, len(toFetchIndexKeys))
+		}
+
+		// SELECT * FROM t WHERE x IN (null), in this case there is no key.
+		if len(toFetchIndexKeys) == 0 {
+			return nil
+		}
 
 		// Fetch all handles.
-		handleVals, err = batchGetter.BatchGet(ctx, keys)
+		handleVals, err = batchGetter.BatchGet(ctx, toFetchIndexKeys)
 		if err != nil {
 			return err
 		}
 
-		e.handles = make([]int64, 0, len(keys))
+		e.handles = make([]int64, 0, len(toFetchIndexKeys))
 		if e.tblInfo.Partition != nil {
-			e.physIDs = make([]int64, 0, len(keys))
+			e.physIDs = make([]int64, 0, len(toFetchIndexKeys))
 		}
-		for _, key := range keys {
+		for _, key := range toFetchIndexKeys {
 			handleVal := handleVals[string(key)]
 			if len(handleVal) == 0 {
 				continue
@@ -212,6 +230,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				return err1
 			}
 			e.handles = append(e.handles, handle)
+			if rc {
+				indexKeys = append(indexKeys, key)
+			}
 			if e.tblInfo.Partition != nil {
 				e.physIDs = append(e.physIDs, tablecodec.DecodeTableID(key))
 			}
@@ -260,21 +281,19 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		keys[i] = key
 	}
 
+	hasKeysToLock := false
 	var values map[string][]byte
-	rc := e.ctx.GetSessionVars().IsPessimisticReadConsistency()
 	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
 	if e.lock && !rc {
-		lockKeys := make([]kv.Key, len(keys), len(keys)+len(indexKeys))
+		lockKeys := make([]kv.Key, len(keys)+len(indexKeys))
 		copy(lockKeys, keys)
-		for _, idxKey := range indexKeys {
-			// lock the non-exist index key, using len(val) in case BatchGet result contains some zero len entries
-			if val := handleVals[string(idxKey)]; len(val) == 0 {
-				lockKeys = append(lockKeys, idxKey)
-			}
-		}
+		copy(lockKeys[len(keys):], indexKeys)
 		err = e.lockKeys(ctx, lockKeys)
 		if err != nil {
 			return err
+		}
+		if len(lockKeys) > 0 {
+			hasKeysToLock = true
 		}
 	}
 	// Fetch all values.
@@ -285,7 +304,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	handles := make([]int64, 0, len(values))
 	var existKeys []kv.Key
 	if e.lock && rc {
-		existKeys = make([]kv.Key, 0, len(values))
+		existKeys = make([]kv.Key, 0, 2*len(values))
 	}
 	e.values = make([][]byte, 0, len(values))
 	for i, key := range keys {
@@ -301,13 +320,29 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
+			if len(indexKeys) > 0 {
+				existKeys = append(existKeys, indexKeys[i])
+			}
 		}
 	}
 	// Lock exists keys only for Read Committed Isolation.
-	if e.lock && rc {
-		err = e.lockKeys(ctx, existKeys)
-		if err != nil {
-			return err
+	if e.lock {
+		if rc {
+			err = e.lockKeys(ctx, existKeys)
+			if err != nil {
+				return err
+			}
+			if len(existKeys) > 0 {
+				hasKeysToLock = true
+			}
+		}
+		if hasKeysToLock {
+			// Update partition table IDs
+			for _, pid := range e.physIDs {
+				e.updateDeltaForTableID(pid)
+			}
+			// Update table ID
+			e.updateDeltaForTableID(e.tblInfo.ID)
 		}
 	}
 	e.handles = handles

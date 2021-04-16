@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -141,6 +142,16 @@ func (s *testSuite5) TestShowErrors(c *C) {
 	tk.Exec(testSQL)
 
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
+}
+
+func (s *testSuite5) TestShowWarningsForExprPushdown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
+	tk.MustExec(testSQL)
+	tk.MustExec("explain select * from show_warnings_expr_pushdown where date_add(value, interval 1 day) = '2020-01-01'")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt) can not be pushed to tikv"))
 }
 
 func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
@@ -542,7 +553,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	tk.MustExec("drop view if exists v")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
-	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE('{}', '{}') AS `col`  "))
+	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`  "))
 	tk.MustExec("drop view if exists v")
 
 	tk.MustExec("drop table if exists t1")
@@ -753,6 +764,16 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+
+	// Test issue #20327
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b char(10) as ('a'));")
+	result := tk.MustQuery("show create table t;").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8mb4'a'\).*`)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b char(10) as (_utf8'a'));")
+	result = tk.MustQuery("show create table t;").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
@@ -891,6 +912,27 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 }
 
+func (s *testAutoRandomSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db;")
+	defer tk.MustExec("drop database if exists auto_random_db;")
+	tk.MustExec("use auto_random_db;")
+	tk.MustExec("drop table if exists t;")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	// 18446744073709541615 is MaxUint64 - 10000.
+	// 18446744073709551615 is the MaxUint64.
+	tk.MustQuery("split table t between (18446744073709541615) and (18446744073709551615) regions 2;").
+		Check(testkit.Rows("1 1"))
+	startKey := tk.MustQuery("show table t regions;").Rows()[1][1].(string)
+	idx := strings.Index(startKey, "_r_")
+	c.Assert(idx == -1, IsFalse)
+	c.Assert(startKey[idx+3] == '-', IsFalse, Commentf("actual key: %s", startKey))
+}
+
 func (s *testSuite5) TestShowEscape(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -925,9 +967,9 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(268, Equals, len(rows))
+	c.Assert(267, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[267][0].(string))
+	c.Assert("yearweek", Equals, rows[266][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {

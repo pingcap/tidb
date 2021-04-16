@@ -169,4 +169,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
 	prometheus.MustRegister(MaxProcs)
 	prometheus.MustRegister(GOGC)
+	prometheus.MustRegister(ConnIdleDurationHistogram)
+	prometheus.MustRegister(ServerInfo)
+	prometheus.MustRegister(TokenGauge)
+	prometheus.MustRegister(ConfigStatus)
 }

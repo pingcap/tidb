@@ -65,14 +65,41 @@ func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType
 // Aggregation is performed by MergeFieldType function.
 func AggFieldType(tps []*FieldType) *FieldType {
 	var currType FieldType
+	isMixedSign := false
 	for i, t := range tps {
 		if i == 0 && currType.Tp == mysql.TypeUnspecified {
 			currType = *t
 			continue
 		}
 		mtp := MergeFieldType(currType.Tp, t.Tp)
+		isMixedSign = isMixedSign || (mysql.HasUnsignedFlag(currType.Flag) != mysql.HasUnsignedFlag(t.Flag))
 		currType.Tp = mtp
 		currType.Flag = mergeTypeFlag(currType.Flag, t.Flag)
+	}
+	// integral promotion when tps contains signed and unsigned
+	if isMixedSign && IsTypeInteger(currType.Tp) {
+		bumpRange := false // indicate one of tps bump currType range
+		for _, t := range tps {
+			bumpRange = bumpRange || (mysql.HasUnsignedFlag(t.Flag) && (t.Tp == currType.Tp || t.Tp == mysql.TypeBit))
+		}
+		if bumpRange {
+			switch currType.Tp {
+			case mysql.TypeTiny:
+				currType.Tp = mysql.TypeShort
+			case mysql.TypeShort:
+				currType.Tp = mysql.TypeInt24
+			case mysql.TypeInt24:
+				currType.Tp = mysql.TypeLong
+			case mysql.TypeLong:
+				currType.Tp = mysql.TypeLonglong
+			case mysql.TypeLonglong:
+				currType.Tp = mysql.TypeNewDecimal
+			}
+		}
+	}
+
+	if mysql.HasUnsignedFlag(currType.Flag) && !isMixedSign {
+		currType.Flag |= mysql.UnsignedFlag
 	}
 
 	return &currType
@@ -106,8 +133,8 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 		}
 		lft = rft
 	}
-	setTypeFlag(flag, mysql.UnsignedFlag, unsigned)
-	setTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
+	SetTypeFlag(flag, mysql.UnsignedFlag, unsigned)
+	SetTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
 	return aggregatedEvalType
 }
 
@@ -132,7 +159,8 @@ func mergeEvalType(lhs, rhs EvalType, lft, rft *FieldType, isLHSUnsigned, isRHSU
 	return ETInt
 }
 
-func setTypeFlag(flag *uint, flagItem uint, on bool) {
+// SetTypeFlag turns the flagItem on or off.
+func SetTypeFlag(flag *uint, flagItem uint, on bool) {
 	if on {
 		*flag |= flagItem
 	} else {
@@ -161,7 +189,7 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 func hasVariantFieldLength(tp *FieldType) bool {
 	switch tp.Tp {
 	case mysql.TypeLonglong, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeBlob,
-		mysql.TypeBit, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeEnum, mysql.TypeSet:
+		mysql.TypeBit, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeSet:
 		return true
 	}
 	return false
@@ -232,8 +260,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Flag |= mysql.UnsignedFlag
 		SetBinChsClnFlag(tp)
 	case BinaryLiteral:
-		tp.Tp = mysql.TypeBit
-		tp.Flen = len(x) * 8
+		tp.Tp = mysql.TypeVarString
+		tp.Flen = len(x)
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 		tp.Flag &= ^mysql.BinaryFlag
@@ -310,10 +338,10 @@ func MergeFieldType(a byte, b byte) byte {
 }
 
 // mergeTypeFlag merges two MySQL type flag to a new one
-// currently only NotNullFlag is checked
-// todo more flag need to be checked, for example: UnsignedFlag
+// currently only NotNullFlag and UnsignedFlag is checked
+// todo more flag need to be checked
 func mergeTypeFlag(a, b uint) uint {
-	return a & (b&mysql.NotNullFlag | ^mysql.NotNullFlag)
+	return a & (b&mysql.NotNullFlag | ^mysql.NotNullFlag) & (b&mysql.UnsignedFlag | ^mysql.UnsignedFlag)
 }
 
 func getFieldTypeIndex(tp byte) int {
