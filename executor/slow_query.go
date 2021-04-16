@@ -74,7 +74,7 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 		}
 		e.initializeAsyncParsing(ctx, sctx)
 	}
-	rows, retrieved, err := e.dataForSlowLog(ctx)
+	rows, retrieved, err := e.dataForSlowLog(ctx, sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
 }
 
-func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
+func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, bool, error) {
 	var (
 		task slowLogTask
 		ok   bool
@@ -216,7 +216,7 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 			continue
 		}
 		if e.table.Name.L == strings.ToLower(infoschema.ClusterTableSlowLog) {
-			rows, err := infoschema.AppendHostInfoToRows(rows)
+			rows, err := infoschema.AppendHostInfoToRows(sctx, rows)
 			return rows, false, err
 		}
 		return rows, false, nil

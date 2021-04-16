@@ -56,6 +56,7 @@ const (
 	tidbProfileMemory     = "tidb_profile_memory"
 	tidbProfileMutex      = "tidb_profile_mutex"
 	tikvProfileCPU        = "tikv_profile_cpu"
+	tidbGCLeaderDesc      = "tidb_gc_leader_desc"
 	restrictedPriv        = "RESTRICTED_"
 )
 
@@ -114,6 +115,11 @@ func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
 		return true
 	}
 	return false
+}
+
+// IsInvisibleStatusVar returns true if the status var needs to be hidden
+func IsInvisibleStatusVar(varName string) bool {
+	return varName == tidbGCLeaderDesc
 }
 
 // IsRestrictedPrivilege returns true if the privilege shuld not be satisfied by SUPER

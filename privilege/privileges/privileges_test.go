@@ -1315,7 +1315,7 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedTables(c *C) {
 	cloudAdminSe := newSession(c, s.store, s.dbName)
 	mustExec(c, cloudAdminSe, "CREATE USER cloudadmin")
 	mustExec(c, cloudAdminSe, "SET tidb_enable_dynamic_privileges=1")
-	mustExec(c, cloudAdminSe, "GRANT RESTRICTED_TABLES_ADMIN, SELECT ON *.* to cloudadmin")
+	mustExec(c, cloudAdminSe, "GRANT RESTRICTED_TABLES_ADMIN, RESTRICTED_STATUS_VARIABLES_ADMIN, SELECT ON *.* to cloudadmin")
 	mustExec(c, cloudAdminSe, "GRANT CREATE ON mysql.* to cloudadmin")
 	mustExec(c, cloudAdminSe, "CREATE USER uroot")
 	mustExec(c, cloudAdminSe, "GRANT ALL ON *.* to uroot WITH GRANT OPTION") // A "MySQL" all powerful user.
@@ -1339,5 +1339,9 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedTables(c *C) {
 	mustExec(c, cloudAdminSe, "USE metrics_schema")
 	mustExec(c, cloudAdminSe, "SELECT * FROM metrics_schema.uptime")
 	mustExec(c, cloudAdminSe, "CREATE TABLE mysql.abcd (a int)")
+
+	// Test tidb_gc_leader_desc status var.
+
+	// Test information_schema tables content.
 
 }
