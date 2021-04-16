@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,12 +13,21 @@
 
 package placement
 
+import (
+	"fmt"
+)
+
 const (
 	// BundleIDPrefix is the bundle prefix of all rule bundles from TiDB_DDL statements.
 	BundleIDPrefix = "TiDB_DDL_"
 	// PDBundleID is the bundle name of pd, the default bundle for all regions.
 	PDBundleID = "pd"
 )
+
+// GroupID accepts a tableID or whatever integer, and encode the integer into a valid GroupID for PD.
+func GroupID(id int64) string {
+	return fmt.Sprintf("%s%d", BundleIDPrefix, id)
+}
 
 const (
 	// RuleIndexDefault is the default index for a rule, check Rule.Index.
