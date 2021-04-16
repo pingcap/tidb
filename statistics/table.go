@@ -326,6 +326,9 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
+	if colID, ok := coll.Idx2ColumnIDs[idxID]; ok && len(colID) == 1 {
+		return coll.GetRowCountByColumnRanges(sc, colID[0], indexRanges)
+	}
 	idx := coll.Indices[idxID]
 	if idx == nil || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
