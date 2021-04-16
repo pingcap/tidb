@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -439,6 +440,9 @@ func (j *antiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator
 	}
 
 	if len(j.conditions) == 0 {
+		if j.ctx.GetSessionVars().ConnectionID != 0 {
+			logrus.Warning("j.conditions is empty")
+		}
 		inners.ReachEnd()
 		return true, false, nil
 	}
