@@ -115,6 +115,18 @@ func (m *memBuffer) GetFlags(key kv.Key) (tikvstore.KeyFlags, error) {
 	return m.MemDB.GetFlags(key)
 }
 
+func (m *memBuffer) Staging() kv.StagingHandle {
+	return kv.StagingHandle(m.MemDB.Staging())
+}
+
+func (m *memBuffer) Cleanup(h kv.StagingHandle) {
+	m.MemDB.Cleanup(int(h))
+}
+
+func (m *memBuffer) Release(h kv.StagingHandle) {
+	m.MemDB.Release(int(h))
+}
+
 func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, tikvstore.KeyFlags, []byte)) {
 	tf := func(key []byte, flag tikvstore.KeyFlags, value []byte) {
 		f(kv.Key(key), flag, value)
@@ -128,10 +140,6 @@ func (m *memBuffer) Set(key kv.Key, value []byte) error {
 
 func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) error {
 	return m.MemDB.SetWithFlags(key, value, ops...)
-}
-
-func (m *memBuffer) UpdateFlags(key kv.Key, ops ...kv.FlagsOp) {
-	m.MemDB.UpdateFlags(key, ops...)
 }
 
 // Iter creates an Iterator positioned on the first entry that k <= entry's key.

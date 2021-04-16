@@ -1,7 +1,7 @@
 # Proposal:
 
 - Author(s):     [morgo](https://github.com/morgo)
-- Last updated:  March 9, 2021
+- Last updated:  April 12, 2021
 - Discussion at: N/A
 
 ## Table of Contents
@@ -136,6 +136,8 @@ The following tables will be hidden:
 * opt_rule_blacklist
 * tidb
 * global_variables
+
+The remaining system tables will be limited to read-only operations.
 
 ### Metrics Schema
 

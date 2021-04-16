@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -566,14 +567,14 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 		// Since we have checked the charset, the dbCollate here shouldn't be "".
 		dbCollate = getDefaultCollate(dbinfo.Charset)
 	}
-
-	// Since the Collate function is text, we should validate the value before setting it
-	// If it is invalid, switch to the default.
+	// GetCollationByName will return an err if new collations are enabled
+	// and the collation is not supported. In USE context, we can substitute
+	// the default collation.
 	coll, err := collate.GetCollationByName(dbCollate)
 	if err != nil {
 		logutil.BgLogger().Warn(err.Error())
 		coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
-		if err != nil { // should not fail
+		if err != nil {
 			return err
 		}
 	}
@@ -583,8 +584,14 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// If `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND` is the first statement in TxnCtx, we should
 	// always create a new Txn instead of reusing it.
-	if s.ReadOnly && s.Bound != nil {
-		return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
+	if s.ReadOnly {
+		enableNoopFuncs := e.ctx.GetSessionVars().EnableNoopFuncs
+		if !enableNoopFuncs && s.Bound == nil {
+			return expression.ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+		}
+		if s.Bound != nil {
+			return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
+		}
 	}
 
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
@@ -986,7 +993,7 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 			return err
 		}
 		if !exists {
-			return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", role.String())
+			return ErrGrantRole.GenWithStackByArgs(role.String())
 		}
 	}
 	for _, user := range s.Users {

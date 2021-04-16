@@ -15,7 +15,6 @@ package placement
 
 import (
 	"encoding/hex"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -24,53 +23,11 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-func checkLabelConstraint(label string) (LabelConstraint, error) {
-	r := LabelConstraint{}
-
-	if len(label) < 4 {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	var op LabelConstraintOp
-	switch label[0] {
-	case '+':
-		op = In
-	case '-':
-		op = NotIn
-	default:
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	kv := strings.Split(label[1:], "=")
-	if len(kv) != 2 {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	key := strings.TrimSpace(kv[0])
-	if key == "" {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	val := strings.TrimSpace(kv[1])
-	if val == "" {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	if op == In && key == EngineLabelKey && strings.ToLower(val) == EngineLabelTiFlash {
-		return r, errors.Errorf("unsupported label constraint '%s'", label)
-	}
-
-	r.Key = key
-	r.Op = op
-	r.Values = []string{val}
-	return r, nil
-}
-
-// CheckLabelConstraints will check labels, and build LabelConstraints for rule.
-func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
-	constraints := make([]LabelConstraint, 0, len(labels))
+// CheckLabelConstraints will check labels, and build Constraints for rule.
+func CheckLabelConstraints(labels []string) ([]Constraint, error) {
+	constraints := make([]Constraint, 0, len(labels))
 	for _, str := range labels {
-		label, err := checkLabelConstraint(strings.TrimSpace(str))
+		label, err := NewConstraint(strings.TrimSpace(str))
 		if err != nil {
 			return constraints, err
 		}
@@ -109,11 +66,6 @@ func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
 	return constraints, nil
 }
 
-// GroupID accepts a tableID or whatever integer, and encode the integer into a valid GroupID for PD.
-func GroupID(id int64) string {
-	return fmt.Sprintf("%s%d", BundleIDPrefix, id)
-}
-
 // ObjectIDFromGroupID extracts the db/table/partition ID from the group ID
 func ObjectIDFromGroupID(groupID string) (int64, error) {
 	// If the rule doesn't come from TiDB, skip it.
@@ -128,7 +80,7 @@ func ObjectIDFromGroupID(groupID string) (int64, error) {
 }
 
 // RestoreLabelConstraintList converts the label constraints to a readable string.
-func RestoreLabelConstraintList(constraints []LabelConstraint) (string, error) {
+func RestoreLabelConstraintList(constraints []Constraint) (string, error) {
 	var sb strings.Builder
 	for i, constraint := range constraints {
 		sb.WriteByte('"')

@@ -128,6 +128,27 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	return cht, nil
 }
 
+// checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
+func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag, offlineMode bool) (string, error) {
+	feature := "READ ONLY"
+	if offlineMode {
+		feature = "OFFLINE MODE"
+	}
+	if TiDBOptOn(normalizedValue) {
+		if !vars.EnableNoopFuncs && scope == ScopeSession {
+			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+		}
+		val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
+		if err != nil {
+			return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
+		}
+		if scope == ScopeGlobal && !TiDBOptOn(val) {
+			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+		}
+	}
+	return normalizedValue, nil
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.

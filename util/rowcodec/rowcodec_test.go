@@ -740,7 +740,7 @@ func (s *testSuite) TestCodecUtil(c *C) {
 	c.Assert(rowcodec.IsNewFormat(oldRow), IsFalse)
 
 	// test stringer for decoder.
-	var cols []rowcodec.ColInfo
+	var cols = make([]rowcodec.ColInfo, 0, len(tps))
 	for i, ft := range tps {
 		cols = append(cols, rowcodec.ColInfo{
 			ID:         colIDs[i],
