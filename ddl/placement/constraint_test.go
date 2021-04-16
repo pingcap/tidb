@@ -194,36 +194,23 @@ func (t *testConstraintSuite) TestRestore(c *C) {
 }
 
 func (t *testConstraintSuite) TestString(c *C) {
-	type TestCase struct {
-		name   string
-		input  Constraint
-		output string
+	// normal
+	input := Constraint{
+		Op:     In,
+		Key:    "zone",
+		Values: []string{"bj"},
 	}
-	tests := []TestCase{
-		{
-			name: "normal",
-			input: Constraint{
-				Op:     In,
-				Key:    "zone",
-				Values: []string{"bj"},
-			},
-			output: "+zone=bj",
-		},
-		{
-			name: "error",
-			input: Constraint{
-				Op:     "[",
-				Key:    "dc",
-				Values: []string{},
-			},
-			output: "label constraint should be in format '{+|-}key=value': constraint should have exactly one label value, got []",
-		},
-	}
+	c.Assert(input.String(), Equals, "+zone=bj")
 
-	for _, t := range tests {
-		comment := Commentf("%s", t.name)
-		c.Assert(t.input.String(), Equals, t.output, comment)
-	}
+	// invalid
+	c.Assert(func() string {
+		input := Constraint{
+			Op:     "[",
+			Key:    "dc",
+			Values: []string{},
+		}
+		return input.String()
+	}, PanicMatches, "label constraint should be in format '{+|-}key=value': constraint should have exactly one label value, got \\[\\]")
 }
 
 func (t *testConstraintSuite) TestCompatibleWith(c *C) {

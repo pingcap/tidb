@@ -108,7 +108,7 @@ func (c *Constraint) Restore() (string, error) {
 func (c *Constraint) String() string {
 	str, err := c.Restore()
 	if err != nil {
-		return err.Error()
+		panic(err)
 	}
 	return str
 }
