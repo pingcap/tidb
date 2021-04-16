@@ -5057,5 +5057,5 @@ func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) 
 	}()
 
 	_, err := tk.Exec("alter table test_add_index_after_add_col add unique index cc(c);")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '0' for key 'cc'")
+	c.Assert(err.Error(), Equals, "[kv:1062]DDL job cancelled by panic in rollingback, error msg: Duplicate entry '0' for key 'cc'")
 }
