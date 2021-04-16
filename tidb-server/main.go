@@ -151,7 +151,12 @@ var (
 )
 
 func main() {
+	help := flag.Bool("help", false, "show the usage")
 	flag.Parse()
+	if *help {
+		flag.Usage()
+		os.Exit(0)
+	}
 	if *version {
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
