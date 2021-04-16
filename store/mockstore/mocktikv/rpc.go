@@ -922,6 +922,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		if c.coprHandler == nil {
 			return nil, errors.New("unimplemented")
 		}
+		session.rawStartKey = MvccKey(session.startKey).Raw()
+		session.rawEndKey = MvccKey(session.endKey).Raw()
 		resp.Resp = c.coprHandler.HandleCmdCop(reqCtx, session, req.Cop())
 	case tikvrpc.CmdBatchCop:
 		failpoint.Inject("BatchCopCancelled", func(value failpoint.Value) {
