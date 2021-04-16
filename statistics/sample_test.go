@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"math/rand"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -135,3 +136,190 @@ func (s *testSampleSuite) TestCollectorProtoConversion(c *C) {
 		c.Assert(len(collector.Samples), Equals, len(s.Samples))
 	}
 }
+
+func (s *testSampleSuite) recordSetForWeightSamplingTest(size int) *recordSet {
+	r := &recordSet{
+		data:  make([]types.Datum, 0, size),
+		count: size,
+	}
+	for i := 0; i < size; i++ {
+		r.data = append(r.data, types.NewIntDatum(int64(i)))
+	}
+	r.setFields(mysql.TypeLonglong)
+	return r
+}
+
+func (s *testSampleSuite) recordSetForDistributedSamplingTest(size, batch int) []*recordSet {
+	sets := make([]*recordSet, 0, batch)
+	batchSize := size / batch
+	for i := 0; i < batch; i++ {
+		r := &recordSet{
+			data:  make([]types.Datum, 0, batchSize),
+			count: batchSize,
+		}
+		for j := 0; j < size/batch; j++ {
+			r.data = append(r.data, types.NewIntDatum(int64(j+batchSize*i)))
+		}
+		r.setFields(mysql.TypeLonglong)
+		sets = append(sets, r)
+	}
+	return sets
+}
+
+func (s *testSampleSuite) TestWeightedSampling(c *C) {
+	sampleNum := int64(20)
+	rowNum := 100
+	loopCnt := 1000
+	rs := s.recordSetForWeightSamplingTest(rowNum)
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	// The loop which is commented out is used for stability test.
+	// for x := 0; x < 800; x++ {
+	itemCnt := make([]int, rowNum)
+	for loopI := 0; loopI < loopCnt; loopI++ {
+		builder := &RowSampleBuilder{
+			Sc:              sc,
+			RecordSet:       rs,
+			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
+			Collators:       make([]collate.Collator, 1),
+			ColGroups:       nil,
+			MaxSampleSize:   int(sampleNum),
+			MaxFMSketchSize: 1000,
+			Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
+		}
+		collector, err := builder.Collect()
+		c.Assert(err, IsNil)
+		for i := 0; i < collector.MaxSampleSize; i++ {
+			a := collector.Samples[i].Columns[0].GetInt64()
+			itemCnt[a]++
+		}
+		c.Assert(rs.Close(), IsNil)
+	}
+	expFrequency := float64(sampleNum) * float64(loopCnt) / float64(rowNum)
+	delta := 0.5
+	for _, cnt := range itemCnt {
+		if float64(cnt) < expFrequency/(1+delta) || float64(cnt) > expFrequency*(1+delta) {
+			// c.Assert(false, IsTrue, Commentf("Round %v, the frequency %v is exceed the Chernoff Bound", x, cnt))
+			c.Assert(false, IsTrue, Commentf("The frequency %v is exceed the Chernoff Bound", cnt))
+		}
+	}
+	// }
+}
+
+func (s *testSampleSuite) TestDistributedWeightedSampling(c *C) {
+	sampleNum := int64(10)
+	rowNum := 100
+	loopCnt := 1500
+	batch := 5
+	sets := s.recordSetForDistributedSamplingTest(rowNum, batch)
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	// The loop which is commented out is used for stability test.
+	// for x := 0; x < 800; x++ {
+	itemCnt := make([]int, rowNum)
+	for loopI := 1; loopI < loopCnt; loopI++ {
+		rootRowCollector := &RowSampleCollector{
+			NullCount:     make([]int64, 1),
+			FMSketches:    make([]*FMSketch, 0, 1),
+			TotalSizes:    make([]int64, 1),
+			Samples:       make(WeightedRowSampleHeap, 0, sampleNum),
+			MaxSampleSize: int(sampleNum),
+		}
+		rootRowCollector.FMSketches = append(rootRowCollector.FMSketches, NewFMSketch(1000))
+		for i := 0; i < batch; i++ {
+			builder := &RowSampleBuilder{
+				Sc:              sc,
+				RecordSet:       sets[i],
+				ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
+				Collators:       make([]collate.Collator, 1),
+				ColGroups:       nil,
+				MaxSampleSize:   int(sampleNum),
+				MaxFMSketchSize: 1000,
+				Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
+			}
+			collector, err := builder.Collect()
+			c.Assert(err, IsNil)
+			rootRowCollector.MergeCollector(collector)
+			c.Assert(sets[i].Close(), IsNil)
+		}
+		for _, sample := range rootRowCollector.Samples {
+			itemCnt[sample.Columns[0].GetInt64()]++
+		}
+	}
+	expFrequency := float64(sampleNum) * float64(loopCnt) / float64(rowNum)
+	delta := 0.5
+	for _, cnt := range itemCnt {
+		if float64(cnt) < expFrequency/(1+delta) || float64(cnt) > expFrequency*(1+delta) {
+			// c.Assert(false, IsTrue, Commentf("In round %v, the frequency %v is exceed the Chernoff Bound", x, cnt))
+			c.Assert(false, IsTrue, Commentf("the frequency %v is exceed the Chernoff Bound", cnt))
+		}
+	}
+	// }
+}
+
+// The following codes are testing the Reservoir Sampling of TiDB before 2021.
+//type simpleSampleSet struct {
+//	samples    []int
+//	sampleSize int
+//	seenCnt    int
+//}
+//
+//func (s *simpleSampleSet) simpleReservoirSampling(v int) {
+//	s.seenCnt++
+//	if len(s.samples) < s.sampleSize {
+//		s.samples = append(s.samples, v)
+//	} else {
+//		shouldAdd := fastrand.Uint64N(uint64(s.seenCnt)) < uint64(s.sampleSize)
+//		if shouldAdd {
+//			idx := int(fastrand.Uint32N(uint32(s.sampleSize)))
+//			s.samples = append(s.samples[:idx], s.samples[idx+1:]...)
+//			s.samples = append(s.samples, v)
+//		}
+//
+//}
+//
+//func (s *testSampleSuite) TestOrigSampling(c *C) {
+//	for x := 0; x < 800; x++ {
+//		sampleNum := 10
+//		rowNum := 100
+//		loopCnt := 1000
+//		rootCollector := simpleSampleSet{
+//			samples:    make([]int, 0, sampleNum),
+//			sampleSize: sampleNum,
+//		}
+//		regionCollector := make([]simpleSampleSet, 0, 5)
+//		for i := 0; i < 5; i++ {
+//			regionCollector = append(regionCollector, simpleSampleSet{
+//				samples:    make([]int, 0, sampleNum),
+//				sampleSize: sampleNum,
+//			})
+//		}
+//		rows := make([]int, 0, rowNum)
+//		for i := 0; i < rowNum; i++ {
+//			rows = append(rows, i)
+//		}
+//		itemCnt := make([]int, rowNum)
+//		for loopI := 0; loopI < loopCnt; loopI++ {
+//			rootCollector.samples = rootCollector.samples[:0]
+//			rootCollector.seenCnt = 0
+//			for i := 0; i < 5; i++ {
+//				regionCollector[i].samples = regionCollector[i].samples[:0]
+//				regionCollector[i].seenCnt = 0
+//				for j := 0; j < rowNum/5; j++ {
+//					regionCollector[i].simpleReservoirSampling(rows[i*20+j])
+//				}
+//				for j := 0; j < regionCollector[i].sampleSize; j++ {
+//					rootCollector.simpleReservoirSampling(regionCollector[i].samples[j])
+//				}
+//			}
+//			for i := 0; i < sampleNum; i++ {
+//				itemCnt[rootCollector.samples[i]]++
+//			}
+//		}
+//		expFrequency := float64(sampleNum) * float64(loopCnt) / float64(rowNum)
+//		delta := 0.5
+//		for _, cnt := range itemCnt {
+//			if float64(cnt) < expFrequency/(1+delta) || float64(cnt) > expFrequency*(1+delta) {
+//				c.Assert(false, IsTrue, Commentf("In round %v, the frequency %v is exceed the Chernoff Bound", x, cnt))
+//			}
+//		}
+//	}
+//}
