@@ -41,7 +41,7 @@ func newCoprRPCHandler() *coprRPCHandler {
 }
 
 func (mc *coprRPCHandler) HandleCmdCop(reqCtx *kvrpcpb.Context, session *Session, r *coprocessor.Request) *coprocessor.Response {
-	if err := session.checkRequestContext(reqCtx); err != nil {
+	if err := session.CheckRequestContext(reqCtx); err != nil {
 		return &coprocessor.Response{RegionError: err}
 	}
 	var res *coprocessor.Response
@@ -59,7 +59,7 @@ func (mc *coprRPCHandler) HandleCmdCop(reqCtx *kvrpcpb.Context, session *Session
 }
 
 func (mc *coprRPCHandler) HandleBatchCop(ctx context.Context, reqCtx *kvrpcpb.Context, session *Session, r *coprocessor.BatchRequest, timeout time.Duration) (*tikvrpc.BatchCopStreamResponse, error) {
-	if err := session.checkRequestContext(reqCtx); err != nil {
+	if err := session.CheckRequestContext(reqCtx); err != nil {
 		return &tikvrpc.BatchCopStreamResponse{
 			Tikv_BatchCoprocessorClient: &mockBathCopErrClient{Error: err},
 			BatchResponse: &coprocessor.BatchResponse{
@@ -87,7 +87,7 @@ func (mc *coprRPCHandler) HandleBatchCop(ctx context.Context, reqCtx *kvrpcpb.Co
 }
 
 func (mc *coprRPCHandler) HandleCopStream(ctx context.Context, reqCtx *kvrpcpb.Context, session *Session, r *coprocessor.Request, timeout time.Duration) (*tikvrpc.CopStreamResponse, error) {
-	if err := session.checkRequestContext(reqCtx); err != nil {
+	if err := session.CheckRequestContext(reqCtx); err != nil {
 		return &tikvrpc.CopStreamResponse{
 			Tikv_CoprocessorStreamClient: &mockCopStreamErrClient{Error: err},
 			Response: &coprocessor.Response{
