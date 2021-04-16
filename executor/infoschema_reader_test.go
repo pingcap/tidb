@@ -550,6 +550,10 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	analyzeTester.MustExec("set role r_t1")
 	resultT1 := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort()
 	c.Assert(len(resultT1.Rows()), Greater, 0)
+	for _, row := range resultT1.Rows() {
+		c.Assert(len(row), Equals, 8) // test length of row
+		c.Assert(row[6], NotNil)      // test `End_time` field
+	}
 }
 
 func (s *testInfoschemaTableSerialSuite) TestForServersInfo(c *C) {
