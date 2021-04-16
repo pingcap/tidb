@@ -3110,7 +3110,7 @@ func (s *testIntegrationSerialSuite) TestLimitIndexLookUpKeepOrder(c *C) {
 	}
 }
 
-// Apply operator may got panic because Projection
+// Apply operator may got panic because empty Projection is eliminated.
 func (s *testIntegrationSerialSuite) TestIssue23887(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
