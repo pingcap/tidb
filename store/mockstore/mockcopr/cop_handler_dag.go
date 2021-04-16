@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mocktikv
+package mockcopr
 
 import (
 	"bytes"
@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -591,7 +592,7 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	chunk, finish, ran, counts, warnings, err := mock.readBlockFromExecutor()
 	resp.Range = ran
 	if err != nil {
-		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
+		if locked, ok := errors.Cause(err).(*mocktikv.ErrLocked); ok {
 			resp.Locked = &kvrpcpb.LockInfo{
 				Key:         locked.Key,
 				PrimaryLock: locked.Primary,
@@ -783,7 +784,7 @@ func buildResp(selResp *tipb.SelectResponse, execDetails []*execDetail, err erro
 	}
 
 	// Select errors have been contained in `SelectResponse.Error`
-	if locked, ok := errors.Cause(err).(*ErrLocked); ok {
+	if locked, ok := errors.Cause(err).(*mocktikv.ErrLocked); ok {
 		resp.Locked = &kvrpcpb.LockInfo{
 			Key:         locked.Key,
 			PrimaryLock: locked.Primary,
