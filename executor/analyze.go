@@ -159,7 +159,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 			}
 			var err1 error
-			if result.StatsVer == statistics.Version2 {
+			if result.StatsVer == statistics.Version3 {
 				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, nil, result.TopNs[i], result.Fms[i], result.StatsVer, 1)
 			} else {
 				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.Fms[i], result.StatsVer, 1)
@@ -522,7 +522,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 	} else {
 		ranges = ranger.FullIntRange(false)
 	}
-	if colExec.analyzeVer == statistics.Version2 {
+	if colExec.analyzeVer == statistics.Version3 {
 		count, hists, topns, fmSketches, err := colExec.buildSamplingStats(ranges)
 		if err != nil {
 			return []analyzeResult{{Err: err, job: colExec.job}}

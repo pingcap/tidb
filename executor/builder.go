@@ -2043,9 +2043,6 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	colGroups := make([]*tipb.AnalyzeColumnGroup, 0, len(task.Indexes))
 	if len(task.Indexes) > 0 {
 		for _, idx := range task.Indexes {
-			if len(idx.Columns) == 1 {
-				continue
-			}
 			availableIdx = append(availableIdx, idx)
 			colGroup := &tipb.AnalyzeColumnGroup{
 				ColumnOffsets: make([]int64, 0, len(idx.Columns)),
@@ -2093,7 +2090,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
-	if task.StatsVersion == statistics.Version2 {
+	if task.StatsVersion == statistics.Version3 {
 		return b.buildAnalyzeSamplingPushdown(task, opts, autoAnalyze)
 	}
 	cols := task.ColsInfo

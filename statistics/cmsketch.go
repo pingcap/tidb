@@ -15,9 +15,11 @@ package statistics
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
@@ -495,6 +497,24 @@ type TopN struct {
 	TopN []TopNMeta
 }
 
+func (c *TopN) String() string {
+	if c == nil {
+		return "EmptyTopN"
+	}
+	builder := &strings.Builder{}
+	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
+	fmt.Fprint(builder, "[")
+	for i := 0; i < len(c.TopN); i++ {
+		fmt.Fprintf(builder, "(%v, %v)", c.TopN[i].Encoded, c.TopN[i].Count)
+		if i+1 != len(c.TopN) {
+			fmt.Fprint(builder, ", ")
+		}
+	}
+	fmt.Fprint(builder, "]")
+	fmt.Fprint(builder, "}")
+	return builder.String()
+}
+
 // Copy makes a copy for current TopN.
 func (c *TopN) Copy() *TopN {
 	if c == nil {
@@ -601,9 +621,9 @@ func (c *TopN) TotalCount() uint64 {
 
 // Equal checks whether the two TopN are equal.
 func (c *TopN) Equal(cc *TopN) bool {
-	if c == nil && cc == nil {
+	if c.TotalCount() == 0 && cc.TotalCount() == 0 {
 		return true
-	} else if c == nil || cc == nil {
+	} else if c.TotalCount() != cc.TotalCount() {
 		return false
 	}
 	if len(c.TopN) != len(cc.TopN) {
