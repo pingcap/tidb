@@ -8,7 +8,7 @@ The purpose of improvement proposals is to have a central place to collect and d
 
 ## Who should initiate the proposal?
 
-Anyone can initiate a proposal but you shouldn't do it unless you have an intention of getting the work done to implement it (otherwise it is silly).
+Anyone can initiate a proposal but you shouldn't do it unless you have an intention of getting the work done to implement it.
 
 ## Process
 
