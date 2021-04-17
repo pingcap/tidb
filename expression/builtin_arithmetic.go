@@ -784,12 +784,15 @@ func (s *builtinArithmeticIntDivideIntSig) evalIntWithCtx(sctx sessionctx.Contex
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	a, isNull, err := s.args[0].EvalInt(sctx, row)
+	if b == 0 && isNull {
+		return 0, true, nil
+	}
 
 	if b == 0 {
 		return 0, true, handleDivisionByZeroError(sctx)
 	}
 
-	a, isNull, err := s.args[0].EvalInt(sctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}

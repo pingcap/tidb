@@ -8249,3 +8249,15 @@ func (s *testSuite) TestIssue23609(c *C) {
 	tk.MustQuery("select * from t1 where a < b").Check(testkit.Rows())
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 }
+
+func (s *testSuite1) TestIssue24091(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t05;")
+	defer tk.MustExec("drop table if exists t05;")
+	tk.MustExec("create table t05(a int) partition by hash (a div 0) partitions 10;")
+	tk.MustExec("insert into t05 values (NULL);")
+
+	tk.MustQuery("select null div 0;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select * from t05;").Check(testkit.Rows("<nil>"))
+}
