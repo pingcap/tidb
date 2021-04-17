@@ -23,16 +23,16 @@ type testUtilsSuite struct{}
 
 func (t *testUtilsSuite) TestRestoreConstraints(c *C) {
 	testCases := []struct {
-		constraints    []LabelConstraint
+		constraints    []Constraint
 		expectedResult string
 		expectErr      bool
 	}{
 		{
-			constraints:    []LabelConstraint{},
+			constraints:    []Constraint{},
 			expectedResult: ``,
 		},
 		{
-			constraints: []LabelConstraint{
+			constraints: []Constraint{
 				{
 					Key:    "zone",
 					Op:     "in",
@@ -42,7 +42,7 @@ func (t *testUtilsSuite) TestRestoreConstraints(c *C) {
 			expectedResult: `"+zone=bj"`,
 		},
 		{
-			constraints: []LabelConstraint{
+			constraints: []Constraint{
 				{
 					Key:    "zone",
 					Op:     "notIn",
@@ -52,7 +52,7 @@ func (t *testUtilsSuite) TestRestoreConstraints(c *C) {
 			expectedResult: `"-zone=bj"`,
 		},
 		{
-			constraints: []LabelConstraint{
+			constraints: []Constraint{
 				{
 					Key:    "zone",
 					Op:     "exists",
@@ -62,21 +62,21 @@ func (t *testUtilsSuite) TestRestoreConstraints(c *C) {
 			expectErr: true,
 		},
 		{
-			constraints: []LabelConstraint{
+			constraints: []Constraint{
 				{
 					Key:    "zone",
 					Op:     "in",
 					Values: []string{"bj", "sh"},
 				},
 			},
-			expectedResult: `"+zone=bj,+zone=sh"`,
+			expectErr: true,
 		},
 		{
-			constraints: []LabelConstraint{
+			constraints: []Constraint{
 				{
 					Key:    "zone",
 					Op:     "in",
-					Values: []string{"bj", "sh"},
+					Values: []string{"bj"},
 				},
 				{
 					Key:    "disk",
@@ -84,7 +84,7 @@ func (t *testUtilsSuite) TestRestoreConstraints(c *C) {
 					Values: []string{"ssd"},
 				},
 			},
-			expectedResult: `"+zone=bj,+zone=sh","+disk=ssd"`,
+			expectedResult: `"+zone=bj","+disk=ssd"`,
 		},
 	}
 	for _, testCase := range testCases {
@@ -134,7 +134,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "12",
 						Role: Leader,
-						LabelConstraints: []LabelConstraint{
+						LabelConstraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     In,
@@ -160,7 +160,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "12",
 						Role: Voter,
-						LabelConstraints: []LabelConstraint{
+						LabelConstraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     In,
@@ -186,7 +186,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "11",
 						Role: Leader,
-						LabelConstraints: []LabelConstraint{
+						LabelConstraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     In,
@@ -203,7 +203,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "12",
 						Role: Voter,
-						LabelConstraints: []LabelConstraint{
+						LabelConstraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     In,
@@ -229,7 +229,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "11",
 						Role: Leader,
-						LabelConstraints: []LabelConstraint{
+						LabelConstraints: []Constraint{
 							{
 								Key:    "fake",
 								Op:     In,
@@ -255,7 +255,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "11",
 						Role: Leader,
-						LabelConstraints: []LabelConstraint{
+						LabelConstraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     NotIn,
@@ -281,7 +281,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "11",
 						Role: Leader,
-						LabelConstraints: []LabelConstraint{
+						LabelConstraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     In,

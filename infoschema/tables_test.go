@@ -1442,7 +1442,7 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 				ID:      "0",
 				Role:    "voter",
 				Count:   3,
-				LabelConstraints: []placement.LabelConstraint{
+				LabelConstraints: []placement.Constraint{
 					{
 						Key:    "zone",
 						Op:     "in",
