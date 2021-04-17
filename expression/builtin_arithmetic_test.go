@@ -380,10 +380,12 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		switch sig.(type) {
-		case *builtinArithmeticIntDivideIntSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideInt)
-		case *builtinArithmeticIntDivideDecimalSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideDecimal)
+		case *builtinArithmeticDivideRealSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_DivideReal)
+		case *builtinArithmeticDivideDecimalSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_DivideDecimal)
+		default:
+			c.Fatal("Wrong type of signature tested")
 		}
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 		c.Assert(err, IsNil)
@@ -488,12 +490,34 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 			args:   []interface{}{uint64(1), float64(-1)},
 			expect: []interface{}{nil, "*BIGINT UNSIGNED value is out of range in '\\(1 DIV -1\\)'"},
 		},
+		{
+			args:   []interface{}{uint64(3), -3},
+			expect: []interface{}{nil, "*BIGINT UNSIGNED value is out of range in '\\(3, -3\\)'"},
+		},
+		{
+			args:   []interface{}{-3, uint64(3)},
+			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(-3, 3\\)'"},
+		},
 	}
 
 	for _, tc := range testCases {
 		sig, err := funcs[ast.IntDiv].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
+		switch sig.(type) {
+		case *builtinArithmeticIntDivideIntSignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideIntSignedUnsigned)
+		case *builtinArithmeticIntDivideIntSignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideIntSignedSigned)
+		case *builtinArithmeticIntDivideIntUnsignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideIntUnsignedSigned)
+		case *builtinArithmeticIntDivideIntUnsignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideIntUnsignedUnsigned)
+		case *builtinArithmeticIntDivideDecimalSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideDecimal)
+		default:
+			c.Fatal("Wrong type of signature tested")
+		}
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 		if tc.expect[1] == nil {
 			c.Assert(err, IsNil)
