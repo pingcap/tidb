@@ -26,3 +26,9 @@ The most common preparations for writing and submitting an design document for n
 4. The pull request is merged or closed when at least two committers reach consensus and no objection from committer.
 
 Please update the tracking issue based on the result of pull request and if merged, the following progresses.
+
+An example that almost fits into this model is the proposal "Support global index for partition table", without following the latest template.
+
+- Its tracking issue: https://github.com/pingcap/tidb/issues/18032
+- Its pull request: https://github.com/pingcap/tidb/pull/18982
+- Its design document: https://github.com/pingcap/tidb/blob/master/docs/design/2020-08-04-global-index.md
