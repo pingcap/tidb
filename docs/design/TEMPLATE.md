@@ -1,7 +1,7 @@
 # TiDB Design Documents
 
 - Author(s): @ghid1, @ghid2, ...
-- Proposal PR: https://github.com/pingcap/tidb/pull/XXX
+- Discussion PR: https://github.com/pingcap/tidb/pull/XXX
 - Tracking Issue: https://github.com/pingcap/tidb/issues/XXX
 
 ## Table of Contents
