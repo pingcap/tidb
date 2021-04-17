@@ -6684,3 +6684,21 @@ func (s *testSerialSuite) TestIssue23872(c *C) {
 	expectFlag1 := uint16(mysql.NotNullFlag | mysql.PriKeyFlag)
 	c.Assert(cols1[0].Column.Flag, Equals, uint(expectFlag1))
 }
+
+// Close issue #23321.
+// See https://github.com/pingcap/tidb/issues/23321
+func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists test_add_index_after_add_col")
+	tk.MustExec("create table test_add_index_after_add_col(a int, b int not null default '0');")
+	tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2);")
+	tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0';")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`), IsNil)
+	defer c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit"), IsNil)
+
+	_, err := tk.Exec("alter table test_add_index_after_add_col add unique index cc(c);")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '0' for key 'cc'")
+}
