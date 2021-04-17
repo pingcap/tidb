@@ -4,7 +4,7 @@ This page describes a proposed TiDB Improvement Proposal process for proposing a
 
 ## What is the purpose of improvement proposals?
 
-The purpose of improvement proposals is to have a central place to collect and document planned major enhancements to TiDB projects. While GitHub Issue is still the tool to track tasks, bugs, and progress, the proposals give an accessible high level overview of the result of design discussions and proposals.
+The purpose of improvement proposals is to have a central place to collect and document planned major enhancements to TiDB projects. While [GitHub Issue](https://github.com/pingcap/tidb/issues) is still the tool to track tasks, bugs, and progress, the proposals give an accessible high-level overview of the result of design discussions and proposals.
 
 ## Who should initiate the proposal?
 
@@ -60,4 +60,3 @@ This section consists of proposal that fails to complete or rejected but worth r
 | Proposal | Discarded Reason |
 | -------- | ---------------- |
 |          |                  |
-
