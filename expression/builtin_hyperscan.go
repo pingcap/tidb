@@ -111,7 +111,7 @@ import (
 	"runtime"
 	"strings"
 
-	hs "github.com/flier/gohs/hyperscan"
+	hs "github.com/blacktear23/gohs/hyperscan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
