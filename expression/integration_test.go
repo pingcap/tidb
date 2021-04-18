@@ -8744,7 +8744,7 @@ PARTITION BY RANGE (c) (
 					GroupID: groupID,
 					Role:    placement.Leader,
 					Count:   1,
-					LabelConstraints: []placement.LabelConstraint{
+					LabelConstraints: []placement.Constraint{
 						{
 							Key:    placement.DCLabelKey,
 							Op:     placement.In,
@@ -9179,5 +9179,19 @@ func (s *testIntegrationSuite) TestIssue23312(c *C) {
 	tk.MustExec("INSERT INTO `test_group_concat` VALUES (DEFAULT, 3.36769e38);")
 	tk.MustExec("INSERT INTO `test_group_concat` VALUES (DEFAULT, 3.18374e38);")
 	tk.MustQuery("select GROUP_CONCAT(col1) from test_group_concat;").Check(
-		testkit.Rows("3.18374e38,3.36769e38"))
+	testkit.Rows("3.18374e38,3.36769e38"))
+}
+
+func (s *testIntegrationSuite) TestRefineArgNullValues(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, a int)")
+	tk.MustExec("create table s(a int)")
+	tk.MustExec("insert into s values(1),(2)")
+
+	tk.MustQuery("select t.id = 1.234 from t right join s on t.a = s.a").Check(testkit.Rows(
+		"<nil>",
+		"<nil>",
+	))
 }
