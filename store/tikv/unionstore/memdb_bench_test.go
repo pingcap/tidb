@@ -14,7 +14,6 @@
 package unionstore
 
 import (
-	"context"
 	"encoding/binary"
 	"math"
 	"math/rand"
@@ -99,7 +98,7 @@ func BenchmarkGet(b *testing.B) {
 
 	b.ResetTimer()
 	for i := range buf {
-		_, err := p.Get(context.TODO(), buf[i][:keySize])
+		_, err := p.Get(buf[i][:keySize])
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -122,7 +121,7 @@ func BenchmarkGetRandom(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := p.Get(context.TODO(), buf[i][:keySize])
+		_, err := p.Get(buf[i][:keySize])
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -183,7 +182,7 @@ func benchmarkSetGet(b *testing.B, buffer *MemDB, data [][]byte) {
 			}
 		}
 		for _, k := range data {
-			_, err := buffer.Get(context.TODO(), k)
+			_, err := buffer.Get(k)
 			if err != nil {
 				b.Fatal(err)
 			}

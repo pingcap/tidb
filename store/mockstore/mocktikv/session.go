@@ -39,7 +39,33 @@ type Session struct {
 	resolvedLocks  []uint64
 }
 
-func (s *Session) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
+// GetIsolationLevel returns the session's isolation level.
+func (s *Session) GetIsolationLevel() kvrpcpb.IsolationLevel {
+	return s.isolationLevel
+}
+
+// GetMVCCStore returns the mock mvcc store.
+func (s *Session) GetMVCCStore() MVCCStore {
+	return s.mvccStore
+}
+
+// GetRawStartKey returns the raw start key of the request.
+func (s *Session) GetRawStartKey() []byte {
+	return s.rawStartKey
+}
+
+// GetRawEndKey returns the raw end key of the request.
+func (s *Session) GetRawEndKey() []byte {
+	return s.rawEndKey
+}
+
+// GetResolvedLocks returns the resolved locks of the request.
+func (s *Session) GetResolvedLocks() []uint64 {
+	return s.resolvedLocks
+}
+
+// CheckRequestContext checks if the context matches the request status.
+func (s *Session) CheckRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil && ctxPeer.GetStoreId() != s.storeID {
 		return &errorpb.Error{
@@ -126,7 +152,7 @@ func (s *Session) checkRequestSize(size int) *errorpb.Error {
 }
 
 func (s *Session) checkRequest(ctx *kvrpcpb.Context, size int) *errorpb.Error {
-	if err := s.checkRequestContext(ctx); err != nil {
+	if err := s.CheckRequestContext(ctx); err != nil {
 		return err
 	}
 	return s.checkRequestSize(size)

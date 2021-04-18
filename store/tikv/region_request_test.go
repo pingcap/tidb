@@ -20,12 +20,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -70,7 +72,7 @@ func (s *testRegionRequestToSingleStoreSuite) SetUpTest(c *C) {
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
-	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore, nil)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
@@ -81,7 +83,7 @@ func (s *testRegionRequestToThreeStoresSuite) SetUpTest(c *C) {
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
-	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore, nil)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
@@ -160,7 +162,6 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnRegionError(c *C) {
 		c.Assert(err, NotNil)
 		c.Assert(resp, IsNil)
 	}()
-
 }
 
 func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
@@ -731,4 +732,42 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 	// Leader changed
 	c.Assert(ctx.Store.storeID, Not(Equals), leaderStore.storeID)
 	c.Assert(ctx.ProxyStore, IsNil)
+}
+
+func (s *testRegionRequestToSingleStoreSuite) TestGetRegionByIDFromCache(c *C) {
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+
+	// test kv epochNotMatch return empty regions
+	s.cache.OnRegionEpochNotMatch(s.bo, &RPCContext{Region: region.Region, Store: &Store{storeID: s.store}}, []*metapb.Region{})
+	c.Assert(err, IsNil)
+	r := s.cache.getRegionByIDFromCache(s.region)
+	c.Assert(r, IsNil)
+
+	// refill cache
+	region, err = s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+
+	// test kv load new region with new start-key and new epoch
+	v2 := region.Region.confVer + 1
+	r2 := metapb.Region{Id: region.Region.id, RegionEpoch: &metapb.RegionEpoch{Version: region.Region.ver, ConfVer: v2}, StartKey: []byte{1}}
+	st := &Store{storeID: s.store}
+	s.cache.insertRegionToCache(&Region{meta: &r2, store: unsafe.Pointer(st), lastAccess: time.Now().Unix()})
+	region, err = s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	c.Assert(region.Region.confVer, Equals, v2)
+	c.Assert(region.Region.ver, Equals, region.Region.ver)
+
+	v3 := region.Region.confVer + 1
+	r3 := metapb.Region{Id: region.Region.id, RegionEpoch: &metapb.RegionEpoch{Version: v3, ConfVer: region.Region.confVer}, StartKey: []byte{2}}
+	st = &Store{storeID: s.store}
+	s.cache.insertRegionToCache(&Region{meta: &r3, store: unsafe.Pointer(st), lastAccess: time.Now().Unix()})
+	region, err = s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	c.Assert(region.Region.confVer, Equals, region.Region.confVer)
+	c.Assert(region.Region.ver, Equals, v3)
 }
