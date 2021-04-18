@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 
 	"github.com/cznic/mathutil"
@@ -2465,14 +2466,30 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
+	user := b.ctx.GetSessionVars().User
 	var authErr error
-	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
-			b.ctx.GetSessionVars().User.AuthHostname, tableInfo.Name.L)
+	if user != nil {
+		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
 	}
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tn.DBInfo.Name.L,
 		tableInfo.Name.L, "", authErr)
+
+	// `REPLACE INTO` requires both INSERT + DELETE privilege
+	// `ON DUPLICATE KEY UPDATE` requires both INSERT + UPDATE privilege
+	var extraPriv mysql.PrivilegeType
+	if insert.IsReplace {
+		extraPriv = mysql.DeletePriv
+	} else if insert.OnDuplicate != nil {
+		extraPriv = mysql.UpdatePriv
+	}
+	if extraPriv != 0 {
+		if user != nil {
+			cmd := strings.ToUpper(mysql.Priv2Str[extraPriv])
+			authErr = ErrTableaccessDenied.GenWithStackByArgs(cmd, user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, extraPriv, tn.DBInfo.Name.L, tableInfo.Name.L, "", authErr)
+	}
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
@@ -3514,6 +3531,9 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (Plan, error) {
+	if sem.IsEnabled() {
+		return nil, ErrNotSupportedWithSem.GenWithStackByArgs("SELECT INTO")
+	}
 	selectIntoInfo := sel.SelectIntoOpt
 	sel.SelectIntoOpt = nil
 	targetPlan, _, err := OptimizeAstNode(ctx, b.ctx, sel, b.is)
@@ -3720,8 +3740,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation", "Source"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowAnalyzeStatus:
-		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "State"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeVarchar}
+		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "End_time", "State"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar}
 	case ast.ShowBuiltins:
 		names = []string{"Supported_builtin_functions"}
 		ftypes = []byte{mysql.TypeVarchar}

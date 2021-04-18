@@ -395,8 +395,8 @@ func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.S
 }
 
 func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
-	var serversInfo []infoschema.ServerInfo
 	servers := strings.Split(s, ";")
+	serversInfo := make([]infoschema.ServerInfo, 0, len(servers))
 	for _, server := range servers {
 		parts := strings.Split(server, ",")
 		serversInfo = append(serversInfo, infoschema.ServerInfo{
@@ -494,7 +494,7 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 	nodeTypes := e.extractor.NodeTypes
 	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, instances)
 
-	var levels []diagnosticspb.LogLevel
+	var levels = make([]diagnosticspb.LogLevel, 0, len(e.extractor.LogLevels))
 	for l := range e.extractor.LogLevels {
 		levels = append(levels, sysutil.ParseLogLevel(l))
 	}

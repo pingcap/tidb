@@ -235,4 +235,8 @@ func (s *testMainSuite) TestIndexUsageSyncLease(c *C) {
 	se, ok = st.(*session)
 	c.Assert(ok, IsTrue)
 	c.Assert(se.idxUsageCollector, NotNil)
+
+	do.Close()
+	err = store.Close()
+	c.Assert(err, IsNil)
 }

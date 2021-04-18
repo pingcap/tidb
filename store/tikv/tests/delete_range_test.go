@@ -20,6 +20,7 @@ import (
 	"sort"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
@@ -34,7 +35,7 @@ type testDeleteRangeSuite struct {
 var _ = Suite(&testDeleteRangeSuite{})
 
 func (s *testDeleteRangeSuite) SetUpTest(c *C) {
-	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("", mockcopr.NewCoprRPCHandler())
 	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("b"), []byte("c"), []byte("d"))
 	s.cluster = cluster

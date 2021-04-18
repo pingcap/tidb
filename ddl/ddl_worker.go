@@ -624,7 +624,11 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 // countForPanic records the error count for DDL job.
 func (w *worker) countForPanic(job *model.Job) {
 	// If run DDL job panic, just cancel the DDL jobs.
-	job.State = model.JobStateCancelling
+	if job.State == model.JobStateRollingback {
+		job.State = model.JobStateCancelled
+	} else {
+		job.State = model.JobStateCancelling
+	}
 	job.ErrorCount++
 
 	// Load global DDL variables.

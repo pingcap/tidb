@@ -71,6 +71,7 @@ type PointGetPlan struct {
 	LockWaitTime       int64
 	partitionColumnPos int
 	Columns            []*model.ColumnInfo
+	cost               float64
 }
 
 type nameValuePair struct {
@@ -82,6 +83,16 @@ type nameValuePair struct {
 // Schema implements the Plan interface.
 func (p *PointGetPlan) Schema() *expression.Schema {
 	return p.schema
+}
+
+// Cost implements PhysicalPlan interface
+func (p *PointGetPlan) Cost() float64 {
+	return p.cost
+}
+
+// SetCost implements PhysicalPlan interface
+func (p *PointGetPlan) SetCost(cost float64) {
+	p.cost = cost
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
@@ -262,6 +273,25 @@ type BatchPointGetPlan struct {
 	Lock             bool
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo
+	cost             float64
+
+	// SinglePart indicates whether this BatchPointGetPlan is just for a single partition, instead of the whole partition table.
+	// If the BatchPointGetPlan is built in fast path, this value if false; if the plan is generated in physical optimization for a partition,
+	// this value would be true. This value would decide the behavior of BatchPointGetExec, i.e, whether to compute the table ID of the partition
+	// on the fly.
+	SinglePart bool
+	// PartTblID is the table ID for the specific table partition.
+	PartTblID int64
+}
+
+// Cost implements PhysicalPlan interface
+func (p *BatchPointGetPlan) Cost() float64 {
+	return p.cost
+}
+
+// SetCost implements PhysicalPlan interface
+func (p *BatchPointGetPlan) SetCost(cost float64) {
+	p.cost = cost
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1019,7 +1049,7 @@ func buildSchemaFromFields(
 			if col == nil {
 				return nil, nil
 			}
-			asName := col.Name
+			asName := colNameExpr.Name.Name
 			if field.AsName.L != "" {
 				asName = field.AsName
 			}
@@ -1027,6 +1057,7 @@ func buildSchemaFromFields(
 				DBName:      dbName,
 				OrigTblName: tbl.Name,
 				TblName:     tblName,
+				OrigColName: col.Name,
 				ColName:     asName,
 			})
 			columns = append(columns, colInfoToColumn(col, len(columns)))
