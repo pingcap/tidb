@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -567,18 +566,10 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 		// Since we have checked the charset, the dbCollate here shouldn't be "".
 		dbCollate = getDefaultCollate(dbinfo.Charset)
 	}
-	// GetCollationByName will return an err if new collations are enabled
-	// and the collation is not supported. In USE context, we can substitute
-	// the default collation.
-	coll, err := collate.GetCollationByName(dbCollate)
-	if err != nil {
-		logutil.BgLogger().Warn(err.Error())
-		coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
-		if err != nil {
-			return err
-		}
-	}
-	return sessionVars.SetSystemVar(variable.CollationDatabase, coll.Name)
+	// If new collations are enabled, switch to the default
+	// collation if this one is not supported.
+	dbCollate = collate.SubstituteMissingCollationToDefault(dbCollate)
+	return sessionVars.SetSystemVar(variable.CollationDatabase, dbCollate)
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {

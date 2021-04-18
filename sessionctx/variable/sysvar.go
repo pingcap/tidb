@@ -490,12 +490,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationServer, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
-		var coll *charset.Collation
-		var err error
-		if coll, err = collate.GetCollationByName(val); err != nil {
-			return err
+		if coll, err := collate.GetCollationByName(val); err == nil {
+			s.systems[CharacterSetServer] = coll.CharsetName
 		}
-		s.systems[CharacterSetServer] = coll.CharsetName
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: BoolOn, Type: TypeBool},
@@ -533,12 +530,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
-		var coll *charset.Collation
-		var err error
-		if coll, err = collate.GetCollationByName(val); err != nil {
-			return err
+		if coll, err := collate.GetCollationByName(val); err == nil {
+			s.systems[CharsetDatabase] = coll.CharsetName
 		}
-		s.systems[CharsetDatabase] = coll.CharsetName
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: AutoIncrementIncrement, Value: strconv.FormatInt(DefAutoIncrementIncrement, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint16, AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
@@ -589,12 +583,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationConnection, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
-		var coll *charset.Collation
-		var err error
-		if coll, err = collate.GetCollationByName(val); err != nil {
-			return err
+		if coll, err := collate.GetCollationByName(val); err == nil {
+			s.systems[CharacterSetConnection] = coll.CharsetName
 		}
-		s.systems[CharacterSetConnection] = coll.CharsetName
 		return nil
 	}},
 	{Scope: ScopeNone, Name: Version, Value: mysql.ServerVersion},
@@ -609,12 +600,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CharsetDatabase, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharsetDatabase)
 	}, SetSession: func(s *SessionVars, val string) error {
-		var coll string
-		var err error
-		if _, coll, err = charset.GetCharsetInfo(val); err != nil {
-			return err
+		if _, coll, err := charset.GetCharsetInfo(val); err == nil {
+			s.systems[CollationDatabase] = coll
 		}
-		s.systems[CollationDatabase] = coll
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576, AutoConvertOutOfRange: true},
@@ -645,23 +633,17 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetConnection, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetConnection)
 	}, SetSession: func(s *SessionVars, val string) error {
-		var coll string
-		var err error
-		if _, coll, err = charset.GetCharsetInfo(val); err != nil {
-			return err
+		if _, coll, err := charset.GetCharsetInfo(val); err == nil {
+			s.systems[CollationConnection] = coll
 		}
-		s.systems[CollationConnection] = coll
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetServer)
 	}, SetSession: func(s *SessionVars, val string) error {
-		var coll string
-		var err error
-		if _, coll, err = charset.GetCharsetInfo(val); err != nil {
-			return err
+		if _, coll, err := charset.GetCharsetInfo(val); err == nil {
+			s.systems[CollationServer] = coll
 		}
-		s.systems[CollationServer] = coll
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: MaxAllowedPacket, Value: "67108864", Type: TypeUnsigned, MinValue: 1024, MaxValue: MaxOfMaxAllowedPacket, AutoConvertOutOfRange: true},

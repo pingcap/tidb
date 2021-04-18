@@ -353,17 +353,9 @@ func (s *session) SetCollation(coID int) error {
 	if err != nil {
 		return err
 	}
-	// If new collations are enabled, this will return an error.
-	// In which case we may need to switch the collation to the default one.
-	if _, err = collate.GetCollationByName(co); err != nil {
-		logutil.BgLogger().Warn(err.Error())
-		var coll *charset.Collation
-		coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
-		if err != nil {
-			return err
-		}
-		co = coll.Name
-	}
+	// If new collations are enabled, switch to the default
+	// collation if this one is not supported.
+	co = collate.SubstituteMissingCollationToDefault(co)
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
