@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -1196,7 +1195,6 @@ func (b *builtinCastRealAsDurationSig) vectorized() bool {
 }
 
 func (b *builtinCastRealAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	fmt.Println("call builtinCastRealAsDurationSig.vecEvalDuration")
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETReal, n)
 	if err != nil {
@@ -1224,9 +1222,8 @@ func (b *builtinCastRealAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 				// ErrTruncatedWrongVal needs to be considered NULL.
 				result.SetNull(i, true)
 				continue
-			} else {
-				return err
 			}
+			return err
 		}
 		ds[i] = dur.Duration
 	}
