@@ -110,7 +110,7 @@ func (s *testScanSuite) TestScan(c *C) {
 				c.Assert(err, IsNil)
 			}
 		}
-		// to fix: cannot check error, sometimes err not nil
+		// FIXME: Cannot check the error, sometimes `err` is not nil.
 		_ = scan.Next()
 		c.Assert(scan.Valid(), IsFalse)
 	}
