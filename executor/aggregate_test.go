@@ -1283,9 +1283,15 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
-	for i := 0; i < 10000; i++ {
-		tk.MustExec("insert into t values (?, ?);", rand.Intn(100), rand.Intn(100))
+	var insertSql string
+	for i := 0; i < 1000; i++ {
+		if i == 0 {
+			insertSql += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
+		}else{
+			insertSql += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
+		}
 	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSql))
 
 	concurrencies := []int{1, 2, 4, 8}
 	for _, sql := range sqls {
