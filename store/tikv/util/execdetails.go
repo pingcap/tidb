@@ -15,12 +15,14 @@ package util
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 )
 
 type commitDetailCtxKeyType struct{}
 type lockKeysDetailCtxKeyType struct{}
+type execDetailsCtxKeyType struct{}
 
 var (
 	// CommitDetailCtxKey presents CommitDetail info key in context.
@@ -28,6 +30,9 @@ var (
 
 	// LockKeysDetailCtxKey presents LockKeysDetail info key in context.
 	LockKeysDetailCtxKey = lockKeysDetailCtxKeyType{}
+
+	// ExecDetailsKey presents ExecDetail info key in context.
+	ExecDetailsKey = execDetailsCtxKeyType{}
 )
 
 // CommitDetails contains commit detail information.
@@ -127,4 +132,50 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 	}
 	lock.Mu.BackoffTypes = append([]fmt.Stringer{}, ld.Mu.BackoffTypes...)
 	return lock
+}
+
+// ExecDetails contains execution detail info.
+type ExecDetails struct {
+	BackoffCount       int64
+	BackoffDuration    int64
+	WaitKVRespDuration int64
+	WaitPDRespDuration int64
+}
+
+// FormatDuration uses to format duration, this function will prune precision before format duration.
+// Pruning precision is for human readability. The prune rule is:
+// 1. if the duration was less than 1us, return the original string.
+// 2. readable value >=10, keep 1 decimal, otherwise, keep 2 decimal. such as:
+//    9.412345ms  -> 9.41ms
+//    10.412345ms -> 10.4ms
+//    5.999s      -> 6s
+//    100.45µs    -> 100.5µs
+func FormatDuration(d time.Duration) string {
+	if d <= time.Microsecond {
+		return d.String()
+	}
+	unit := getUnit(d)
+	if unit == time.Nanosecond {
+		return d.String()
+	}
+	integer := (d / unit) * unit
+	decimal := float64(d%unit) / float64(unit)
+	if d < 10*unit {
+		decimal = math.Round(decimal*100) / 100
+	} else {
+		decimal = math.Round(decimal*10) / 10
+	}
+	d = integer + time.Duration(decimal*float64(unit))
+	return d.String()
+}
+
+func getUnit(d time.Duration) time.Duration {
+	if d >= time.Second {
+		return time.Second
+	} else if d >= time.Millisecond {
+		return time.Millisecond
+	} else if d >= time.Microsecond {
+		return time.Microsecond
+	}
+	return time.Nanosecond
 }

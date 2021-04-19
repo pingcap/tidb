@@ -39,7 +39,7 @@ type testClusterSuite struct {
 }
 
 func (s *testClusterSuite) TestClusterSplit(c *C) {
-	rpcClient, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	rpcClient, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("", nil)
 	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := rpcClient.MvccStore
