@@ -15,10 +15,14 @@ package util
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -434,9 +438,18 @@ type SequenceTable interface {
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
-func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error) {
+func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, autoReload bool, err error) {
+	autoReload = false
 	if len(cert) == 0 || len(key) == 0 {
-		return
+		autoReload = true
+		tempStoragePath := config.GetGlobalConfig().TempStoragePath
+		cert = tempStoragePath + "/cert.pem"
+		key = tempStoragePath + "/key.pem"
+		err = createTLSCertificates(cert, key)
+		if err != nil {
+			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
+			return
+		}
 	}
 
 	var tlsCert tls.Certificate
@@ -545,4 +558,64 @@ func QueryStrForLog(query string) string {
 		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
 	}
 	return query
+}
+
+func createTLSCertificates(certpath string, keypath string) error {
+	privkey, err := rsa.GenerateKey(rand.Reader, 4096)
+	if err != nil {
+		return err
+	}
+
+	certValidity := 90 * 24 * time.Hour // 90 days
+	notBefore := time.Now()
+	notAfter := notBefore.Add(certValidity)
+	hostname, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		DNSNames:     []string{hostname},
+	}
+
+	// DER: Distinguished Encoding Rules, this is the ASN.1 encoding rule of the certificate.
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privkey.PublicKey, privkey)
+	if err != nil {
+		return err
+	}
+
+	certOut, err := os.Create(certpath)
+	if err != nil {
+		return err
+	}
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		return err
+	}
+	if err := certOut.Close(); err != nil {
+		return err
+	}
+
+	keyOut, err := os.OpenFile(keypath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+
+	privBytes, err := x509.MarshalPKCS8PrivateKey(privkey)
+	if err != nil {
+		return err
+	}
+
+	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: privBytes}); err != nil {
+		return err
+	}
+
+	if err := keyOut.Close(); err != nil {
+		return err
+	}
+
+	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath), zap.Duration("validity", certValidity))
+	return nil
 }

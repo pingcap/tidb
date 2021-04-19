@@ -905,18 +905,8 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	err = cli.runTestTLSConnection(c, connOverrider) // We should get ErrNoTLS.
-	c.Assert(err, NotNil)
-	c.Assert(errors.Cause(err).Error(), Equals, mysql.ErrNoTLS.Error())
-
-	// Test SSL/TLS session vars
-	var v *variable.SessionVars
-	stats, err := server.Stats(v)
+	err = cli.runTestTLSConnection(c, connOverrider) // Relying on automatically created TLS certificates
 	c.Assert(err, IsNil)
-	c.Assert(stats, HasKey, "Ssl_server_not_after")
-	c.Assert(stats, HasKey, "Ssl_server_not_before")
-	c.Assert(stats["Ssl_server_not_after"], Equals, "")
-	c.Assert(stats["Ssl_server_not_before"], Equals, "")
 
 	server.Close()
 
@@ -952,7 +942,8 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	cli.runTestRegression(c, connOverrider, "TLSRegression")
 
 	// Test SSL/TLS session vars
-	stats, err = server.Stats(v)
+	var v *variable.SessionVars
+	stats, err := server.Stats(v)
 	c.Assert(err, IsNil)
 	c.Assert(stats, HasKey, "Ssl_server_not_after")
 	c.Assert(stats, HasKey, "Ssl_server_not_before")
@@ -996,9 +987,9 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}), IsFalse)
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}), IsTrue)
 
-	_, err = util.LoadTLSCertificates("", "wrong key", "wrong cert")
+	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert")
 	c.Assert(err, NotNil)
-	_, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	_, _, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem")
 	c.Assert(err, NotNil)
 }
 

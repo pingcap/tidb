@@ -193,7 +193,23 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
 	}
 	setTxnScope()
-	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+	tlsConfig, autoReload, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+
+	// Automatically reload auto-generated certificates.
+	// The certificates are re-created every 30 days and are valid for 90 days.
+	if autoReload {
+		go func() {
+			for range time.Tick(time.Hour * 24 * 30) { // 30 days
+				logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
+				tlsConfig, _, err = util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+				if err != nil {
+					logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
+				}
+				atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+			}
+		}()
+	}
+
 	if err != nil {
 		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
 	}
