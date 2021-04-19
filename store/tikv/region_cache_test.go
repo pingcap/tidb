@@ -21,14 +21,13 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/google/btree"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -923,7 +922,7 @@ func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 	client := &RawKVClient{
 		clusterID:   0,
 		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
-		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore, nil),
 	}
 	defer client.Close()
 	testKey := []byte("test_key")
@@ -948,7 +947,7 @@ func (s *testRegionCacheSuite) TestReplaceAddrWithNewStore(c *C) {
 	client := &RawKVClient{
 		clusterID:   0,
 		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
-		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore, nil),
 	}
 	defer client.Close()
 	testKey := []byte("test_key")
@@ -977,7 +976,7 @@ func (s *testRegionCacheSuite) TestReplaceNewAddrAndOldOfflineImmediately(c *C) 
 	client := &RawKVClient{
 		clusterID:   0,
 		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
-		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore, nil),
 	}
 	defer client.Close()
 	testKey := []byte("test_key")
@@ -1013,7 +1012,7 @@ func (s *testRegionCacheSuite) TestReplaceStore(c *C) {
 	client := &RawKVClient{
 		clusterID:   0,
 		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
-		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore, nil),
 	}
 	defer client.Close()
 	testKey := []byte("test_key")
@@ -1315,44 +1314,6 @@ func (s *testRegionCacheSuite) TestPeersLenChange(c *C) {
 
 	// OnSendFail should not panic
 	s.cache.OnSendFail(NewNoopBackoff(context.Background()), ctx, false, errors.New("send fail"))
-}
-
-func (s *testRegionRequestToSingleStoreSuite) TestGetRegionByIDFromCache(c *C) {
-	region, err := s.cache.LocateRegionByID(s.bo, s.region)
-	c.Assert(err, IsNil)
-	c.Assert(region, NotNil)
-
-	// test kv epochNotMatch return empty regions
-	s.cache.OnRegionEpochNotMatch(s.bo, &RPCContext{Region: region.Region, Store: &Store{storeID: s.store}}, []*metapb.Region{})
-	c.Assert(err, IsNil)
-	r := s.cache.getRegionByIDFromCache(s.region)
-	c.Assert(r, IsNil)
-
-	// refill cache
-	region, err = s.cache.LocateRegionByID(s.bo, s.region)
-	c.Assert(err, IsNil)
-	c.Assert(region, NotNil)
-
-	// test kv load new region with new start-key and new epoch
-	v2 := region.Region.confVer + 1
-	r2 := metapb.Region{Id: region.Region.id, RegionEpoch: &metapb.RegionEpoch{Version: region.Region.ver, ConfVer: v2}, StartKey: []byte{1}}
-	st := &Store{storeID: s.store}
-	s.cache.insertRegionToCache(&Region{meta: &r2, store: unsafe.Pointer(st), lastAccess: time.Now().Unix()})
-	region, err = s.cache.LocateRegionByID(s.bo, s.region)
-	c.Assert(err, IsNil)
-	c.Assert(region, NotNil)
-	c.Assert(region.Region.confVer, Equals, v2)
-	c.Assert(region.Region.ver, Equals, region.Region.ver)
-
-	v3 := region.Region.confVer + 1
-	r3 := metapb.Region{Id: region.Region.id, RegionEpoch: &metapb.RegionEpoch{Version: v3, ConfVer: region.Region.confVer}, StartKey: []byte{2}}
-	st = &Store{storeID: s.store}
-	s.cache.insertRegionToCache(&Region{meta: &r3, store: unsafe.Pointer(st), lastAccess: time.Now().Unix()})
-	region, err = s.cache.LocateRegionByID(s.bo, s.region)
-	c.Assert(err, IsNil)
-	c.Assert(region, NotNil)
-	c.Assert(region.Region.confVer, Equals, region.Region.confVer)
-	c.Assert(region.Region.ver, Equals, v3)
 }
 
 func createSampleRegion(startKey, endKey []byte) *Region {

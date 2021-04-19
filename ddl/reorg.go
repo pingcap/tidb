@@ -436,7 +436,6 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(ctx)
 	return result, nil
 }
 
