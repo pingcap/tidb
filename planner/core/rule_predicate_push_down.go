@@ -335,6 +335,11 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 	}
 }
 
+func SimplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
+	simplifyOuterJoin(p, predicates)
+	return
+}
+
 // isNullRejected check whether a condition is null-rejected
 // A condition would be null-rejected in one of following cases:
 // If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
