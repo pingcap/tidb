@@ -25,7 +25,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	tikvcfg "github.com/pingcap/tidb/store/tikv/config"
 )
 
@@ -157,22 +156,7 @@ func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) 
 	}
 }
 
-const (
-	globalTxnScope = "global"
-)
-
 // GetTxnScopeFromConfig extracts @@txn_scope value from config
 func GetTxnScopeFromConfig() (bool, string) {
-	failpoint.Inject("injectTxnScope", func(val failpoint.Value) {
-		v := val.(string)
-		if len(v) > 0 {
-			failpoint.Return(false, v)
-		}
-		failpoint.Return(true, globalTxnScope)
-	})
-
-	if kvcfg := tikvcfg.GetGlobalConfig(); kvcfg != nil && len(kvcfg.TxnScope) > 0 {
-		return false, kvcfg.TxnScope
-	}
-	return true, globalTxnScope
+	return tikvcfg.GetTxnScopeFromConfig()
 }
