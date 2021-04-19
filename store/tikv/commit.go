@@ -133,16 +133,26 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 				zap.Strings("keys", hexBatchKeys(keys)))
 			return errors.Trace(err)
 		}
-		// The transaction maybe rolled back by concurrent transactions.
-		logutil.Logger(bo.ctx).Debug("2PC failed commit primary key",
-			zap.Error(err),
-			zap.Uint64("txnStartTS", c.startTS))
+		if batch.isPrimary {
+			// The transaction maybe rolled back by concurrent transactions.
+			logutil.Logger(bo.ctx).Debug("2PC failed commit primary key",
+				zap.Error(err),
+				zap.Uint64("txnStartTS", c.startTS))
+		} else {
+			logutil.Logger(bo.ctx).Debug("2PC failed commit secondary key",
+				zap.Error(err),
+				zap.Uint64("txnStartTS", c.startTS))
+		}
 		return err
 	}
 
+	// if batch is not primary key then return immediately
+	// Group that contains primary key is always the first except async commit.
+	if batch.isPrimary {
+		return nil
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// Group that contains primary key is always the first.
 	// We mark transaction's status committed when we receive the first success response.
 	c.mu.committed = true
 	return nil
