@@ -1005,7 +1005,7 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 			return err
 		}
 		if !exists {
-			return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", role.String())
+			return ErrGrantRole.GenWithStackByArgs(role.String())
 		}
 	}
 	for _, user := range s.Users {

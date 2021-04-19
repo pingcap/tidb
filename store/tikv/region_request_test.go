@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/kv"
 
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"google.golang.org/grpc"
 )
@@ -73,7 +73,7 @@ func (s *testRegionRequestToSingleStoreSuite) SetUpTest(c *C) {
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
-	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore, nil)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
@@ -84,7 +84,7 @@ func (s *testRegionRequestToThreeStoresSuite) SetUpTest(c *C) {
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
-	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore, nil)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
