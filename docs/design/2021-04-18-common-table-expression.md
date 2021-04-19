@@ -181,7 +181,7 @@ Three structures will be constructed:
 2. `TempTableReaderExec`: Read result of previous iteration and return result to parent operator.
 3. `CTEStorage`: This is where the materialized results stored. `CTEExec` will write it and `TempTableReaderExec` will read it.
 
-The executor_tree tree will be like:
+The executor tree will be like:
 
 ![executors](./imgs/executors.png)
 
