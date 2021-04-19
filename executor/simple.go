@@ -657,7 +657,7 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 		if err != nil {
 			return err
 		}
-		opt.MaxPrevSec = uint64(d.Seconds())
+		opt.PrevSec = uint64(d.Seconds())
 	case ast.TimestampBoundMinReadTimestamp:
 		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
 		if !ok {
@@ -672,7 +672,7 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 			return err
 		}
 		startTS := oracle.ComposeTS(gt.Unix()*1000, 0)
-		opt.MinStartTS = startTS
+		opt.StartTS = startTS
 	}
 	err := e.ctx.NewTxnWithStalenessOption(ctx, opt)
 	if err != nil {

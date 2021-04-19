@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/ddl/placement"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -216,7 +217,7 @@ func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTx
 		for _, store := range allStores {
 			if store.IsLabelsMatch([]*metapb.StoreLabel{
 				{
-					Key:   "zone",
+					Key:   placement.DCLabelKey,
 					Value: txnScope,
 				},
 			}) {
@@ -228,7 +229,7 @@ func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTx
 	}
 	resolveTS := s.getMinResolveTSByStores(stores)
 	startTS := minStartTS
-	// If the resolveTS is larger then then minStartTS, we will use resolveTS as StartTS, otherwise we will use
+	// If the resolveTS is larger than the minStartTS, we will use resolveTS as StartTS, otherwise we will use
 	// minStartTS directly.
 	if oracle.CompareTS(startTS, resolveTS) < 0 {
 		startTS = resolveTS
@@ -404,6 +405,10 @@ func (s *KVStore) getMinResolveTSByStores(stores []*Store) uint64 {
 	minSafeTS := uint64(math.MaxUint64)
 	s.resolveTSMu.RLock()
 	defer s.resolveTSMu.RUnlock()
+	// when there is no store, return 0 in order to let minStartTS become startTS directly
+	if len(stores) < 1 {
+		return 0
+	}
 	for _, store := range stores {
 		safeTS := s.resolveTSMu.resolveTS[store.storeID]
 		if safeTS < minSafeTS {
