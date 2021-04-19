@@ -912,10 +912,8 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		if types.ErrTruncatedWrongVal.Equal(err) {
 			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-			// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
-			if res == types.ZeroDuration {
-				return res, true, err
-			}
+			// ErrTruncatedWrongVal needs to be considered NULL.
+			return res, true, err
 		}
 	}
 	return res, false, err
