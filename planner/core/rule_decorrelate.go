@@ -282,12 +282,37 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 					apply.CorCols = extractCorColumnsBySchema4LogicalPlan(apply.children[1], apply.children[0].Schema())
 				}
 			}
+			// transform sql: ... where (select count(*) from ...) > 0 --> ... where exists (select * from ...)
+			// determine whether the aggregation function is count.
+			if len(agg.AggFuncs) == 1 && agg.AggFuncs[0].Name == "count" && len(apply.RightConditions) == 1 {
+				// determine whether the selection condition is scalarFunction
+				if cond, ok := apply.RightConditions[0].(*expression.ScalarFunction); ok {
+					// determine whether the operation is gt, and whether the right arg is 0.
+					if v, ok := cond.GetArgs()[1].(*expression.Constant); ok && v.Value.GetUint64() == 0 && cond.FuncName.L == "gt" {
+						innerPlan = agg.children[0]
+						apply.SetChildren(outerPlan, innerPlan)
+						apply.JoinType = SemiJoin
+						apply.RightConditions = nil
+						return s.optimize(ctx, p)
+					}
+				}
+			}
 		} else if sort, ok := innerPlan.(*LogicalSort); ok {
 			// Since we only pull up Selection, Projection, Aggregation, MaxOneRow,
 			// the top level Sort has no effect on the subquery's result.
 			innerPlan = sort.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			return s.optimize(ctx, p)
+		}
+	}
+	// Push down conditions to LogicalApply for the convenience of subsequent use.
+	if sel, ok := p.(*LogicalSelection); ok {
+		if app, ok := sel.children[0].(*LogicalApply); ok {
+			SimplifyOuterJoin(&app.LogicalJoin, sel.Conditions)
+			if app.JoinType == InnerJoin {
+				app.AttachOnConds(sel.Conditions)
+				return s.optimize(ctx, app)
+			}
 		}
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
