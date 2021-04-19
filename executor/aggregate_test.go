@@ -1241,7 +1241,7 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 	for i := 0; i < 1000; i++ {
 		if i == 0 {
 			insertSql += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
-		}else{
+		} else {
 			insertSql += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
 		}
 	}
@@ -1293,7 +1293,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	for i := 0; i < 1000; i++ {
 		if i == 0 {
 			insertSql += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
-		}else{
+		} else {
 			insertSql += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
 		}
 	}
