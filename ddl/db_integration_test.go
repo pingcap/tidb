@@ -2611,6 +2611,20 @@ func (s *testIntegrationSuite5) TestDropColumnWithMultiIndex(c *C) {
 	tk.MustQuery(query).Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite5) TestDropColumnWithPrimaryIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_column_with_pk(a int primary key, b int, c int)")
+	tk.MustGetErrCode("alter table t_drop_column_with_pk drop column a", 8200)
+}
+
+func (s *testIntegrationSuite5) TestDropColumnWithClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_column_with_cidx(a int, b int, c int, primary key(a, b) clustered)")
+	tk.MustGetErrCode("alter table t_drop_column_with_cidx drop column a", 8200)
+}
+
 func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
