@@ -23,7 +23,7 @@ var _ = Suite(&testJoinReorderSuite{})
 type testJoinReorderSuite struct {
 }
 
-func (s*testJoinReorderSuite) TestIssue24095(c *C){
+func (s *testJoinReorderSuite) TestIssue24095(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
