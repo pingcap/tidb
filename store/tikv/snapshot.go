@@ -525,10 +525,10 @@ func (s *KVSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
 		return
 	}
 	if s.mu.stats.scanDetail == nil {
-		s.mu.stats.scanDetail = &execdetails.ScanDetail{}
+		s.mu.stats.scanDetail = &util.ScanDetail{}
 	}
 	if s.mu.stats.timeDetail == nil {
-		s.mu.stats.timeDetail = &execdetails.TimeDetail{}
+		s.mu.stats.timeDetail = &util.TimeDetail{}
 	}
 	s.mu.stats.scanDetail.MergeFromScanDetailV2(detail.ScanDetailV2)
 	s.mu.stats.timeDetail.MergeFromTimeDetail(detail.TimeDetail)
@@ -706,8 +706,8 @@ type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
 	backoffSleepMS map[BackoffType]int
 	backoffTimes   map[BackoffType]int
-	scanDetail     *execdetails.ScanDetail
-	timeDetail     *execdetails.TimeDetail
+	scanDetail     *util.ScanDetail
+	timeDetail     *util.TimeDetail
 }
 
 // Tp implements the RuntimeStats interface.
