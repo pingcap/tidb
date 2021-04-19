@@ -1075,10 +1075,8 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types
 	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), int8(b.tp.Decimal))
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
-		if res == types.ZeroDuration {
-			return res, true, err
-		}
+		// ErrTruncatedWrongVal needs to be considered NULL.
+		return res, true, err
 	}
 	return res, false, err
 }
