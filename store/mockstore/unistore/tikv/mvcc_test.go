@@ -1501,8 +1501,8 @@ func (s *testMvccSuite) TestResolveCommit(c *C) {
 }
 
 func MustLoad(startTS, commitTS uint64, store *TestStore, pairs ...string) {
-	var keys [][]byte
-	var vals [][]byte
+	var keys = make([][]byte, 0, len(pairs))
+	var vals = make([][]byte, 0, len(pairs))
 	for _, pair := range pairs {
 		strs := strings.Split(pair, ":")
 		keys = append(keys, []byte(strs[0]))

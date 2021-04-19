@@ -582,11 +582,11 @@ type RPCClient struct {
 
 // NewRPCClient creates an RPCClient.
 // Note that close the RPCClient may close the underlying MvccStore.
-func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
+func NewRPCClient(cluster *Cluster, mvccStore MVCCStore, coprHandler CoprRPCHandler) *RPCClient {
 	return &RPCClient{
 		Cluster:     cluster,
 		MvccStore:   mvccStore,
-		coprHandler: newCoprRPCHandler(),
+		coprHandler: coprHandler,
 	}
 }
 
