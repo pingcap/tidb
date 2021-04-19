@@ -404,6 +404,7 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 
 // Execute implements glue.Session
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
+	// FIXME: br relies on a deprecated API, it may be unsafe
 	_, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	return err
 }

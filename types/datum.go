@@ -194,7 +194,10 @@ var sink = func(s string) {
 
 // GetBytes gets bytes value.
 func (d *Datum) GetBytes() []byte {
-	return d.b
+	if d.b != nil {
+		return d.b
+	}
+	return []byte{}
 }
 
 // SetBytes sets bytes value to datum.
@@ -1424,6 +1427,10 @@ func (d *Datum) convertToMysqlFloatYear(sc *stmtctx.StatementContext, target *Fi
 		y = float64(d.GetMysqlTime().Year())
 	case KindMysqlDuration:
 		y = float64(time.Now().Year())
+	case KindNull:
+		// if datum is NULL, we should keep it as it is, instead of setting it to zero or any other value.
+		ret = *d
+		return ret, nil
 	default:
 		ret, err = d.convertToFloat(sc, NewFieldType(mysql.TypeDouble))
 		if err != nil {
