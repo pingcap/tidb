@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1255,7 +1256,7 @@ func (s *seqTestSuite) TestShowForNewCollations(c *C) {
 		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
 	)
 	tk.MustQuery("show collation").Check(expectRows)
-	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
+	tk.MustQuery(fmt.Sprintf("select * from %s.COLLATIONS", util.InformationSchemaName)).Check(expectRows)
 }
 
 func (s *seqTestSuite) TestForbidUnsupportedCollations(c *C) {

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
 	pmodel "github.com/prometheus/common/model"
@@ -182,7 +183,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustQuery("select type, `key`, value from information_schema.cluster_config").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("select type, `key`, value from %s.cluster_config", util.InformationSchemaName)).Check(testkit.Rows(
 		"tidb key1 value1",
 		"tidb key2.nest1 n-value1",
 		"tidb key2.nest2 n-value2",
@@ -248,7 +249,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 		rows     []string
 	}{
 		{
-			sql:      "select * from information_schema.cluster_config",
+			sql:      fmt.Sprintf("select * from %s.cluster_config", util.InformationSchemaName),
 			reqCount: 9,
 			rows: flatten(
 				rows["tidb"][0],
@@ -263,7 +264,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type='pd' or type='tikv'",
+			sql:      fmt.Sprintf("select * from %s.cluster_config where type='pd' or type='tikv'", util.InformationSchemaName),
 			reqCount: 6,
 			rows: flatten(
 				rows["tikv"][0],
@@ -275,7 +276,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type='pd' or instance='" + testServers[0].address + "'",
+			sql:      fmt.Sprintf("select * from %s.cluster_config where type='pd' or instance='", util.InformationSchemaName) + testServers[0].address + "'",
 			reqCount: 9,
 			rows: flatten(
 				rows["tidb"][0],
@@ -286,11 +287,11 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type='pd' and type='tikv'",
+			sql:      fmt.Sprintf("select * from %s.cluster_config where type='pd' and type='tikv'", util.InformationSchemaName),
 			reqCount: 0,
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type='tikv'",
+			sql:      fmt.Sprintf("select * from %s.cluster_config where type='tikv'", util.InformationSchemaName),
 			reqCount: 3,
 			rows: flatten(
 				rows["tikv"][0],
@@ -299,7 +300,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type='pd'",
+			sql:      fmt.Sprintf("select * from %s.cluster_config where type='pd'", util.InformationSchemaName),
 			reqCount: 3,
 			rows: flatten(
 				rows["pd"][0],
@@ -308,7 +309,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type='tidb'",
+			sql:      fmt.Sprintf("select * from %s.cluster_config where type='tidb'", util.InformationSchemaName),
 			reqCount: 3,
 			rows: flatten(
 				rows["tidb"][0],
@@ -317,7 +318,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where 'tidb'=type",
+			sql:      fmt.Sprintf("select * from %s.cluster_config where 'tidb'=type", util.InformationSchemaName),
 			reqCount: 3,
 			rows: flatten(
 				rows["tidb"][0],
@@ -326,7 +327,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type in ('tidb', 'tikv')",
+			sql:      fmt.Sprintf("select * from %s.cluster_config where type in ('tidb', 'tikv')", util.InformationSchemaName),
 			reqCount: 6,
 			rows: flatten(
 				rows["tidb"][0],
@@ -338,7 +339,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type in ('tidb', 'tikv', 'pd')",
+			sql:      fmt.Sprintf("select * from %s.cluster_config where type in ('tidb', 'tikv', 'pd')", util.InformationSchemaName),
 			reqCount: 9,
 			rows: flatten(
 				rows["tidb"][0],
@@ -890,7 +891,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	for _, cas := range cases {
-		sql := "select * from information_schema.cluster_log"
+		sql := fmt.Sprintf("select * from %s.cluster_log", util.InformationSchemaName)
 		if len(cas.conditions) > 0 {
 			sql = fmt.Sprintf("%s where %s", sql, strings.Join(cas.conditions, " and "))
 		}
@@ -919,7 +920,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
 	// Test without start time error.
-	rs, err := tk.Exec("select * from information_schema.cluster_log")
+	rs, err := tk.Exec(fmt.Sprintf("select * from %s.cluster_log", util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
@@ -927,7 +928,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	c.Assert(rs.Close(), IsNil)
 
 	// Test without end time error.
-	rs, err = tk.Exec("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011'")
+	rs, err = tk.Exec(fmt.Sprintf("select * from %s.cluster_log where time>='2019/08/26 06:18:13.011'", util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
@@ -935,7 +936,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	c.Assert(rs.Close(), IsNil)
 
 	// Test without specified message error.
-	rs, err = tk.Exec("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011' and time<'2019/08/26 16:18:13.011'")
+	rs, err = tk.Exec(fmt.Sprintf("select * from %s.cluster_log where time>='2019/08/26 06:18:13.011' and time<'2019/08/26 16:18:13.011'", util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)

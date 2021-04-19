@@ -270,8 +270,8 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 		}
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
-			return fmt.Sprintf("the cluster has different config value of %[2]s, execute the sql to see more detail: select * from information_schema.cluster_config where type='%[1]s' and `key`='%[2]s'",
-				tp, item)
+			return fmt.Sprintf("the cluster has different config value of %[2]s, execute the sql to see more detail: select * from %[3]s.cluster_config where type='%[1]s' and `key`='%[2]s'",
+				tp, item, util.InformationSchemaName)
 		}
 		m := make(map[string][]string)
 		for _, row := range rows {
@@ -349,7 +349,7 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 			continue
 		}
 		sql.Reset()
-		fmt.Fprintf(sql, "select type,instance,value from information_schema.%s where %s", cas.table, cas.cond)
+		fmt.Fprintf(sql, "select type,instance,value from %s.%s where %s", util.InformationSchemaName, cas.table, cas.cond)
 		stmt, err := exec.ParseWithParams(ctx, sql.String())
 		if err == nil {
 			rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
@@ -495,7 +495,7 @@ func (versionInspection) inspect(ctx context.Context, sctx sessionctx.Context, f
 				actual:   "inconsistent",
 				expected: "consistent",
 				severity: "critical",
-				detail:   fmt.Sprintf("the cluster has %[1]v different %[2]s versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='%[2]s'", row.GetUint64(1), row.GetString(0)),
+				detail:   fmt.Sprintf("the cluster has %[1]v different %[2]s versions, execute the sql to see more detail: select * from %[3]s.cluster_info where type='%[2]s'", row.GetUint64(1), row.GetString(0), util.InformationSchemaName),
 			})
 		}
 	}
@@ -517,7 +517,7 @@ func (c nodeLoadInspection) inspect(ctx context.Context, sctx sessionctx.Context
 type inspectVirtualMemUsage struct{}
 
 func (inspectVirtualMemUsage) genSQL(timeRange plannercore.QueryTimeRange) string {
-	sql := fmt.Sprintf("select instance, max(value) as max_usage from metrics_schema.node_memory_usage %s group by instance having max_usage >= 70", timeRange.Condition())
+	sql := fmt.Sprintf("select instance, max(value) as max_usage from %s.node_memory_usage %s group by instance having max_usage >= 70", util.MetricSchemaName, timeRange.Condition())
 	return sql
 }
 
@@ -540,7 +540,7 @@ func (inspectVirtualMemUsage) getItem() string {
 type inspectSwapMemoryUsed struct{}
 
 func (inspectSwapMemoryUsed) genSQL(timeRange plannercore.QueryTimeRange) string {
-	sql := fmt.Sprintf("select instance, max(value) as max_used from metrics_schema.node_memory_swap_used %s group by instance having max_used > 0", timeRange.Condition())
+	sql := fmt.Sprintf("select instance, max(value) as max_used from %s.node_memory_swap_used %s group by instance having max_used > 0", util.MetricSchemaName, timeRange.Condition())
 	return sql
 }
 
@@ -562,7 +562,7 @@ func (inspectSwapMemoryUsed) getItem() string {
 type inspectDiskUsage struct{}
 
 func (inspectDiskUsage) genSQL(timeRange plannercore.QueryTimeRange) string {
-	sql := fmt.Sprintf("select instance, device, max(value) as max_usage from metrics_schema.node_disk_usage %v and device like '/%%' group by instance, device having max_usage >= 70", timeRange.Condition())
+	sql := fmt.Sprintf("select instance, device, max(value) as max_usage from %s.node_disk_usage %v and device like '/%%' group by instance, device having max_usage >= 70", util.MetricSchemaName, timeRange.Condition())
 	return sql
 }
 
@@ -589,9 +589,9 @@ type inspectCPULoad struct {
 
 func (i inspectCPULoad) genSQL(timeRange plannercore.QueryTimeRange) string {
 	sql := fmt.Sprintf(`select t1.instance, t1.max_load , 0.7*t2.cpu_count from
-			(select instance,max(value) as max_load  from metrics_schema.%[1]s %[2]s group by instance) as t1 join
-			(select instance,max(value) as cpu_count from metrics_schema.node_virtual_cpus %[2]s group by instance) as t2
-			on t1.instance=t2.instance where t1.max_load>(0.7*t2.cpu_count);`, i.tbl, timeRange.Condition())
+			(select instance,max(value) as max_load  from %[3]s.%[1]s %[2]s group by instance) as t1 join
+			(select instance,max(value) as cpu_count from %[3]s.node_virtual_cpus %[2]s group by instance) as t2
+			on t1.instance=t2.instance where t1.max_load>(0.7*t2.cpu_count);`, i.tbl, timeRange.Condition(), util.MetricSchemaName)
 	return sql
 }
 
@@ -698,8 +698,8 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	sql := new(strings.Builder)
 	fmt.Fprintf(sql, `select t1.job,t1.instance, t2.min_time from
-		(select instance,job from metrics_schema.up %[1]s group by instance,job having max(value)-min(value)>0) as t1 join
-		(select instance,min(time) as min_time from metrics_schema.up %[1]s and value=0 group by instance,job) as t2 on t1.instance=t2.instance order by job`, condition)
+		(select instance,job from %[2]s.up %[1]s group by instance,job having max(value)-min(value)>0) as t1 join
+		(select instance,min(time) as min_time from %[2]s.up %[1]s and value=0 group by instance,job) as t2 on t1.instance=t2.instance order by job`, condition, util.MetricSchemaName)
 	var rows []chunk.Row
 	stmt, err := exec.ParseWithParams(ctx, sql.String())
 	if err == nil {
@@ -728,7 +728,7 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 	}
 	// Check from log.
 	sql.Reset()
-	fmt.Fprintf(sql, "select type,instance,time from information_schema.cluster_log %s and level = 'info' and message like '%%Welcome to'", condition)
+	fmt.Fprintf(sql, "select type,instance,time from %s.cluster_log %s and level = 'info' and message like '%%Welcome to'", util.InformationSchemaName, condition)
 	stmt, err = exec.ParseWithParams(ctx, sql.String())
 	if err == nil {
 		rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
@@ -1035,9 +1035,9 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 		}
 		sql.Reset()
 		if rule.isMin {
-			fmt.Fprintf(sql, "select instance, min(value)/%.0f as min_value from metrics_schema.%s %s group by instance having min_value < %f;", rule.factor, rule.tbl, cond, rule.threshold)
+			fmt.Fprintf(sql, "select instance, min(value)/%.0f as min_value from %s.%s %s group by instance having min_value < %f;", rule.factor, util.MetricSchemaName, rule.tbl, cond, rule.threshold)
 		} else {
-			fmt.Fprintf(sql, "select instance, max(value)/%.0f as max_value from metrics_schema.%s %s group by instance having max_value > %f;", rule.factor, rule.tbl, cond, rule.threshold)
+			fmt.Fprintf(sql, "select instance, max(value)/%.0f as max_value from %s.%s %s group by instance having max_value > %f;", rule.factor, util.MetricSchemaName, rule.tbl, cond, rule.threshold)
 		}
 		stmt, err := exec.ParseWithParams(ctx, sql.String())
 		if err == nil {
@@ -1104,8 +1104,8 @@ func (c compareStoreStatus) genSQL(timeRange plannercore.QueryTimeRange) string 
         	t2.address,
         	min(t2.value),
          	max((t1.value-t2.value)/t1.value) AS ratio
-		FROM metrics_schema.pd_scheduler_store_status t1
-		JOIN metrics_schema.pd_scheduler_store_status t2 %s
+		FROM %[1]s.pd_scheduler_store_status t1
+		JOIN %[1]s.pd_scheduler_store_status t2 %s
         	AND t1.type='%s'
         	AND t1.time = t2.time
         	AND t1.type=t2.type
@@ -1113,7 +1113,7 @@ func (c compareStoreStatus) genSQL(timeRange plannercore.QueryTimeRange) string 
         	AND (t1.value-t2.value)/t1.value>%v
         	AND t1.value > 0
 		GROUP BY  t1.address,t2.address
-		ORDER BY  ratio desc`, condition, c.tp, c.threshold)
+		ORDER BY  ratio desc`, util.MetricSchemaName, condition, c.tp, c.threshold)
 }
 
 func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult {
@@ -1143,8 +1143,8 @@ type checkRegionHealth struct{}
 
 func (c checkRegionHealth) genSQL(timeRange plannercore.QueryTimeRange) string {
 	condition := timeRange.Condition()
-	return fmt.Sprintf(`select instance, sum(value) as sum_value from metrics_schema.pd_region_health %s and
-		type in ('extra-peer-region-count','learner-peer-region-count','pending-peer-region-count') having sum_value>100`, condition)
+	return fmt.Sprintf(`select instance, sum(value) as sum_value from %s.pd_region_health %s and
+		type in ('extra-peer-region-count','learner-peer-region-count','pending-peer-region-count') having sum_value>100`, util.MetricSchemaName, condition)
 }
 
 func (c checkRegionHealth) genResult(_ string, row chunk.Row) inspectionResult {
@@ -1171,7 +1171,7 @@ type checkStoreRegionTooMuch struct{}
 
 func (c checkStoreRegionTooMuch) genSQL(timeRange plannercore.QueryTimeRange) string {
 	condition := timeRange.Condition()
-	return fmt.Sprintf(`select address, max(value) from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000 group by address`, condition)
+	return fmt.Sprintf(`select address, max(value) from %s.pd_scheduler_store_status %s and type='region_count' and value > 20000 group by address`, util.MetricSchemaName, condition)
 }
 
 func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspectionResult {
@@ -1244,7 +1244,7 @@ func (c thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx
 	condition := filter.timeRange.Condition()
 	threshold := 50.0
 	sql := new(strings.Builder)
-	fmt.Fprintf(sql, `select address,min(value) as mi,max(value) as mx from metrics_schema.pd_scheduler_store_status %s and type='leader_count' group by address having mx-mi>%v`, condition, threshold)
+	fmt.Fprintf(sql, `select address,min(value) as mi,max(value) as mx from %s.pd_scheduler_store_status %s and type='leader_count' group by address having mx-mi>%v`, util.MetricSchemaName, condition, threshold)
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 
 	var rows []chunk.Row
@@ -1260,7 +1260,7 @@ func (c thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx
 	for _, row := range rows {
 		address := row.GetString(0)
 		sql.Reset()
-		fmt.Fprintf(sql, `select time, value from metrics_schema.pd_scheduler_store_status %s and type='leader_count' and address = '%s' order by time`, condition, address)
+		fmt.Fprintf(sql, `select time, value from %s.pd_scheduler_store_status %s and type='leader_count' and address = '%s' order by time`, util.MetricSchemaName, condition, address)
 		var subRows []chunk.Row
 		stmt, err := exec.ParseWithParams(ctx, sql.String())
 		if err == nil {
@@ -1270,7 +1270,6 @@ func (c thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 			continue
 		}
-
 		lastValue := float64(0)
 		for i, subRows := range subRows {
 			v := subRows.GetFloat64(1)

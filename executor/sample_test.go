@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -168,7 +169,7 @@ func (s *testTableSampleSuite) TestTableSampleInvalid(c *C) {
 	tk.MustExec("insert into t values (1, 'abc');")
 	tk.MustExec("create view v as select * from t;")
 	tk.MustGetErrCode("select * from v tablesample regions();", errno.ErrInvalidTableSample)
-	tk.MustGetErrCode("select * from information_schema.tables tablesample regions();", errno.ErrInvalidTableSample)
+	tk.MustGetErrCode(fmt.Sprintf("select * from %s.tables tablesample regions();", util.InformationSchemaName), errno.ErrInvalidTableSample)
 
 	tk.MustGetErrCode("select a from t tablesample system();", errno.ErrInvalidTableSample)
 	tk.MustGetErrCode("select a from t tablesample bernoulli(10 percent);", errno.ErrInvalidTableSample)
