@@ -341,15 +341,15 @@ func (s *testSuite7) TestUpdateScanningHandles(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int primary key, b int);")
 	tk.MustExec("begin")
-	var insertSql string
+	var insertSQL string
 	for i := 2; i < 10000; i++ {
 		if i == 2 {
-			insertSql += fmt.Sprintf("(%d, %d)", i, i)
+			insertSQL += fmt.Sprintf("(%d, %d)", i, i)
 		} else {
-			insertSql += fmt.Sprintf(",(%d, %d)", i, i)
+			insertSQL += fmt.Sprintf(",(%d, %d)", i, i)
 		}
 	}
-	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSql))
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
 	tk.MustExec("commit;")
 
 	tk.MustExec("set tidb_distsql_scan_concurrency = 1;")

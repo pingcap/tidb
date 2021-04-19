@@ -1237,15 +1237,15 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
 
-	var insertSql string
+	var insertSQL string
 	for i := 0; i < 1000; i++ {
 		if i == 0 {
-			insertSql += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
+			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
 		} else {
-			insertSql += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
+			insertSQL += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
 		}
 	}
-	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSql))
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
 
 	sql := "select /*+ stream_agg() */ group_concat(a, b) from t group by b;"
 	concurrencies := []int{1, 2, 4, 8}
@@ -1289,15 +1289,15 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
-	var insertSql string
+	var insertSQL string
 	for i := 0; i < 1000; i++ {
 		if i == 0 {
-			insertSql += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
+			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
 		} else {
-			insertSql += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
+			insertSQL += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
 		}
 	}
-	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSql))
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
 
 	concurrencies := []int{1, 2, 4, 8}
 	for _, sql := range sqls {
