@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sem"
 	"go.uber.org/zap"
 )
 
@@ -37,7 +38,13 @@ import (
 var SkipWithGrant = false
 
 var _ privilege.Manager = (*UserPrivileges)(nil)
-var dynamicPrivs = []string{"BACKUP_ADMIN", "SYSTEM_VARIABLES_ADMIN", "ROLE_ADMIN", "CONNECTION_ADMIN"}
+var dynamicPrivs = []string{
+	"BACKUP_ADMIN",
+	"SYSTEM_VARIABLES_ADMIN",
+	"ROLE_ADMIN",
+	"CONNECTION_ADMIN",
+	"RESTRICTED_TABLES_ADMIN",
+}
 var dynamicPrivLock sync.Mutex
 
 // UserPrivileges implements privilege.Manager interface.
@@ -74,6 +81,22 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	// Skip check for system databases.
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
 	dbLowerName := strings.ToLower(db)
+	tblLowerName := strings.ToLower(table)
+	// If SEM is enabled and the user does not have the RESTRICTED_TABLES_ADMIN privilege
+	// There are some hard rules which overwrite system tables and schemas as read-only at most.
+	if sem.IsEnabled() && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
+		if sem.IsInvisibleTable(dbLowerName, tblLowerName) {
+			return false
+		}
+		if util.IsMemOrSysDB(dbLowerName) {
+			switch priv {
+			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
+				mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			}
+		}
+	}
+
 	switch dbLowerName {
 	case util.InformationSchemaName.L:
 		switch priv {
@@ -388,6 +411,13 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string) bool {
 	if SkipWithGrant {
 		return true
+	}
+	// If SEM is enabled, respect hard rules about certain schemas being invisible
+	// Before checking if the user has permissions granted to them.
+	if sem.IsEnabled() && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
+		if sem.IsInvisibleSchema(db) {
+			return false
+		}
 	}
 	mysqlPriv := p.Handle.Get()
 	if mysqlPriv.DBIsVisible(p.user, p.host, db) {

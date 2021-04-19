@@ -343,22 +343,23 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
 }
 
-// RemoveIdxVals remove the given values from the histogram.
-func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
+// RemoveVals remove the given values from the histogram.
+func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 	totalSubCnt := int64(0)
+	var cmpResult int
 	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
-		for pairIdx < len(idxValCntPairs) {
+		for pairIdx < len(valCntPairs) {
 			// If the current val smaller than current bucket's lower bound, skip it.
-			cmpResult := bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2), idxValCntPairs[pairIdx].Encoded)
+			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(bktIdx*2), valCntPairs[pairIdx].Encoded)
 			if cmpResult > 0 {
 				continue
 			}
 			// If the current val bigger than current bucket's upper bound, break.
-			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2+1), idxValCntPairs[pairIdx].Encoded)
+			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(bktIdx*2+1), valCntPairs[pairIdx].Encoded)
 			if cmpResult < 0 {
 				break
 			}
-			totalSubCnt += int64(idxValCntPairs[pairIdx].Count)
+			totalSubCnt += int64(valCntPairs[pairIdx].Count)
 			if hg.Buckets[bktIdx].NDV > 0 {
 				hg.Buckets[bktIdx].NDV--
 			}
@@ -1119,6 +1120,7 @@ type Index struct {
 	Histogram
 	*CMSketch
 	*TopN
+	FMSketch *FMSketch
 	ErrorRate
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Info           *model.IndexInfo
