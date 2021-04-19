@@ -119,6 +119,12 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 						tryToSubstituteExpr(expr, lp.SCtx(), candidateExpr, tp, x.Schema(), column)
 					}
 				}
+			case ast.Like:
+				expr := &sf.GetArgs()[0]
+				tp = sf.GetArgs()[1].GetType().EvalType()
+				for candidateExpr, column := range exprToColumn {
+					tryToSubstituteExpr(expr, lp.SCtx(), candidateExpr, tp, x.Schema(), column)
+				}
 			}
 		}
 	case *LogicalProjection:
