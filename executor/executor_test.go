@@ -8253,11 +8253,11 @@ func (s *testSuite) TestIssue23609(c *C) {
 func (s *testSuite1) TestIssue24091(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t05;")
-	defer tk.MustExec("drop table if exists t05;")
-	tk.MustExec("create table t05(a int) partition by hash (a div 0) partitions 10;")
-	tk.MustExec("insert into t05 values (NULL);")
+	tk.MustExec("drop table if exists t;")
+	defer tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int) partition by hash (a div 0) partitions 10;")
+	tk.MustExec("insert into t values (NULL);")
 
 	tk.MustQuery("select null div 0;").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select * from t05;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("<nil>"))
 }
