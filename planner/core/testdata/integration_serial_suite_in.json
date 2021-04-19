@@ -244,7 +244,7 @@
     ]
   },
   {
-    "name": "TestMppAggWithJoin",
+    "name": "TestMppAggTopNWithJoin",
     "cases": [
       "desc format = 'brief' select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
       "desc format = 'brief' select * from t join ( select count(*)+id as v from t group by id) as A on A.v = t.id",
@@ -252,7 +252,10 @@
       "desc format = 'brief' select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
       "desc format = 'brief' select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
       "desc format = 'brief' select * from (select id from t group by id) C join (select sum(value),id from t group by id)B on C.id=B.id",
-      "desc format = 'brief' select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id"
+      "desc format = 'brief' select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id",
+      "desc format = 'brief' select * from t join t t1 on t.id = t1.id order by t.value limit 1",
+      "desc format = 'brief' select * from t join t t1 on t.id = t1.id order by t.value % 100 limit 1",
+      "desc format = 'brief' select count(*) from (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 20) v group by v.v1"
     ]
   }
 ]
