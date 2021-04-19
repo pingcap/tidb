@@ -72,7 +72,7 @@ func (s *testRegionRequestToSingleStoreSuite) SetUpTest(c *C) {
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
-	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore, nil)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
@@ -83,7 +83,7 @@ func (s *testRegionRequestToThreeStoresSuite) SetUpTest(c *C) {
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
-	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore, nil)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 

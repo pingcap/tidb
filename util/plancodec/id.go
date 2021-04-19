@@ -365,6 +365,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeClusterMemTableReader
 	case typeLoadDataID:
 		return TypeLoadData
+	case typeTableSampleID:
+		return TypeTableSample
 	case typeTableFullScan:
 		return TypeTableFullScan
 	case typeTableRangeScan:

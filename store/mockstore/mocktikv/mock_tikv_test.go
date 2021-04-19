@@ -51,21 +51,6 @@ func (s *testMockTiKVSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 }
 
-// PutMutations is exported for testing.
-var PutMutations = putMutations
-
-func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
-	var mutations []*kvrpcpb.Mutation
-	for i := 0; i < len(kvpairs); i += 2 {
-		mutations = append(mutations, &kvrpcpb.Mutation{
-			Op:    kvrpcpb.Op_Put,
-			Key:   []byte(kvpairs[i]),
-			Value: []byte(kvpairs[i+1]),
-		})
-	}
-	return mutations
-}
-
 func lock(key, primary string, ts uint64) *kvrpcpb.LockInfo {
 	return &kvrpcpb.LockInfo{
 		Key:         []byte(key),
@@ -160,27 +145,12 @@ func (s *testMockTiKVSuite) mustRangeReverseScanOK(c *C, start, end string, limi
 	}
 }
 
-func MustPrewriteOK(c *C, store MVCCStore, mutations []*kvrpcpb.Mutation, primary string, startTS uint64, ttl uint64) {
-	s := testMockTiKVSuite{store}
-	s.mustPrewriteWithTTLOK(c, mutations, primary, startTS, ttl)
-}
-
 func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
 	s.mustPrewriteWithTTLOK(c, mutations, primary, startTS, 0)
 }
 
 func (s *testMockTiKVSuite) mustPrewriteWithTTLOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64, ttl uint64) {
-	req := &kvrpcpb.PrewriteRequest{
-		Mutations:    mutations,
-		PrimaryLock:  []byte(primary),
-		StartVersion: startTS,
-		LockTtl:      ttl,
-		MinCommitTs:  startTS + 1,
-	}
-	errs := s.store.Prewrite(req)
-	for _, err := range errs {
-		c.Assert(err, IsNil)
-	}
+	c.Assert(mustPrewriteWithTTL(s.store, mutations, primary, startTS, ttl), IsTrue)
 }
 
 func (s *testMockTiKVSuite) mustCommitOK(c *C, keys [][]byte, startTS, commitTS uint64) {
