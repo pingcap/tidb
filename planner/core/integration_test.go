@@ -1827,9 +1827,6 @@ func (s *testIntegrationSuite) TestReorderSimplifiedOuterJoins(c *C) {
 	}
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSuite) TestIssue22071(c *C) {
-=======
 // Apply operator may got panic because empty Projection is eliminated.
 func (s *testIntegrationSerialSuite) TestIssue23887(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1855,8 +1852,7 @@ func (s *testIntegrationSerialSuite) TestIssue23887(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestDecorrelateInnerJoinInSubquery(c *C) {
->>>>>>> 4cd7fb022... planner: donot prune all columns for Projection (#24024)
+func (s *testIntegrationSuite) TestIssue22071(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int);")
