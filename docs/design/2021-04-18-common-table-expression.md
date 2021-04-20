@@ -254,29 +254,17 @@ In some scenario, the performance may not as good as implementations which use `
 
 ### Choose between Merge and Materialization
 Most mainstream DBMS use `Merge` and `Materialization` to implement non-recursive cte, while recursive cte can only be implemented with `Materialization`.
-`Merge` is perferred when there are no side effects.
+`Merge` is perferred when there are no side effects, such as random()/cur_timestmap() is used in subquery.
 But when CTE is referenced multiple times, `Materializatoin` may be better.
-
-MySQL's use `Merge` except that:
-1. Optimize hint [NO_MERGE](https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html#optimizer-hints-table-level) is used.
-2. There are constructs within subquery that prevent merging, such as: window function, aggregation or DISTINCT. [MySQL doc](https://dev.mysql.com/doc/refman/8.0/en/derived-table-optimization.html)
-
-PostgreSQL use `Merge` except that:
-1. User can specify by use [MATERIALIZED](https://www.postgresql.org/docs/13/queries-with.html) keyword.
-2. The CTE has side-effects. This includes either not being a plain SELECT, or containing volatile functions.
-
-CockroachDB uses `Materialization` except that:
-1. User specify `NOT MATERIALIZED` hint.
-2. CTE has side-effect and is referenced only once.
+Also user can control which method to use explicitly by using hint.
 
 ### Materialization
 For `Materializatoin`, most DBMS use some kind of container to store materialized result,
 which will be spilled to disk if the size is too large. The computation steps for recursive CTE are all similar.
 
 But different system use different ways to try to optimize:
-1. MySQL will try to postpone materilization.
-2. MySQL will add index on temporary table if needed.
-3. MariaDB will pushdown predicates to reduce the size of temporary table.
+1. Try to postpone materilization.
+3. Pushdown predicates to reduce the size of temporary table.
 
 ## Unresolved Questions
 
