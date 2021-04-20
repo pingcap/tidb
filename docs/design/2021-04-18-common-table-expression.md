@@ -137,8 +137,6 @@ When the last user calls Close(), the `CTEStorage` will really be closed.
 
 ### Life of a CTE
 #### Parsing
-The syntax will be compatible with [MySQL](https://dev.mysql.com/doc/refman/8.0/en/with.html).
-
 In parsing phase, definition of CTE will be parsed as a subtree of the outermost select stmt.
 
 #### Logical Plan
@@ -287,4 +285,4 @@ None
 ## Future Work
 1. Support `Merge` and related hint(merge/no_merge).
 2. Optimize `Materialization`, pushdown predicates to materialized table.
-2. MPP support. `CTEExec` should be able to pushed to TiFlash.
+2. MPP support. `CTEExec` will be implemented in TiFlash.
