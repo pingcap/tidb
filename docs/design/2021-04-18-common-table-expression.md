@@ -4,7 +4,7 @@ This is a template for TiDB's change proposal process, documented [here](./READM
 
 # Proposal: Support Common Table Expression
 
-- Author(s):     [@wjhuang2016](https://github.com/wjhuang2016) [@guo-shaoge](https://github.com/guo-shaoge)
+- Author(s):     [@guo-shaoge](https://github.com/guo-shaoge) [@wjhuang2016](https://github.com/wjhuang2016) 
 - Last updated:  2021-04-18
 - Discussion at: https://github.com/pingcap/tidb/issues/17472 <!-- https://github.com/pingcap/tidb/issues/XXX -->
 
@@ -25,11 +25,12 @@ This is a template for TiDB's change proposal process, documented [here](./READM
 
 ## Introduction
 
-This proposal describes the design of Common Table Expression.
+This proposal describes the basic implementation of Common Table Expression(CTE) using the `Materialization` method.
+`Merge` is another way to implement CTE and will be supported later.
 
 ## Motivation or Background
 
-The Common Table Expression(CTE) is a temporary result set which exists within a statement. You can reference it later in the statement.
+CTE is introduced in SQL:1999. It's a temporary result set which exists within a statement. You can reference it later in the statement.
 It's similar to derived tables in some way. But CTE has extra advantages over derived tables.
 
 1. CTE can be referenced multiple times.
@@ -242,12 +243,14 @@ None
 
 ### Benchmark Tests
 
-We should know the performance of recursive/non-recursive CTE compared with Oracle and MySQL.
+A basic performance test should be given in specific scenrio.
+The memory usage, disk usage and QPS should be reported.
 
 ## Impacts & Risks
 
 CTE is a new feature and it will not affect the overall performance.
-But for now we only use materialization to implement non-recursive CTE. Performance may not be as good as MySQL in some scenarios.
+But for now we only use `Materialization` to implement non-recursive CTE.
+In some scenario, the performance may not as good as implementations which use `Merge`.
 
 ## Investigation & Alternatives
 
