@@ -674,6 +674,7 @@ const (
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
+	DefCteMaxRecursionDepth            = 1000
 )
 
 // Process global variables.

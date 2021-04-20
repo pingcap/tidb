@@ -1231,6 +1231,10 @@ var defaultSysVars = []*SysVar{
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: CteMaxRecursionDepth, Value: strconv.Itoa(DefCteMaxRecursionDepth), Type: TypeInt, MinValue: 0, MaxValue: 4294967295, AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
+		s.CteMaxRecursionDepth = tidbOptPositiveInt32(val, DefCteMaxRecursionDepth)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBCheckMb4ValueInUTF8, Value: BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 		return nil
@@ -1640,6 +1644,8 @@ const (
 	OptimizerSwitch = "optimizer_switch"
 	// SystemTimeZone is the name of 'system_time_zone' system variable.
 	SystemTimeZone = "system_time_zone"
+	// CteMaxRecursionDepth is the name of 'cte_max_recursion_depth' system variable.
+	CteMaxRecursionDepth = "cte_max_recursion_depth"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
