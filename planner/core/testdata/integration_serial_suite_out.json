@@ -102,7 +102,7 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t2 group by a",
         "Plan": [
-          "TableReader_24 3.00 77.00 root  data:ExchangeSender_23",
+          "TableReader_24 3.00 3.21 root  data:ExchangeSender_23",
           "└─ExchangeSender_23 3.00 77.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_22 3.00 0.00 batchCop[tiflash]  Column#4",
           "    └─HashAgg_8 3.00 77.00 batchCop[tiflash]  group by:test.t2.a, funcs:count(1)->Column#4",
@@ -152,8 +152,8 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
-          "StreamAgg_12 1.00 20.77 root  funcs:count(1)->Column#7",
-          "└─TableReader_44 3.00 235.38 root  data:ExchangeSender_43",
+          "StreamAgg_12 1.00 18.81 root  funcs:count(1)->Column#7",
+          "└─TableReader_44 3.00 9.81 root  data:ExchangeSender_43",
           "  └─ExchangeSender_43 3.00 235.38 cop[tiflash]  ExchangeType: PassThrough",
           "    └─HashJoin_40 3.00 235.38 cop[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "      ├─ExchangeReceiver_19(Build) 3.00 77.00 cop[tiflash]  ",
@@ -167,11 +167,11 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
         "Plan": [
-          "StreamAgg_15 1.00 62.68 root  funcs:count(1)->Column#10",
-          "└─HashJoin_65 3.00 53.68 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "StreamAgg_15 1.00 60.48 root  funcs:count(1)->Column#10",
+          "└─HashJoin_65 3.00 51.48 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
           "  ├─IndexReader_53(Build) 3.00 11.66 root  index:IndexFullScan_52",
           "  │ └─IndexFullScan_52 3.00 150.50 cop[tikv] table:t3, index:c(b) keep order:false",
-          "  └─TableReader_39(Probe) 3.00 264.38 root  data:ExchangeSender_38",
+          "  └─TableReader_39(Probe) 3.00 11.02 root  data:ExchangeSender_38",
           "    └─ExchangeSender_38 3.00 264.38 cop[tiflash]  ExchangeType: PassThrough",
           "      └─HashJoin_29 3.00 264.38 cop[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "        ├─ExchangeReceiver_35(Build) 3.00 106.00 cop[tiflash]  ",
