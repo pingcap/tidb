@@ -1232,7 +1232,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CteMaxRecursionDepth, Value: strconv.Itoa(DefCteMaxRecursionDepth), Type: TypeInt, MinValue: 0, MaxValue: 4294967295, AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
-		s.CteMaxRecursionDepth = tidbOptPositiveInt32(val, DefCteMaxRecursionDepth)
+		s.CteMaxRecursionDepth = tidbOptInt(val, DefCteMaxRecursionDepth)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBCheckMb4ValueInUTF8, Value: BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
