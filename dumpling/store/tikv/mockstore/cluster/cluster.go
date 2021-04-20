@@ -35,10 +35,6 @@ type Cluster interface {
 	Split(regionID, newRegionID uint64, key []byte, peerIDs []uint64, leaderPeerID uint64)
 	// SplitRaw splits a Region at the key (not encoded) and creates new Region.
 	SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *metapb.Region
-	// SplitTable evenly splits the data in table into count regions.
-	SplitTable(tableID int64, count int)
-	// SplitIndex evenly splits the data in index into count regions.
-	SplitIndex(tableID, indexID int64, count int)
 	// SplitKeys evenly splits the start, end key into "count" regions.
 	SplitKeys(start, end []byte, count int)
 	// AddStore adds a new Store to the cluster.
