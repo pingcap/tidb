@@ -257,7 +257,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, string(bVal))
+	c.Assert(val, Equals, config.HideConfig(string(bVal)))
 
 	err = SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("1"))
 	c.Assert(err, IsNil)
@@ -620,7 +620,7 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 	}
 
 	for _, t := range tests {
-		_, err := ValidateSetSystemVar(v, t.key, t.value, ScopeGlobal)
+		_, err := GetSysVar(t.key).Validate(v, t.value, ScopeGlobal)
 		if t.error {
 			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
 		} else {
@@ -674,7 +674,7 @@ func (s *testVarsutilSuite) TestValidateStmtSummary(c *C) {
 	}
 
 	for _, t := range tests {
-		_, err := ValidateSetSystemVar(v, t.key, t.value, t.scope)
+		_, err := GetSysVar(t.key).Validate(v, t.value, t.scope)
 		if t.error {
 			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
 		} else {

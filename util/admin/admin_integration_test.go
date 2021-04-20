@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
@@ -109,7 +110,7 @@ func (s *testAdminSuite) TestAdminCheckTableClusterIndex(c *C) {
 	tk.MustExec("create database admin_check_table_clustered_index;")
 	tk.MustExec("use admin_check_table_clustered_index;")
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t (a bigint, b varchar(255), c int, primary key (a, b), index idx_0(a, b), index idx_1(b, c));")
 	tk.MustExec("insert into t values (1, '1', 1);")

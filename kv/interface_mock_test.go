@@ -22,7 +22,7 @@ import (
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
 type mockTxn struct {
-	opts  map[Option]interface{}
+	opts  map[int]interface{}
 	valid bool
 }
 
@@ -44,15 +44,15 @@ func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 	return nil
 }
 
-func (t *mockTxn) SetOption(opt Option, val interface{}) {
+func (t *mockTxn) SetOption(opt int, val interface{}) {
 	t.opts[opt] = val
 }
 
-func (t *mockTxn) DelOption(opt Option) {
+func (t *mockTxn) DelOption(opt int) {
 	delete(t.opts, opt)
 }
 
-func (t *mockTxn) GetOption(opt Option) interface{} {
+func (t *mockTxn) GetOption(opt int) interface{} {
 	return t.opts[opt]
 }
 
@@ -145,7 +145,7 @@ func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{
-		opts:  make(map[Option]interface{}),
+		opts:  make(map[int]interface{}),
 		valid: true,
 	}
 }
@@ -168,7 +168,7 @@ func (*mockTxn) IsPessimistic() bool {
 
 func (s *mockStorage) GetSnapshot(ver Version) Snapshot {
 	return &mockSnapshot{
-		store: newMemDB(),
+		store: newMockMap(),
 	}
 }
 
@@ -223,7 +223,7 @@ func newMockStorage() Storage {
 }
 
 type mockSnapshot struct {
-	store MemBuffer
+	store Retriever
 }
 
 func (s *mockSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
@@ -257,5 +257,5 @@ func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 	return s.store.IterReverse(k)
 }
 
-func (s *mockSnapshot) SetOption(opt Option, val interface{}) {}
-func (s *mockSnapshot) DelOption(opt Option)                  {}
+func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
+func (s *mockSnapshot) DelOption(opt int)                  {}

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store"
 	tidbdriver "github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/table"
@@ -559,7 +560,7 @@ func (s *TestDDLSuite) Bootstrap(c *C) {
 	tk.MustExec("create table test_mixed (c1 int, c2 int, primary key(c1))")
 	tk.MustExec("create table test_inc (c1 int, c2 int, primary key(c1))")
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists test_insert_common, test_conflict_insert_common, " +
 		"test_update_common, test_conflict_update_common, test_delete_common, test_conflict_delete_common, " +
 		"test_mixed_common, test_inc_common")
@@ -571,7 +572,7 @@ func (s *TestDDLSuite) Bootstrap(c *C) {
 	tk.MustExec("create table test_conflict_delete_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_mixed_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_inc_common (c1 int, c2 int, primary key(c1, c2))")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 }
 
 func (s *TestDDLSuite) TestSimple(c *C) {

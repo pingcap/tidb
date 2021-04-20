@@ -60,9 +60,6 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	if p.CalculateNoDelay {
 		return false
 	}
-	if p.Schema().Len() == 0 {
-		return true
-	}
 	child := p.Children()[0]
 	if p.Schema().Len() != child.Schema().Len() {
 		return false
@@ -117,6 +114,9 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		return p
 	}
 	child := p.Children()[0]
+	if childProj, ok := child.(*PhysicalProjection); ok {
+		childProj.SetSchema(p.Schema())
+	}
 	return child
 }
 

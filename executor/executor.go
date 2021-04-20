@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -426,10 +427,10 @@ type ShowDDLJobsExec struct {
 
 	jobNumber int
 	is        infoschema.InfoSchema
-	done      bool
 }
 
 // DDLJobRetriever retrieve the DDLJobs.
+// nolint:structcheck
 type DDLJobRetriever struct {
 	runningJobs    []*model.Job
 	historyJobIter *meta.LastJobIterator
@@ -967,8 +968,8 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
-func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
-	return &kv.LockCtx{
+func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
+	return &tikvstore.LockCtx{
 		Killed:                &seVars.Killed,
 		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
 		LockWaitTime:          lockWaitTime,
@@ -984,7 +985,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 // waitTime means the lock operation will wait in milliseconds if target key is already
 // locked by others. used for (select for update nowait) situation
 // except 0 means alwaysWait 1 means nowait
-func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
+func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.LockCtx, keys ...kv.Key) error {
 	sctx := se.GetSessionVars().StmtCtx
 	if !sctx.InUpdateStmt && !sctx.InDeleteStmt {
 		atomic.StoreUint32(&se.GetSessionVars().TxnCtx.ForUpdate, 1)
@@ -994,8 +995,8 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx,
 	if err != nil {
 		return err
 	}
-	var lockKeyStats *execdetails.LockKeysDetails
-	ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
+	var lockKeyStats *tikvutil.LockKeysDetails
+	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
 	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
 	if lockKeyStats != nil {
 		sctx.MergeLockKeysExecDetails(lockKeyStats)
@@ -1549,6 +1550,10 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.Trace(result.err)
 	}
 
+	if result.chk.NumCols() != req.NumCols() {
+		return errors.Errorf("Internal error: UnionExec chunk column count mismatch, req: %d, result: %d",
+			req.NumCols(), result.chk.NumCols())
+	}
 	req.SwapColumns(result.chk)
 	result.src <- result.chk
 	return nil

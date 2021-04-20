@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -215,7 +216,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	se1 := newSession(c, store, s.dbName)
 	ver, err := getBootstrapVersion(se1)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	c.Assert(ver, Equals, currentBootstrapVersion)
 
 	// Do something to downgrade the store.
 	// downgrade meta bootstrap version
@@ -260,7 +261,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 
 	ver, err = getBootstrapVersion(se2)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	c.Assert(ver, Equals, currentBootstrapVersion)
 
 	// Verify that 'new_collation_enabled' is false.
 	r = mustExecSQL(c, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s';`, tidbNewCollationEnabled))
@@ -307,7 +308,7 @@ func (s *testBootstrapSuite) TestIssue17979_1(c *C) {
 	seV4 := newSession(c, store, s.dbName)
 	ver, err = getBootstrapVersion(seV4)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	c.Assert(ver, Equals, currentBootstrapVersion)
 	r := mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk()
 	r.Next(ctx, req)
@@ -350,7 +351,7 @@ func (s *testBootstrapSuite) TestIssue17979_2(c *C) {
 	seV4 := newSession(c, store, s.dbName)
 	ver, err = getBootstrapVersion(seV4)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	c.Assert(ver, Equals, currentBootstrapVersion)
 	r := mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk()
 	r.Next(ctx, req)
@@ -387,7 +388,7 @@ func (s *testBootstrapSuite) TestIssue20900_1(c *C) {
 	seV4 := newSession(c, store, s.dbName)
 	ver, err = getBootstrapVersion(seV4)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	c.Assert(ver, Equals, currentBootstrapVersion)
 	r := mustExecSQL(c, seV4, "select @@tidb_mem_quota_query")
 	req := r.NewChunk()
 	r.Next(ctx, req)
@@ -428,7 +429,7 @@ func (s *testBootstrapSuite) TestIssue20900_2(c *C) {
 	seV4 := newSession(c, store, s.dbName)
 	ver, err = getBootstrapVersion(seV4)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	c.Assert(ver, Equals, currentBootstrapVersion)
 	r := mustExecSQL(c, seV4, "select @@tidb_mem_quota_query")
 	req := r.NewChunk()
 	r.Next(ctx, req)
@@ -606,6 +607,48 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	mustExecSQL(c, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
 }
 
+func (s *testBootstrapSuite) TestUpgradeClusteredIndexDefaultValue(c *C) {
+	var err error
+	defer testleak.AfterTest(c)()
+	store, _ := newStoreWithBootstrap(c, s.dbName)
+	defer func() {
+		c.Assert(store.Close(), IsNil)
+	}()
+
+	seV67 := newSession(c, store, s.dbName)
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(67))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	mustExecSQL(c, seV67, "update mysql.tidb set variable_value='67' where variable_name='tidb_server_version'")
+	mustExecSQL(c, seV67, "UPDATE mysql.global_variables SET VARIABLE_VALUE = 'OFF' where VARIABLE_NAME = 'tidb_enable_clustered_index'")
+	c.Assert(seV67.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(1))
+	mustExecSQL(c, seV67, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV67)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(67))
+
+	domV68, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer domV68.Close()
+	seV68 := newSession(c, store, s.dbName)
+	ver, err = getBootstrapVersion(seV68)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, currentBootstrapVersion)
+
+	r := mustExecSQL(c, seV68, `select @@global.tidb_enable_clustered_index, @@session.tidb_enable_clustered_index`)
+	req := r.NewChunk()
+	c.Assert(r.Next(context.Background(), req), IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+	row := req.GetRow(0)
+	c.Assert(row.GetString(0), Equals, "INT_ONLY")
+	c.Assert(row.GetString(1), Equals, "INT_ONLY")
+}
+
 func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
 	var err error
 	defer testleak.AfterTest(c)()
@@ -637,7 +680,7 @@ func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
 	seV66 := newSession(c, store, s.dbName)
 	ver, err = getBootstrapVersion(seV66)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	c.Assert(ver, Equals, currentBootstrapVersion)
 	r := mustExecSQL(c, seV66, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
 	req := r.NewChunk()
 	c.Assert(r.Next(ctx, req), IsNil)
@@ -645,4 +688,37 @@ func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
 	row := req.GetRow(0)
 	c.Assert(row.GetInt64(0), Equals, int64(1))
 	c.Assert(row.GetInt64(1), Equals, int64(1))
+}
+
+func (s *testBootstrapSuite) TestForIssue23387(c *C) {
+	// For issue https://github.com/pingcap/tidb/issues/23387
+	saveCurrentBootstrapVersion := currentBootstrapVersion
+	currentBootstrapVersion = version57
+
+	// Bootstrap to an old version, create a user.
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	_, err = BootstrapSession(store)
+	// domain leaked here, Close() is not called. For testing, it's OK.
+	// If we close it and BootstrapSession again, we'll get an error "session pool is closed".
+	// The problem is caused by some the global level variable, domain map is not intended for multiple instances.
+	c.Assert(err, IsNil)
+
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "create user quatest")
+
+	// Upgrade to a newer version, check the user's privilege.
+	currentBootstrapVersion = saveCurrentBootstrapVersion
+	dom, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+
+	se = newSession(c, store, s.dbName)
+	rs, err := exec(se, "show grants for quatest")
+	c.Assert(err, IsNil)
+	rows, err := ResultSetToStringSlice(context.Background(), se, rs)
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "GRANT USAGE ON *.* TO 'quatest'@'%'")
 }
