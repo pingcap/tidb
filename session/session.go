@@ -509,6 +509,16 @@ func (s *session) doCommit(ctx context.Context) error {
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 }
 
+// errIsNoisy is used to filter DUPLCATE KEY errors.
+// These can observed by users in INFORMATION_SCHEMA.CLIENT_ERRORS_SUMMARY_GLOBAL instead.
+//
+// The rationale for filtering these errors is because they are "client generated errors". i.e.
+// of the errors defined in kv/error.go, these look to be clearly related to a client-inflicted issue,
+// and the server is only responsible for handling the error correctly. It does not need to log.
+func errIsNoisy(err error) bool {
+	return kv.ErrKeyExists.Equal(err)
+}
+
 func (s *session) doCommitWithRetry(ctx context.Context) error {
 	defer func() {
 		s.GetSessionVars().SetTxnIsolationLevelOneShotStateForNextTxn()
@@ -546,7 +556,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
-		} else {
+		} else if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("can not retry txn",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
@@ -562,9 +572,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	s.recordOnTransactionExecution(err, counter, duration)
 
 	if err != nil {
-		logutil.Logger(ctx).Warn("commit failed",
-			zap.String("finished txn", s.txn.GoString()),
-			zap.Error(err))
+		if !errIsNoisy(err) {
+			logutil.Logger(ctx).Warn("commit failed",
+				zap.String("finished txn", s.txn.GoString()),
+				zap.Error(err))
+		}
 		return err
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
@@ -1355,6 +1367,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	metrics.SessionRestrictedSQLCounter.Inc()
 
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
 	rs, err := se.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		se.sessionVars.StmtCtx.AppendError(err)
@@ -2092,7 +2105,9 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
-		s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		if GetIndexUsageSyncLease() > 0 {
+			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		}
 	}
 
 	return s, nil

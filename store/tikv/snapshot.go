@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
 )
 
@@ -525,10 +524,10 @@ func (s *KVSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
 		return
 	}
 	if s.mu.stats.scanDetail == nil {
-		s.mu.stats.scanDetail = &execdetails.ScanDetail{}
+		s.mu.stats.scanDetail = &util.ScanDetail{}
 	}
 	if s.mu.stats.timeDetail == nil {
-		s.mu.stats.timeDetail = &execdetails.TimeDetail{}
+		s.mu.stats.timeDetail = &util.TimeDetail{}
 	}
 	s.mu.stats.scanDetail.MergeFromScanDetailV2(detail.ScanDetailV2)
 	s.mu.stats.timeDetail.MergeFromTimeDetail(detail.TimeDetail)
@@ -706,17 +705,12 @@ type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
 	backoffSleepMS map[BackoffType]int
 	backoffTimes   map[BackoffType]int
-	scanDetail     *execdetails.ScanDetail
-	timeDetail     *execdetails.TimeDetail
-}
-
-// Tp implements the RuntimeStats interface.
-func (rs *SnapshotRuntimeStats) Tp() int {
-	return execdetails.TpSnapshotRuntimeStats
+	scanDetail     *util.ScanDetail
+	timeDetail     *util.TimeDetail
 }
 
 // Clone implements the RuntimeStats interface.
-func (rs *SnapshotRuntimeStats) Clone() execdetails.RuntimeStats {
+func (rs *SnapshotRuntimeStats) Clone() *SnapshotRuntimeStats {
 	newRs := SnapshotRuntimeStats{rpcStats: NewRegionRequestRuntimeStats()}
 	if rs.rpcStats.Stats != nil {
 		for k, v := range rs.rpcStats.Stats {
@@ -737,28 +731,24 @@ func (rs *SnapshotRuntimeStats) Clone() execdetails.RuntimeStats {
 }
 
 // Merge implements the RuntimeStats interface.
-func (rs *SnapshotRuntimeStats) Merge(other execdetails.RuntimeStats) {
-	tmp, ok := other.(*SnapshotRuntimeStats)
-	if !ok {
-		return
-	}
-	if tmp.rpcStats.Stats != nil {
+func (rs *SnapshotRuntimeStats) Merge(other *SnapshotRuntimeStats) {
+	if other.rpcStats.Stats != nil {
 		if rs.rpcStats.Stats == nil {
-			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats, len(tmp.rpcStats.Stats))
+			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats, len(other.rpcStats.Stats))
 		}
-		rs.rpcStats.Merge(tmp.rpcStats)
+		rs.rpcStats.Merge(other.rpcStats)
 	}
-	if len(tmp.backoffSleepMS) > 0 {
+	if len(other.backoffSleepMS) > 0 {
 		if rs.backoffSleepMS == nil {
 			rs.backoffSleepMS = make(map[BackoffType]int)
 		}
 		if rs.backoffTimes == nil {
 			rs.backoffTimes = make(map[BackoffType]int)
 		}
-		for k, v := range tmp.backoffSleepMS {
+		for k, v := range other.backoffSleepMS {
 			rs.backoffSleepMS[k] += v
 		}
-		for k, v := range tmp.backoffTimes {
+		for k, v := range other.backoffTimes {
 			rs.backoffTimes[k] += v
 		}
 	}
@@ -774,7 +764,7 @@ func (rs *SnapshotRuntimeStats) String() string {
 		}
 		ms := rs.backoffSleepMS[k]
 		d := time.Duration(ms) * time.Millisecond
-		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k.String(), v, execdetails.FormatDuration(d)))
+		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k.String(), v, util.FormatDuration(d)))
 	}
 	timeDetail := rs.timeDetail.String()
 	if timeDetail != "" {
