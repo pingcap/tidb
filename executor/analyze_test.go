@@ -648,13 +648,13 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 }
 
-func (s *testSuite1) TestIssue20874(c *C) {
+func (s *testSerialSuite2) TestIssue20874(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci not null, b char(20) collate utf8mb4_general_ci not null, key idxa(a), key idxb(b))")
+	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci not null, b char(20) collate utf8mb4_general_ci not null)")
 	tk.MustExec("insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
@@ -663,10 +663,10 @@ func (s *testSuite1) TestIssue20874(c *C) {
 		"test t  a 0 2 3 1 \x0e3 \x0e3",
 		"test t  b 0 0 1 1 \x00A \x00A",
 		"test t  b 0 1 3 2 \x00C \x00C",
-		"test t  idxa 1 0 1 1 \x02\xd2 \x02\xd2",
-		"test t  idxa 1 1 2 1 \x0e\x0f \x0e\x0f",
-		"test t  idxa 1 2 3 1 \x0e3 \x0e3",
-		"test t  idxb 1 0 1 1 \x00A \x00A",
-		"test t  idxb 1 1 3 2 \x00C \x00C",
 	))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a char(10) collate utf8mb4_general_ci not null)")
+	tk.MustExec("insert into t values ('汉字'), ('中文'), ('汉字'), ('中文'), ('汉字'), ('中文'), ('汉字'), ('中文'), ('汉字'), ('中文'), ('汉字'), ('中文'), ('汉字'), ('中文')")
+	tk.MustExec("analyze table t")
 }
