@@ -362,7 +362,7 @@ func MockNoPKTable() *model.TableInfo {
 	return table
 }
 
-// MockNoPKTable is only used for plan related tests.
+// MockNoPKTableString1 is only used for plan related tests.
 func MockNoPKTableString1() *model.TableInfo {
 	// column: a, b
 	col0 := &model.ColumnInfo{
@@ -387,7 +387,7 @@ func MockNoPKTableString1() *model.TableInfo {
 	return table
 }
 
-// MockNoPKTable is only used for plan related tests.
+// MockNoPKTableString2 is only used for plan related tests.
 func MockNoPKTableString2() *model.TableInfo {
 	// column: a, b
 	col0 := &model.ColumnInfo{
