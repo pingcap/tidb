@@ -1236,6 +1236,8 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
+	tk.MustExec("set tidb_init_chunk_size=1;")
+	tk.MustExec("set tidb_max_chunk_size=32;")
 
 	var insertSQL string
 	for i := 0; i < 1000; i++ {
@@ -1289,6 +1291,8 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
+	tk.MustExec("set tidb_init_chunk_size=1;")
+	tk.MustExec("set tidb_max_chunk_size=32;")
 	var insertSQL string
 	for i := 0; i < 1000; i++ {
 		if i == 0 {
