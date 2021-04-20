@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/ddl/placement"
 )
 
 // Session stores session scope rpc data.
@@ -164,7 +163,7 @@ func (s *Session) checkKeyInRegion(key []byte) bool {
 
 func isTiFlashStore(store *metapb.Store) bool {
 	for _, l := range store.GetLabels() {
-		if l.GetKey() == placement.EngineLabelKey && l.GetValue() == placement.EngineLabelTiFlash {
+		if l.GetKey() == "engine" && l.GetValue() == "tiflash" {
 			return true
 		}
 	}
