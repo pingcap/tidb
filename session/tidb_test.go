@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/mockstore"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -210,7 +211,32 @@ func (s *testMainSuite) TestKeysNeedLock(c *C) {
 	for _, tt := range tests {
 		c.Assert(keyNeedToLock(tt.key, tt.val, 0), Equals, tt.need)
 	}
-	flag := kv.KeyFlags(1)
+	flag := tikvstore.KeyFlags(1)
 	c.Assert(flag.HasPresumeKeyNotExists(), IsTrue)
 	c.Assert(keyNeedToLock(indexKey, deleteVal, flag), IsTrue)
+}
+
+func (s *testMainSuite) TestIndexUsageSyncLease(c *C) {
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	do, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	do.SetStatsUpdating(true)
+	st, err := CreateSessionWithOpt(store, nil)
+	c.Assert(err, IsNil)
+	se, ok := st.(*session)
+	c.Assert(ok, IsTrue)
+	c.Assert(se.idxUsageCollector, IsNil)
+
+	SetIndexUsageSyncLease(1)
+	defer SetIndexUsageSyncLease(0)
+	st, err = CreateSessionWithOpt(store, nil)
+	c.Assert(err, IsNil)
+	se, ok = st.(*session)
+	c.Assert(ok, IsTrue)
+	c.Assert(se.idxUsageCollector, NotNil)
+
+	do.Close()
+	err = store.Close()
+	c.Assert(err, IsNil)
 }
