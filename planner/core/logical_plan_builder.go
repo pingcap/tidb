@@ -3335,17 +3335,17 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			}
 			nameMap[cte.Name.L] = struct{}{}
 		}
-		l := len(sel.With.CTEs)
-		defer func() {
-			b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
-		}()
-		b.outerCTEs = append(b.outerCTEs, sel.With.CTEs...)
-		//for _, cte := range sel.With.CTEs {
-		//	_, err := b.buildCte(ctx, cte)
-		//	if err != nil {
-		//		return nil, err
-		//	}
-		//}
+		//l := len(sel.With.CTEs)
+		//defer func() {
+		//	b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+		//}()
+		//b.outerCTEs = append(b.outerCTEs, sel.With.CTEs...)
+		for _, cte := range sel.With.CTEs {
+			_, err := b.buildCte(ctx, cte, sel.With.IsRecursive)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
@@ -3625,27 +3625,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	dbName := tn.Schema
 	sessionVars := b.ctx.GetSessionVars()
 
-	if dbName.L == "" {
-		// Try CTE
-		last := len(b.outerCTEs)-1
-		if len(b.cteStacks) > 0 {
-			last = b.cteStacks[len(b.cteStacks)-1]
-			last = last-1
-		}
-		for i := len(b.outerCTEs)-1; i >= 0; i-- {
-			if
-			cte := b.outerCTEs[i]
-			if cte.Name.L == tn.Name.L {
-				b.cteStacks = append(b.cteStacks, i)
-				defer func() {
-					b.cteStacks = b.cteStacks[:len(b.cteStacks)-1]
-				}()
-				return b.buildDataSourceFromCTE(ctx, cte)
-			}
-		}
-
-		dbName = model.NewCIStr(sessionVars.CurrentDB)
-	}
+	//if dbName.L == "" {
+	//	// Try CTE
+	//	last := len(b.outerCTEs)-1
+	//	for i := len(b.outerCTEs)-1; i >= 0; i-- {
+	//		cte := b.outerCTEs[i]
+	//		if cte.Name.L == tn.Name.L {
+	//			defer func() {
+	//			}()
+	//			return b.buildDataSourceFromCTE(ctx, cte)
+	//		}
+	//	}
+	//
+	//	dbName = model.NewCIStr(sessionVars.CurrentDB)
+	//}
 
 	tbl, err := b.is.TableByName(dbName, tn.Name)
 	if err != nil {
@@ -5700,15 +5693,68 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 	return cnt > 1
 }
 
-//func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression) (p LogicalPlan, err error) {
-//	seed, recursive, err := b.splitSeedAndRecursive(cte.Query.Query)
-//	return nil, nil
-//}
-//
-//func (b *PlanBuilder) splitSeedAndRecursive(cte ast.ResultSetNode) (*ast.Node, *ast.Node, error) {
-//	switch x := (cte).(type) {
-//	case *ast.SetOprStmt:
-//	case *ast.TableName:
-//
-//	}
-//}
+func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
+
+	_, _, err = b.splitSeedAndRecursive(ctx, cte.Query.Query, cte.Name)
+	if err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultSetNode, cteName model.CIStr) (LogicalPlan, LogicalPlan, error) {
+	switch x := (cte).(type) {
+	case *ast.SetOprStmt:
+		if x.With != nil {
+			// Check CTE name must be unique.
+			nameMap := make(map[string]struct{})
+			for _, cte := range x.With.CTEs {
+				if _, ok := nameMap[cte.Name.L]; ok {
+					return nil, nil, errors.New("Not unique table/alias")
+				}
+				nameMap[cte.Name.L] = struct{}{}
+			}
+			l := len(x.With.CTEs)
+			defer func() {
+				b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+			}()
+			b.outerCTEs = append(b.outerCTEs, x.With.CTEs...)
+			for _, cte := range x.With.CTEs {
+				_, err := b.buildCte(ctx, cte, false)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+
+		seed := make([]LogicalPlan, 0)
+		recursive := make([]LogicalPlan, 0)
+
+		// Find the first union
+		for i, sel := x.SelectList.AfterSetOperator {
+
+		}
+
+		for _, sel := range x.SelectList.Selects {
+			p, err := b.buildResultSetNode(ctx, sel)
+			if err != nil {
+				return nil, nil, err
+			}
+			if b.findRecursivePart {
+				recursive = append(recursive, p)
+			} else {
+				seed = append(seed, p)
+			}
+		}
+
+		if b.findRecursivePart && len(seed) == 0 {
+			return nil, nil, errors.New("No seed part")
+		}
+	default:
+		p, err := b.Build(ctx, x)
+		if err != nil {
+			return nil, nil, err
+		}
+		return p, nil, nil
+	}
+}

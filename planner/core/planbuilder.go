@@ -415,7 +415,8 @@ type PlanBuilder struct {
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	outerCTEs    []*ast.CommonTableExpression
-	cteStacks    []int
+	// outerRecursiveCheck
+	outerRecursiveCheck []bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -587,7 +588,8 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 	return &PlanBuilder{
 		ctx:                 sctx,
 		is:                  is,
-		outerCTEs:     make([]*ast.CommonTableExpression, 0),
+		outerCTEs:           make([]*ast.CommonTableExpression, 0),
+		outerRecursiveCheck: make([]bool, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		hintProcessor:       processor,
