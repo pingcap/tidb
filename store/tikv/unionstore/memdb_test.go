@@ -24,13 +24,11 @@ import (
 
 	. "github.com/pingcap/check"
 	leveldb "github.com/pingcap/goleveldb/leveldb/memdb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
 type KeyFlags = kv.KeyFlags
-type StagingHandle = tidbkv.StagingHandle
 
 func init() {
 	testMode = true
@@ -399,7 +397,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 	}
 	h3 := s.deriveAndFill(1000, 2000, 3, db)
 
-	db.InspectStage(int(h3), func(key []byte, _ KeyFlags, val []byte) {
+	db.InspectStage(h3, func(key []byte, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -407,7 +405,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 		c.Assert(v-k, DeepEquals, 3)
 	})
 
-	db.InspectStage(int(h2), func(key []byte, _ KeyFlags, val []byte) {
+	db.InspectStage(h2, func(key []byte, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -422,7 +420,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 	db.Cleanup(h3)
 	db.Release(h2)
 
-	db.InspectStage(int(h1), func(key []byte, _ KeyFlags, val []byte) {
+	db.InspectStage(h1, func(key []byte, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -577,7 +575,7 @@ func (s *testMemDBSuite) fillDB(cnt int) *MemDB {
 	return db
 }
 
-func (s *testMemDBSuite) deriveAndFill(start, end, valueBase int, db *MemDB) StagingHandle {
+func (s *testMemDBSuite) deriveAndFill(start, end, valueBase int, db *MemDB) int {
 	h := db.Staging()
 	var kbuf, vbuf [4]byte
 	for i := start; i < end; i++ {
