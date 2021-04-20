@@ -1359,7 +1359,10 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg0Type.Flag)) {
 			finalArg1 = arg1
 		}
-		if isExceptional && arg1.GetType().EvalType() == types.ETInt && mysql.HasNotNullFlag(arg0Type.Flag) {
+		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
+		// to check the NotNullFlag, then more optimizations can be enabled.
+		isExceptional = isExceptional && mysql.HasNotNullFlag(arg0Type.Flag)
+		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
 			// Judge it is inf or -inf
 			// For int:
 			//			inf:  01111111 & 1 == 1
@@ -1380,7 +1383,10 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)) {
 			finalArg0 = arg0
 		}
-		if isExceptional && arg0.GetType().EvalType() == types.ETInt && mysql.HasNotNullFlag(arg1Type.Flag) {
+		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
+		// to check the NotNullFlag, then more optimizations can be enabled.
+		isExceptional = isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)
+		if isExceptional && arg0.GetType().EvalType() == types.ETInt {
 			if arg0.Value.GetInt64()&1 == 1 {
 				isNegativeInfinite = true
 			} else {

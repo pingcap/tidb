@@ -33,7 +33,7 @@ import (
 )
 
 type actionPessimisticLock struct {
-	*tidbkv.LockCtx
+	*kv.LockCtx
 }
 type actionPessimisticRollback struct{}
 
@@ -106,7 +106,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		failpoint.Inject("PessimisticLockErrWriteConflict", func() error {
 			time.Sleep(300 * time.Millisecond)
-			return tidbkv.ErrWriteConflict
+			return &kv.ErrWriteConflict{WriteConflict: nil}
 		})
 		startTime := time.Now()
 		resp, err := c.store.SendReq(bo, req, batch.region, ReadTimeoutShort)
@@ -138,7 +138,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if action.ReturnValues {
 				action.ValuesLock.Lock()
 				for i, mutation := range mutations {
-					action.Values[string(mutation.Key)] = tidbkv.ReturnedValue{Value: lockResp.Values[i]}
+					action.Values[string(mutation.Key)] = kv.ReturnedValue{Value: lockResp.Values[i]}
 				}
 				action.ValuesLock.Unlock()
 			}
@@ -230,7 +230,7 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 	return nil
 }
 
-func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *tidbkv.LockCtx, mutations CommitterMutations) error {
+func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {
 	if c.sessionID > 0 {
 		failpoint.Inject("beforePessimisticLock", func(val failpoint.Value) {
 			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like

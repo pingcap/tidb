@@ -259,6 +259,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 			c.Flag |= mysql.PriKeyFlag
 			// Primary key can not be NULL.
 			c.Flag |= mysql.NotNullFlag
+			setNoDefaultValueFlag(c, c.DefaultValue != nil)
 		}
 	case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 		for i, key := range v.Keys {
@@ -4016,9 +4017,8 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 }
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
-	// Disallow add/drop actions on auto_random.
 	var oldRandBits uint64
-	if tableInfo.PKIsHandle && (tableInfo.GetPkName().L == originCol.Name.L) {
+	if originCol.IsPKHandleColumn(tableInfo) {
 		oldRandBits = tableInfo.AutoRandomBits
 	}
 	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
@@ -4028,25 +4028,38 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 	switch {
 	case oldRandBits == newRandBits:
 		break
-	case oldRandBits == 0 || newRandBits == 0:
-		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
-	case autoid.MaxAutoRandomBits < newRandBits:
-		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
-			autoid.MaxAutoRandomBits, newRandBits, specNewColumn.Name.Name.O)
-		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	case oldRandBits < newRandBits:
+		addingAutoRandom := oldRandBits == 0
+		if addingAutoRandom {
+			convFromAutoInc := mysql.HasAutoIncrementFlag(originCol.Flag) && originCol.IsPKHandleColumn(tableInfo)
+			if !convFromAutoInc {
+				return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterChangeFromAutoInc)
+			}
+		}
+		if autoid.MaxAutoRandomBits < newRandBits {
+			errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
+				autoid.MaxAutoRandomBits, newRandBits, specNewColumn.Name.Name.O)
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+		}
 		break // Increasing auto_random shard bits is allowed.
 	case oldRandBits > newRandBits:
+		if newRandBits == 0 {
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
+		}
 		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomDecreaseBitErrMsg)
 	}
 
-	if oldRandBits != 0 {
+	modifyingAutoRandCol := oldRandBits > 0 || newRandBits > 0
+	if modifyingAutoRandCol {
 		// Disallow changing the column field type.
 		if originCol.Tp != specNewColumn.Tp.Tp {
 			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomModifyColTypeErrMsg)
 		}
-		// Disallow changing auto_increment on auto_random column.
-		if containsColumnOption(specNewColumn, ast.ColumnOptionAutoIncrement) != mysql.HasAutoIncrementFlag(originCol.Flag) {
+		if originCol.Tp != mysql.TypeLonglong {
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(originCol.Tp)))
+		}
+		// Disallow changing from auto_random to auto_increment column.
+		if containsColumnOption(specNewColumn, ast.ColumnOptionAutoIncrement) {
 			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 		}
 		// Disallow specifying a default value on auto_random column.
@@ -6050,7 +6063,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		// refer to tidb#22065.
 		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
 		// placement rules in SQL is not compatible with `set tiflash replica` yet
-		rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+		rule.LabelConstraints = append(rule.LabelConstraints, placement.Constraint{
 			Op:     placement.NotIn,
 			Key:    placement.EngineLabelKey,
 			Values: []string{placement.EngineLabelTiFlash},
@@ -6073,7 +6086,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
-			LabelConstraints: []placement.LabelConstraint{{
+			LabelConstraints: []placement.Constraint{{
 				Op:     placement.NotIn,
 				Key:    placement.EngineLabelKey,
 				Values: []string{placement.EngineLabelTiFlash},

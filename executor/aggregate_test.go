@@ -1236,10 +1236,18 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
+	tk.MustExec("set tidb_init_chunk_size=1;")
+	tk.MustExec("set tidb_max_chunk_size=32;")
 
-	for i := 0; i < 10000; i++ {
-		tk.MustExec("insert into t values(?, ?);", rand.Intn(100), rand.Intn(100))
+	var insertSQL string
+	for i := 0; i < 1000; i++ {
+		if i == 0 {
+			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
+		} else {
+			insertSQL += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
+		}
 	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
 
 	sql := "select /*+ stream_agg() */ group_concat(a, b) from t group by b;"
 	concurrencies := []int{1, 2, 4, 8}
@@ -1283,9 +1291,17 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
-	for i := 0; i < 10000; i++ {
-		tk.MustExec("insert into t values (?, ?);", rand.Intn(100), rand.Intn(100))
+	tk.MustExec("set tidb_init_chunk_size=1;")
+	tk.MustExec("set tidb_max_chunk_size=32;")
+	var insertSQL string
+	for i := 0; i < 1000; i++ {
+		if i == 0 {
+			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
+		} else {
+			insertSQL += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
+		}
 	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
 
 	concurrencies := []int{1, 2, 4, 8}
 	for _, sql := range sqls {
