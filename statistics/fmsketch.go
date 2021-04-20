@@ -101,6 +101,7 @@ func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.D
 	b := make([]byte, 0, 8)
 	s.hashFunc.Reset()
 	for _, v := range values {
+		b = b[:0]
 		b, err := codec.EncodeValue(sc, b, v)
 		if err != nil {
 			return err
