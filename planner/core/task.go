@@ -2033,7 +2033,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		cst: t.cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor,
 	}
 	p.cost = rt.cost()
-	return rt;
+	return rt
 }
 
 func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
