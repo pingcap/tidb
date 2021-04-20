@@ -489,13 +489,11 @@ const (
 	version68 = 68
 	// version69 adds mysql.global_grants for DYNAMIC privileges
 	version69 = 69
-	// version70 adds the global variable 'cte_max_recursion_depth'.
-	version70 = 70
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version70
+var currentBootstrapVersion int64 = version69
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -568,7 +566,6 @@ var (
 		upgradeToVer67,
 		upgradeToVer68,
 		upgradeToVer69,
-		upgradeToVer70,
 	}
 )
 
@@ -1490,13 +1487,6 @@ func upgradeToVer69(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateGlobalGrantsTable)
-}
-
-func upgradeToVer70(s Session, ver int64) {
-	if ver >= version70 {
-		return
-	}
-	mustExecute(s, "INSERT INTO mysql.global_variables VALUES ('cte_max_recursion_depth', '1000');")
 }
 
 func writeOOMAction(s Session) {
