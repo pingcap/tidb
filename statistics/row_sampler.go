@@ -1,3 +1,16 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package statistics
 
 import (
@@ -123,14 +136,14 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 					}
 					val.SetBytes(encodedKey)
 				}
-				err := collector.collectColumns(s.Sc, datums)
-				if err != nil {
-					return nil, err
-				}
-				err = collector.collectIndexes(s.Sc, datums, s.ColGroups)
-				if err != nil {
-					return nil, err
-				}
+			}
+			err := collector.collectColumns(s.Sc, datums)
+			if err != nil {
+				return nil, err
+			}
+			err = collector.collectColumnGroups(s.Sc, datums, s.ColGroups)
+			if err != nil {
+				return nil, err
 			}
 			weight := s.Rng.Int63()
 			collector.sampleRow(datums, weight)
@@ -153,7 +166,7 @@ func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols [
 	return nil
 }
 
-func (s *RowSampleCollector) collectIndexes(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64) error {
+func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64) error {
 	colLen := len(cols)
 	datumBuffer := make([]types.Datum, 0, len(cols))
 	for i, group := range colGroups {
