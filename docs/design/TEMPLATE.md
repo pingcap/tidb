@@ -26,7 +26,7 @@ One para explanation of the proposal that helps others get the brief info of thi
 
 What's the background and the problem being solved by this design doc? What use cases does it support?
 
-Please pay attention on this section. When a design is under review, the reviewers usually do not rush into deatils, but try to figure out the motivation or background of it. In other words, who wants the feature or what problem the feature solves.
+Please pay attention to this section. When a design is under review, the reviewers usually do not rush into details, but try to figure out the motivation or background of it. In other words, who wants the feature or what problem the feature solves.
 
 ## Detailed Design
 
