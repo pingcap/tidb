@@ -285,6 +285,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			if noIntervalRanges || len(path.Ranges) == 0 {
 				ds.possibleAccessPaths[0] = path
 				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 				break
 			}
 			continue
@@ -294,6 +295,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
 			ds.possibleAccessPaths[0] = path
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+			ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 			break
 		}
 	}
@@ -453,7 +455,11 @@ func (ds *DataSource) generateIndexMergeOrPaths() error {
 
 			accessConds := make([]expression.Expression, 0, len(partialPaths))
 			for _, p := range partialPaths {
-				accessConds = append(accessConds, p.AccessConds...)
+				indexCondsForP := p.AccessConds[:]
+				indexCondsForP = append(indexCondsForP, p.IndexFilters...)
+				if len(indexCondsForP) > 0 {
+					accessConds = append(accessConds, expression.ComposeCNFCondition(ds.ctx, indexCondsForP...))
+				}
 			}
 			accessDNF := expression.ComposeDNFCondition(ds.ctx, accessConds...)
 			sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, []expression.Expression{accessDNF}, nil)
@@ -506,10 +512,8 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
-			// If `AccessConds` is empty, we ignore the access path.
-			// If the path contains a full range, ignore it also. This can happen when `AccessConds` is constant true, and
-			// it comes from the result of a subquery, so it is not folded.
-			if len(path.AccessConds) == 0 || ranger.HasFullRange(path.Ranges) {
+			// If the path contains a full range, ignore it.
+			if ranger.HasFullRange(path.Ranges) {
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
@@ -520,6 +524,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 					results[0] = path
 					results = results[:1]
 				}
+				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 				break
 			}
 		} else {
@@ -533,10 +538,8 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
-			// If `AccessConds` is empty, we ignore the access path.
-			// If the path contains a full range, ignore it also. This can happen when `AccessConds` is constant true, and
-			// it comes from the result of a subquery, so it is not folded.
-			if len(path.AccessConds) == 0 || ranger.HasFullRange(path.Ranges) {
+			// If the path contains a full range, ignore it.
+			if ranger.HasFullRange(path.Ranges) {
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
@@ -547,6 +550,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 					results[0] = path
 					results = results[:1]
 				}
+				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 				break
 			}
 		}

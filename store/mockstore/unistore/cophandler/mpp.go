@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/mpp"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -132,7 +132,11 @@ func (b *mppExecBuilder) buildMPPExchangeReceiver(pb *tipb.ExchangeReceiver) (*e
 	}
 
 	for _, pbType := range pb.FieldTypes {
-		e.fieldTypes = append(e.fieldTypes, expression.FieldTypeFromPB(pbType))
+		tp := expression.FieldTypeFromPB(pbType)
+		if tp.Tp == mysql.TypeEnum {
+			tp.Elems = append(tp.Elems, pbType.Elems...)
+		}
+		e.fieldTypes = append(e.fieldTypes, tp)
 	}
 	return e, nil
 }
@@ -271,6 +275,7 @@ func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 		}
 		e.aggExprs = append(e.aggExprs, aggExpr)
 	}
+	e.sc = b.sc
 
 	for _, gby := range agg.GroupBy {
 		ft := expression.PbTypeToFieldType(gby.FieldType)

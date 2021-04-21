@@ -490,7 +490,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 
 	e.iterators[workerID].Reset(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
-	rowIdx := 0
+	rowIdx, ok := 0, false
 	for e.iterators[workerID].Begin(); e.iterators[workerID].Current() != e.iterators[workerID].End(); {
 		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(&e.iterators[workerID], probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
@@ -505,7 +505,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		rowIdx += len(outerMatchStatus)
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
-			ok, joinResult := e.getNewJoinResult(workerID)
+			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
 				return false, joinResult
 			}
@@ -525,7 +525,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 		return true, joinResult
 	}
 	e.iterators[workerID].Reset(buildSideRows)
-	hasMatch, hasNull := false, false
+	hasMatch, hasNull, ok := false, false, false
 	for e.iterators[workerID].Begin(); e.iterators[workerID].Current() != e.iterators[workerID].End(); {
 		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, &e.iterators[workerID], joinResult.chk)
 		if err != nil {
@@ -537,7 +537,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
-			ok, joinResult := e.getNewJoinResult(workerID)
+			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
 				return false, joinResult
 			}

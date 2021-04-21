@@ -40,8 +40,10 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -62,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -317,7 +320,6 @@ func (s *testSuiteP1) TestShow(c *C) {
 	c.Assert(len(tk.MustQuery("show master status").Rows()), Equals, 1)
 	tk.MustQuery("show create database test_show").Check(testkit.Rows("test_show CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
-		"Alter Tables To alter the table",
 		"Alter routine Functions,Procedures To alter or drop stored functions/procedures",
 		"Create Databases,Tables,Indexes To create new databases and tables",
 		"Create routine Databases To use CREATE FUNCTION/PROCEDURE",
@@ -1264,10 +1266,10 @@ func (s *testSuiteWithData) TestIndexScanWithYearCol(c *C) {
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
@@ -1510,6 +1512,12 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	tk.MustExec("create table t(a int, b decimal(6, 3))")
 	tk.MustExec("insert into t values(1, 1.000)")
 	tk.MustQuery("select count(distinct a), sum(distinct a), avg(distinct a) from (select a from t union all select b from t) tmp;").Check(testkit.Rows("1 1.000 1.0000000"))
+
+	// #issue 23832
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bit(20), b float, c double, d int)")
+	tk.MustExec("insert into t values(10, 10, 10, 10), (1, -1, 2, -2), (2, -2, 1, 1), (2, 1.1, 2.1, 10.1)")
+	tk.MustQuery("select a from t union select 10 order by a").Check(testkit.Rows("1", "2", "10"))
 }
 
 func (s *testSuite2) TestUnionLimit(c *C) {
@@ -2350,7 +2358,7 @@ func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
 	tk.MustExec("create database test_cluster_index_is_point_get;")
 	tk.MustExec("use test_cluster_index_is_point_get;")
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key (c, a));")
 	ctx := tk.Se.(sessionctx.Context)
@@ -2446,7 +2454,7 @@ func (s *testSerialSuite) TestBatchPointGetRepeatableRead(c *C) {
 }
 
 func (s *testSerialSuite) TestSplitRegionTimeout(c *C) {
-	c.Assert(tikv.MockSplitRegionTimeout.Enable(`return(true)`), IsNil)
+	c.Assert(tikvutil.MockSplitRegionTimeout.Enable(`return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2455,24 +2463,24 @@ func (s *testSerialSuite) TestSplitRegionTimeout(c *C) {
 	tk.MustExec(`set @@tidb_wait_split_region_timeout=1`)
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
-	err := tikv.MockSplitRegionTimeout.Disable()
+	err := tikvutil.MockSplitRegionTimeout.Disable()
 	c.Assert(err, IsNil)
 
 	// Test scatter regions timeout.
-	c.Assert(tikv.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
+	c.Assert(tikvutil.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
-	err = tikv.MockScatterRegionTimeout.Disable()
+	err = tikvutil.MockScatterRegionTimeout.Disable()
 	c.Assert(err, IsNil)
 
 	// Test pre-split with timeout.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@global.tidb_scatter_region=1;")
-	c.Assert(tikv.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
+	c.Assert(tikvutil.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	start := time.Now()
 	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5;")
 	c.Assert(time.Since(start).Seconds(), Less, 10.0)
-	err = tikv.MockScatterRegionTimeout.Disable()
+	err = tikvutil.MockScatterRegionTimeout.Disable()
 	c.Assert(err, IsNil)
 }
 
@@ -3011,6 +3019,75 @@ func (s *testSuite) TestTiDBLastTxnInfo(c *C) {
 
 	_, err = tk.Exec("set @@tidb_last_txn_info = '{}'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+}
+
+func (s *testSerialSuite) TestTiDBLastTxnInfoCommitMode(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
+	})
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"async_commit"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "false")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 1")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Assert(rows[0][0], Equals, `"1pc"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "false")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "false")
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+	})
+
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "true")
+	c.Assert(rows[0][2], Equals, "false")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 1")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "false")
+	c.Assert(rows[0][2], Equals, "true")
+
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	tk.MustExec("set @@tidb_enable_1pc = 1")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode'), json_extract(@@tidb_last_txn_info, '$.async_commit_fallback'), json_extract(@@tidb_last_txn_info, '$.one_pc_fallback')").Rows()
+	c.Log(rows)
+	c.Assert(rows[0][0], Equals, `"2pc"`)
+	c.Assert(rows[0][1], Equals, "true")
+	c.Assert(rows[0][2], Equals, "true")
 }
 
 func (s *testSuite) TestTiDBLastQueryInfo(c *C) {
@@ -3647,7 +3724,7 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 func (s *testSuite) TestSignedCommonHandle(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(k1 int, k2 int, primary key(k1, k2))")
 	tk.MustExec("insert into t(k1, k2) value(-100, 1), (-50, 1), (0, 0), (1, 1), (3, 3)")
@@ -3815,7 +3892,7 @@ func (s *testSuite) TestCheckTableClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists admin_test;")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c1, c2), index (c1), unique key(c2));")
 	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
@@ -4129,6 +4206,173 @@ func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
 }
 
+func (s *testSuiteP1) TestUpdateClustered(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	type resultChecker struct {
+		check  string
+		assert []string
+	}
+
+	for _, clustered := range []string{"", "clustered"} {
+		tests := []struct {
+			initSchema  []string
+			initData    []string
+			dml         string
+			resultCheck []resultChecker
+		}{
+			{ // left join + update both + match & unmatched + pk
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 int, k2 int, v int)",
+					fmt.Sprintf("create table b (a int not null, k1 int, k2 int, v int, primary key(k1, k2) %s)", clustered),
+				},
+				[]string{
+					"insert into a values (1, 1, 1), (2, 2, 2)", // unmatched + matched
+					"insert into b values (2, 2, 2, 2)",
+				},
+				"update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.v = 20, b.v = 100, a.k1 = a.k1 + 1, b.k1 = b.k1 + 1, a.k2 = a.k2 + 2, b.k2 = b.k2 + 2",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"2 3 4 100"},
+					},
+					{
+						"select * from a",
+						[]string{"2 3 20", "3 4 20"},
+					},
+				},
+			},
+			{ // left join + update both + match & unmatched + pk
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 int, k2 int, v int)",
+					fmt.Sprintf("create table b (a int not null, k1 int, k2 int, v int, primary key(k1, k2) %s)", clustered),
+				},
+				[]string{
+					"insert into a values (1, 1, 1), (2, 2, 2)", // unmatched + matched
+					"insert into b values (2, 2, 2, 2)",
+				},
+				"update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2,  a.v = 20, b.v = 100",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"2 3 4 100"},
+					},
+					{
+						"select * from a",
+						[]string{"2 3 20", "3 4 20"},
+					},
+				},
+			},
+			{ // left join + update both + match & unmatched + prefix pk
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 varchar(100), k2 varchar(100), v varchar(100))",
+					fmt.Sprintf("create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) %s, key kk1(k1(1), v(1)))", clustered),
+				},
+				[]string{
+					"insert into a values ('11', '11', '11'), ('22', '22', '22')", // unmatched + matched
+					"insert into b values ('22', '22', '22', '22')",
+				},
+				"update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"22 23 24 100"},
+					},
+					{
+						"select * from a",
+						[]string{"12 13 20", "23 24 20"},
+					},
+				},
+			},
+			{ // right join + update both + match & unmatched + prefix pk
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 varchar(100), k2 varchar(100), v varchar(100))",
+					fmt.Sprintf("create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) %s, key kk1(k1(1), v(1)))", clustered),
+				},
+				[]string{
+					"insert into a values ('11', '11', '11'), ('22', '22', '22')", // unmatched + matched
+					"insert into b values ('22', '22', '22', '22')",
+				},
+				"update b right join a on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"22 23 24 100"},
+					},
+					{
+						"select * from a",
+						[]string{"12 13 20", "23 24 20"},
+					},
+				},
+			},
+			{ // inner join + update both + match & unmatched + prefix pk
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 varchar(100), k2 varchar(100), v varchar(100))",
+					fmt.Sprintf("create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) %s, key kk1(k1(1), v(1)))", clustered),
+				},
+				[]string{
+					"insert into a values ('11', '11', '11'), ('22', '22', '22')", // unmatched + matched
+					"insert into b values ('22', '22', '22', '22')",
+				},
+				"update b join a on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"22 23 24 100"},
+					},
+					{
+						"select * from a",
+						[]string{"11 11 11", "23 24 20"},
+					},
+				},
+			},
+			{
+				[]string{
+					"drop table if exists a, b",
+					"create table a (k1 varchar(100), k2 varchar(100), v varchar(100))",
+					fmt.Sprintf("create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) %s, key kk1(k1(1), v(1)))", clustered),
+				},
+				[]string{
+					"insert into a values ('11', '11', '11'), ('22', '22', '22')", // unmatched + matched
+					"insert into b values ('22', '22', '22', '22')",
+				},
+				"update a set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, a.v = 20 where exists (select 1 from b where a.k1 = b.k1 and a.k2 = b.k2)",
+				[]resultChecker{
+					{
+						"select * from b",
+						[]string{"22 22 22 22"},
+					},
+					{
+						"select * from a",
+						[]string{"11 11 11", "23 24 20"},
+					},
+				},
+			},
+		}
+
+		for _, test := range tests {
+			for _, s := range test.initSchema {
+				tk.MustExec(s)
+			}
+			for _, s := range test.initData {
+				tk.MustExec(s)
+			}
+			tk.MustExec(test.dml)
+			for _, checker := range test.resultCheck {
+				tk.MustQuery(checker.check).Check(testkit.Rows(checker.assert...))
+			}
+			tk.MustExec("admin check table a")
+			tk.MustExec("admin check table b")
+		}
+	}
+}
+
 func (s *testSuite6) TestUpdateJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4200,6 +4444,11 @@ func (s *testSuite6) TestUpdateJoin(c *C) {
 	tk.MustExec("insert into t7 values (5, 1, 'a')")
 	tk.MustExec("update t6, t7 set t6.v = t7.v where t6.id = t7.id and t7.x = 5")
 	tk.MustQuery("select v from t6").Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int primary key, v int, gv int GENERATED ALWAYS AS (v * 2) STORED)")
+	tk.MustExec("create table t2(id int, v int)")
+	tk.MustExec("update t1 tt1 inner join (select count(t1.id) a, t1.id from t1 left join t2 on t1.id = t2.id group by t1.id) x on tt1.id = x.id set tt1.v = tt1.v + x.a")
 }
 
 func (s *testSuite3) TestMaxOneRow(c *C) {
@@ -4259,7 +4508,7 @@ func (s *testSuite3) TestRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec(`create table t(a varchar(10), b varchar(10), c varchar(1), index idx(a, b, c));`)
 	tk.MustExec(`insert into t values('a', 'b', 'c');`)
 	tk.MustExec(`insert into t values('a', 'b', 'c');`)
@@ -4736,9 +4985,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	// Test for split index region.
 	// Check min value is more than max value.
 	tk.MustExec(`split table t index idx1 between (0) and (1000000000) regions 10`)
-	_, err = tk.Exec(`split table t index idx1 between (2,'a') and (1,'c') regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split index `idx1` region lower value (2,a) should less than the upper value (1,c)")
+	tk.MustGetErrCode(`split table t index idx1 between (2,'a') and (1,'c') regions 10`, errno.ErrInvalidSplitRegionRanges)
 
 	// Check min value is invalid.
 	_, err = tk.Exec(`split table t index idx1 between () and (1) regions 10`)
@@ -4768,9 +5015,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	// Test for split table region.
 	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
 	// Check the lower value is more than the upper value.
-	_, err = tk.Exec(`split table t between (2) and (1) regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split table `t` region lower value 2 should less than the upper value 1")
+	tk.MustGetErrCode(`split table t between (2) and (1) regions 10`, errno.ErrInvalidSplitRegionRanges)
 
 	// Check the lower value is invalid.
 	_, err = tk.Exec(`split table t between () and (1) regions 10`)
@@ -4798,9 +5043,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column '_tidb_rowid'")
 
 	// Test split table region step is too small.
-	_, err = tk.Exec(`split table t between (0) and (100) regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split table `t` region step value should more than 1000, step 10 is invalid")
+	tk.MustGetErrCode(`split table t between (0) and (100) regions 10`, errno.ErrInvalidSplitRegionRanges)
 
 	// Test split region by syntax.
 	tk.MustExec(`split table t by (0),(1000),(1000000)`)
@@ -4823,12 +5066,25 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
 }
 
+func (s *testSplitTable) TestSplitRegionEdgeCase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint(20) auto_increment primary key);")
+	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 16;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int(20) auto_increment primary key);")
+	tk.MustGetErrCode("split table t between (-9223372036854775808) and (9223372036854775807) regions 16;", errno.ErrDataOutOfRange)
+}
+
 func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_cluster_index_index_split_table_integration;")
 	tk.MustExec("create database test_cluster_index_index_split_table_integration;")
 	tk.MustExec("use test_cluster_index_index_split_table_integration;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t (a varchar(255), b double, c int, primary key (a, b));")
 
@@ -4843,9 +5099,9 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and (100.0, 'aaa') regions 10;", errMsg)
 
 	// lower bound >= upper bound.
-	errMsg = "Split table `t` region lower value (aaa,0) should less than the upper value (aaa,0)"
+	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (aaa,0) should less than the upper value (aaa,0)"
 	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
-	errMsg = "Split table `t` region lower value (bbb,0) should less than the upper value (aaa,0)"
+	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (bbb,0) should less than the upper value (aaa,0)"
 	tk.MustGetErrMsg("split table t between ('bbb', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
 
 	// Exceed limit 1000.
@@ -4883,7 +5139,7 @@ func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
 	tk.MustExec("drop database if exists cluster_index_regions;")
 	tk.MustExec("create database cluster_index_regions;")
 	tk.MustExec("use cluster_index_regions;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2);")
 	tk.MustQuery("split table t between (1, 0) and (2, 3) regions 2;").Check(testkit.Rows("1 1"))
@@ -4906,7 +5162,7 @@ func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
 func (s *testSuiteWithData) TestClusterIndexOuterJoinElimination(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a int, b int, c int, primary key(a,b))")
 	rows := tk.MustQuery(`explain format = 'brief' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b`).Rows()
 	rowStrs := s.testData.ConvertRowsToStrings(rows)
@@ -5301,6 +5557,22 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	result := tk.MustQuery("explain analyze select count(distinct b) from t")
 	c.Assert(result.Rows()[2][4], Equals, "table:t")
 	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
+}
+
+func (s *testSuiteP2) TestIssue23567(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	oriProbability := statistics.FeedbackProbability.Load()
+	statistics.FeedbackProbability.Store(1.0)
+	defer func() { statistics.FeedbackProbability.Store(oriProbability) }()
+	failpoint.Enable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect", `return("")`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned, b int, primary key(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("analyze table t")
+	// The SQL should not panic.
+	tk.MustQuery("select count(distinct b) from t")
+	failpoint.Disable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect")
 }
 
 func (s *testSuite) TestSummaryFailedUpdate(c *C) {
@@ -6572,7 +6844,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("drop table if exists t1,t2,t3,t4")
 	tk.MustExec(`create table t1(
 	a int(11),
 	b varchar(10) DEFAULT NULL,
@@ -6624,6 +6896,11 @@ func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 
 	tk.MustExec("update t2 partition(p0) set a = 3 where a = 2")
 	tk.MustExec("update t2 partition(p0, p3) set a = 33 where a = 1")
+
+	tk.MustExec("create table t4(a int primary key, b int) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t4(a, b) values(1, 1),(2, 2),(3, 3);")
+	err = tk.ExecToErr("update t4 partition(p0) set a = 5 where a = 2")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
 }
 
 func (s *testSuiteP2) TestApplyCache(c *C) {
@@ -6635,7 +6912,7 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
 	tk.MustExec("analyze table t;")
 	result := tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_38")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_39")
 	var (
 		ind  int
 		flag bool
@@ -6655,7 +6932,7 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9);")
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_38")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_39")
 	flag = false
 	value = (result.Rows()[1][5]).(string)
 	for ind = 0; ind < len(value)-5; ind++ {
@@ -6726,6 +7003,45 @@ func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 			"alter user {user_sensitive@% password = ***};",
 			"create user {user_sensitive@% password = ***};",
 			"set password for user user_sensitive@%;",
+		))
+}
+
+func (s *testSlowQuery) TestSlowQueryPrepared(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+
+	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	c.Assert(err, IsNil)
+	f.Close()
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+		tk.MustExec("set tidb_redact_log=0;")
+		config.StoreGlobalConfig(originCfg)
+		os.Remove(newCfg.Log.SlowQueryFile)
+	}()
+	err = logutil.InitLogger(newCfg.Log.ToLogConfig())
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	tk.MustExec(`prepare mystmt1 from 'select sleep(?), 1';`)
+	tk.MustExec("SET @num = 0.01;")
+	tk.MustExec("execute mystmt1 using @num;")
+	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
+		"where query like 'select%sleep%' order by time desc limit 1").
+		Check(testkit.Rows(
+			"select sleep(?), 1 [arguments: 0.01];",
+		))
+
+	tk.MustExec("set tidb_redact_log=1;")
+	tk.MustExec(`prepare mystmt2 from 'select sleep(?), 2';`)
+	tk.MustExec("execute mystmt2 using @num;")
+	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
+		"where query like 'select%sleep%' order by time desc limit 1").
+		Check(testkit.Rows(
+			"select `sleep` ( ? ) , ?;",
 		))
 }
 
@@ -7022,7 +7338,8 @@ func (s *testCoprCache) TestIntegrationCopCache(c *C) {
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
 	tk.MustExec(`insert into t values(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12)`)
-	s.cls.SplitTable(tid, 6)
+	tableStart := tablecodec.GenTableRecordPrefix(tid)
+	s.cls.SplitKeys(tableStart, tableStart.PrefixNext(), 6)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`), IsNil)
 	defer func() {
@@ -7399,40 +7716,6 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
 }
 
-func (s *testSerialSuite) TestIssue21441(c *C) {
-	err := failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
-		c.Assert(err, IsNil)
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec(`insert into t values(1),(2),(3)`)
-	tk.Se.GetSessionVars().InitChunkSize = 1
-	tk.Se.GetSessionVars().MaxChunkSize = 1
-	sql := `
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t union all
-select a from t`
-	tk.MustQuery(sql).Sort().Check(testkit.Rows(
-		"1", "1", "1", "1", "1", "1", "1", "1",
-		"2", "2", "2", "2", "2", "2", "2", "2",
-		"3", "3", "3", "3", "3", "3", "3", "3",
-	))
-
-	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
-	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
-}
-
 func (s *testSuite) Test17780(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7705,7 +7988,7 @@ func (s *testSerialSuite) TestStaleReadKVRequest(c *C) {
 		c.Log(testcase.name)
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v")`, testcase.txnScope))
+		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`)
 		tk.MustQuery(testcase.sql)
@@ -7832,18 +8115,150 @@ func (s *testSuiteP1) TestIssue22941(c *C) {
 		PRIMARY KEY (mid),
 		KEY ind_bm_parent (ParentId,mid)
 	)`)
-
+	// mp should have more columns than m
 	tk.MustExec(`CREATE TABLE mp (
 		mpid bigint(20) unsigned NOT NULL DEFAULT '0',
 		mid varchar(50) DEFAULT NULL COMMENT '模块主键',
+		sid int,
 	PRIMARY KEY (mpid)
 	);`)
 
-	tk.MustExec(`insert into mp values("1","1");`)
+	tk.MustExec(`insert into mp values("1","1","0");`)
 	tk.MustExec(`insert into m values("0", "0");`)
-	rs := tk.MustQuery(`SELECT ( SELECT COUNT(1) FROM m WHERE ParentId = c.mid ) expand,  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
-	rs.Check(testkit.Rows("1 <nil> 1 0"))
+	rs := tk.MustQuery(`SELECT ( SELECT COUNT(1) FROM m WHERE ParentId = c.mid ) expand,  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL, sid FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
+	rs.Check(testkit.Rows("1 <nil> 1 0 <nil>"))
 
 	rs = tk.MustQuery(`SELECT  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
 	rs.Check(testkit.Rows("<nil> 1 0"))
+}
+
+func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int key, b int)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput", "return(true)"), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput")
+		c.Assert(err, IsNil)
+	}()
+
+	mustExec := func(sql string) {
+		tk.MustExec(sql)
+		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().InTxn())
+	}
+	errExec := func(sql string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		tk.Se.GetTxnWriteThroughputSLI().FinishExecuteStmt(time.Second, tk.Se.AffectedRows(), tk.Se.GetSessionVars().InTxn())
+	}
+
+	// Test insert in small txn
+	mustExec("insert into t values (1,3),(2,4)")
+	writeSLI := tk.Se.GetTxnWriteThroughputSLI()
+	c.Assert(writeSLI.IsInvalid(), Equals, false)
+	c.Assert(writeSLI.IsSmallTxn(), Equals, true)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test insert ... select ... from
+	mustExec("insert into t select b, a from t")
+	c.Assert(writeSLI.IsInvalid(), Equals, true)
+	c.Assert(writeSLI.IsSmallTxn(), Equals, true)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: true, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test for delete
+	mustExec("delete from t")
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 4, writeSize: 76, readKeys: 0, writeKeys: 4, writeTime: 1s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test insert not in small txn
+	mustExec("begin")
+	for i := 0; i < 20; i++ {
+		mustExec(fmt.Sprintf("insert into t values (%v,%v)", i, i))
+		c.Assert(writeSLI.IsSmallTxn(), Equals, true)
+	}
+	// The statement which affect rows is 0 shouldn't record into time.
+	mustExec("select count(*) from t")
+	mustExec("select * from t")
+	mustExec("insert into t values (20,20)")
+	c.Assert(writeSLI.IsSmallTxn(), Equals, false)
+	mustExec("commit")
+	c.Assert(writeSLI.IsInvalid(), Equals, false)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 21, writeSize: 609, readKeys: 0, writeKeys: 21, writeTime: 22s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test invalid when transaction has replace ... select ... from ... statement.
+	mustExec("delete from t")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+	mustExec("begin")
+	mustExec("insert into t values (1,3),(2,4)")
+	mustExec("replace into t select b, a from t")
+	mustExec("commit")
+	c.Assert(writeSLI.IsInvalid(), Equals, true)
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: true, affectRow: 4, writeSize: 116, readKeys: 0, writeKeys: 4, writeTime: 3s")
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+
+	// Test clean last failed transaction information.
+	err := failpoint.Disable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput")
+	c.Assert(err, IsNil)
+	mustExec("begin")
+	mustExec("insert into t values (1,3),(2,4)")
+	errExec("commit")
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput", "return(true)"), IsNil)
+	mustExec("begin")
+	mustExec("insert into t values (5, 6)")
+	mustExec("commit")
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 1, writeSize: 29, readKeys: 0, writeKeys: 1, writeTime: 2s")
+
+	// Test for reset
+	tk.Se.GetTxnWriteThroughputSLI().Reset()
+	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s")
+}
+
+func (s *testSuiteP2) TestProjectionBitType(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(k1 int, v bit(34) DEFAULT b'111010101111001001100111101111111', primary key(k1) clustered);")
+	tk.MustExec("create table t1(k1 int, v bit(34) DEFAULT b'111010101111001001100111101111111', primary key(k1) nonclustered);")
+	tk.MustExec("insert into t(k1) select 1;")
+	tk.MustExec("insert into t1(k1) select 1;")
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression = 0;")
+	// following SQL should returns same result
+	tk.MustQuery("(select * from t where false) union(select * from t for update);").Check(testkit.Rows("1 \x01\xd5\xe4\xcf\u007f"))
+	tk.MustQuery("(select * from t1 where false) union(select * from t1 for update);").Check(testkit.Rows("1 \x01\xd5\xe4\xcf\u007f"))
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression = 1;")
+	tk.MustQuery("(select * from t where false) union(select * from t for update);").Check(testkit.Rows("1 \x01\xd5\xe4\xcf\u007f"))
+	tk.MustQuery("(select * from t1 where false) union(select * from t1 for update);").Check(testkit.Rows("1 \x01\xd5\xe4\xcf\u007f"))
+}
+
+func (s *testSuite) TestIssue23609(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE `t1` (\n  `a` timestamp NULL DEFAULT NULL,\n  `b` year(4) DEFAULT NULL,\n  KEY `a` (`a`),\n  KEY `b` (`b`)\n)")
+	tk.MustExec("insert into t1 values(\"2002-10-03 04:28:53\",2000), (\"2002-10-03 04:28:53\",2002), (NULL, 2002)")
+	tk.MustQuery("select /*+ inl_join (x,y) */ * from t1 x cross join t1 y on x.a=y.b").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 x cross join t1 y on x.a>y.b order by x.a, x.b, y.a, y.b").Check(testkit.Rows("2002-10-03 04:28:53 2000 <nil> 2002", "2002-10-03 04:28:53 2000 2002-10-03 04:28:53 2000", "2002-10-03 04:28:53 2000 2002-10-03 04:28:53 2002", "2002-10-03 04:28:53 2002 <nil> 2002", "2002-10-03 04:28:53 2002 2002-10-03 04:28:53 2000", "2002-10-03 04:28:53 2002 2002-10-03 04:28:53 2002"))
+	tk.MustQuery("select * from t1 where a = b").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 where a < b").Check(testkit.Rows())
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+}
+
+func (s *testSuite1) TestIssue24091(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	defer tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int) partition by hash (a div 0) partitions 10;")
+	tk.MustExec("insert into t values (NULL);")
+
+	tk.MustQuery("select null div 0;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("<nil>"))
 }

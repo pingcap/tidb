@@ -30,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
@@ -52,6 +54,7 @@ type TxnState struct {
 	initCnt       int
 	stagingHandle kv.StagingHandle
 	mutations     map[int64]*binlog.TableMutation
+	writeSLI      sli.TxnWriteThroughputSLI
 }
 
 // GetTableInfo returns the cached index name.
@@ -281,7 +284,7 @@ func (txn *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	}
 	keys := make([]kv.Key, 0, txn.countHint())
 	buf := txn.Transaction.GetMemBuffer()
-	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
+	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags tikvstore.KeyFlags, v []byte) {
 		if !keyNeedToLock(k, v, flags) {
 			return
 		}
@@ -290,7 +293,7 @@ func (txn *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	return keys, nil
 }
 
-func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
+func keyNeedToLock(k, v []byte, flags tikvstore.KeyFlags) bool {
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.

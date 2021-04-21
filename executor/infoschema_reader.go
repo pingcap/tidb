@@ -28,6 +28,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -457,7 +458,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			pkType := "NON-CLUSTERED"
+			pkType := "NONCLUSTERED"
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
@@ -841,12 +842,17 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					nil,           // Expression
 					0,             // INDEX_ID
 					"YES",         // IS_VISIBLE
+					"YES",         // CLUSTERED
 				)
 				rows = append(rows, record)
 			}
 			for _, idxInfo := range tb.Indices {
 				if idxInfo.State != model.StatePublic {
 					continue
+				}
+				isClustered := "NO"
+				if tb.IsCommonHandle && idxInfo.Primary {
+					isClustered = "YES"
 				}
 				for i, col := range idxInfo.Columns {
 					nonUniq := 1
@@ -881,6 +887,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						expression,      // Expression
 						idxInfo.ID,      // INDEX_ID
 						visible,         // IS_VISIBLE
+						isClustered,     // CLUSTERED
 					)
 					rows = append(rows, record)
 				}
@@ -1052,8 +1059,8 @@ func (e *memtableRetriever) setDataFromEngines() {
 }
 
 func (e *memtableRetriever) setDataFromCharacterSets() {
-	var rows [][]types.Datum
 	charsets := charset.GetSupportedCharsets()
+	var rows = make([][]types.Datum, 0, len(charsets))
 	for _, charset := range charsets {
 		rows = append(rows,
 			types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen),
@@ -1063,8 +1070,8 @@ func (e *memtableRetriever) setDataFromCharacterSets() {
 }
 
 func (e *memtableRetriever) setDataFromCollations() {
-	var rows [][]types.Datum
 	collations := collate.GetSupportedCollations()
+	var rows = make([][]types.Datum, 0, len(collations))
 	for _, collation := range collations {
 		isDefault := ""
 		if collation.IsDefault {
@@ -1078,8 +1085,8 @@ func (e *memtableRetriever) setDataFromCollations() {
 }
 
 func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
-	var rows [][]types.Datum
 	collations := collate.GetSupportedCollations()
+	var rows = make([][]types.Datum, 0, len(collations))
 	for _, collation := range collations {
 		rows = append(rows,
 			types.MakeDatums(collation.Name, collation.CharsetName),
@@ -1181,12 +1188,12 @@ func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
 }
 
 func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
-	var rows [][]types.Datum
 	tables := make([]string, 0, len(infoschema.MetricTableMap))
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
 	}
 	sort.Strings(tables)
+	rows := make([][]types.Datum, 0, len(tables))
 	for _, name := range tables {
 		schema := infoschema.MetricTableMap[name]
 		record := types.MakeDatums(
@@ -1662,11 +1669,16 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum) 
 	checker := privilege.GetPrivilegeManager(sctx)
 	for _, job := range statistics.GetAllAnalyzeJobs() {
 		job.Lock()
-		var startTime interface{}
+		var startTime, endTime interface{}
 		if job.StartTime.IsZero() {
 			startTime = nil
 		} else {
 			startTime = types.NewTime(types.FromGoTime(job.StartTime), mysql.TypeDatetime, 0)
+		}
+		if job.EndTime.IsZero() {
+			endTime = nil
+		} else {
+			endTime = types.NewTime(types.FromGoTime(job.EndTime), mysql.TypeDatetime, 0)
 		}
 		if checker == nil || checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
 			rows = append(rows, types.MakeDatums(
@@ -1676,6 +1688,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum) 
 				job.JobInfo,       // JOB_INFO
 				job.RowCount,      // ROW_COUNT
 				startTime,         // START_TIME
+				endTime,           // END_TIME
 				job.State,         // STATE
 			))
 		}
@@ -1853,11 +1866,21 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 			continue
 		}
 		// Currently, only partitions have placement rules.
+		var tbName, dbName, ptName string
+		skip := true
 		tb, db, part := is.FindTableByPartitionID(id)
-		if tb == nil {
-			return errors.Errorf("Can't find partition by id %d", id)
+		if tb != nil && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv)) {
+			dbName = db.Name.L
+			tbName = tb.Meta().Name.L
+			ptName = part.Name.L
+			skip = false
 		}
-		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
+		failpoint.Inject("outputInvalidPlacementRules", func(val failpoint.Value) {
+			if val.(bool) {
+				skip = false
+			}
+		})
+		if skip {
 			continue
 		}
 		for _, rule := range bundle.Rules {
@@ -1869,9 +1892,9 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 				bundle.ID,
 				bundle.Index,
 				rule.ID,
-				db.Name.L,
-				tb.Meta().Name.L,
-				part.Name.L,
+				dbName,
+				tbName,
+				ptName,
 				nil,
 				string(rule.Role),
 				rule.Count,
