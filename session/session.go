@@ -2562,6 +2562,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableExchangePartition,
 	variable.TiDBAllowFallbackToTiKV,
 	variable.TiDBEnableDynamicPrivileges,
+	variable.CTEMaxRecursionDepth,
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
