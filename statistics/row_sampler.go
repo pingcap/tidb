@@ -1,3 +1,16 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package statistics
 
 import (
@@ -127,17 +140,25 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 					}
 					val.SetBytes(encodedKey)
 				}
-				err := collector.collectColumns(s.Sc, datums)
-				if err != nil {
-					return nil, err
-				}
-				err = collector.collectIndexes(s.Sc, datums, s.ColGroups)
-				if err != nil {
-					return nil, err
-				}
+			}
+			err := collector.collectColumns(s.Sc, datums)
+			if err != nil {
+				return nil, err
+			}
+			err = collector.collectColumnGroups(s.Sc, datums, s.ColGroups)
+			if err != nil {
+				return nil, err
 			}
 			weight := s.Rng.Int63()
-			collector.sampleRow(datums, weight)
+			newCols := make([]types.Datum, len(datums))
+			for i := range datums {
+				datums[i].Copy(&newCols[i])
+			}
+			item := &RowSampleItem{
+				Columns: newCols,
+				Weight:  weight,
+			}
+			collector.sampleZippedRow(item)
 		}
 	}
 }
@@ -146,6 +167,7 @@ func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols [
 	for i, col := range cols {
 		if col.IsNull() {
 			s.NullCount[i]++
+			continue
 		}
 		s.TotalSizes[i] += int64(len(col.GetBytes())) - 1
 		// Minus one is to remove the flag byte.
@@ -157,50 +179,28 @@ func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols [
 	return nil
 }
 
-func (s *RowSampleCollector) collectIndexes(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64) error {
+func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64) error {
 	colLen := len(cols)
 	datumBuffer := make([]types.Datum, 0, len(cols))
 	for i, group := range colGroups {
 		datumBuffer = datumBuffer[:0]
-		allNull := true
+		hasNull := true
 		for _, c := range group {
 			datumBuffer = append(datumBuffer, cols[c])
-			allNull = allNull && cols[c].IsNull()
+			hasNull = hasNull && cols[c].IsNull()
 			s.TotalSizes[colLen+i] += int64(len(cols[c].GetBytes())) - 1
+		}
+		// We don't maintain the null counts information for the multi-column group
+		if hasNull && len(group) == 1 {
+			s.NullCount[colLen+i]++
+			continue
 		}
 		err := s.FMSketches[colLen+i].InsertRowValue(sc, datumBuffer)
 		if err != nil {
 			return err
 		}
-		if allNull {
-			s.NullCount[colLen+i]++
-		}
 	}
 	return nil
-}
-
-func (s *RowSampleCollector) sampleRow(cols []types.Datum, weight int64) {
-	if len(s.Samples) < s.MaxSampleSize {
-		newCols := make([]types.Datum, len(cols))
-		for i := range cols {
-			cols[i].Copy(&newCols[i])
-		}
-		s.Samples = append(s.Samples, &RowSampleItem{
-			Columns: newCols,
-			Weight:  weight,
-		})
-		if len(s.Samples) == s.MaxSampleSize {
-			heap.Init(&s.Samples)
-		}
-		return
-	}
-	if s.Samples[0].Weight < weight {
-		for i := range cols {
-			cols[i].Copy(&s.Samples[0].Columns[i])
-		}
-		s.Samples[0].Weight = weight
-		heap.Fix(&s.Samples, 0)
-	}
 }
 
 func (s *RowSampleCollector) sampleZippedRow(sample *RowSampleItem) {

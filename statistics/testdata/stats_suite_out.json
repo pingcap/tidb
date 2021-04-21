@@ -241,9 +241,10 @@
         "  └─TableFullScan_5 6.00 cop[tikv] table:tprefix keep order:false"
       ],
       [
-        "TableReader_7 1.00 root  data:Selection_6",
-        "└─Selection_6 1.00 cop[tikv]  eq(test.tprefix.a, \"888\")",
-        "  └─TableFullScan_5 6.00 cop[tikv] table:tprefix keep order:false"
+        "IndexLookUp_11 0.00 root  ",
+        "├─IndexRangeScan_8(Build) 0.00 cop[tikv] table:tprefix, index:prefixa(a) range:[\"88\",\"88\"], keep order:false",
+        "└─Selection_10(Probe) 0.00 cop[tikv]  eq(test.tprefix.a, \"888\")",
+        "  └─TableRowIDScan_9 0.00 cop[tikv] table:tprefix keep order:false"
       ],
       [
         "TableReader_7 1.00 root  data:Selection_6",
@@ -400,8 +401,8 @@
         "└─TableRangeScan_5 4.00 cop[tikv] table:ct1 range:[\"1\",\"4\"], keep order:false"
       ],
       [
-        "TableReader_6 3.00 root  data:TableRangeScan_5",
-        "└─TableRangeScan_5 3.00 cop[tikv] table:ct1 range:[\"4\",\"6\"], keep order:false"
+        "TableReader_6 3.75 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 3.75 cop[tikv] table:ct1 range:[\"4\",\"6\"], keep order:false"
       ],
       [
         "TableReader_6 3.00 root  data:TableRangeScan_5",

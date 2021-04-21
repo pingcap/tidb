@@ -1124,6 +1124,7 @@ type Index struct {
 	Histogram
 	*CMSketch
 	*TopN
+	FMSketch *FMSketch
 	ErrorRate
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Info           *model.IndexInfo
