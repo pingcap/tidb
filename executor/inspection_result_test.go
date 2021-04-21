@@ -479,7 +479,7 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 		}
 	}()
 
-	var servers []string
+	var servers = make([]string, 0, len(testServers))
 	for _, s := range testServers {
 		servers = append(servers, strings.Join([]string{s.typ, s.address, s.address}, ","))
 	}

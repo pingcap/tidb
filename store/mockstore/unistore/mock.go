@@ -17,9 +17,9 @@ import (
 	"io/ioutil"
 	"os"
 
-	usconf "github.com/ngaut/unistore/config"
-	ussvr "github.com/ngaut/unistore/server"
 	"github.com/pingcap/errors"
+	usconf "github.com/pingcap/tidb/store/mockstore/unistore/config"
+	ussvr "github.com/pingcap/tidb/store/mockstore/unistore/server"
 	pd "github.com/tikv/pd/client"
 )
 

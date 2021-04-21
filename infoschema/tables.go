@@ -155,6 +155,12 @@ const (
 	TableTiFlashSegments = "TIFLASH_SEGMENTS"
 	// TablePlacementPolicy is the string constant of placement policy table.
 	TablePlacementPolicy = "PLACEMENT_POLICY"
+	// TableClientErrorsSummaryGlobal is the string constant of client errors table.
+	TableClientErrorsSummaryGlobal = "CLIENT_ERRORS_SUMMARY_GLOBAL"
+	// TableClientErrorsSummaryByUser is the string constant of client errors table.
+	TableClientErrorsSummaryByUser = "CLIENT_ERRORS_SUMMARY_BY_USER"
+	// TableClientErrorsSummaryByHost is the string constant of client errors table.
+	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
 )
 
 var tableIDMap = map[string]int64{
@@ -224,6 +230,9 @@ var tableIDMap = map[string]int64{
 	TableTiFlashTables:                      autoid.InformationSchemaDBID + 64,
 	TableTiFlashSegments:                    autoid.InformationSchemaDBID + 65,
 	TablePlacementPolicy:                    autoid.InformationSchemaDBID + 66,
+	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
+	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
+	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
 }
 
 type columnInfo struct {
@@ -741,6 +750,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "CLUSTERED", tp: mysql.TypeVarchar, size: 64},
 }
 
 var slowQueryCols = []columnInfo{
@@ -858,6 +868,7 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "JOB_INFO", tp: mysql.TypeVarchar, size: 64},
 	{name: "PROCESSED_ROWS", tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: "START_TIME", tp: mysql.TypeDatetime},
+	{name: "END_TIME", tp: mysql.TypeDatetime},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 }
 
@@ -1292,6 +1303,35 @@ var tablePlacementPolicyCols = []columnInfo{
 	{name: "CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024},
 }
 
+var tableClientErrorsSummaryGlobalCols = []columnInfo{
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+}
+
+var tableClientErrorsSummaryByUserCols = []columnInfo{
+	{name: "USER", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+}
+
+var tableClientErrorsSummaryByHostCols = []columnInfo{
+	{name: "HOST", tp: mysql.TypeVarchar, size: 255, flag: mysql.NotNullFlag},
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1413,11 +1453,11 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var servers []ServerInfo
 	var isDefaultVersion bool
 	if len(config.GetGlobalConfig().ServerVersion) == 0 {
 		isDefaultVersion = true
 	}
+	var servers = make([]ServerInfo, 0, len(tidbNodes))
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
@@ -1464,11 +1504,11 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
-	var servers []ServerInfo
 	members, err := etcd.EtcdAddrs()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	var servers = make([]ServerInfo, 0, len(members))
 	for _, addr := range members {
 		// Get PD version
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.ClusterVersion)
@@ -1658,6 +1698,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiFlashTables:                      tableTableTiFlashTablesCols,
 	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
 	TablePlacementPolicy:                    tablePlacementPolicyCols,
+	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
+	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
+	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

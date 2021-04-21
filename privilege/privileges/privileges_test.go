@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -153,6 +154,31 @@ func (s *testPrivilegeSuite) TestCheckPointGetDBPrivilege(c *C) {
 	_, err := se.ExecuteInternal(context.Background(), `select * from test2.t where id = 1`)
 	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "update test2.t set v = 2 where id = 1")
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+}
+
+func (s *testPrivilegeSuite) TestIssue22946(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, "create database db1;")
+	mustExec(c, rootSe, "create database db2;")
+	mustExec(c, rootSe, "use test;")
+	mustExec(c, rootSe, "create table a(id int);")
+	mustExec(c, rootSe, "use db1;")
+	mustExec(c, rootSe, "create table a(id int primary key,name varchar(20));")
+	mustExec(c, rootSe, "use db2;")
+	mustExec(c, rootSe, "create table b(id int primary key,address varchar(50));")
+	mustExec(c, rootSe, "CREATE USER 'delTest'@'localhost';")
+	mustExec(c, rootSe, "grant all on db1.* to delTest@'localhost';")
+	mustExec(c, rootSe, "grant all on db2.* to delTest@'localhost';")
+	mustExec(c, rootSe, "grant select on test.* to delTest@'localhost';")
+	mustExec(c, rootSe, "flush privileges;")
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "delTest", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.ExecuteInternal(context.Background(), `delete from db1.a as A where exists(select 1 from db2.b as B where A.id = B.id);`)
+	c.Assert(err, IsNil)
+	mustExec(c, rootSe, "use db1;")
+	_, err = se.ExecuteInternal(context.Background(), "delete from test.a as A;")
 	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 }
 
@@ -891,6 +917,45 @@ func (s *testPrivilegeSuite) TestShowCreateTable(c *C) {
 	mustExec(c, se, `SHOW CREATE TABLE mysql.user`)
 }
 
+func (s *testPrivilegeSuite) TestReplaceAndInsertOnDuplicate(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER tr_insert`)
+	mustExec(c, se, `CREATE USER tr_update`)
+	mustExec(c, se, `CREATE USER tr_delete`)
+	mustExec(c, se, `CREATE TABLE t1 (a int primary key, b int)`)
+	mustExec(c, se, `GRANT INSERT ON t1 TO tr_insert`)
+	mustExec(c, se, `GRANT UPDATE ON t1 TO tr_update`)
+	mustExec(c, se, `GRANT DELETE ON t1 TO tr_delete`)
+
+	// Restrict the permission to INSERT only.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_insert", Hostname: "localhost", AuthUsername: "tr_insert", AuthHostname: "%"}, nil, nil), IsTrue)
+
+	// REPLACE requires INSERT + DELETE privileges, having INSERT alone is insufficient.
+	_, err := se.ExecuteInternal(context.Background(), `REPLACE INTO t1 VALUES (1, 2)`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]DELETE command denied to user 'tr_insert'@'%' for table 't1'")
+
+	// INSERT ON DUPLICATE requires INSERT + UPDATE privileges, having INSERT alone is insufficient.
+	_, err = se.ExecuteInternal(context.Background(), `INSERT INTO t1 VALUES (3, 4) ON DUPLICATE KEY UPDATE b = 5`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]UPDATE command denied to user 'tr_insert'@'%' for table 't1'")
+
+	// Plain INSERT should work.
+	mustExec(c, se, `INSERT INTO t1 VALUES (6, 7)`)
+
+	// Also check that having DELETE alone is insufficient for REPLACE.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_delete", Hostname: "localhost", AuthUsername: "tr_delete", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), `REPLACE INTO t1 VALUES (8, 9)`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'tr_delete'@'%' for table 't1'")
+
+	// Also check that having UPDATE alone is insufficient for INSERT ON DUPLICATE.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_update", Hostname: "localhost", AuthUsername: "tr_update", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), `INSERT INTO t1 VALUES (10, 11) ON DUPLICATE KEY UPDATE b = 12`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'tr_update'@'%' for table 't1'")
+}
+
 func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
@@ -950,7 +1015,7 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	_, err = se.ExecuteInternal(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "DELETE command denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "create table performance_schema.t(a int)")
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
@@ -962,7 +1027,7 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	_, err = se.ExecuteInternal(context.Background(), "update metrics_schema.tidb_query_duration set instance = 'tst'")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "delete from metrics_schema.tidb_query_duration")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "DELETE command denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "create table metric_schema.t(a int)")
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
@@ -1005,6 +1070,10 @@ func (s *testPrivilegeSuite) TestTableNotExistNoPermissions(c *C) {
 		{
 			"SHOW CREATE TABLE %s.%s",
 			"SHOW",
+		},
+		{
+			"DELETE FROM %s.%s WHERE a=0",
+			"DELETE",
 		},
 		{
 			"DELETE FROM %s.%s",
@@ -1170,4 +1239,105 @@ func newSession(c *C, store kv.Storage, dbName string) session.Session {
 	mustExec(c, se, "create database if not exists "+dbName)
 	mustExec(c, se, "use "+dbName)
 	return se
+}
+
+func (s *testPrivilegeSuite) TestDynamicPrivs(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, "CREATE USER notsuper")
+	mustExec(c, rootSe, "CREATE USER otheruser")
+	mustExec(c, rootSe, "CREATE ROLE anyrolename")
+	mustExec(c, rootSe, "SET tidb_enable_dynamic_privileges=1")
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "notsuper", Hostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "SET tidb_enable_dynamic_privileges=1")
+
+	// test SYSTEM_VARIABLES_ADMIN
+	_, err := se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86400")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_admin ON *.* TO notsuper")
+	mustExec(c, se, "SET GLOBAL wait_timeout = 86400")
+
+	// test ROLE_ADMIN
+	_, err = se.ExecuteInternal(context.Background(), "GRANT anyrolename TO otheruser")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or ROLE_ADMIN privilege(s) for this operation")
+	mustExec(c, rootSe, "GRANT ROLE_ADMIN ON *.* TO notsuper")
+	mustExec(c, se, "GRANT anyrolename TO otheruser")
+
+	// revoke SYSTEM_VARIABLES_ADMIN, confirm it is dropped
+	mustExec(c, rootSe, "REVOKE SYSTEM_VARIABLES_AdmIn ON *.* FROM notsuper")
+	_, err = se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86000")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+
+	// grant super, confirm that it is also a substitute for SYSTEM_VARIABLES_ADMIN
+	mustExec(c, rootSe, "GRANT SUPER ON *.* TO notsuper")
+	mustExec(c, se, "SET GLOBAL wait_timeout = 86400")
+
+	// revoke SUPER, assign SYSTEM_VARIABLES_ADMIN to anyrolename.
+	// confirm that a dynamic privilege can be inherited from a role.
+	mustExec(c, rootSe, "REVOKE SUPER ON *.* FROM notsuper")
+	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_AdmIn ON *.* TO anyrolename")
+	mustExec(c, rootSe, "GRANT anyrolename TO notsuper")
+
+	// It's not a default role, this should initially fail:
+	_, err = se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86400")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+	mustExec(c, se, "SET ROLE anyrolename")
+	mustExec(c, se, "SET GLOBAL wait_timeout = 87000")
+}
+
+func (s *testPrivilegeSuite) TestDynamicGrantOption(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, "CREATE USER varuser1")
+	mustExec(c, rootSe, "CREATE USER varuser2")
+	mustExec(c, rootSe, "CREATE USER varuser3")
+	mustExec(c, rootSe, "SET tidb_enable_dynamic_privileges=1")
+
+	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser1")
+	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser2 WITH GRANT OPTION")
+
+	se1 := newSession(c, s.store, s.dbName)
+	mustExec(c, se1, "SET tidb_enable_dynamic_privileges=1")
+
+	c.Assert(se1.Auth(&auth.UserIdentity{Username: "varuser1", Hostname: "%"}, nil, nil), IsTrue)
+	_, err := se1.ExecuteInternal(context.Background(), "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation")
+
+	se2 := newSession(c, s.store, s.dbName)
+	mustExec(c, se2, "SET tidb_enable_dynamic_privileges=1")
+
+	c.Assert(se2.Auth(&auth.UserIdentity{Username: "varuser2", Hostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se2, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedTables(c *C) {
+	// This provides an integration test of the tests in util/security/security_test.go
+	cloudAdminSe := newSession(c, s.store, s.dbName)
+	mustExec(c, cloudAdminSe, "CREATE USER cloudadmin")
+	mustExec(c, cloudAdminSe, "SET tidb_enable_dynamic_privileges=1")
+	mustExec(c, cloudAdminSe, "GRANT RESTRICTED_TABLES_ADMIN, SELECT ON *.* to cloudadmin")
+	mustExec(c, cloudAdminSe, "GRANT CREATE ON mysql.* to cloudadmin")
+	mustExec(c, cloudAdminSe, "CREATE USER uroot")
+	mustExec(c, cloudAdminSe, "GRANT ALL ON *.* to uroot WITH GRANT OPTION") // A "MySQL" all powerful user.
+	c.Assert(cloudAdminSe.Auth(&auth.UserIdentity{Username: "cloudadmin", Hostname: "%"}, nil, nil), IsTrue)
+	urootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, urootSe, "SET tidb_enable_dynamic_privileges=1")
+	c.Assert(urootSe.Auth(&auth.UserIdentity{Username: "uroot", Hostname: "%"}, nil, nil), IsTrue)
+
+	sem.Enable()
+	defer sem.Disable()
+
+	_, err := urootSe.ExecuteInternal(context.Background(), "use metrics_schema")
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'uroot'@'%' to database 'metrics_schema'")
+
+	_, err = urootSe.ExecuteInternal(context.Background(), "SELECT * FROM metrics_schema.uptime")
+	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'uroot'@'%' for table 'uptime'")
+
+	_, err = urootSe.ExecuteInternal(context.Background(), "CREATE TABLE mysql.abcd (a int)")
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'uroot'@'%' for table 'abcd'")
+
+	mustExec(c, cloudAdminSe, "USE metrics_schema")
+	mustExec(c, cloudAdminSe, "SELECT * FROM metrics_schema.uptime")
+	mustExec(c, cloudAdminSe, "CREATE TABLE mysql.abcd (a int)")
+
 }
