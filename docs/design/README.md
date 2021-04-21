@@ -26,7 +26,7 @@ The most common preparations for writing and submitting an design document for n
 4. If accepted, [create a tracking issue](https://github.com/pingcap/tidb/issues/new/choose) for the design document or convert one from a previous discuss issue. The tracking issue basically tracks subtasks and progress. And refer the tracking issue in the design document replacing placeholder in the template.
 5. Merge the pull request of design.
 
-Please update the tracking issue based on the result of pull request and if merged, the following progresses.
+Please update the tracking issue according to the progress of succeeding implementation pull requests.
 
 An example that almost fits into this model is the proposal "Support global index for partition table", without following the latest template.
 
