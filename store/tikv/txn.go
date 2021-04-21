@@ -38,6 +38,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
+// We use it to abort the transaction to guarantee GC worker will not influence it.
+const MaxTxnTimeUse = 24 * 60 * 60 * 1000
+
 // SchemaAmender is used by pessimistic transactions to amend commit mutations for schema change during 2pc.
 type SchemaAmender interface {
 	// AmendTxn is the amend entry, new mutations will be generated based on input mutations using schema change info.
@@ -125,7 +129,7 @@ func (txn *KVTxn) GetVars() *tidbkv.Variables {
 }
 
 // Get implements transaction interface.
-func (txn *KVTxn) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
+func (txn *KVTxn) Get(ctx context.Context, k []byte) ([]byte, error) {
 	ret, err := txn.us.Get(ctx, k)
 	if tidbkv.IsErrNotFound(err) {
 		return nil, err
@@ -145,7 +149,7 @@ func NewBufferBatchGetter(buffer unionstore.BatchBufferGetter, middleCache union
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 // Do not use len(value) == 0 or value == nil to represent non-exist.
 // If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
-func (txn *KVTxn) BatchGet(ctx context.Context, keys []tidbkv.Key) (map[string][]byte, error) {
+func (txn *KVTxn) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -156,7 +160,7 @@ func (txn *KVTxn) BatchGet(ctx context.Context, keys []tidbkv.Key) (map[string][
 
 // Set sets the value for key k as v into kv store.
 // v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
-func (txn *KVTxn) Set(k tidbkv.Key, v []byte) error {
+func (txn *KVTxn) Set(k []byte, v []byte) error {
 	txn.setCnt++
 	return txn.us.GetMemBuffer().Set(k, v)
 }
@@ -170,17 +174,17 @@ func (txn *KVTxn) String() string {
 // If such entry is not found, it returns an invalid Iterator with no error.
 // It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 // The Iterator must be Closed after use.
-func (txn *KVTxn) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
+func (txn *KVTxn) Iter(k []byte, upperBound []byte) (unionstore.Iterator, error) {
 	return txn.us.Iter(k, upperBound)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (txn *KVTxn) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
+func (txn *KVTxn) IterReverse(k []byte) (unionstore.Iterator, error) {
 	return txn.us.IterReverse(k)
 }
 
 // Delete removes the entry for key k from kv store.
-func (txn *KVTxn) Delete(k tidbkv.Key) error {
+func (txn *KVTxn) Delete(k []byte) error {
 	return txn.us.GetMemBuffer().Delete(k)
 }
 
@@ -212,6 +216,13 @@ func (txn *KVTxn) DelOption(opt int) {
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
 	return txn.us.GetOption(kv.Pessimistic) != nil
+}
+
+func (txn *KVTxn) getKVFilter() KVFilter {
+	if filter := txn.us.GetOption(kv.KVFilter); filter != nil {
+		return filter.(KVFilter)
+	}
+	return nil
 }
 
 // Commit commits the transaction operations to KV store.
@@ -388,7 +399,7 @@ func (txn *KVTxn) onCommitted(err error) {
 
 // LockKeys tries to lock the entries with the keys in KV store.
 // lockWaitTime in ms, except that tidbkv.LockAlwaysWait(0) means always wait lock, tidbkv.LockNowait(-1) means nowait lock
-func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInput ...tidbkv.Key) error {
+func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...[]byte) error {
 	// Exclude keys that are already locked.
 	var err error
 	keys := make([][]byte, 0, len(keysInput))
@@ -439,7 +450,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tidbkv.LockCtx, keysInp
 		if lockCtx.ReturnValues && locked {
 			// An already locked key can not return values, we add an entry to let the caller get the value
 			// in other ways.
-			lockCtx.Values[string(key)] = tidbkv.ReturnedValue{AlreadyLocked: true}
+			lockCtx.Values[string(key)] = kv.ReturnedValue{AlreadyLocked: true}
 		}
 	}
 	if len(keys) == 0 {
