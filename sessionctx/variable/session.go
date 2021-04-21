@@ -403,7 +403,7 @@ type SessionVars struct {
 	TxnCtx *TransactionContext
 
 	// KVVars is the variables for KV storage.
-	KVVars *kv.Variables
+	KVVars *tikvstore.Variables
 
 	// txnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
 	txnIsolationLevelOneShot struct {
@@ -1024,7 +1024,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 	}
-	vars.KVVars = kv.NewVariables(&vars.Killed)
+	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:     DefIndexLookupConcurrency,
 		indexSerialScanConcurrency: DefIndexSerialScanConcurrency,

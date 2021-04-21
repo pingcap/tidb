@@ -25,7 +25,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -134,7 +133,7 @@ const (
 	boMaxTsNotSynced
 )
 
-func (t BackoffType) createFn(vars *tidbkv.Variables) func(context.Context, int) int {
+func (t BackoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
 	if vars.Hook != nil {
 		vars.Hook(t.String(), vars)
 	}
@@ -252,7 +251,7 @@ type Backoffer struct {
 	totalSleep int
 	errors     []error
 	types      []fmt.Stringer
-	vars       *tidbkv.Variables
+	vars       *kv.Variables
 	noop       bool
 
 	backoffSleepMS map[BackoffType]int
@@ -269,12 +268,12 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
 		ctx:      ctx,
 		maxSleep: maxSleep,
-		vars:     tidbkv.DefaultVars,
+		vars:     kv.DefaultVars,
 	}
 }
 
-// NewBackofferWithVars creates a Backoffer with maximum sleep time(in ms) and tidbkv.Variables.
-func NewBackofferWithVars(ctx context.Context, maxSleep int, vars *tidbkv.Variables) *Backoffer {
+// NewBackofferWithVars creates a Backoffer with maximum sleep time(in ms) and kv.Variables.
+func NewBackofferWithVars(ctx context.Context, maxSleep int, vars *kv.Variables) *Backoffer {
 	return NewBackoffer(ctx, maxSleep).withVars(vars)
 }
 
@@ -283,8 +282,8 @@ func NewNoopBackoff(ctx context.Context) *Backoffer {
 	return &Backoffer{ctx: ctx, noop: true}
 }
 
-// withVars sets the tidbkv.Variables to the Backoffer and return it.
-func (b *Backoffer) withVars(vars *tidbkv.Variables) *Backoffer {
+// withVars sets the kv.Variables to the Backoffer and return it.
+func (b *Backoffer) withVars(vars *kv.Variables) *Backoffer {
 	if vars != nil {
 		b.vars = vars
 	}
@@ -415,7 +414,7 @@ func (b *Backoffer) Fork() (*Backoffer, context.CancelFunc) {
 }
 
 // GetVars returns the binded vars.
-func (b *Backoffer) GetVars() *tidbkv.Variables {
+func (b *Backoffer) GetVars() *kv.Variables {
 	return b.vars
 }
 
