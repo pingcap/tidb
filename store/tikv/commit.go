@@ -148,7 +148,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 
 	// if batch is not primary key then return immediately
 	// Group that contains primary key is always the first except async commit.
-	if batch.isPrimary {
+	if !batch.isPrimary {
 		return nil
 	}
 	c.mu.Lock()
