@@ -122,6 +122,10 @@ func (txn *tikvTxn) SetVars(vars interface{}) {
 	}
 }
 
+func (txn *tikvTxn) GetVars() interface{} {
+	return txn.KVTxn.GetVars()
+}
+
 func (txn *tikvTxn) extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikvstore.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())

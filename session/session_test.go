@@ -2649,10 +2649,6 @@ func (s *testSessionSuite2) TestDBUserNameLength(c *C) {
 	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%'`)
 }
 
-type varsGetter interface {
-	GetVars() *tikv.Variables
-}
-
 func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@tidb_backoff_lock_fast = 1")
@@ -2662,7 +2658,7 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	tk.MustExec("begin")
 	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
-	vars := txn.(varsGetter).GetVars()
+	vars := txn.GetVars().(*tikv.Variables)
 	c.Assert(vars.BackoffLockFast, Equals, 1)
 	c.Assert(vars.BackOffWeight, Equals, 100)
 	tk.MustExec("rollback")
@@ -2672,7 +2668,7 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(tk.Se.GetSessionVars().InTxn(), IsTrue)
 	txn, err = tk.Se.Txn(false)
 	c.Assert(err, IsNil)
-	vars = txn.(varsGetter).GetVars()
+	vars = txn.GetVars().(*tikv.Variables)
 	c.Assert(vars.BackOffWeight, Equals, 50)
 
 	tk.MustExec("set @@autocommit = 1")
