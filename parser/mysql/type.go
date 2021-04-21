@@ -72,6 +72,7 @@ const (
 	ParseToJSONFlag       uint = 1 << 18 /* Internal: Used when we want to parse string to JSON in CAST */
 	IsBooleanFlag         uint = 1 << 19 /* Internal: Used for telling boolean literal from integer */
 	PreventNullInsertFlag uint = 1 << 20 /* Prevent this Field from inserting NULL values */
+	EnumSetAsIntFlag      uint = 1 << 21 /* Internal: Used for inferring enum eval type. */
 )
 
 // TypeInt24 bounds.
@@ -149,4 +150,9 @@ func HasIsBooleanFlag(flag uint) bool {
 // HasPreventNullInsertFlag checks if PreventNullInsertFlag is set.
 func HasPreventNullInsertFlag(flag uint) bool {
 	return (flag & PreventNullInsertFlag) > 0
+}
+
+// HasEnumSetAsIntFlag checks if EnumSetAsIntFlag is set.
+func HasEnumSetAsIntFlag(flag uint) bool {
+	return (flag & EnumSetAsIntFlag) > 0
 }
