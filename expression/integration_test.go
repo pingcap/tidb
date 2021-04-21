@@ -9050,9 +9050,8 @@ func (s *testIntegrationSuite) TestEnumPushDown(c *C) {
 
 	// enable index
 	tk.MustExec("alter table t add index idx(e)")
-	// FIXME after enum index calculation is supported
 	tk.MustQuery("select e from t where e > 'b'").
-		Check(testkit.Rows("a")) // the result should be 'c'
+		Check(testkit.Rows("c"))
 	tk.MustQuery("select e from t where e > 2").
 		Check(testkit.Rows("a"))
 }
