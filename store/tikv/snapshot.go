@@ -480,6 +480,9 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			if firstLock == nil {
 				firstLock = lock
 			} else if s.version == maxTimestamp && firstLock.TxnID != lock.TxnID {
+				// If it is an autocommit point get, it needs to be blocked only
+				// by the first lock it meets. During retries, if the encountered
+				// lock is different from the first one, we can omit it.
 				cli.resolvedLocks.Put(lock.TxnID)
 				continue
 			}
