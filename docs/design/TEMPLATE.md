@@ -51,7 +51,7 @@ It's used to ensure the basic feature function works as expected. Both the integ
 
 ### Scenario Tests
 
-It's used to ensure this feature works as expected in some common scenarios
+It's used to ensure this feature works as expected in some common scenarios.
 
 ### Compatibility Tests
 
