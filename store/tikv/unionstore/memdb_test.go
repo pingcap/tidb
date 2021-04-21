@@ -25,7 +25,7 @@ import (
 	. "github.com/pingcap/check"
 	leveldb "github.com/pingcap/goleveldb/leveldb/memdb"
 	"github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/store/tikv/util/testleak"
 )
 
 type KeyFlags = kv.KeyFlags

@@ -259,6 +259,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 			c.Flag |= mysql.PriKeyFlag
 			// Primary key can not be NULL.
 			c.Flag |= mysql.NotNullFlag
+			setNoDefaultValueFlag(c, c.DefaultValue != nil)
 		}
 	case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 		for i, key := range v.Keys {
@@ -6062,7 +6063,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		// refer to tidb#22065.
 		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
 		// placement rules in SQL is not compatible with `set tiflash replica` yet
-		rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+		rule.LabelConstraints = append(rule.LabelConstraints, placement.Constraint{
 			Op:     placement.NotIn,
 			Key:    placement.EngineLabelKey,
 			Values: []string{placement.EngineLabelTiFlash},
@@ -6085,7 +6086,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
-			LabelConstraints: []placement.LabelConstraint{{
+			LabelConstraints: []placement.Constraint{{
 				Op:     placement.NotIn,
 				Key:    placement.EngineLabelKey,
 				Values: []string{placement.EngineLabelTiFlash},
