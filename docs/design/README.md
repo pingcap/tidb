@@ -22,7 +22,7 @@ The most common preparations for writing and submitting an design document for n
 
 1. Create a pull request with a design document based on the [template](./TEMPLATE.md) under this directory as `YYYY-MM-DD-my-feature.md`.
 2. Discussion takes place, and the text is revised in response.
-3. The design document is accepted or rejected when at least two committers reach consensus and no objection from committer.
+3. The design document is accepted or rejected when at least two committers reach consensus and no objection from the committer.
 4. If accepted, [create a tracking issue](https://github.com/pingcap/tidb/issues/new/choose) for the design document or convert one from a previous discuss issue. The tracking issue basically tracks subtasks and progress. And refer the tracking issue in the design document replacing placeholder in the template.
 5. Merge the pull request of design.
 
