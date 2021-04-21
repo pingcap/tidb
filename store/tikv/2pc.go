@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/prometheus/client_golang/prometheus"
 	zap "go.uber.org/zap"
 )
@@ -403,10 +402,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	const logEntryCount = 10000
 	const logSize = 4 * 1024 * 1024 // 4MB
 	if c.mutations.Len() > logEntryCount || size > logSize {
-		tableID := tablecodec.DecodeTableID(c.mutations.GetKey(0))
 		logutil.BgLogger().Info("[BIG_TXN]",
 			zap.Uint64("session", c.sessionID),
-			zap.Int64("table ID", tableID),
+			zap.String("key sample", kv.StrKey(c.mutations.GetKey(0))),
 			zap.Int("size", size),
 			zap.Int("keys", c.mutations.Len()),
 			zap.Int("puts", putCnt),

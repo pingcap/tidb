@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/tablecodec"
 )
 
 var (
@@ -1031,7 +1030,6 @@ func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
 	untouchedIndexKey := []byte("t00000001_i000000001")
 	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
 	noValueIndexKey := []byte("t00000001_i000000002")
-	c.Assert(tablecodec.IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue), IsTrue)
 	txn := s.begin(c)
 	txn.SetOption(kv.KVFilter, drivertxn.TiDBKVFilter{})
 	err := txn.Set(untouchedIndexKey, untouchedIndexValue)
