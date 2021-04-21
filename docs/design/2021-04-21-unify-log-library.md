@@ -35,6 +35,7 @@ When PD and TiDB-operator were using pingcap/log, there was no custom encoder fu
 ### TiDB
 
 Log library dependencies:
+
 ![tidb-log-dependency](./imgs/tidb-log-dependency.png)
 
 For historical reasons, TiDB has two third-party logging libraries -- logrus and pingcap/log, with pingcap/log wrapping another layer on top of zap.
@@ -150,8 +151,8 @@ Only the etcd, grupc, and draft components use the logrus handler.
 
 #### Pingcap/log (Zap)
 
-整个pd里面只有一个zap log handler。
-初始化的地方比较隐蔽，在cmd/pd-server/main.go里面：
+There is only one zap log handler inside the whole pd.
+The initialization is hidden, in cmd/pd-server/main.go.
 
 ```go
 // New zap logger
@@ -170,8 +171,8 @@ Most of the logging logic in PD will use the global zap handler.
 
 ### Pingcap/br
 
-Br列在这里很奇怪，他不是tidb集群运行的必要组件。把他写出来就因为一个原因：tidb依赖了br，br又依赖了tidb的util/logutil/log.go，构成了循环依赖。不光是循环依赖，还刚好依赖在了log组件上🙃🙃🙃！这给refactor造成了不小的阻碍。
-下面的代码来自pkg/lightning/log/log.go，他先调用了tidb的InitLogger，又调用了pingcap/log的InitLogger：
+Br is strangely listed here, he is not a necessary component for the tidb cluster to run. Write him out just for one reason: tidb depends on br, which in turn depends on tidb's util/logutil/log.go, constituting a circular dependency. Not only is it a circular dependency, it also happens to depend on the log component 🙃🙃🙃🙃! This creates a considerable obstacle for the refactor.
+The following code is from pkg/lightning/log/log.go, which calls tidb's InitLogger and then pingcap/log's InitLogger.
 
 ```go
 // InitLogger initializes Lightning's and also the TiDB library's loggers.
