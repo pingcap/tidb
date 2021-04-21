@@ -109,6 +109,10 @@ func (ft *FieldType) EvalType() EvalType {
 		return ETDuration
 	case mysql.TypeJSON:
 		return ETJson
+	case mysql.TypeEnum, mysql.TypeSet:
+		if ft.Flag&mysql.EnumSetAsIntFlag > 0 {
+			return ETInt
+		}
 	}
 	return ETString
 }
