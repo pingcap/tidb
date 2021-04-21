@@ -55,11 +55,8 @@ type TxnScope struct {
 
 // GetTxnScope gets oracle.TxnScope from config
 func GetTxnScope() TxnScope {
-	location := ""
-	if cfg := config.GetGlobalConfig(); cfg != nil {
-		location = cfg.TxnScope
-	}
-	if len(location) == 0 {
+	isGlobal, location := config.GetTxnScopeFromConfig()
+	if isGlobal {
 		return NewGlobalTxnScope()
 	}
 	return NewLocalTxnScope(location)
