@@ -15,13 +15,13 @@ package expression
 
 import (
 	"fmt"
-	math2 "github.com/pingcap/tidb/util/math"
 	"math"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	math2 "github.com/pingcap/tidb/util/math"
 )
 
 func (b *builtinArithmeticMultiplyRealSig) vectorized() bool {

@@ -15,7 +15,6 @@ package expression
 
 import (
 	"fmt"
-	math2 "github.com/pingcap/tidb/util/math"
 	"math"
 
 	"github.com/cznic/mathutil"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	math2 "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
