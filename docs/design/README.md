@@ -8,7 +8,7 @@ The process described in this page is intended to provide a consistent and contr
 
 ## Who should initiate the design document?
 
-Anyone can initiate a design document but you shouldn't do it unless you have an intention of getting the work done to implement it.
+Everyone is encouraged to initiate a design document, but before doing it, please make sure you have an intention of getting the work done to implement it.
 
 ## Before creating a design document
 
