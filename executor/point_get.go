@@ -580,7 +580,7 @@ func (e *runtimeStatsWithSnapshot) Clone() execdetails.RuntimeStats {
 	newRs := &runtimeStatsWithSnapshot{}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+		newRs.SnapshotRuntimeStats = snapshotStats
 	}
 	return newRs
 }
@@ -594,7 +594,7 @@ func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
 	if tmp.SnapshotRuntimeStats != nil {
 		if e.SnapshotRuntimeStats == nil {
 			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			e.SnapshotRuntimeStats = snapshotStats
 			return
 		}
 		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
