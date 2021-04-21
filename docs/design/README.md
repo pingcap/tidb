@@ -20,10 +20,11 @@ The most common preparations for writing and submitting an design document for n
 
 ## What is the process?
 
-1. [Create a tracking issue](https://github.com/pingcap/tidb/issues/new/choose) for the design document or convert one from a previous discuss issue. The tracking issue basically tracks subtasks and progress.
-2. Create a pull request with a design document based on the [template](./TEMPLATE.md) under this directory as `YYYY-MM-DD-my-feature.md`.
-3. Discussion takes place, and the text is revised in response.
-4. The pull request is merged or closed when at least two committers reach consensus and no objection from committer.
+1. Create a pull request with a design document based on the [template](./TEMPLATE.md) under this directory as `YYYY-MM-DD-my-feature.md`.
+2. Discussion takes place, and the text is revised in response.
+3. The design document is accepted or rejected when at least two committers reach consensus and no objection from committer.
+4. If accepted, [create a tracking issue](https://github.com/pingcap/tidb/issues/new/choose) for the design document or convert one from a previous discuss issue. The tracking issue basically tracks subtasks and progress. And refer the tracking issue in the design document replacing placeholder in the template.
+5. Merge the pull request of design.
 
 Please update the tracking issue based on the result of pull request and if merged, the following progresses.
 
