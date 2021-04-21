@@ -43,7 +43,7 @@
     "Name": "TestEstimation",
     "Cases": [
       {
-        "SQL": "explain select count(*) from t group by a",
+        "SQL": "explain format = 'brief' select count(*) from t group by a",
         "Plan": [
           "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
           "└─TableReader 2.00 root  data:HashAgg",
