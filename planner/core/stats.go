@@ -455,7 +455,11 @@ func (ds *DataSource) generateIndexMergeOrPaths() error {
 
 			accessConds := make([]expression.Expression, 0, len(partialPaths))
 			for _, p := range partialPaths {
-				accessConds = append(accessConds, p.AccessConds...)
+				indexCondsForP := p.AccessConds[:]
+				indexCondsForP = append(indexCondsForP, p.IndexFilters...)
+				if len(indexCondsForP) > 0 {
+					accessConds = append(accessConds, expression.ComposeCNFCondition(ds.ctx, indexCondsForP...))
+				}
 			}
 			accessDNF := expression.ComposeDNFCondition(ds.ctx, accessConds...)
 			sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, []expression.Expression{accessDNF}, nil)

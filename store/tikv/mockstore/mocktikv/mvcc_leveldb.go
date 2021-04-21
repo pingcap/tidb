@@ -27,12 +27,19 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/mockstore/deadlock"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/deadlock"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/util/codec"
 	"go.uber.org/zap"
+)
+
+// Used for pessimistic lock wait time
+// these two constants are special for lock protocol with tikv
+// 0 means always wait, -1 means nowait, others meaning lock wait in milliseconds
+var (
+	LockAlwaysWait = int64(0)
+	LockNoWait     = int64(-1)
 )
 
 // MVCCLevelDB implements the MVCCStore interface.
@@ -502,14 +509,14 @@ func (mvcc *MVCCLevelDB) PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *k
 		if err != nil {
 			anyError = true
 		}
-		if lockWaitTime == kv.LockNoWait {
+		if lockWaitTime == LockNoWait {
 			if _, ok := err.(*ErrLocked); ok {
 				break
 			}
 		}
 	}
 	if anyError {
-		if lockWaitTime != kv.LockNoWait {
+		if lockWaitTime != LockNoWait {
 			// TODO: remove this when implement sever side wait.
 			simulateServerSideWaitLock(errs)
 		}
