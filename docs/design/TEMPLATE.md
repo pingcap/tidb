@@ -1,6 +1,6 @@
 # TiDB Design Documents
 
-- Author(s): @ghid1, @ghid2, ...
+- Author(s): [Author Name](http://github.com/your-github-id), [Co-Author Name](http://github.com/your-github-id), ...
 - Discussion PR: https://github.com/pingcap/tidb/pull/XXX
 - Tracking Issue: https://github.com/pingcap/tidb/issues/XXX
 
