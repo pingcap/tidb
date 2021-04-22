@@ -83,6 +83,9 @@ type lookupTableTask struct {
 	// the same handle of index has multiple values.
 	duplicatedIndexOrder *kv.HandleMap
 
+	// partitionTable indicates whether this task belongs to a partition table and which partition table it is.
+	partitionTable table.PhysicalTable
+
 	// memUsage records the memory usage of this task calculated by table worker.
 	// memTracker is used to release memUsage after task is done and unused.
 	//

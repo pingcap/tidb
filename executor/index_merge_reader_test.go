@@ -14,6 +14,10 @@
 package executor_test
 
 import (
+	"fmt"
+	"math/rand"
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -85,4 +89,40 @@ func (s *testSuite1) TestIndexMergeCausePanic(c *C) {
 	tk.MustExec("set @@tidb_enable_index_merge = 1;")
 	tk.MustExec("create table t (a int, b int, c int, primary key(a), key(b))")
 	tk.MustQuery("explain select /*+ inl_join(t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.c = t2.c where t2.a = 1 or t2.b = 1")
+}
+
+func (s *testSuite1) TestPartitionTableIndexMerge(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_index_merge=1")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec(`create table t (a int, b int, key(a), key(b))
+		partition by range (a) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30),
+		partition p4 values less than (40))`)
+	tk.MustExec(`create table tnormal (a int, b int, key(a), key(b))`)
+
+	values := make([]string, 0, 128)
+	for i := 0; i < 128; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(40), rand.Intn(40)))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
+	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
+
+	randRange := func() (int, int) {
+		a, b := rand.Intn(40), rand.Intn(40)
+		if a > b {
+			return b, a
+		}
+		return a, b
+	}
+	for i := 0; i < 256; i++ {
+		la, ra := randRange()
+		lb, rb := randRange()
+		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
+		tk.MustQuery("select * from t use index(a, b) where " + cond).Sort().Check(
+			tk.MustQuery("select * from tnormal where " + cond).Sort().Rows())
+	}
 }
