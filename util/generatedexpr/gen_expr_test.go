@@ -14,16 +14,9 @@
 package generatedexpr
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 )
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
 
 var _ = Suite(&testGenExprSuite{})
 
