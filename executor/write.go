@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -68,7 +67,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
 	onUpdateSpecified := make(map[int]bool)
-	var newHandle kv.Handle
 
 	// We can iterate on public columns not writable columns,
 	// because all of them are sorted by their `Offset`, which
@@ -119,7 +117,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			}
 			if col.IsPKHandleColumn(t.Meta()) {
 				handleChanged = true
-				newHandle = kv.IntHandle(newData[i].GetInt64())
 				// Rebase auto random id if the field is changed.
 				if err := rebaseAutoRandomValue(sctx, t, &newData[i], col); err != nil {
 					return false, err
@@ -133,14 +130,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 					pkDts = append(pkDts, newData[idxCol.Offset])
 				}
 				tablecodec.TruncateIndexValues(t.Meta(), pkIdx, pkDts)
-				handleBytes, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, pkDts...)
-				if err != nil {
-					return false, err
-				}
-				newHandle, err = kv.NewCommonHandle(handleBytes)
-				if err != nil {
-					return false, err
-				}
 			}
 		} else {
 			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
@@ -190,17 +179,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 
 	// 5. If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
-		if sc.DupKeyAsWarning {
-			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
-			// If the new handle or unique index exists, this will avoid to remove the record.
-			err = tables.CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx, sctx, t, newHandle, newData, modified)
-			if err != nil {
-				if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-					return false, nil
-				}
-				return false, err
-			}
-		}
 		if updated, err := func() (bool, error) {
 			txn, err := sctx.Txn(true)
 			if err != nil {
@@ -214,17 +192,12 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				return false, err
 			}
 
-			// the `affectedRows` is increased when adding new record.
-			if sc.DupKeyAsWarning {
-				_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.SkipHandleCheck, table.WithCtx(ctx))
-			} else {
-				_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
-			}
+			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
 			if err != nil {
 				return false, err
 			}
 			memBuffer.Release(sh)
-			return false, nil
+			return true, nil
 		}(); err != nil {
 			return updated, err
 		}
