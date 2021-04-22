@@ -507,9 +507,6 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(tikvstore.GuaranteeLinearizability,
 			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
-	if s.txn.Valid() {
-		txnstateRecorder.ReportCommitStarted(s.txn.StartTS())
-	}
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 }
 

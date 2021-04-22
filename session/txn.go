@@ -235,6 +235,8 @@ func (txn *TxnState) Commit(ctx context.Context) error {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
 
+	txnstateRecorder.ReportCommitStarted(txn.StartTS())
+
 	// mockCommitError8942 is used for PR #8942.
 	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
 		if val.(bool) {
@@ -264,6 +266,13 @@ func (txn *TxnState) Commit(ctx context.Context) error {
 func (txn *TxnState) Rollback() error {
 	defer txn.reset()
 	return txn.Transaction.Rollback()
+}
+
+func (txn *TxnState) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
+	txnstateRecorder.ReportBlocked(txn.StartTS())
+	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
+	txnstateRecorder.ReportUnblocked(txn.StartTS())
+	return err
 }
 
 func (txn *TxnState) reset() {

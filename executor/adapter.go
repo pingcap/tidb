@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tidb/util/txnstateRecorder"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -583,9 +582,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		var lockKeyStats *util.LockKeysDetails
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
-		txnstateRecorder.ReportBlocked(txn.StartTS())
 		err = txn.LockKeys(ctx, lockCtx, keys...)
-		txnstateRecorder.ReportUnblocked(txn.StartTS())
 		if lockKeyStats != nil {
 			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
 		}
