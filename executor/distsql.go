@@ -313,8 +313,9 @@ type IndexLookUpExecutor struct {
 	*dataReaderBuilder
 
 	// fields about accessing partition tables
-	prunedPartitions  []table.PhysicalTable // partition tables need to access
-	partitionKVRanges [][]kv.KeyRange       // kvRanges of each partition table
+	partitionTableMode bool                  // if this executor is accessing a partition table
+	prunedPartitions   []table.PhysicalTable // partition tables need to access
+	partitionKVRanges  [][]kv.KeyRange       // kvRanges of each partition table
 
 	// All fields above are immutable.
 
@@ -367,10 +368,6 @@ type checkIndexValue struct {
 	idxTblCols []*table.Column
 }
 
-func (e *IndexLookUpExecutor) partitionTableMode() bool {
-	return len(e.prunedPartitions) > 0
-}
-
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
@@ -394,7 +391,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 
 func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
-	if e.partitionTableMode() {
+	if e.partitionTableMode {
 		if e.keepOrder { // this case should be prevented by the optimizer
 			return errors.New("invalid execution plan: cannot keep order when accessing a partition table by IndexLookUpReader")
 		}
@@ -497,7 +494,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	tracker.AttachTo(e.memTracker)
 
 	kvRanges := [][]kv.KeyRange{e.kvRanges}
-	if e.partitionTableMode() {
+	if e.partitionTableMode {
 		kvRanges = e.partitionKVRanges
 	}
 	tps := e.getRetTpsByHandle()
@@ -545,7 +542,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			if worker.batchSize > worker.maxBatchSize {
 				worker.batchSize = worker.maxBatchSize
 			}
-			if e.partitionTableMode() {
+			if e.partitionTableMode {
 				worker.partitionTable = e.prunedPartitions[i]
 			}
 			ctx1, cancel := context.WithCancel(ctx)
@@ -597,7 +594,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookupTableTask) (Executor, error) {
 	table := e.table
-	if e.partitionTableMode() && task.partitionTable != nil {
+	if e.partitionTableMode && task.partitionTable != nil {
 		table = task.partitionTable
 	}
 	tableReaderExec := &TableReaderExecutor{

@@ -3071,6 +3071,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		b.err = err
 		return nil
 	}
+	ret.partitionTableMode = true
 	ret.prunedPartitions = partitions
 	return ret
 }
