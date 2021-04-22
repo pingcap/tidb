@@ -259,6 +259,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 			c.Flag |= mysql.PriKeyFlag
 			// Primary key can not be NULL.
 			c.Flag |= mysql.NotNullFlag
+			setNoDefaultValueFlag(c, c.DefaultValue != nil)
 		}
 	case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 		for i, key := range v.Keys {
@@ -5893,7 +5894,7 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
 		}
 
-		labelConstraints, err := placement.CheckLabelConstraints(constraints1)
+		labelConstraints, err := placement.NewConstraints(constraints1)
 		if err != nil {
 			return rules, err
 		}
@@ -5923,7 +5924,7 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 				}
 			}
 
-			labelConstraints, err := placement.CheckLabelConstraints(strings.Split(strings.TrimSpace(labels), ","))
+			labelConstraints, err := placement.NewConstraints(strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
 				return rules, err
 			}
@@ -6062,11 +6063,13 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		// refer to tidb#22065.
 		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
 		// placement rules in SQL is not compatible with `set tiflash replica` yet
-		rule.LabelConstraints = append(rule.LabelConstraints, placement.Constraint{
+		if err := rule.LabelConstraints.Add(placement.Constraint{
 			Op:     placement.NotIn,
 			Key:    placement.EngineLabelKey,
 			Values: []string{placement.EngineLabelTiFlash},
-		})
+		}); err != nil {
+			return errors.Trace(err)
+		}
 		rule.GroupID = bundle.ID
 		rule.ID = strconv.Itoa(i)
 		rule.StartKeyHex = startKey
