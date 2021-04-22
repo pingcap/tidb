@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func (s *pkgTestSuite) testHashTables(c *C) {
+func (s *pkgTestSuite) TestHashTables(c *C) {
 	var ht baseHashTable
 	test := func() {
 		ht.Put(1, chunk.RowPtr{ChkIdx: 1, RowIdx: 1})
