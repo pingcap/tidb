@@ -668,7 +668,7 @@ func (c *ddlCallback) OnChanged(err error) error {
 	return nil
 }
 
-// OnSchemaStateChange overrides the ddl Callback interface.
+// OnSchemaStateChanged overrides the ddl Callback interface.
 func (c *ddlCallback) OnSchemaStateChanged() {
 	err := c.do.Reload()
 	if err != nil {
@@ -746,7 +746,14 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
-	callback := &ddlCallback{do: do}
+	var callback ddl.Callback
+	if ddl.CustomizedDDLHook != nil {
+		copyOne := ddl.CustomizedDDLHook
+		copyOne.Do = do
+		callback = copyOne
+	} else {
+		callback = &ddlCallback{do: do}
+	}
 	d := do.ddl
 	do.ddl = ddl.NewDDL(
 		ctx,

@@ -961,10 +961,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(0)
 		job.Args = append(job.Args, changingCol, changingIdxs)
 	case model.StateDeleteOnly:
-		failpoint.Inject("httpMockHangMiddleState", func() {
-			logutil.BgLogger().Warn("[failpoint] Hang for 0.5 seconds on delete-only state injected")
-			time.Sleep(500 * time.Millisecond)
-		})
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(changingCol.Flag) {
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
@@ -984,10 +980,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
-		failpoint.Inject("httpMockHangMiddleState", func() {
-			logutil.BgLogger().Warn("[failpoint] Hang for 0.5 seconds on write-only state injected")
-			time.Sleep(500 * time.Millisecond)
-		})
 		// write only -> reorganization
 		updateChangingInfo(changingCol, changingIdxs, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
@@ -998,10 +990,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
-		failpoint.Inject("httpMockHangMiddleState", func() {
-			logutil.BgLogger().Warn("[failpoint] Hang for 0.5 seconds on write-reorg state injected")
-			time.Sleep(500 * time.Millisecond)
-		})
 		tbl, err := getTable(d.store, dbInfo.ID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
