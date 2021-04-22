@@ -143,7 +143,10 @@ func (b *Bundle) Tidy() error {
 		if err != nil {
 			return err
 		}
-		// added -engine=tiflash, and it is the only constraint
+		// Constraints.Add() will automatically avoid duplication
+		// if -engine=tiflash is added and there is only one constraint
+		// then it must be -engine=tiflash
+		// it is seen as an empty constraint, so merge it
 		if len(rule.Constraints) == 1 {
 			extraCnt[rule.Role] += rule.Count
 			continue
@@ -152,7 +155,7 @@ func (b *Bundle) Tidy() error {
 		newRules = append(newRules, rule)
 	}
 	for role, cnt := range extraCnt {
-		// refer to tidb#22065.
+		// add -engine=tiflash, refer to tidb#22065.
 		newRules = append(newRules, &Rule{
 			ID:    string(role),
 			Role:  role,
