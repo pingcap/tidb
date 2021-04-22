@@ -31,11 +31,11 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tidbkv "github.com/pingcap/tidb/kv"
 	drivertxn "github.com/pingcap/tidb/store/driver/txn"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
@@ -66,7 +66,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	cluster := mocktikv.NewCluster(mvccStore)
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("a"), []byte("b"), []byte("c"))
 	s.cluster = cluster
-	client := mocktikv.NewRPCClient(cluster, mvccStore)
+	client := mocktikv.NewRPCClient(cluster, mvccStore, nil)
 	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
 	spkv := tikv.NewMockSafePointKV()
 	store, err := tikv.NewKVStore("mocktikv-store", pdCli, spkv, client)
