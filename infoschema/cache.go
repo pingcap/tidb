@@ -1,0 +1,77 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package infoschema
+
+import (
+	"sort"
+	"sync"
+)
+
+// InfoCache handles information schema, including getting and setting.
+type InfoCache struct {
+	// mu can not be RWMutex, because we access infoschema in the cache slice
+	mu sync.Mutex
+	// cache is sorted by SchemaVersion in descending order
+	cache []InfoSchema
+}
+
+// NewCache creates a new Handle.
+func NewCache(capcity int) *InfoCache {
+	return &InfoCache{cache: make([]InfoSchema, 0, capcity)}
+}
+
+// Get gets the newest information schema.
+func (h *InfoCache) Get() InfoSchema {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.cache) > 0 {
+		return h.cache[0]
+	}
+	return nil
+}
+
+// GetVersion gets the information schema based on schemaVersion. Returns nil if it is not loaded.
+func (h *InfoCache) GetVersion(version int64) InfoSchema {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	i := sort.Search(len(h.cache), func(i int) bool {
+		return h.cache[i].SchemaMetaVersion() <= version
+	})
+	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
+		return h.cache[i]
+	}
+	return nil
+}
+
+// Insert will **TRY** to insert the infoschema into the cache. It works by always keeping newers.
+// But YOU SHOULD NOT RELY THIS BEHAVIOR.
+func (h *InfoCache) Insert(is InfoSchema) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	version := is.SchemaMetaVersion()
+	i := sort.Search(len(h.cache), func(i int) bool {
+		return h.cache[i].SchemaMetaVersion() <= version
+	})
+	if len(h.cache) < cap(h.cache) {
+		// has free space
+		h.cache = append(h.cache, nil)
+		copy(h.cache[i+1:], h.cache[i:])
+		h.cache[i] = is
+	} else if i < len(h.cache) {
+		// drop older schema
+		copy(h.cache[i+1:], h.cache[i:])
+		h.cache[i] = is
+	}
+	// older than all cached schemas, refuse to cache it
+}

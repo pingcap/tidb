@@ -202,7 +202,7 @@ type ddlCtx struct {
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
-	infoHandle   *infoschema.Handle
+	infoCache    *infoschema.InfoCache
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
@@ -290,7 +290,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
-		infoHandle:   opt.InfoHandle,
+		infoCache:    opt.InfoCache,
 		tableLockCkr: deadLockCkr,
 		etcdCli:      opt.EtcdCli,
 	}
@@ -411,7 +411,7 @@ func (d *ddl) GetLease() time.Duration {
 // Please don't use this function, it is used by TestParallelDDLBeforeRunDDLJob to intercept the calling of d.infoHandle.Get(), use d.infoHandle.Get() instead.
 // Otherwise, the TestParallelDDLBeforeRunDDLJob will hang up forever.
 func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
-	is := d.infoHandle.Get()
+	is := d.infoCache.Get()
 
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -649,10 +649,10 @@ func (d *ddl) startCleanDeadTableLock() {
 			if !d.ownerManager.IsOwner() {
 				continue
 			}
-			if d.infoHandle == nil || !d.infoHandle.IsValid() {
+			if d.infoCache == nil || d.infoCache.Get() == nil {
 				continue
 			}
-			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoHandle.Get().AllSchemas())
+			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoCache.Get().AllSchemas())
 			if err != nil {
 				logutil.BgLogger().Info("[ddl] get dead table lock failed.", zap.Error(err))
 				continue
