@@ -279,7 +279,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
-		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
+		SetFromInfoSchema(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)).
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()

@@ -198,7 +198,7 @@ func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 	for i := 0; i < 2; i++ {
 		stmt, err := s.ParseOneStmt(sql1, "", "")
 		c.Check(err, IsNil)
-		is := tk.Se.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+		is := tk.Se.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 		builder, _ := core.NewPlanBuilder(tk.Se, is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Check(err, IsNil)

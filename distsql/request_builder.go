@@ -230,11 +230,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	if sv.SnapshotInfoschema != nil {
-		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
-	} else {
-		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
-	}
+	builder.Request.SchemaVar = sv.GetInfoSchema().(infoschema.InfoSchema).SchemaMetaVersion()
 	builder.txnScope = sv.TxnCtx.TxnScope
 	builder.IsStaleness = sv.TxnCtx.IsStaleness
 	if builder.IsStaleness && builder.txnScope != oracle.GlobalTxnScope {

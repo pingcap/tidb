@@ -231,7 +231,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
-		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
+		SetFromInfoSchema(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)).
 		Build()
 	if err != nil {
 		return nil, err

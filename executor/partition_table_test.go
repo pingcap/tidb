@@ -204,7 +204,7 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
   PARTITION p202010 VALUES LESS THAN ("2020-11-01"),
   PARTITION p202011 VALUES LESS THAN ("2020-12-01")
 )`)
-	is := infoschema.GetInfoSchema(tk.Se)
+	is := tk.Se.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_info_null"))
 	c.Assert(err, IsNil)
 
