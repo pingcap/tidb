@@ -69,19 +69,12 @@ const (
 	// TypeDuration for a golang duration (a TiDB extension)
 	TypeDuration TypeFlag = 7
 
-	// BoolOff is the canonical string representation of a boolean false.
-	BoolOff = "OFF"
-	// BoolOn is the canonical string representation of a boolean true.
-	BoolOn = "ON"
 	// On is the canonical string for ON
 	On = "ON"
-
 	// Off is the canonical string for OFF
 	Off = "OFF"
-
 	// Warn means return warnings
 	Warn = "WARN"
-
 	// IntOnly means enable for int type
 	IntOnly = "INT_ONLY"
 )
@@ -308,9 +301,9 @@ func (sv *SysVar) checkFloatSystemVar(value string, vars *SessionVars) (string, 
 
 func (sv *SysVar) checkBoolSystemVar(value string, vars *SessionVars) (string, error) {
 	if strings.EqualFold(value, "ON") {
-		return BoolOn, nil
+		return On, nil
 	} else if strings.EqualFold(value, "OFF") {
-		return BoolOff, nil
+		return Off, nil
 	}
 	val, err := strconv.ParseInt(value, 10, 64)
 	if err == nil {
@@ -319,15 +312,15 @@ func (sv *SysVar) checkBoolSystemVar(value string, vars *SessionVars) (string, e
 		// negative integer to 1.
 		if !sv.AutoConvertNegativeBool {
 			if val == 0 {
-				return BoolOff, nil
+				return Off, nil
 			} else if val == 1 {
-				return BoolOn, nil
+				return On, nil
 			}
 		} else {
 			if val == 1 || val < 0 {
-				return BoolOn, nil
+				return On, nil
 			} else if val == 0 {
-				return BoolOff, nil
+				return Off, nil
 			}
 		}
 	}
@@ -492,7 +485,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: BoolOn, Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: On, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TimeZone, Value: "SYSTEM", IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if strings.EqualFold(normalizedValue, "SYSTEM") {
 			return "SYSTEM", nil
@@ -508,14 +501,14 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeNone, Name: SystemTimeZone, Value: "CST"},
-	{Scope: ScopeGlobal | ScopeSession, Name: ForeignKeyChecks, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: ForeignKeyChecks, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if TiDBOptOn(normalizedValue) {
 			// TiDB does not yet support foreign keys.
 			// Return the original value in the warning, so that users are not confused.
 			vars.StmtCtx.AppendWarning(ErrUnsupportedValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue))
-			return BoolOff, nil
+			return Off, nil
 		} else if !TiDBOptOn(normalizedValue) {
-			return BoolOff, nil
+			return Off, nil
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
 	}},
@@ -545,7 +538,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeNone, Name: Port, Value: "4000", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint16},
 	{Scope: ScopeNone, Name: LowerCaseTableNames, Value: "2"},
-	{Scope: ScopeNone, Name: LogBin, Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeNone, Name: LogBin, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if normalizedValue == "" {
 			return normalizedValue, nil
@@ -582,7 +575,7 @@ var defaultSysVars = []*SysVar{
 		return normalizedValue, nil
 	}},
 	{Scope: ScopeNone, Name: Version, Value: mysql.ServerVersion},
-	{Scope: ScopeGlobal | ScopeSession, Name: AutoCommit, Value: BoolOn, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: AutoCommit, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		isAutocommit := TiDBOptOn(val)
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
@@ -627,7 +620,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: MaxAllowedPacket, Value: "67108864", Type: TypeUnsigned, MinValue: 1024, MaxValue: MaxOfMaxAllowedPacket, AutoConvertOutOfRange: true},
 	{Scope: ScopeSession, Name: WarningCount, Value: "0", ReadOnly: true},
 	{Scope: ScopeSession, Name: ErrorCount, Value: "0", ReadOnly: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: BoolOn, Type: TypeBool, IsHintUpdatable: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: On, Type: TypeBool, IsHintUpdatable: true, SetSession: func(s *SessionVars, val string) error {
 		s.WindowingUseHighPrecision = TiDBOptOn(val)
 		return nil
 	}},
@@ -831,11 +824,11 @@ var defaultSysVars = []*SysVar{
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCascadesPlanner, Value: BoolOff, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCascadesPlanner, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.SetEnableCascadesPlanner(TiDBOptOn(val))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: BoolOff, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.SetEnableIndexMerge(TiDBOptOn(val))
 		return nil
 	}},
@@ -867,11 +860,11 @@ var defaultSysVars = []*SysVar{
 		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: BoolOff, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStreaming = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBEnableChunkRPC, Value: BoolOn, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBEnableChunkRPC, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableChunkRPC = TiDBOptOn(val)
 		return nil
 	}},
@@ -889,11 +882,11 @@ var defaultSysVars = []*SysVar{
 		s.txnIsolationLevelOneShot.value = val
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: BoolOn, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "AUTO"}, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: On, Type: TypeEnum, PossibleValues: []string{Off, On, "AUTO"}, SetSession: func(s *SessionVars, val string) error {
 		s.EnableTablePartition = val
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBEnableListTablePartition, Value: BoolOff, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBEnableListTablePartition, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableListTablePartition = TiDBOptOn(val)
 		return nil
 	}},
@@ -1025,7 +1018,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	/* The following variable is defined as session scope but is actually server scope. */
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableDynamicPrivileges, Value: BoolOff, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableDynamicPrivileges, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableDynamicPrivileges = TiDBOptOn(val)
 		return nil
 	}},
@@ -1095,7 +1088,7 @@ var defaultSysVars = []*SysVar{
 		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeout))
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBLowResolutionTSO, Value: BoolOff, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBLowResolutionTSO, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.LowResolutionTSO = TiDBOptOn(val)
 		return nil
 	}},
@@ -1113,7 +1106,7 @@ var defaultSysVars = []*SysVar{
 		// TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, serverReadOnly
 		// To prevent this strange position, prevent setting to OFF when any of these sysVars are ON of the same scope.
 
-		if normalizedValue == BoolOff {
+		if normalizedValue == Off {
 			for _, potentialIncompatibleSysVar := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, serverReadOnly} {
 				val, _ := vars.GetSystemVar(potentialIncompatibleSysVar) // session scope
 				if scope == ScopeGlobal {                                // global scope
@@ -1153,7 +1146,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryHistorySize, Value: strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize), Type: TypeInt, MinValue: 0, MaxValue: uint64(math.MaxUint8), AllowEmpty: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryMaxStmtCount, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().StmtSummary.MaxStmtCount), 10), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt16), AllowEmpty: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryMaxSQLLength, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().StmtSummary.MaxSQLLength), 10), Type: TypeInt, MinValue: 0, MaxValue: uint64(math.MaxInt32), AllowEmpty: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCapturePlanBaseline, Value: BoolOff, Type: TypeBool, AllowEmptyAll: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCapturePlanBaseline, Value: Off, Type: TypeBool, AllowEmptyAll: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBUsePlanBaselines, Value: BoolToOnOff(DefTiDBUsePlanBaselines), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.UsePlanBaselines = TiDBOptOn(val)
 		return nil
@@ -1342,10 +1335,10 @@ var defaultSysVars = []*SysVar{
 		s.TiDBEnableExchangePartition = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeNone, Name: TiDBEnableEnhancedSecurity, Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeNone, Name: TiDBEnableEnhancedSecurity, Value: Off, Type: TypeBool},
 
 	/* tikv gc metrics */
-	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: BoolOn, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBGCRunInterval, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},

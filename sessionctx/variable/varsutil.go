@@ -97,16 +97,16 @@ func GetMaxDeltaSchemaCount() int64 {
 // BoolToOnOff returns the string representation of a bool, i.e. "ON/OFF"
 func BoolToOnOff(b bool) string {
 	if b {
-		return BoolOn
+		return On
 	}
-	return BoolOff
+	return Off
 }
 
 func int32ToBoolStr(i int32) string {
 	if i == 1 {
-		return BoolOn
+		return On
 	}
-	return BoolOff
+	return Off
 }
 
 func checkCharacterValid(normalizedValue string, argName string) (string, error) {
@@ -128,14 +128,14 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 	}
 	if TiDBOptOn(normalizedValue) {
 		if !vars.EnableNoopFuncs && scope == ScopeSession {
-			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
 		}
 		val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
 		if err != nil {
 			return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
 		}
 		if scope == ScopeGlobal && !TiDBOptOn(val) {
-			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
 		}
 	}
 	return normalizedValue, nil
@@ -364,9 +364,9 @@ const (
 // TiDBOptMultiStmt converts multi-stmt options to int.
 func TiDBOptMultiStmt(opt string) int {
 	switch opt {
-	case BoolOff:
+	case Off:
 		return OffInt
-	case BoolOn:
+	case On:
 		return OnInt
 	}
 	return WarnInt
