@@ -403,6 +403,9 @@ const (
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
 
+	// tidb_enable_pipelined_window_function is used to control whether to use pipelined window function, it only works when tidb_enable_window_function = true.
+	TiDBEnablePipelinedWindowFunction = "tidb_enable_pipelined_window_function"
+
 	// tidb_enable_strict_double_type_check is used to control table field double type syntax check.
 	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
 
@@ -644,6 +647,7 @@ const (
 	DefTiDBStreamAggConcurrency        = 1
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefEnableWindowFunction            = true
+	DefEnablePipelinedWindowFunction   = false
 	DefEnableStrictDoubleTypeCheck     = true
 	DefEnableVectorizedExpression      = true
 	DefTiDBOptJoinReorderThreshold     = 0

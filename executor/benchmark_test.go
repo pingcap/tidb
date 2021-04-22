@@ -588,6 +588,7 @@ type windowTestCase struct {
 	ndv              int // the number of distinct group-by keys
 	rows             int
 	concurrency      int
+	pipelined        bool
 	dataSourceSorted bool
 	ctx              sessionctx.Context
 	rawDataSmall     string
@@ -595,15 +596,15 @@ type windowTestCase struct {
 }
 
 func (a windowTestCase) String() string {
-	return fmt.Sprintf("(func:%v, aggColType:%s, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v)",
-		a.windowFunc, a.columns[0].RetType, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency)
+	return fmt.Sprintf("(func:%v, aggColType:%s, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v. pipelined:%v)",
+		a.windowFunc, a.columns[0].RetType, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency, a.pipelined)
 }
 
 func defaultWindowTestCase() *windowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx, strings.Repeat("x", 16),
+	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, false, true, ctx, strings.Repeat("x", 16),
 		[]*expression.Column{
 			{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
 			{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -615,6 +616,9 @@ func defaultWindowTestCase() *windowTestCase {
 func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 	ctx := casTest.ctx
 	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBWindowConcurrency, fmt.Sprintf("%v", casTest.concurrency)); err != nil {
+		b.Fatal(err)
+	}
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBEnablePipelinedWindowFunction, fmt.Sprintf("%v", casTest.pipelined)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -660,7 +664,7 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 func BenchmarkWindowRows(b *testing.B) {
 	b.ReportAllocs()
 	rows := []int{1000, 100000}
-	ndvs := []int{10, 1000}
+	ndvs := []int{1, 10, 1000}
 	concs := []int{1, 2, 4}
 	for _, row := range rows {
 		for _, ndv := range ndvs {
@@ -671,6 +675,10 @@ func BenchmarkWindowRows(b *testing.B) {
 				cas.concurrency = con
 				cas.dataSourceSorted = false
 				cas.windowFunc = ast.WindowFuncRowNumber // cheapest
+				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+					benchmarkWindowExecWithCase(b, cas)
+				})
+				cas.pipelined = true
 				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 					benchmarkWindowExecWithCase(b, cas)
 				})
@@ -2060,4 +2068,9 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 			}
 		})
 	}
+}
+
+func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
+	b.ReportAllocs()
+
 }

@@ -3739,7 +3739,69 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 	return distsql.IndexRangesToKVRanges(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, nil)
 }
 
-func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec {
+func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
+	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
+		childExec := b.build(v.Children()[0])
+		if b.err != nil {
+			return nil
+		}
+		base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
+		groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
+		for _, item := range v.PartitionBy {
+			groupByItems = append(groupByItems, item.Col)
+		}
+		orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
+		for _, item := range v.OrderBy {
+			orderByCols = append(orderByCols, item.Col)
+		}
+		windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
+		partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
+		resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
+		for _, desc := range v.WindowFuncDescs {
+			aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
+			windowFuncs = append(windowFuncs, agg)
+			partialResult, _ := agg.AllocPartialResult()
+			partialResults = append(partialResults, partialResult)
+			resultColIdx++
+		}
+		p := processor{
+			windowFuncs:    windowFuncs,
+			partialResults: partialResults,
+		}
+		if v.Frame == nil {
+			p.start = &plannercore.FrameBound{
+				Type:      ast.Preceding,
+				UnBounded: true,
+			}
+			p.end = &plannercore.FrameBound{
+				Type:      ast.Following,
+				UnBounded: true,
+			}
+		} else {
+			p.start = v.Frame.Start
+			p.end = v.Frame.End
+			if v.Frame.Type == ast.Ranges {
+				cmpResult := int64(-1)
+				if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
+					cmpResult = 1
+				}
+				p.orderByCols = orderByCols
+				p.expectedCmpResult = cmpResult
+			}
+		}
+
+		return &PipelinedWindowExec{
+			baseExecutor:   base,
+			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+			numWindowFuncs: len(v.WindowFuncDescs),
+			p:              p,
+		}
+	}
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil

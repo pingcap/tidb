@@ -52,3 +52,7 @@ func (rn *rowNumber) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partial
 	chk.AppendInt64(rn.ordinal, p.curIdx)
 	return nil
 }
+
+func (rn *rowNumber) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	return nil
+}

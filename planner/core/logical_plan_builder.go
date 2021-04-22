@@ -5469,13 +5469,27 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 		newSpec.Frame = nil
 		return &newSpec, true
 	}
-	// For functions that operate on the entire partition, the frame clause will be ignored.
-	if !needFrame && spec.Frame != nil {
-		specName := spec.Name.O
-		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(windowFuncName, getWindowName(specName)))
+	if !needFrame {
+		var updated bool
 		newSpec := *spec
-		newSpec.Frame = nil
-		return &newSpec, true
+
+		// For functions that operate on the entire partition, the frame clause will be ignored.
+		if spec.Frame != nil {
+			specName := spec.Name.O
+			b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(windowFuncName, getWindowName(specName)))
+			newSpec.Frame = nil
+			updated = true
+		}
+		if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
+			useDefaultFrame, defaultFrame := aggregation.UseDefaultFrame(windowFuncName)
+			if useDefaultFrame {
+				newSpec.Frame = &defaultFrame
+				updated = true
+			}
+		}
+		if updated {
+			return &newSpec, true
+		}
 	}
 	return spec, false
 }
