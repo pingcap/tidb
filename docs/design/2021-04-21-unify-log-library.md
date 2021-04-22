@@ -6,22 +6,20 @@
 
 ## Motivation or Background
 
-Tidb as a distributed system can be divided into several components, such as TiKV, PD, TiDB, TiFlash, etc.
+Tidb as a distributed system can be divided into several components.
 
 Except for slow query logs, all other logs must satisfy the [unified-log-format RFC standard](https://github.com/tikv/rfcs/blob/master/text/2018-12-19-unified-log-format.md).
 
 However, in practice, it was found that the format of logs is confusing, as shown in the following four points:
 
-- There are fewer logging configuration instructions in the documentation.
+- There are fewer logging configuration instructions in the documentation. We need to enrich document especially what logs each component will emits, and what the format of the logs are.
 - The configured logging parameters do not match the runtime logging, e.g. `tidb_stderr` is configured with text format, but the logging is in json format.
 - The logs of some components do not meet the [unified-log-format RFC standard](https://github.com/tikv/rfcs/blob/master/text/2018-12-19-unified-log-format.md), e.g. `tiflash_cluster_manager`.
 - Duplicate logs, e.g. `pd_stderr` will emit both text and json logs with duplicate content (but with a few subtle differences in timestamps).
 
 ## Logging code for each component
 
-### Pingcap/log
-
-First, the repo address: [pingcap/log (github.com)](https://github.com/pingcap/log).
+### [pingcap/log (github.com)](https://github.com/pingcap/log)
 
 As a common logging library for PingCAP golang projects, it does the following things:
 
@@ -33,7 +31,7 @@ As a common logging library for PingCAP golang projects, it does the following t
 
 `pingcap/log` has a strong limitation -- it cannot customize the encoder for the text format. This problem has been fixed by a community contributor, see [Feature/register zap encoder by 9547 - Pull Request #14 - pingcap/log ( github.com)](https://github.com/pingcap/log/pull/14).
 
-When PD and TiDB-operator were using pingcap/log, there was no custom encoder function yet, so they implemented one by themselves respectively, but accidentally wrote out a circular dependency. This problem is also fixed by the same community contributor, see [logutil: replace etcd.defaultlogger with pingcap's text encoder by 9547 - Pull Request #3480 - tikv/pd (github.com)](https://github.com/tikv/pd/pull/3480), for details.
+When PD and TiDB-operator were using `pingcap/log`, there was no custom encoder function yet, so they implemented one by themselves respectively, but accidentally wrote out a circular dependency. This problem is also fixed by the same community contributor, see [logutil: replace etcd.defaultlogger with pingcap's text encoder by 9547 - Pull Request #3480 - tikv/pd (github.com)](https://github.com/tikv/pd/pull/3480), for details.
 
 ### TiDB
 
@@ -94,7 +92,7 @@ Regarding where these two handlers are used.
 - Some historical legacy code, such as `cmd/importer/parser.go`, which uses the standard logger by `logrus`.
 - Slow query log all uses the slow query log handler created by `logrus`, code in `executor/adapter.go`.
 
-#### Pingcap/log (Zap)
+#### [pingcap/log (github.com)](https://github.com/pingcap/log)
 
 `pingcap/log` is a wrapper around zap, and as mentioned below the two terms are equivalently interchangeable.
 
@@ -159,11 +157,9 @@ There is only one `logrus` handler inside the entire PD codebase.
 
 Only the etcd, grpc, and draft components use the `logrus` handler.
 
-#### Pingcap/log (Zap)
+#### [pingcap/log (github.com)](https://github.com/pingcap/log)
 
-There is only one zap log handler inside the entire PD codebase.
-
-The initialization is hidden, in `cmd/pd-server/main.go`.
+There is only one zap log handler inside the entire PD codebase, and its initialization is inline `cmd/pd-server/main.go`.
 
 ```go
 // New zap logger
@@ -181,9 +177,9 @@ The logic is simple, create a new handler based on the configuration and replace
 
 Most of the logging logic in PD will use the global zap handler.
 
-### Pingcap/br
+### [pingcap/br](https://github.com/pingcap/br)
 
-BR is strangely listed here, it is not a necessary component for the tidb cluster to run. Write him out just for one reason: tidb depends on BR, which in turn depends on tidb's `util/logutil/log.go`, constituting a circular dependency. 
+BR is strangely listed here, it is not a necessary component for the tidb cluster to run. It is here just for one reason: tidb depends on BR, which in turn depends on tidb's `util/logutil/log.go`, constituting a circular dependency. 
 
 Not only is it a circular dependency, it also happens to depend on the log component 🙃🙃🙃🙃! This creates a considerable obstacle for the refactor.
 
