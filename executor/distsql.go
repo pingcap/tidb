@@ -313,8 +313,8 @@ type IndexLookUpExecutor struct {
 	*dataReaderBuilder
 
 	// fields about accessing partition tables
-	prunedPartitions  []table.PhysicalTable
-	partitionKVRanges [][]kv.KeyRange
+	prunedPartitions  []table.PhysicalTable // partition tables need to access
+	partitionKVRanges [][]kv.KeyRange       // kvRanges of each partition table
 
 	// All fields above are immutable.
 
@@ -396,7 +396,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	if e.partitionTableMode() {
 		if e.keepOrder { // this case should be prevented by the optimizer
-			return errors.New("invalid execution plan")
+			return errors.New("invalid execution plan: cannot keep order when accessing a partition table by IndexLookUpReader")
 		}
 		e.feedback.Invalidate() // feedback for partition tables is not ready
 		e.partitionKVRanges = make([][]kv.KeyRange, 0, len(e.prunedPartitions))
