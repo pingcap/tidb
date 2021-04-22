@@ -9039,6 +9039,20 @@ func (s *testIntegrationSuite) TestEnumPushDown(c *C) {
 	tk.MustQuery("select c_enum from t group by c_enum order by c_enum").
 		Check(testkit.Rows("c", "b", "a"))
 
+	// test correlated
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (
+		a char(3) NOT NULL default '',
+		e enum('a','b','c','d','e') NOT NULL default 'a'
+	)`)
+	tk.MustExec("INSERT INTO t1 VALUES ('aaa','e')")
+	tk.MustExec("INSERT INTO t1 VALUES ('bbb','e')")
+	tk.MustExec("INSERT INTO t1 VALUES ('ccc','a')")
+	tk.MustExec("INSERT INTO t1 VALUES ('ddd','e')")
+	tk.MustQuery(`SELECT DISTINCT e AS c FROM t1 outr WHERE
+	a <> SOME ( SELECT a FROM t1 WHERE e = outr.e)`).
+		Check(testkit.Rows("e"))
+
 	// no index
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(e enum('c','b','a'))")
