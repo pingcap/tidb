@@ -37,8 +37,6 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	"unsafe"
-
 	// For pprof
 	_ "net/http/pprof"
 	"os"
@@ -46,6 +44,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
@@ -58,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
@@ -553,6 +553,17 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
+	}
+	return rs
+}
+
+// ShowTxnList shows all txn info for displaying in `TIDB_TRX`
+func (s *Server) ShowTxnList() [][]types.Datum {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	rs := make([][]types.Datum, len(s.clients))
+	for _, client := range s.clients {
+		rs = append(rs, client.ctx.Session.TxnInfo())
 	}
 	return rs
 }

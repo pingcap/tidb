@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -726,6 +727,10 @@ func (s *testInfoschemaClusterTableSuite) TearDownSuite(c *C) {
 type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
 	serverID       uint64
+}
+
+func (sm *mockSessionManager) ShowTxnList() [][]types.Datum {
+	return nil
 }
 
 func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {

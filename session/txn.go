@@ -20,11 +20,13 @@ import (
 	"runtime/trace"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -33,11 +35,25 @@ import (
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
-	"github.com/pingcap/tidb/util/txnstateRecorder"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
+)
+
+// TxnRunningState is the current state of a transaction
+type TxnRunningState = int
+
+const (
+	// TxnRunningNormal means the transaction is running normally
+	TxnRunningNormal TxnRunningState = iota
+	// TxnLockWaiting means the transaction is blocked on a lock
+	TxnLockWaiting TxnRunningState = iota
+	// TxnCommitting means the transaction is (at least trying to) committing
+	TxnCommitting TxnRunningState = iota
+	// TxnRollingBack means the transaction is rolling back
+	TxnRollingBack TxnRunningState = iota
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
@@ -56,6 +72,19 @@ type TxnState struct {
 	stagingHandle kv.StagingHandle
 	mutations     map[int64]*binlog.TableMutation
 	writeSLI      sli.TxnWriteThroughputSLI
+	// human readable startTime
+	startTime time.Time
+	// todo: Shall we parse startTs to get it?
+	// Pros: Save memory, some how is the "global" timestamp in a cluster(so for the CLUSTER_TIDB_TRX, this field would be more useful)
+	// Cons: May different with result of "NOW()"
+	humanReadableStartTime time.Time
+	// digest of SQL current running
+	CurrentSQLDigest string
+	// current executing state
+	State TxnRunningState
+	// last trying to block start time
+	// todo: currently even if stmtState is not Blocking, blockStartTime is not nil (showing last block), is it the preferred behaviour?
+	blockStartTime *time.Time
 }
 
 // GetTableInfo returns the cached index name.
@@ -159,6 +188,7 @@ func (txn *TxnState) GoString() string {
 }
 
 func (txn *TxnState) changeInvalidToValid(kvTxn kv.Transaction) {
+	txn.startTime = time.Now()
 	txn.Transaction = kvTxn
 	txn.initStmtBuf()
 	txn.txnFuture = nil
@@ -183,8 +213,8 @@ func (txn *TxnState) changePendingToValid(ctx context.Context) error {
 		txn.Transaction = nil
 		return err
 	}
+	txn.startTime = time.Now()
 	txn.Transaction = t
-	txnstateRecorder.ReportTxnStart(txn.StartTS())
 	txn.initStmtBuf()
 	return nil
 }
@@ -235,7 +265,7 @@ func (txn *TxnState) Commit(ctx context.Context) error {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
 
-	txnstateRecorder.ReportCommitStarted(txn.StartTS())
+	txn.State = TxnCommitting
 
 	// mockCommitError8942 is used for PR #8942.
 	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
@@ -268,10 +298,12 @@ func (txn *TxnState) Rollback() error {
 	return txn.Transaction.Rollback()
 }
 
+// LockKeys tries to lock the keys. Will block until all keys are locked successfully or an error occurs.
 func (txn *TxnState) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
-	txnstateRecorder.ReportBlocked(txn.StartTS())
+	originState := txn.State
+	txn.State = TxnLockWaiting
 	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
-	txnstateRecorder.ReportUnblocked(txn.StartTS())
+	txn.State = originState
 	return err
 }
 
@@ -325,6 +357,22 @@ func keyNeedToLock(k, v []byte, flags tikvstore.KeyFlags) bool {
 	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
 	// Put row key and unique index need to lock.
 	return !isNonUniqueIndex
+}
+
+// Datum dump the TxnState to Datum for displaying in `TIDB_TRX`
+func (txn *TxnState) Datum() []types.Datum {
+	var blockStartTime interface{}
+	if txn.blockStartTime == nil {
+		blockStartTime = nil
+	} else {
+		blockStartTime = types.NewTime(types.FromGoTime(*txn.blockStartTime), mysql.TypeTimestamp, 0)
+	}
+	return types.MakeDatums(
+		txn.StartTS(),
+		types.NewTime(types.FromGoTime(txn.humanReadableStartTime), mysql.TypeTimestamp, 0),
+		txn.CurrentSQLDigest,
+		txn.State,
+		blockStartTime)
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {

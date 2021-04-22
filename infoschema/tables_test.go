@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -433,6 +434,10 @@ func (s *testTableSuite) TestCurrentTimestampAsDefault(c *C) {
 
 type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
+}
+
+func (sm *mockSessionManager) ShowTxnList() [][]types.Datum {
+	return nil
 }
 
 func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {

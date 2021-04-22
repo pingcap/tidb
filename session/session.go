@@ -83,7 +83,6 @@ import (
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tidb/util/txnstateRecorder"
 )
 
 var (
@@ -146,6 +145,7 @@ type Session interface {
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	ShowProcess() *util.ProcessInfo
+	TxnInfo() []types.Datum
 	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
@@ -440,6 +440,10 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
+func (s *session) TxnInfo() []types.Datum {
+	return s.txn.Datum()
+}
+
 func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
 		return nil
@@ -600,10 +604,6 @@ func (s *session) CommitTxn(ctx context.Context) error {
 
 	var commitDetail *tikvutil.CommitDetails
 	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
-	startTs := uint64(0)
-	if s.txn.Valid() {
-		startTs = s.txn.StartTS()
-	}
 	err := s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
@@ -615,9 +615,6 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		}
 	})
 	s.sessionVars.TxnCtx.Cleanup()
-	if startTs != 0 {
-		txnstateRecorder.ReportTxnEnd(startTs)
-	}
 	return err
 }
 
@@ -627,10 +624,8 @@ func (s *session) RollbackTxn(ctx context.Context) {
 		defer span1.Finish()
 	}
 
-	startTs := uint64(0)
 	if s.txn.Valid() {
-		startTs = s.txn.StartTS()
-		txnstateRecorder.ReportRollbackStarted(startTs)
+		s.txn.State = TxnRollingBack
 		terror.Log(s.txn.Rollback())
 	}
 	if ctx.Value(inCloseSession{}) == nil {
@@ -639,9 +634,6 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetInTxn(false)
-	if startTs != 0 {
-		txnstateRecorder.ReportTxnEnd(startTs)
-	}
 }
 
 func (s *session) GetClient() kv.Client {
@@ -1406,7 +1398,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
 	if s.txn.Valid() {
 		_, digest := parser.NormalizeDigest(stmtNode.Text())
-		txnstateRecorder.ReportStatementStartExecute(s.txn.StartTS(), digest)
+		s.txn.CurrentSQLDigest = digest
 	}
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {

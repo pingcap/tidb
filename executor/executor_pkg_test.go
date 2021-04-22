@@ -60,6 +60,10 @@ type mockSessionManager struct {
 	serverID uint64
 }
 
+func (msm *mockSessionManager) ShowTxnList() [][]types.Datum {
+	return nil
+}
+
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
 func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 	ret := make(map[uint64]*util.ProcessInfo)

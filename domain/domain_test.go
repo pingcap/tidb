@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -239,6 +240,10 @@ func TestInfo(t *testing.T) {
 
 type mockSessionManager struct {
 	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager) ShowTxnList() [][]types.Datum {
+	return nil
 }
 
 func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
