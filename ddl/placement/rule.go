@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/go-yaml/yaml"
-	"github.com/hashicorp/go-multierror"
 )
 
 // PeerRoleType is the expected peer type of the placement rule.
@@ -120,7 +119,7 @@ func NewRules(replicas uint64, cnstr string) ([]*Rule, error) {
 		return rules, nil
 	}
 
-	return nil, multierror.Append(fmt.Errorf("%w: should be [constraint1, ...], {constraint1: cnt1, ...}, or any yaml compatible representation", ErrInvalidConstraintsFormat), err1, err2)
+	return nil, fmt.Errorf("%w: should be [constraint1, ...] (error %s), {constraint1: cnt1, ...} (error %s), or any yaml compatible representation", ErrInvalidConstraintsFormat, err1, err2)
 }
 
 // Clone is used to duplicate a RuleOp for safe modification.

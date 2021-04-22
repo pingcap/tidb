@@ -28,7 +28,6 @@ require (
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
-	github.com/hashicorp/go-multierror v1.1.1
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
 	github.com/joho/sqltocsv v0.0.0-20210208114054-cb2c3a95fb99 // indirect
 	github.com/klauspost/cpuid v1.2.1
