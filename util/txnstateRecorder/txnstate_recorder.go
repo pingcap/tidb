@@ -20,11 +20,9 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/parser/mysql"
-
 	"github.com/pingcap/tidb/types"
+	"go.uber.org/zap"
 )
 
 // TxnRunningState is the current state of a transaction
@@ -54,10 +52,6 @@ type txnStateEntry struct {
 	currentSQLDigest string
 	// current executing state
 	state TxnRunningState
-	// how many times the transaction tries to commit
-	commitCount uint64
-	// last trying of commit start time, nil if commitCount is 0
-	commitStartTime *time.Time
 	// last trying to block start time
 	// todo: currently even if stmtState is not Blocking, blockStartTime is not nil (showing last block), is it the preferred behaviour?
 	blockStartTime *time.Time
@@ -84,9 +78,6 @@ func (e *txnStateEntry) onRollbackStarted() {
 
 func (e *txnStateEntry) onCommitStarted() {
 	e.state = TxnCommitting
-	now := time.Now()
-	e.commitStartTime = &now
-	e.commitCount++
 }
 
 func (e *txnStateEntry) onBlocked() {
@@ -100,12 +91,6 @@ func (e *txnStateEntry) onUnblocked() {
 }
 
 func (e *txnStateEntry) toDatum() []types.Datum {
-	var commitStartTime interface{}
-	if e.commitStartTime == nil {
-		commitStartTime = nil
-	} else {
-		commitStartTime = types.NewTime(types.FromGoTime(*e.commitStartTime), mysql.TypeTimestamp, 0)
-	}
 	var blockStartTime interface{}
 	if e.blockStartTime == nil {
 		blockStartTime = nil
@@ -117,8 +102,6 @@ func (e *txnStateEntry) toDatum() []types.Datum {
 		types.NewTime(types.FromGoTime(e.humanReadableStartTime), mysql.TypeTimestamp, 0),
 		e.currentSQLDigest,
 		e.state,
-		e.commitCount,
-		commitStartTime,
 		blockStartTime)
 }
 
@@ -131,8 +114,6 @@ func ReportTxnStart(txnID uint64) {
 		humanReadableStartTime: time.Now(),
 		currentSQLDigest:       "",
 		state:                  TxnRunningNormal,
-		commitCount:            0,
-		commitStartTime:        nil,
 		blockStartTime:         nil,
 	}
 }

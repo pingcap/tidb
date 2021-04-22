@@ -1342,8 +1342,6 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: "START_TIME", tp: mysql.TypeTimestamp, size: 26, comment: "Start time of the transaction"},
 	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of the sql the transaction are currently running"},
 	{name: "STATE", tp: mysql.TypeLonglong, size: 64, comment: "Current running state of the transaction"},
-	{name: "COMMIT_TRY_COUNT", tp: mysql.TypeLonglong, size: 64, comment: "Current transactions commit retry count"},
-	{name: "COMMITSTART_TIME", tp: mysql.TypeTimestamp, size: 26, comment: "Current commit's start time"},
 	{name: "WAITING_START_TIME", tp: mysql.TypeTimestamp, size: 26, comment: "Current lock waiting's start time"},
 }
 
