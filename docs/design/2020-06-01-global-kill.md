@@ -1,7 +1,7 @@
 # Global Kill
 
 - Author(s):     [pingyu](https://github.com/pingyu) (Ping Yu)
-- Last updated:  2020-11-15
+- Last updated:  2021-04-22
 - Discussion at: https://github.com/pingcap/tidb/issues/8854
 
 ## Abstract
@@ -81,3 +81,28 @@ On processing `KILL x` command, first extract `serverId` from `x`. Then if `serv
 
 - [`KILL TIDB`](https://docs.pingcap.com/tidb/v4.0/sql-statement-kill) syntax and [`compatible-kill-query`](https://docs.pingcap.com/tidb/v4.0/tidb-configuration-file#compatible-kill-query) configuration item are deprecated.
 
+## Test Design
+
+### Prerequisite
+Set `small_cluster_size_threshold` and `local_connid_pool_size` to small numbers (e.g. 4) by variable hacking, for easily switch between 32 and 64 bits `connId`.
+
+### Scenario A. 32 bits `connId` with small cluster
+1. A TiDB without PD, killed by Ctrl+C, and killed by KILL.
+2. One TiDB with PD, killed by Ctrl+C, and killed by KILL.
+3. Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
+
+### Scenario B. Upgrade from 32 to 64 bits `connId`
+1. Upgrade caused by cluster scaled up from small to big.
+2. Upgrade caused by `local connId` used up.
+
+### Scenario C. 64 bits `connId` with big cluster
+1. Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
+
+### Scenario D. Downgrade from 64 to 32 bits `connId`
+1. Downgrade caused by cluster scaled down from big to small.
+
+### Scenario E. Fault tolerant while disconnected with PD
+1. Existing connections are killed after PD lost connection for long time.
+2. New connections are not accepted after PD lost connection for long time.
+3. New connections are accepted after PD lost connection for long time and then recovered.
+4. Connections can be killed after PD lost connection for long time and then recovered.
