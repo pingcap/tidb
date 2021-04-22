@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -175,7 +175,7 @@ type Request struct {
 	kvrpcpb.Context
 	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
 	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
-	StoreTp         kv.StoreType
+	StoreTp         EndpointType
 	// ForwardedHost is the address of a store which will handle the request. It's different from
 	// the address the request sent to.
 	// If it's not empty, the store which receive the request will forward it to
