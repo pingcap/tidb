@@ -1448,18 +1448,6 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 	return nil
 }
 
-// CheckPartitionExistsForUpdateIgnoreOrInsertOnDupIgnore check whether the partition for given value exists, if not exists return ErrNoPartitionForGivenValue
-func CheckPartitionExistsForUpdateIgnoreOrInsertOnDupIgnore(sctx sessionctx.Context, t table.Table, newRow []types.Datum) error {
-	if pt, ok := t.(*partitionedTable); ok {
-		info := t.Meta().GetPartitionInfo()
-		_, err := pt.locatePartition(sctx, info, newRow)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func getDuplicateErrorHandleString(t table.Table, handle kv.Handle, row []types.Datum) string {
 	if handle.IsInt() {
 		return kv.GetDuplicateErrorHandleString(handle)

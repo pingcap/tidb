@@ -179,12 +179,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 
 	// 5. If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
-		if err := tables.CheckPartitionExistsForUpdateIgnoreOrInsertOnDupIgnore(sctx, t, newData); err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-				return false, nil
-			}
-		}
-
 		if updated, err := func() (bool, error) {
 			txn, err := sctx.Txn(true)
 			if err != nil {
@@ -205,6 +199,9 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			memBuffer.Release(sh)
 			return true, nil
 		}(); err != nil {
+			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				return false, nil
+			}
 			return updated, err
 		}
 	} else {
