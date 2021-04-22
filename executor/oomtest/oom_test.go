@@ -19,6 +19,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
@@ -32,6 +33,11 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
 
 var _ = SerialSuites(&testOOMSuite{})
 
