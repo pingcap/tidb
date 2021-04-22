@@ -201,17 +201,32 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				return false, err
 			}
 		}
-		if err = t.RemoveRecord(sctx, h, oldData); err != nil {
-			return false, err
-		}
-		// the `affectedRows` is increased when adding new record.
-		if sc.DupKeyAsWarning {
-			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.SkipHandleCheck, table.WithCtx(ctx))
-		} else {
-			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
-		}
-		if err != nil {
-			return false, err
+		if updated, err := func() (bool, error) {
+			txn, err := sctx.Txn(true)
+			if err != nil {
+				return false, err
+			}
+			memBuffer := txn.GetMemBuffer()
+			sh := memBuffer.Staging()
+			defer memBuffer.Cleanup(sh)
+
+			if err = t.RemoveRecord(sctx, h, oldData); err != nil {
+				return false, err
+			}
+
+			// the `affectedRows` is increased when adding new record.
+			if sc.DupKeyAsWarning {
+				_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.SkipHandleCheck, table.WithCtx(ctx))
+			} else {
+				_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
+			}
+			if err != nil {
+				return false, err
+			}
+			memBuffer.Release(sh)
+			return false, nil
+		}(); err != nil {
+			return updated, err
 		}
 	} else {
 		// Update record to new value and update index.
