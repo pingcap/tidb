@@ -130,15 +130,16 @@ func init() {
 	if s := os.Getenv("DDL_HOOK"); len(s) > 0 {
 		s = strings.ToLower(s)
 		s = strings.TrimSpace(s)
-		if hook, ok := customizedCallBackRegisterMap[s]; !ok {
+		hook, ok := customizedCallBackRegisterMap[s]
+		if !ok {
 			logutil.BgLogger().Error(fmt.Sprintf("bad ddl hook %s", s))
 			os.Exit(1)
-		} else {
-			CustomizedDDLHook = hook
 		}
+		CustomizedDDLHook = hook
 	}
 }
 
+// DomainReloader is used to avoid import loop.
 type DomainReloader interface {
 	Reload() error
 }
@@ -167,6 +168,7 @@ func (tc *TestDDLCallback) OnSchemaStateChanged() {
 	}
 }
 
+// OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 	log.Info("on job run before", zap.String("job", job.String()))
 	if tc.OnJobRunBeforeExported != nil {
@@ -181,6 +183,7 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 	tc.BaseCallback.OnJobRunBefore(job)
 }
 
+// OnJobUpdated is used to run the user customized logic of `OnJobUpdated` first.
 func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
 	log.Info("on job updated", zap.String("job", job.String()))
 	if tc.OnJobUpdatedExported != nil {
@@ -195,6 +198,7 @@ func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
 	tc.BaseCallback.OnJobUpdated(job)
 }
 
+// OnWatched is used to run the user customized logic of `OnWatched` first.
 func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	if tc.onWatched != nil {
 		tc.onWatched(ctx)
