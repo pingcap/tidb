@@ -173,6 +173,7 @@ func (s *testSampleSuite) TestWeightedSampling(c *C) {
 	rs := s.recordSetForWeightSamplingTest(rowNum)
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	// The loop which is commented out is used for stability test.
+	// This test can run 800 times in a row without any failure.
 	// for x := 0; x < 800; x++ {
 	itemCnt := make([]int, rowNum)
 	for loopI := 0; loopI < loopCnt; loopI++ {
@@ -198,7 +199,6 @@ func (s *testSampleSuite) TestWeightedSampling(c *C) {
 	delta := 0.5
 	for _, cnt := range itemCnt {
 		if float64(cnt) < expFrequency/(1+delta) || float64(cnt) > expFrequency*(1+delta) {
-			// c.Assert(false, IsTrue, Commentf("Round %v, the frequency %v is exceed the Chernoff Bound", x, cnt))
 			c.Assert(false, IsTrue, Commentf("The frequency %v is exceed the Chernoff Bound", cnt))
 		}
 	}
@@ -213,6 +213,7 @@ func (s *testSampleSuite) TestDistributedWeightedSampling(c *C) {
 	sets := s.recordSetForDistributedSamplingTest(rowNum, batch)
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	// The loop which is commented out is used for stability test.
+	// This test can run 800 times in a row without any failure.
 	// for x := 0; x < 800; x++ {
 	itemCnt := make([]int, rowNum)
 	for loopI := 1; loopI < loopCnt; loopI++ {
@@ -248,78 +249,8 @@ func (s *testSampleSuite) TestDistributedWeightedSampling(c *C) {
 	delta := 0.5
 	for _, cnt := range itemCnt {
 		if float64(cnt) < expFrequency/(1+delta) || float64(cnt) > expFrequency*(1+delta) {
-			// c.Assert(false, IsTrue, Commentf("In round %v, the frequency %v is exceed the Chernoff Bound", x, cnt))
 			c.Assert(false, IsTrue, Commentf("the frequency %v is exceed the Chernoff Bound", cnt))
 		}
 	}
 	// }
 }
-
-// The following codes are testing the Reservoir Sampling of TiDB before 2021.
-//type simpleSampleSet struct {
-//	samples    []int
-//	sampleSize int
-//	seenCnt    int
-//}
-//
-//func (s *simpleSampleSet) simpleReservoirSampling(v int) {
-//	s.seenCnt++
-//	if len(s.samples) < s.sampleSize {
-//		s.samples = append(s.samples, v)
-//	} else {
-//		shouldAdd := fastrand.Uint64N(uint64(s.seenCnt)) < uint64(s.sampleSize)
-//		if shouldAdd {
-//			idx := int(fastrand.Uint32N(uint32(s.sampleSize)))
-//			s.samples = append(s.samples[:idx], s.samples[idx+1:]...)
-//			s.samples = append(s.samples, v)
-//		}
-//
-//}
-//
-//func (s *testSampleSuite) TestOrigSampling(c *C) {
-//	for x := 0; x < 800; x++ {
-//		sampleNum := 10
-//		rowNum := 100
-//		loopCnt := 1000
-//		rootCollector := simpleSampleSet{
-//			samples:    make([]int, 0, sampleNum),
-//			sampleSize: sampleNum,
-//		}
-//		regionCollector := make([]simpleSampleSet, 0, 5)
-//		for i := 0; i < 5; i++ {
-//			regionCollector = append(regionCollector, simpleSampleSet{
-//				samples:    make([]int, 0, sampleNum),
-//				sampleSize: sampleNum,
-//			})
-//		}
-//		rows := make([]int, 0, rowNum)
-//		for i := 0; i < rowNum; i++ {
-//			rows = append(rows, i)
-//		}
-//		itemCnt := make([]int, rowNum)
-//		for loopI := 0; loopI < loopCnt; loopI++ {
-//			rootCollector.samples = rootCollector.samples[:0]
-//			rootCollector.seenCnt = 0
-//			for i := 0; i < 5; i++ {
-//				regionCollector[i].samples = regionCollector[i].samples[:0]
-//				regionCollector[i].seenCnt = 0
-//				for j := 0; j < rowNum/5; j++ {
-//					regionCollector[i].simpleReservoirSampling(rows[i*20+j])
-//				}
-//				for j := 0; j < regionCollector[i].sampleSize; j++ {
-//					rootCollector.simpleReservoirSampling(regionCollector[i].samples[j])
-//				}
-//			}
-//			for i := 0; i < sampleNum; i++ {
-//				itemCnt[rootCollector.samples[i]]++
-//			}
-//		}
-//		expFrequency := float64(sampleNum) * float64(loopCnt) / float64(rowNum)
-//		delta := 0.5
-//		for _, cnt := range itemCnt {
-//			if float64(cnt) < expFrequency/(1+delta) || float64(cnt) > expFrequency*(1+delta) {
-//				c.Assert(false, IsTrue, Commentf("In round %v, the frequency %v is exceed the Chernoff Bound", x, cnt))
-//			}
-//		}
-//	}
-//}

@@ -48,13 +48,14 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -258,7 +259,7 @@ func (m mockPumpPullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
 }
 
 func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
-	return mockPumpPullBinlogsClient{mocktikv.MockGRPCClientStream()}, nil
+	return mockPumpPullBinlogsClient{mockcopr.MockGRPCClientStream()}, nil
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
@@ -2215,7 +2216,8 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}
 	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
 	c.Assert(err, IsNil)
-	s.cluster.SplitTable(tbl.Meta().ID, 10)
+	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
 
 	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 	tk.MustExec("set tidb_init_chunk_size = 2")
@@ -2400,7 +2402,8 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	}
 	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
 	c.Assert(err, IsNil)
-	s.cluster.SplitIndex(tbl.Meta().ID, tbl.Indices()[0].Meta().ID, 10)
+	indexStart := tablecodec.EncodeTableIndexPrefix(tbl.Meta().ID, tbl.Indices()[0].Meta().ID)
+	s.cluster.SplitKeys(indexStart, indexStart.PrefixNext(), 10)
 
 	tk.Se.GetSessionVars().IndexLookupSize = 10
 	rs, err := tk.Exec("select * from chk order by k")
@@ -3254,7 +3257,7 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("")`)
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("")`)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
@@ -3265,9 +3268,9 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
-	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
@@ -3314,7 +3317,7 @@ PARTITION BY RANGE (c) (
 					GroupID: groupID,
 					Role:    placement.Leader,
 					Count:   1,
-					LabelConstraints: []placement.LabelConstraint{
+					LabelConstraints: []placement.Constraint{
 						{
 							Key:    placement.DCLabelKey,
 							Op:     placement.In,
@@ -3375,8 +3378,8 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("dc-1")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("dc-1")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	// set txn_scope to local
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")

@@ -1030,6 +1030,11 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 // in BootstrapSession.
 func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 	ctx.GetSessionVars().InRestrictedSQL = true
+	err := telemetry.InitialRun(ctx, do.GetEtcdClient())
+	if err != nil {
+		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
+	}
+
 	do.wg.Add(1)
 	go func() {
 		defer func() {

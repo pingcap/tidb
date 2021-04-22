@@ -8744,7 +8744,7 @@ PARTITION BY RANGE (c) (
 					GroupID: groupID,
 					Role:    placement.Leader,
 					Count:   1,
-					LabelConstraints: []placement.LabelConstraint{
+					LabelConstraints: []placement.Constraint{
 						{
 							Key:    placement.DCLabelKey,
 							Op:     placement.In,
@@ -8831,7 +8831,7 @@ PARTITION BY RANGE (c) (
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope",
+		failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
 		_, err = tk.Exec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		c.Assert(err, IsNil)
@@ -8849,7 +8849,7 @@ PARTITION BY RANGE (c) (
 		} else {
 			c.Assert(checkErr, IsNil)
 		}
-		failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	}
 }
 
