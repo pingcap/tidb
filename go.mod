@@ -89,5 +89,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/pingcap/tipb => github.com/winoros/tipb v0.0.0-20210413062212-213a4a6fe1bf
