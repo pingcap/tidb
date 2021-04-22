@@ -16,7 +16,6 @@ package kv
 import (
 	"context"
 	"crypto/tls"
-	"sync"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -36,10 +34,6 @@ import (
 // 2. For unique index: normally, the index value is the record handle ID, 8 bytes.
 // Append UnCommitIndexKVFlag to the value indicate the index key/value is no need to commit.
 const UnCommitIndexKVFlag byte = '1'
-
-// MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
-// We use it to abort the transaction to guarantee GC worker will not influence it.
-const MaxTxnTimeUse = 24 * 60 * 60 * 1000
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
@@ -140,6 +134,9 @@ type MemBuffer interface {
 	Len() int
 }
 
+// LockCtx contains information for LockKeys method.
+type LockCtx = tikvstore.LockCtx
+
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
 type Transaction interface {
@@ -193,28 +190,6 @@ type Transaction interface {
 	// GetIndexName returns the cached index name.
 	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
 	GetTableInfo(id int64) *model.TableInfo
-}
-
-// LockCtx contains information for LockKeys method.
-type LockCtx struct {
-	Killed                *uint32
-	ForUpdateTS           uint64
-	LockWaitTime          int64
-	WaitStartTime         time.Time
-	PessimisticLockWaited *int32
-	LockKeysDuration      *int64
-	LockKeysCount         *int32
-	ReturnValues          bool
-	Values                map[string]ReturnedValue
-	ValuesLock            sync.Mutex
-	LockExpired           *uint32
-	Stats                 *util.LockKeysDetails
-}
-
-// ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
-type ReturnedValue struct {
-	Value         []byte
-	AlreadyLocked bool
 }
 
 // Client is used to send request to KV layer.

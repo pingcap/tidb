@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,20 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mocktikv
+package placement
 
 import (
-	"github.com/pingcap/errors"
-	pd "github.com/tikv/pd/client"
+	"errors"
 )
 
-// NewTiKVAndPDClient creates a TiKV client and PD client from options.
-func NewTiKVAndPDClient(path string) (*RPCClient, *Cluster, pd.Client, error) {
-	mvccStore, err := NewMVCCLevelDB(path)
-	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
-	}
-	cluster := NewCluster(mvccStore)
-
-	return NewRPCClient(cluster, mvccStore), cluster, NewPDClient(cluster), nil
-}
+var (
+	// ErrInvalidConstraintFormat is from constraint.go.
+	ErrInvalidConstraintFormat = errors.New("label constraint should be in format '{+|-}key=value'")
+	// ErrUnsupportedConstraint is from constraint.go.
+	ErrUnsupportedConstraint = errors.New("unsupported label constraint")
+	// ErrConflictingConstraints is from constraints.go.
+	ErrConflictingConstraints = errors.New("conflicting label constraints")
+)

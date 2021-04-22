@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
@@ -152,11 +153,11 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	execDetail := execdetails.ExecDetails{
 		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
-		ScanDetail: &execdetails.ScanDetail{
+		ScanDetail: &util.ScanDetail{
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
 		},
-		TimeDetail: execdetails.TimeDetail{
+		TimeDetail: util.TimeDetail{
 			ProcessTime: time.Second * time.Duration(2),
 			WaitTime:    time.Minute,
 		},
