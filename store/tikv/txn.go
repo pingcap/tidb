@@ -654,6 +654,9 @@ func (txn *KVTxn) GetSnapshot() *KVSnapshot {
 // SetBinlogExecutor sets the method to perform binlong synchronization.
 func (txn *KVTxn) SetBinlogExecutor(binlog BinlogExecutor) {
 	txn.binlog = binlog
+	if txn.committer != nil {
+		txn.committer.binlog = binlog
+	}
 }
 
 // GetClusterID returns store's cluster id.
