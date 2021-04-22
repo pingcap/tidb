@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"runtime/pprof"
 	"strings"
 	"time"
@@ -283,6 +284,40 @@ func (s *testSuite3) TestPartitionTableIndexLookUpReader(c *C) {
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a").Check(testkit.Rows("1 1", "2 2", "11 11", "12 12"))
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a limit 1").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
+}
+
+func (s *testSuite3) TestPartitionTableRandomlyIndexLookUpReader(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (a int, b int, key(a))
+		partition by range (a) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30),
+		partition p4 values less than (40))`)
+	tk.MustExec("create table tnormal (a int, b int, key(a))")
+	values := make([]string, 0, 128)
+	for i := 0; i < 128; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(40), rand.Intn(40)))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
+	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
+
+	randRange := func() (int, int) {
+		a, b := rand.Intn(40), rand.Intn(40)
+		if a > b {
+			return b, a
+		}
+		return a, b
+	}
+	for i := 0; i < 256; i++ {
+		la, ra := randRange()
+		lb, rb := randRange()
+		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
+		tk.MustQuery("select * from t use index(a) where " + cond).Sort().Check(
+			tk.MustQuery("select * from tnormal where " + cond).Sort().Rows())
+	}
 }
 
 func (s *testSuite3) TestIndexLookUpStats(c *C) {
