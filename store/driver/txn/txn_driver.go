@@ -17,7 +17,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
@@ -27,21 +26,17 @@ import (
 
 type tikvTxn struct {
 	*tikv.KVTxn
-	idxNameCache map[int64]*model.TableInfo
+	ctxAccessor *kv.ContextAccessor
 }
 
 // NewTiKVTxn returns a new Transaction.
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	txn.SetOption(tikvstore.KVFilter, TiDBKVFilter{})
-	return &tikvTxn{txn, make(map[int64]*model.TableInfo)}
+	return &tikvTxn{txn, kv.NewContextAccessor()}
 }
 
-func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
-	return txn.idxNameCache[id]
-}
-
-func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
-	txn.idxNameCache[id] = info
+func (txn *tikvTxn) GetContextAccessor() *kv.ContextAccessor {
+	return txn.ctxAccessor
 }
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
@@ -128,9 +123,8 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}
 
-	tblInfo := txn.GetTableInfo(tableID)
-	if tblInfo == nil {
-		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
+	if txn.ctxAccessor == nil {
+		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find ContextAccessor"))
 	}
 	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
 	if err != nil {
@@ -138,9 +132,9 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	}
 
 	if isRecord {
-		return extractKeyExistsErrFromHandle(key, value, tblInfo)
+		return extractKeyExistsErrFromHandle(key, value, tableID, txn.ctxAccessor)
 	}
-	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
+	return extractKeyExistsErrFromIndex(key, value, tableID, indexID, txn.ctxAccessor)
 }
 
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.

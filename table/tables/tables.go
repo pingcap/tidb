@@ -618,7 +618,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		hasRecordID = true
 	} else {
 		tblInfo := t.Meta()
-		txn.CacheTableInfo(t.physicalTableID, tblInfo)
+		txn.GetContextAccessor().CacheTableInfo(t.physicalTableID, tblInfo)
+		txn.GetContextAccessor().CacheAutoIDConflictChecker(sctx.GetSessionVars().RetryInfo.CheckAutoIDExists)
 		if tblInfo.PKIsHandle {
 			recordID = kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64())
 			hasRecordID = true

@@ -922,8 +922,8 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 		if strings.HasPrefix(tt.insert, "retry : ") {
 			// it's the last retry insert case, change the sessionVars.
 			retryInfo := &variable.RetryInfo{Retrying: true}
-			retryInfo.AddAutoIncrementID(1000)
-			retryInfo.AddAutoIncrementID(1001)
+			retryInfo.AddAutoID(1000, autoid.AutoIncrementType)
+			retryInfo.AddAutoID(1001, autoid.AutoIncrementType)
 			tk.Se.GetSessionVars().RetryInfo = retryInfo
 			tk.MustExec(tt.insert[8:])
 			tk.Se.GetSessionVars().RetryInfo = &variable.RetryInfo{}

@@ -16,7 +16,6 @@ package kv
 import (
 	"context"
 
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -134,11 +133,7 @@ func (t *mockTxn) GetVars() *Variables {
 	return nil
 }
 
-func (t *mockTxn) CacheTableInfo(id int64, info *model.TableInfo) {
-
-}
-
-func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
+func (t *mockTxn) GetContextAccessor() *ContextAccessor {
 	return nil
 }
 

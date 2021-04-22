@@ -41,7 +41,25 @@ func genKeyExistsError(name string, value string, err error) error {
 	return kv.ErrKeyExists.FastGenByArgs(value, name)
 }
 
-func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.TableInfo) error {
+func intHandleIsAllocatingID(handle int64, tableInfo *model.TableInfo,
+	checker func(autoID int64, tp kv.AutoIDType) bool) bool {
+	if checker == nil {
+		return false
+	}
+	if tableInfo.PKIsHandle {
+		autoIncCol := tableInfo.GetAutoIncrementColInfo()
+		if autoIncCol != nil && mysql.HasPriKeyFlag(autoIncCol.Flag) {
+			return checker(handle, kv.AutoIDTypeIncrement)
+		}
+		if tableInfo.ContainsAutoRandomBits() {
+			return checker(handle, kv.AutoIDTypeRandom)
+		}
+	}
+	return false
+}
+
+func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tableID int64, ctxAccessor *kv.ContextAccessor) error {
+	tblInfo := ctxAccessor.GetTableInfo(tableID)
 	const name = "PRIMARY"
 	_, handle, err := tablecodec.DecodeRecordKey(key)
 	if err != nil {
@@ -49,6 +67,14 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 	}
 
 	if handle.IsInt() {
+		if intHandleIsAllocatingID(handle.IntValue(), tblInfo, ctxAccessor.GetAutoIDConflictChecker()) {
+			colName := "_tidb_rowid"
+			pkInfo := tblInfo.GetPkColInfo()
+			if pkInfo != nil {
+				colName = pkInfo.Name.String()
+			}
+			return kv.ErrAllocatedAutoIDInvalid.GenWithStackByArgs(colName, handle.IntValue())
+		}
 		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
 			if mysql.HasUnsignedFlag(pkInfo.Flag) {
 				handleStr := fmt.Sprintf("%d", uint64(handle.IntValue()))
@@ -98,7 +124,8 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
 }
 
-func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.TableInfo, indexID int64) error {
+func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tableID, indexID int64, ctxAccessor *kv.ContextAccessor) error {
+	tblInfo := ctxAccessor.GetTableInfo(tableID)
 	var idxInfo *model.IndexInfo
 	for _, index := range tblInfo.Indices {
 		if index.ID == indexID {
@@ -114,6 +141,8 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		return genKeyExistsError(name, key.String(), errors.New("missing value"))
 	}
 
+	needCheckAutoIDConflict := (idxInfo.Primary || idxInfo.Unique) && len(idxInfo.Columns) == 1 &&
+		mysql.HasAutoIncrementFlag(tblInfo.Columns[idxInfo.Columns[0].Offset].Flag)
 	colInfo := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
 	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleNotNeeded, colInfo)
 	if err != nil {
@@ -124,6 +153,12 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		d, err := tablecodec.DecodeColumnValue(val, colInfo[i].Ft, time.Local)
 		if err != nil {
 			return genKeyExistsError(name, key.String(), err)
+		}
+		if needCheckAutoIDConflict {
+			check := ctxAccessor.GetAutoIDConflictChecker()
+			if check != nil && check(d.GetInt64(), kv.AutoIDTypeIncrement) {
+				return kv.ErrAllocatedAutoIDInvalid.GenWithStackByArgs(idxInfo.Columns[0].Name.String(), d.GetInt64())
+			}
 		}
 		str, err := d.ToString()
 		if err != nil {

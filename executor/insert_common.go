@@ -717,7 +717,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				return nil, err
 			}
 			e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
-			retryInfo.AddAutoIncrementID(recordID)
+			retryInfo.AddAutoID(recordID, autoid.AutoIncrementType)
 			continue
 		}
 
@@ -725,8 +725,8 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 		if autoDatum.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
 			// Consume the auto IDs in RetryInfo first.
-			for retryInfo.Retrying && processedIdx < rowCount {
-				nextID, ok := retryInfo.GetCurrAutoIncrementID()
+			for retryInfo.CanReuseAutoIDs() && processedIdx < rowCount {
+				nextID, ok := retryInfo.GetAutoID(kv.AutoIDTypeIncrement)
 				if !ok {
 					break
 				}
@@ -765,7 +765,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				if err != nil {
 					return nil, err
 				}
-				retryInfo.AddAutoIncrementID(id)
+				retryInfo.AddAutoID(id, autoid.AutoIncrementType)
 			}
 			continue
 		}
@@ -774,15 +774,15 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		if err != nil {
 			return nil, err
 		}
-		retryInfo.AddAutoIncrementID(recordID)
+		retryInfo.AddAutoID(recordID, autoid.AutoIncrementType)
 	}
 	return rows, nil
 }
 
 func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
-	if retryInfo.Retrying {
-		id, ok := retryInfo.GetCurrAutoIncrementID()
+	if retryInfo.CanReuseAutoIDs() {
+		id, ok := retryInfo.GetAutoID(kv.AutoIDTypeIncrement)
 		if ok {
 			d.SetAutoID(id, c.Flag)
 			return d, nil
@@ -807,7 +807,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 			return types.Datum{}, err
 		}
 		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
-		retryInfo.AddAutoIncrementID(recordID)
+		retryInfo.AddAutoID(recordID, autoid.AutoIncrementType)
 		return d, nil
 	}
 
@@ -829,7 +829,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	if err != nil {
 		return types.Datum{}, err
 	}
-	retryInfo.AddAutoIncrementID(recordID)
+	retryInfo.AddAutoID(recordID, autoid.AutoIncrementType)
 	return d, nil
 }
 
@@ -854,8 +854,8 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 
 func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
-	if retryInfo.Retrying {
-		autoRandomID, ok := retryInfo.GetCurrAutoRandomID()
+	if retryInfo.CanReuseAutoIDs() {
+		autoRandomID, ok := retryInfo.GetAutoID(kv.AutoIDTypeRandom)
 		if ok {
 			d.SetAutoID(autoRandomID, c.Flag)
 			return d, nil
@@ -884,7 +884,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		}
 		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 		d.SetAutoID(recordID, c.Flag)
-		retryInfo.AddAutoRandomID(recordID)
+		retryInfo.AddAutoID(recordID, autoid.AutoRandomType)
 		return d, nil
 	}
 
@@ -906,13 +906,16 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	if err != nil {
 		return types.Datum{}, err
 	}
-	retryInfo.AddAutoRandomID(recordID)
+	retryInfo.AddAutoID(recordID, autoid.AutoRandomType)
 	return d, nil
 }
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
 func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.FieldType) (int64, error) {
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
+	if e.ctx.GetSessionVars().RetryInfo.NeedInvalidateAutoIDCache() {
+		alloc.Invalidate()
+	}
 	tableInfo := e.Table.Meta()
 	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
 	offset := e.ctx.GetSessionVars().AutoIncrementOffset

@@ -51,6 +51,8 @@ var (
 	// ErrWriteConflictInTiDB is the error when the commit meets an write conflict error when local latch is enabled.
 	ErrWriteConflictInTiDB = dbterror.ClassKV.NewStdErr(mysql.ErrWriteConflictInTiDB,
 		pmysql.Message(mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB].Raw+" "+TxnRetryableMark, nil))
+	// ErrAllocatedAutoIDInvalid is the error when allocated auto_id is exist.
+	ErrAllocatedAutoIDInvalid = dbterror.ClassKV.NewStd(mysql.ErrAllocatedAutoIDInvalid)
 )
 
 // IsTxnRetryableError checks if the error could safely retry the transaction.
@@ -59,7 +61,10 @@ func IsTxnRetryableError(err error) bool {
 		return false
 	}
 
-	if ErrTxnRetryable.Equal(err) || ErrWriteConflict.Equal(err) || ErrWriteConflictInTiDB.Equal(err) {
+	if ErrTxnRetryable.Equal(err) ||
+		ErrWriteConflict.Equal(err) ||
+		ErrWriteConflictInTiDB.Equal(err) ||
+		ErrAllocatedAutoIDInvalid.Equal(err) {
 		return true
 	}
 

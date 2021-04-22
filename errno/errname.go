@@ -920,6 +920,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrAdminCheckTable:            mysql.Message("TiDB admin check table failed.", nil),
 	ErrTxnTooLarge:                mysql.Message("Transaction is too large, size: %d", nil),
 	ErrWriteConflictInTiDB:        mysql.Message("Write conflict, txnStartTS %d is stale", nil),
+	ErrAllocatedAutoIDInvalid:     mysql.Message("Allocated ID conflict, column: %s, value: %d", nil),
 	ErrInvalidPluginID:            mysql.Message("Wrong plugin id: %s, valid plugin id is [name]-[version], both name and version should not contain '-'", nil),
 	ErrInvalidPluginManifest:      mysql.Message("Cannot read plugin %s's manifest", nil),
 	ErrInvalidPluginName:          mysql.Message("Plugin load with %s but got wrong name %s", nil),

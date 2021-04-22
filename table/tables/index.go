@@ -149,7 +149,8 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
 func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	if c.Meta().Unique {
-		txn.CacheTableInfo(c.phyTblID, c.tblInfo)
+		txn.GetContextAccessor().CacheTableInfo(c.phyTblID, c.tblInfo)
+		txn.GetContextAccessor().CacheAutoIDConflictChecker(sctx.GetSessionVars().RetryInfo.CheckAutoIDExists)
 	}
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {

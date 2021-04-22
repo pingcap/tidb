@@ -555,6 +555,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
+			s.sessionVars.RetryInfo.SetAutoIDConflicted(err)
 			err = s.retry(ctx, uint(maxRetryCount))
 		} else if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("can not retry txn",

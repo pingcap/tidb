@@ -145,6 +145,7 @@ type Allocator interface {
 	// NextGlobalAutoID returns the next global autoID.
 	NextGlobalAutoID(tableID int64) (int64, error)
 	GetType() AllocatorType
+	Invalidate()
 }
 
 // Allocators represents a set of `Allocator`s.
@@ -398,6 +399,10 @@ func (alloc *allocator) RebaseSeq(tableID, requiredBase int64) (int64, bool, err
 
 func (alloc *allocator) GetType() AllocatorType {
 	return alloc.allocType
+}
+
+func (alloc *allocator) Invalidate() {
+	alloc.base = alloc.end
 }
 
 // NextStep return new auto id step according to previous step and consuming time.

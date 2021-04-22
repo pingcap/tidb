@@ -24,7 +24,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -57,14 +56,9 @@ type TxnState struct {
 	writeSLI      sli.TxnWriteThroughputSLI
 }
 
-// GetTableInfo returns the cached index name.
-func (txn *TxnState) GetTableInfo(id int64) *model.TableInfo {
-	return txn.Transaction.GetTableInfo(id)
-}
-
-// CacheTableInfo caches the index name.
-func (txn *TxnState) CacheTableInfo(id int64, info *model.TableInfo) {
-	txn.Transaction.CacheTableInfo(id, info)
+// GetContextAccessor returns the ContextAccessor.
+func (txn *TxnState) GetContextAccessor() *kv.ContextAccessor {
+	return txn.Transaction.GetContextAccessor()
 }
 
 func (txn *TxnState) init() {

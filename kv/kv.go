@@ -184,12 +184,43 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
-	// CacheIndexName caches the index name.
-	// PresumeKeyNotExists will use this to help decode error message.
-	CacheTableInfo(id int64, info *model.TableInfo)
-	// GetIndexName returns the cached index name.
-	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
-	GetTableInfo(id int64) *model.TableInfo
+	GetContextAccessor() *ContextAccessor
+}
+
+type AutoIDType int8
+
+const (
+	AutoIDTypeRowID AutoIDType = iota
+	AutoIDTypeIncrement
+	AutoIDTypeRandom
+)
+
+// ContextAccessor contains the extra information of a transaction may need.
+type ContextAccessor struct {
+	tableInfoCache        map[int64]*model.TableInfo
+	autoIDConflictChecker func(int64, AutoIDType) bool
+}
+
+func NewContextAccessor() *ContextAccessor {
+	return &ContextAccessor{
+		tableInfoCache: make(map[int64]*model.TableInfo),
+	}
+}
+
+func (c *ContextAccessor) CacheTableInfo(id int64, info *model.TableInfo) {
+	c.tableInfoCache[id] = info
+}
+
+func (c *ContextAccessor) GetTableInfo(id int64) *model.TableInfo {
+	return c.tableInfoCache[id]
+}
+
+func (c *ContextAccessor) CacheAutoIDConflictChecker(checker func(int64, AutoIDType) bool) {
+	c.autoIDConflictChecker = checker
+}
+
+func (c *ContextAccessor) GetAutoIDConflictChecker() func(int64, AutoIDType) bool {
+	return c.autoIDConflictChecker
 }
 
 // Client is used to send request to KV layer.

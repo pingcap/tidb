@@ -62,14 +62,32 @@ var PreparedStmtCount int64
 type RetryInfo struct {
 	Retrying               bool
 	DroppedPreparedStmtIDs []uint32
+	autoIDConflicted       bool
 	autoIncrementIDs       retryInfoAutoIDs
 	autoRandomIDs          retryInfoAutoIDs
+}
+
+func (r *RetryInfo) CanReuseAutoIDs() bool {
+	return r.Retrying && !r.autoIDConflicted
+}
+
+func (r *RetryInfo) NeedInvalidateAutoIDCache() bool {
+	return r.autoIDConflicted
+}
+
+func (r *RetryInfo) SetAutoIDConflicted(retryableErr error) {
+	if kv.ErrAllocatedAutoIDInvalid.Equal(retryableErr) {
+		r.autoIDConflicted = true
+		r.autoIncrementIDs.clean()
+		r.autoRandomIDs.clean()
+	}
 }
 
 // Clean does some clean work.
 func (r *RetryInfo) Clean() {
 	r.autoIncrementIDs.clean()
 	r.autoRandomIDs.clean()
+	r.autoIDConflicted = false
 
 	if len(r.DroppedPreparedStmtIDs) > 0 {
 		r.DroppedPreparedStmtIDs = r.DroppedPreparedStmtIDs[:0]
@@ -82,24 +100,40 @@ func (r *RetryInfo) ResetOffset() {
 	r.autoRandomIDs.resetOffset()
 }
 
-// AddAutoIncrementID adds id to autoIncrementIDs.
-func (r *RetryInfo) AddAutoIncrementID(id int64) {
-	r.autoIncrementIDs.autoIDs = append(r.autoIncrementIDs.autoIDs, id)
+// AddAutoID adds an allocating auto id to the RetryInfo.
+func (r *RetryInfo) AddAutoID(id int64, tp autoid.AllocatorType) {
+	switch tp {
+	case autoid.AutoIncrementType:
+		r.autoIncrementIDs.autoIDs = append(r.autoIncrementIDs.autoIDs, id)
+	case autoid.AutoRandomType:
+		r.autoRandomIDs.autoIDs = append(r.autoRandomIDs.autoIDs, id)
+	}
 }
 
-// GetCurrAutoIncrementID gets current autoIncrementID.
-func (r *RetryInfo) GetCurrAutoIncrementID() (int64, bool) {
-	return r.autoIncrementIDs.getCurrent()
+func (r *RetryInfo) GetAutoID(tp kv.AutoIDType) (int64, bool) {
+	switch tp {
+	case kv.AutoIDTypeIncrement:
+		return r.autoIncrementIDs.getCurrent()
+	case kv.AutoIDTypeRandom:
+		return r.autoRandomIDs.getCurrent()
+	}
+	return 0, false
 }
 
-// AddAutoRandomID adds id to autoRandomIDs.
-func (r *RetryInfo) AddAutoRandomID(id int64) {
-	r.autoRandomIDs.autoIDs = append(r.autoRandomIDs.autoIDs, id)
-}
-
-// GetCurrAutoRandomID gets current AutoRandomID.
-func (r *RetryInfo) GetCurrAutoRandomID() (int64, bool) {
-	return r.autoRandomIDs.getCurrent()
+func (r *RetryInfo) CheckAutoIDExists(id int64, tp kv.AutoIDType) bool {
+	var ids retryInfoAutoIDs
+	switch tp {
+	case kv.AutoIDTypeIncrement:
+		ids = r.autoIncrementIDs
+	case kv.AutoIDTypeRandom:
+		ids = r.autoRandomIDs
+	}
+	for _, v := range ids.autoIDs {
+		if v == id {
+			return true
+		}
+	}
+	return false
 }
 
 type retryInfoAutoIDs struct {
