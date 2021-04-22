@@ -52,7 +52,7 @@ type Rule struct {
 
 // NewRules constructs []*Rule from a yaml-compatible representation of
 // array or map of constraints. It converts 'CONSTRAINTS' field in RFC
-// docs/design/2021-06-24-placement-rules-in-sql.md to structs.
+// https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md to structs.
 func NewRules(replicas uint64, cnstr string) ([]*Rule, error) {
 	rules := []*Rule{}
 
