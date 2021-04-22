@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -10,18 +10,28 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build !leak
 
-package placement
+package testleak
 
 import (
-	"errors"
+	"testing"
+
+	"github.com/pingcap/check"
 )
 
-var (
-	// ErrInvalidConstraintFormat is from constraint.go.
-	ErrInvalidConstraintFormat = errors.New("label constraint should be in format '{+|-}key=value'")
-	// ErrUnsupportedConstraint is from constraint.go.
-	ErrUnsupportedConstraint = errors.New("unsupported label constraint")
-	// ErrConflictingConstraints is from constraints.go.
-	ErrConflictingConstraints = errors.New("conflicting label constraints")
-)
+// BeforeTest is a dummy implementation when build tag 'leak' is not set.
+func BeforeTest() {
+}
+
+// AfterTest is a dummy implementation when build tag 'leak' is not set.
+func AfterTest(c *check.C) func() {
+	return func() {
+	}
+}
+
+// AfterTestT is used after all the test cases is finished.
+func AfterTestT(t *testing.T) func() {
+	return func() {
+	}
+}
