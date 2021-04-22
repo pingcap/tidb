@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
@@ -123,13 +122,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				}
 			}
 			if col.IsCommonHandleColumn(t.Meta()) {
-				pkIdx := tables.FindPrimaryIndex(t.Meta())
 				handleChanged = true
-				pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
-				for _, idxCol := range pkIdx.Columns {
-					pkDts = append(pkDts, newData[idxCol.Offset])
-				}
-				tablecodec.TruncateIndexValues(t.Meta(), pkIdx, pkDts)
 			}
 		} else {
 			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
