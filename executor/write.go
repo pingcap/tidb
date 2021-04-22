@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
@@ -179,6 +180,12 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 
 	// 5. If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
+		if err := tables.CheckPartitionExistsForUpdateIgnoreOrInsertOnDupIgnore(sctx, t, newData); err != nil {
+			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				return false, nil
+			}
+		}
+		
 		if updated, err := func() (bool, error) {
 			txn, err := sctx.Txn(true)
 			if err != nil {
@@ -189,11 +196,13 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			defer memBuffer.Cleanup(sh)
 
 			if err = t.RemoveRecord(sctx, h, oldData); err != nil {
+				fmt.Printf("error %s", err.Error())
 				return false, err
 			}
 
 			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
 			if err != nil {
+				fmt.Printf("error %s", err.Error())
 				return false, err
 			}
 			memBuffer.Release(sh)
