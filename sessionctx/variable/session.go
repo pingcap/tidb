@@ -67,14 +67,17 @@ type RetryInfo struct {
 	autoRandomIDs          retryInfoAutoIDs
 }
 
+// CanReuseAutoIDs indicates if the auto IDs can be reused.
 func (r *RetryInfo) CanReuseAutoIDs() bool {
 	return r.Retrying && !r.autoIDConflicted
 }
 
+// NeedInvalidateAutoIDCache indicates the corresponding allocator need to invalidate its cache.
 func (r *RetryInfo) NeedInvalidateAutoIDCache() bool {
 	return r.autoIDConflicted
 }
 
+// SetAutoIDConflicted mark itself as auto-id-conflict if the error is `ErrAllocatedAutoIDInvalid`.
 func (r *RetryInfo) SetAutoIDConflicted(retryableErr error) {
 	if kv.ErrAllocatedAutoIDInvalid.Equal(retryableErr) {
 		r.autoIDConflicted = true
@@ -101,15 +104,16 @@ func (r *RetryInfo) ResetOffset() {
 }
 
 // AddAutoID adds an allocating auto id to the RetryInfo.
-func (r *RetryInfo) AddAutoID(id int64, tp autoid.AllocatorType) {
+func (r *RetryInfo) AddAutoID(id int64, tp kv.AutoIDType) {
 	switch tp {
-	case autoid.AutoIncrementType:
+	case kv.AutoIDTypeIncrement:
 		r.autoIncrementIDs.autoIDs = append(r.autoIncrementIDs.autoIDs, id)
-	case autoid.AutoRandomType:
+	case kv.AutoIDTypeRandom:
 		r.autoRandomIDs.autoIDs = append(r.autoRandomIDs.autoIDs, id)
 	}
 }
 
+// GetAutoID gets the current auto id according to the type.
 func (r *RetryInfo) GetAutoID(tp kv.AutoIDType) (int64, bool) {
 	switch tp {
 	case kv.AutoIDTypeIncrement:
@@ -120,6 +124,7 @@ func (r *RetryInfo) GetAutoID(tp kv.AutoIDType) (int64, bool) {
 	return 0, false
 }
 
+// CheckAutoIDExists checks whether the id exists in the RetryInfo.
 func (r *RetryInfo) CheckAutoIDExists(id int64, tp kv.AutoIDType) bool {
 	var ids retryInfoAutoIDs
 	switch tp {

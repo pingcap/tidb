@@ -187,9 +187,11 @@ type Transaction interface {
 	GetContextAccessor() *ContextAccessor
 }
 
+// AutoIDType represents the auto id type in RetryInfo.
 type AutoIDType int8
 
 const (
+	// AutoIDTypeRowID is reserved for future use.
 	AutoIDTypeRowID AutoIDType = iota
 	AutoIDTypeIncrement
 	AutoIDTypeRandom
@@ -201,24 +203,29 @@ type ContextAccessor struct {
 	autoIDConflictChecker func(int64, AutoIDType) bool
 }
 
+// NewContextAccessor creates a ContextAccessor.
 func NewContextAccessor() *ContextAccessor {
 	return &ContextAccessor{
 		tableInfoCache: make(map[int64]*model.TableInfo),
 	}
 }
 
+// CacheTableInfo stores the TableInfo to the transaction.
 func (c *ContextAccessor) CacheTableInfo(id int64, info *model.TableInfo) {
 	c.tableInfoCache[id] = info
 }
 
+// GetTableInfo gets the TableInfo that stored by `CacheTableInfo`.
 func (c *ContextAccessor) GetTableInfo(id int64) *model.TableInfo {
 	return c.tableInfoCache[id]
 }
 
+// CacheAutoIDConflictChecker stores the auto IDs conflict checker to the transaction.
 func (c *ContextAccessor) CacheAutoIDConflictChecker(checker func(int64, AutoIDType) bool) {
 	c.autoIDConflictChecker = checker
 }
 
+// GetAutoIDConflictChecker gets the checker that stored by CacheAutoIDConflictChecker.
 func (c *ContextAccessor) GetAutoIDConflictChecker() func(int64, AutoIDType) bool {
 	return c.autoIDConflictChecker
 }

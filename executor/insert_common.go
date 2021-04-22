@@ -717,7 +717,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				return nil, err
 			}
 			e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
-			retryInfo.AddAutoID(recordID, autoid.AutoIncrementType)
+			retryInfo.AddAutoID(recordID, kv.AutoIDTypeIncrement)
 			continue
 		}
 
@@ -765,7 +765,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				if err != nil {
 					return nil, err
 				}
-				retryInfo.AddAutoID(id, autoid.AutoIncrementType)
+				retryInfo.AddAutoID(id, kv.AutoIDTypeIncrement)
 			}
 			continue
 		}
@@ -774,7 +774,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		if err != nil {
 			return nil, err
 		}
-		retryInfo.AddAutoID(recordID, autoid.AutoIncrementType)
+		retryInfo.AddAutoID(recordID, kv.AutoIDTypeIncrement)
 	}
 	return rows, nil
 }
@@ -807,7 +807,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 			return types.Datum{}, err
 		}
 		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
-		retryInfo.AddAutoID(recordID, autoid.AutoIncrementType)
+		retryInfo.AddAutoID(recordID, kv.AutoIDTypeIncrement)
 		return d, nil
 	}
 
@@ -829,7 +829,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	if err != nil {
 		return types.Datum{}, err
 	}
-	retryInfo.AddAutoID(recordID, autoid.AutoIncrementType)
+	retryInfo.AddAutoID(recordID, kv.AutoIDTypeIncrement)
 	return d, nil
 }
 
@@ -884,7 +884,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		}
 		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 		d.SetAutoID(recordID, c.Flag)
-		retryInfo.AddAutoID(recordID, autoid.AutoRandomType)
+		retryInfo.AddAutoID(recordID, kv.AutoIDTypeRandom)
 		return d, nil
 	}
 
@@ -906,7 +906,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	if err != nil {
 		return types.Datum{}, err
 	}
-	retryInfo.AddAutoID(recordID, autoid.AutoRandomType)
+	retryInfo.AddAutoID(recordID, kv.AutoIDTypeRandom)
 	return d, nil
 }
 
