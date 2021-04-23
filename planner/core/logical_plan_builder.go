@@ -1357,11 +1357,11 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 	//if setOpr.With != nil {
 	//	// Check CTE name must be unique.
 	//	nameMap := make(map[string]struct{})
-	//	for _, cte := range setOpr.With.CTEs {
-	//		if _, ok := nameMap[cte.Name.L]; ok {
+	//	for _, Cte := range setOpr.With.CTEs {
+	//		if _, ok := nameMap[Cte.Name.L]; ok {
 	//			return nil, errors.New("Not unique table/alias")
 	//		}
-	//		nameMap[cte.Name.L] = struct{}{}
+	//		nameMap[Cte.Name.L] = struct{}{}
 	//	}
 	//	l := len(setOpr.With.CTEs)
 	//	defer func() {
@@ -3337,7 +3337,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 		l := len(sel.With.CTEs)
 		for _, cte := range sel.With.CTEs {
-			b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, false, true, false, nil, nil, b.allocIDForCTEStorage, 0})
+			b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !sel.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0})
 			b.allocIDForCTEStorage++
 			saveFlag := b.optFlag
 			b.optFlag = 0
@@ -3614,6 +3614,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			cte := b.outerCTEs[i]
 			if cte.def.Name.L == tn.Name.L {
 				if cte.isBuilding {
+					if cte.nonRecursive {
+						// Can't see this Cte, try outer definition.
+						continue
+					}
+
 					// Building the recursive part.
 					cte.useRecursive = true
 					if cte.seedLP == nil {
@@ -3624,7 +3629,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					p.SetOutputNames(cte.seedLP.OutputNames())
 					return p, nil
 				}
-				p := LogicalCTE{cte: &CTEClass{isDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, idForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
+				p := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, idForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(cte.seedLP.Schema())
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				return p, nil
@@ -5692,7 +5697,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			}
 			l := len(x.With.CTEs)
 			for _, cte := range x.With.CTEs {
-				b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, false, true, false, nil, nil, b.allocIDForCTEStorage, 0})
+				b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !x.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0})
 				b.allocIDForCTEStorage++
 				saveFlag := b.optFlag
 				b.optFlag = 0
@@ -5794,6 +5799,9 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 		recurPart, err := b.buildUnion(ctx, recursive, tmpAfterSetOptsForRecur)
 		if err != nil {
 			return err
+		}
+		if recurPart.Schema().Len() != cInfo.seedLP.Schema().Len() {
+			return ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 		}
 		cInfo.recurLP = recurPart
 		return nil

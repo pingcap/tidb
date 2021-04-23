@@ -1908,7 +1908,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 		}
 	}
 
-	pcte := PhysicalCTE{seedPlan: sp, recurPlan: rp, cte: p.cte}.Init(p.ctx, p.stats)
+	pcte := PhysicalCTE{SeedPlan: sp, RecurPlan: rp, Cte: p.cte}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
 	t = &rootTask{pcte, sp.statsInfo().RowCount}
 	p.cte.cteTask = t
@@ -1920,7 +1920,7 @@ func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, planCoun
 		return nil, 1, nil
 	}
 
-	pcteTable := PhysicalCTETable{idForStorage: p.idForStorage}.Init(p.ctx, p.stats)
+	pcteTable := PhysicalCTETable{IdForStorage: p.idForStorage}.Init(p.ctx, p.stats)
 	pcteTable.SetSchema(p.schema)
 	t = &rootTask{p: pcteTable}
 	return t, 1, nil

@@ -409,6 +409,7 @@ const (
 
 type cteInfo struct {
 	def          *ast.CommonTableExpression
+	nonRecursive bool
 	useRecursive bool
 	isBuilding   bool
 	isDistinct   bool

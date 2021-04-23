@@ -1366,14 +1366,14 @@ func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt
 type PhysicalCTE struct {
 	physicalSchemaProducer
 
-	seedPlan  PhysicalPlan
-	recurPlan PhysicalPlan
-	cte       *CTEClass
+	SeedPlan  PhysicalPlan
+	RecurPlan PhysicalPlan
+	Cte       *CTEClass
 }
 
 // PhysicalCTETable is for CTE table.
 type PhysicalCTETable struct {
 	physicalSchemaProducer
 
-	idForStorage int
+	IdForStorage int
 }

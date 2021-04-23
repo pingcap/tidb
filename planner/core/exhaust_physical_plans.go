@@ -2546,32 +2546,32 @@ func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 //	if !prop.IsEmpty() {
 //		return nil, true, nil
 //	}
-//	if p.cte.seedPartLogicalPlan != nil {
+//	if p.Cte.seedPartLogicalPlan != nil {
 //		// Already built it.
-//		return []PhysicalPlan{PhysicalCTE{cte: p.cte}.Init(p.ctx, p.stats)}, true, nil
+//		return []PhysicalPlan{PhysicalCTE{Cte: p.Cte}.Init(p.ctx, p.stats)}, true, nil
 //	}
-//	sp, _, err := DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+//	sp, _, err := DoOptimize(context.TODO(), p.ctx, p.Cte.optFlag, p.Cte.seedPartLogicalPlan)
 //	if err != nil {
 //		return nil, false, err
 //	}
-//	if p.cte.recursivePartLogicalPlan != nil {
-//		rp, _, err := DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+//	if p.Cte.recursivePartLogicalPlan != nil {
+//		rp, _, err := DoOptimize(context.TODO(), p.ctx, p.Cte.optFlag, p.Cte.recursivePartLogicalPlan)
 //		if err != nil {
 //			return nil, false, err
 //		}
-//		p.cte.recursiveTask = rp
+//		p.Cte.recursiveTask = rp
 //	}
 //
 //	t := &rootTask{p: sp, cst: sp.statsInfo().RowCount}
-//	p.cte.cteTask = sp
-//	if p.cte.recursivePartLogicalPlan != nil {
-//		rp, _, err := DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+//	p.Cte.cteTask = sp
+//	if p.Cte.recursivePartLogicalPlan != nil {
+//		rp, _, err := DoOptimize(context.TODO(), p.ctx, p.Cte.optFlag, p.Cte.recursivePartLogicalPlan)
 //		if err != nil {
 //			return nil, false, err
 //		}
-//		p.cte.recursiveTask = rp
+//		p.Cte.recursiveTask = rp
 //	}
-//	return []PhysicalPlan{PhysicalCTE{cte: p.cte}.Init(p.ctx, p.stats)}, true, nil
+//	return []PhysicalPlan{PhysicalCTE{Cte: p.Cte}.Init(p.ctx, p.stats)}, true, nil
 //}
 
 func (p *LogicalCTETable) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
@@ -2579,5 +2579,5 @@ func (p *LogicalCTETable) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		return nil, true, nil
 	}
 
-	return []PhysicalPlan{PhysicalCTETable{idForStorage: p.idForStorage}.Init(p.ctx, p.stats)}, true, nil
+	return []PhysicalPlan{PhysicalCTETable{IdForStorage: p.idForStorage}.Init(p.ctx, p.stats)}, true, nil
 }
