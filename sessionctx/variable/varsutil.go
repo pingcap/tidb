@@ -404,6 +404,14 @@ func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	return val
 }
 
+func tidbOptInt(opt string, defaultVal int) int {
+	val, err := strconv.Atoi(opt)
+	if err != nil {
+		return defaultVal
+	}
+	return val
+}
+
 func tidbOptInt64(opt string, defaultVal int64) int64 {
 	val, err := strconv.ParseInt(opt, 10, 64)
 	if err != nil {
