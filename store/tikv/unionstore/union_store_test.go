@@ -18,7 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/store/tikv/util/testleak"
 )
 
 var _ = Suite(&testUnionStoreSuite{})
@@ -131,7 +131,7 @@ func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
 	for i, k := range keys {
 		v := values[i]
 		c.Assert(iter.Valid(), IsTrue)
-		c.Assert([]byte(iter.Key()), BytesEquals, k)
+		c.Assert(iter.Key(), BytesEquals, k)
 		c.Assert(iter.Value(), BytesEquals, v)
 		c.Assert(iter.Next(), IsNil)
 	}

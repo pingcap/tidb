@@ -153,7 +153,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
-	firstPartRanges, secondPartRanges := distsql.SplitRangesBySign(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
+	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()

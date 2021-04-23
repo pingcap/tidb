@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 
 	"github.com/cznic/mathutil"
@@ -478,11 +479,6 @@ type PlanBuilder struct {
 type handleColHelper struct {
 	id2HandleMapStack []map[int64][]HandleCols
 	stackTail         int
-}
-
-func (hch *handleColHelper) appendColToLastMap(tblID int64, handleCols HandleCols) {
-	tailMap := hch.id2HandleMapStack[hch.stackTail-1]
-	tailMap[tblID] = append(tailMap[tblID], handleCols)
 }
 
 func (hch *handleColHelper) popMap() map[int64][]HandleCols {
@@ -3530,6 +3526,9 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (Plan, error) {
+	if sem.IsEnabled() {
+		return nil, ErrNotSupportedWithSem.GenWithStackByArgs("SELECT INTO")
+	}
 	selectIntoInfo := sel.SelectIntoOpt
 	sel.SelectIntoOpt = nil
 	targetPlan, _, err := OptimizeAstNode(ctx, b.ctx, sel, b.is)
@@ -3736,8 +3735,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation", "Source"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowAnalyzeStatus:
-		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "State"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeVarchar}
+		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "End_time", "State"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar}
 	case ast.ShowBuiltins:
 		names = []string{"Supported_builtin_functions"}
 		ftypes = []byte{mysql.TypeVarchar}
