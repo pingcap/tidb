@@ -85,10 +85,6 @@ func (s *testCoprocessorSuite) TestDisable(c *C) {
 	v = cache.CheckResponseAdmission(1024, time.Second*5)
 	c.Assert(v, Equals, false)
 
-	cache, err = newCoprCache(&config.CoprocessorCache{CapacityMB: 0.1, AdmissionMaxResultMB: 1})
-	c.Assert(err, NotNil)
-	c.Assert(cache, IsNil)
-
 	cache, err = newCoprCache(&config.CoprocessorCache{CapacityMB: 0.001})
 	c.Assert(err, NotNil)
 	c.Assert(cache, IsNil)
