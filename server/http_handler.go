@@ -1996,4 +1996,7 @@ func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	dom.DDL().SetHook(callback)
 	writeData(w, "success!")
+
+	ctx := req.Context()
+	logutil.Logger(ctx).Info("change ddl hook success", zap.String("to_ddl_hook", req.FormValue("ddl_hook")))
 }
