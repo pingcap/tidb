@@ -18,8 +18,8 @@ import (
 	"math"
 	"sync"
 
-	us "github.com/ngaut/unistore/tikv"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	pd "github.com/tikv/pd/client"
 	"golang.org/x/net/context"
 )

@@ -74,7 +74,7 @@ func (r reqCollapse) tryCollapseRequest(ctx context.Context, addr string, req *t
 func (r reqCollapse) collapse(ctx context.Context, key string, sf *singleflight.Group,
 	addr string, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, err error) {
 	rsC := sf.DoChan(key, func() (interface{}, error) {
-		return r.Client.SendRequest(context.Background(), addr, req, readTimeoutShort) // use resolveLock timeout.
+		return r.Client.SendRequest(context.Background(), addr, req, ReadTimeoutShort) // use resolveLock timeout.
 	})
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
