@@ -398,6 +398,9 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 		e.feedback.Invalidate() // feedback for partition tables is not ready
 		e.partitionKVRanges = make([][]kv.KeyRange, 0, len(e.prunedPartitions))
 		for _, p := range e.prunedPartitions {
+			// TODO: prune and adjust e.ranges for each partition again, since not all e.ranges are suitable for all e.prunedPartitions.
+			// For example, a table partitioned by range(a), and p0=(1, 10), p1=(11, 20), for the condition "(a>1 and a<10) or (a>11 and a<20)",
+			// the first range is only suitable to p0 and the second is to p1, but now we'll also build kvRange for range0+p1 and range1+p0.
 			physicalID := p.GetPhysicalID()
 			var kvRange []kv.KeyRange
 			if e.index.ID == -1 {
@@ -526,19 +529,19 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	e.idxWorkerWg.Add(1)
 	go func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
+		worker := &indexWorker{
+			idxLookup:       e,
+			workCh:          workCh,
+			finished:        e.finished,
+			resultCh:        e.resultCh,
+			keepOrder:       e.keepOrder,
+			checkIndexValue: e.checkIndexValue,
+			maxBatchSize:    e.ctx.GetSessionVars().IndexLookupSize,
+			maxChunkSize:    e.maxChunkSize,
+			PushedLimit:     e.PushedLimit,
+		}
 		for i, result := range results {
-			worker := &indexWorker{
-				idxLookup:       e,
-				workCh:          workCh,
-				finished:        e.finished,
-				resultCh:        e.resultCh,
-				keepOrder:       e.keepOrder,
-				batchSize:       initBatchSize,
-				checkIndexValue: e.checkIndexValue,
-				maxBatchSize:    e.ctx.GetSessionVars().IndexLookupSize,
-				maxChunkSize:    e.maxChunkSize,
-				PushedLimit:     e.PushedLimit,
-			}
+			worker.batchSize = initBatchSize
 			if worker.batchSize > worker.maxBatchSize {
 				worker.batchSize = worker.maxBatchSize
 			}
