@@ -46,7 +46,7 @@ type Rule struct {
 	EndKeyHex        string       `json:"end_key"`
 	Role             PeerRoleType `json:"role"`
 	Count            int          `json:"count"`
-	LabelConstraints []Constraint `json:"label_constraints,omitempty"`
+	LabelConstraints Constraints  `json:"label_constraints,omitempty"`
 	LocationLabels   []string     `json:"location_labels,omitempty"`
 	IsolationLevel   string       `json:"isolation_level,omitempty"`
 }
