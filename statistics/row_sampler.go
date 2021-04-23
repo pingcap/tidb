@@ -20,6 +20,7 @@ import (
 	"math/rand"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -52,6 +53,7 @@ type RowSampleCollector struct {
 type RowSampleItem struct {
 	Columns []types.Datum
 	Weight  int64
+	Handle  kv.Handle
 }
 
 // WeightedRowSampleHeap implements the Heap interface.
@@ -345,9 +347,13 @@ func BuildHistAndTopNOnRowSample(
 		return nil, nil, errors.Trace(err)
 	}
 	curCnt := float64(0)
+	var corrXYSum float64
 
 	// Iterate through the samples
 	for i := int64(0); i < sampleNum; i++ {
+		if isColumn {
+			corrXYSum += float64(i) * float64(samples[i].Ordinal)
+		}
 
 		sampleBytes, err := getComparedBytes(samples[i].Value)
 		if err != nil {
@@ -384,6 +390,11 @@ func BuildHistAndTopNOnRowSample(
 			topNList = topNList[:numTopN]
 		}
 		cur, curCnt = sampleBytes, 1
+	}
+
+	// Calc the correlation of the column between the handle column.
+	if isColumn {
+		hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
 	}
 
 	// Handle the counting for the last value. Basically equal to the case 2 above.

@@ -1665,12 +1665,19 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			Incremental:   as.Incremental,
 			StatsVersion:  version,
 		}
-		taskSlice = append(taskSlice, AnalyzeColumnsTask{
+		newTask := AnalyzeColumnsTask{
+			HandleCols:  BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo),
 			ColsInfo:    tbl.TableInfo.Columns,
 			analyzeInfo: info,
 			TblInfo:     tbl.TableInfo,
 			Indexes:     idxInfos,
-		})
+		}
+		if newTask.HandleCols == nil {
+			extraCol := model.NewExtraHandleColInfo()
+			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
+			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
+		}
+		taskSlice = append(taskSlice, newTask)
 	}
 	return taskSlice
 }

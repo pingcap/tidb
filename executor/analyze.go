@@ -528,15 +528,6 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 			return []analyzeResult{{Err: err, job: colExec.job}}
 		}
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
-		colResult := analyzeResult{
-			TableID:  colExec.tableID,
-			Hist:     hists[:cLen],
-			TopNs:    topns[:cLen],
-			Fms:      fmSketches[:cLen],
-			job:      colExec.job,
-			StatsVer: colExec.analyzeVer,
-			Count:    count,
-		}
 		idxResult := analyzeResult{
 			TableID:  colExec.tableID,
 			Hist:     hists[cLen:],
@@ -547,6 +538,20 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 			Count:    count,
 			IsIndex:  1,
 		}
+		// discard stats of _tidb_rowid
+		if hists[cLen-1].ID == -1 {
+			cLen -= 1
+		}
+		colResult := analyzeResult{
+			TableID:  colExec.tableID,
+			Hist:     hists[:cLen],
+			TopNs:    topns[:cLen],
+			Fms:      fmSketches[:cLen],
+			job:      colExec.job,
+			StatsVer: colExec.analyzeVer,
+			Count:    count,
+		}
+
 		return []analyzeResult{colResult, idxResult}
 	}
 	collExtStats := colExec.ctx.GetSessionVars().EnableExtendedStats
@@ -734,15 +739,25 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 				sample.Columns[i].SetBytes(sample.Columns[i].GetBytes())
 			}
 		}
+		sample.Handle, err = e.handleCols.BuildHandleByDatums(sample.Columns)
+		if err != nil {
+			return 0, nil, nil, nil, err
+		}
 	}
+
+	sort.Slice(rootRowCollector.Samples, func(i, j int) bool {
+		return rootRowCollector.Samples[i].Handle.Compare(rootRowCollector.Samples[j].Handle) < 0
+	})
+
 	hists = make([]*statistics.Histogram, 0, len(e.colsInfo))
 	topns = make([]*statistics.TopN, 0, len(e.colsInfo))
 	fmSketches = make([]*statistics.FMSketch, 0, len(e.colsInfo))
 	for i, col := range e.colsInfo {
 		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
-		for _, row := range rootRowCollector.Samples {
+		for j, row := range rootRowCollector.Samples {
 			sampleItems = append(sampleItems, &statistics.SampleItem{
-				Value: row.Columns[i],
+				Value:   row.Columns[i],
+				Ordinal: j,
 			})
 		}
 		collector := &statistics.SampleCollector{
