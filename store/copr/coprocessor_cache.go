@@ -21,6 +21,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/tidb/util/logutil"
+
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -58,6 +60,10 @@ func (v *coprCacheValue) Len() int {
 
 func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 	if config == nil || config.CapacityMB == 0 {
+		return nil, nil
+	}
+	if config.CapacityMB < 0 {
+		logutil.BgLogger().Info("Capacity should >= 0")
 		return nil, nil
 	}
 	capacityInBytes := int64(config.CapacityMB * 1024.0 * 1024.0)
