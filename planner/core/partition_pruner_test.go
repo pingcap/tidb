@@ -38,16 +38,6 @@ type testPartitionPruneSuit struct {
 	testData testutil.TestData
 }
 
-func (s *testPartitionPruneSuit) cleanEnv(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_partition")
-	r := tk.MustQuery("show tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-	}
-}
-
 func (s *testPartitionPruneSuit) SetUpSuite(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()

@@ -59,19 +59,6 @@ func NewServer(rm RegionManager, store *MVCCStore, innerServer InnerServer) *Ser
 	}
 }
 
-const requestMaxSize = 6 * 1024 * 1024
-
-func (svr *Server) checkRequestSize(size int) *errorpb.Error {
-	// TiKV has a limitation on raft log size.
-	// mocktikv has no raft inside, so we check the request's size instead.
-	if size >= requestMaxSize {
-		return &errorpb.Error{
-			RaftEntryTooLarge: &errorpb.RaftEntryTooLarge{},
-		}
-	}
-	return nil
-}
-
 // Stop stops the server.
 func (svr *Server) Stop() {
 	atomic.StoreInt32(&svr.stopped, 1)
@@ -627,28 +614,6 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 		}
 	}
 	return nil
-}
-
-func (mrm *MockRegionManager) getMPPTaskHandler(rpcClient client.Client, meta *mpp.TaskMeta, createdIfNotExist bool, storeID uint64) (*cophandler.MPPTaskHandler, bool, error) {
-	set := mrm.getMPPTaskSet(storeID)
-	if set == nil {
-		return nil, false, errors.New("cannot find mpp task set for store")
-	}
-	set.mu.Lock()
-	defer set.mu.Unlock()
-	if handler, ok := set.taskHandlers[meta.TaskId]; ok {
-		return handler, false, nil
-	}
-	if createdIfNotExist {
-		handler := &cophandler.MPPTaskHandler{
-			TunnelSet: make(map[int64]*cophandler.ExchangerTunnel),
-			Meta:      meta,
-			RPCClient: rpcClient,
-		}
-		set.taskHandlers[meta.TaskId] = handler
-		return handler, true, nil
-	}
-	return nil, false, nil
 }
 
 func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64) error {
