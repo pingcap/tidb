@@ -64,10 +64,6 @@ func (g *unitStrGener) gen() interface{} {
 	return units[n]
 }
 
-type dateTimeUnitStrGener struct {
-	randGen *defaultRandGen
-}
-
 // tzStrGener is used to generate strings which are timezones
 type tzStrGener struct{}
 
@@ -82,24 +78,6 @@ func (g *tzStrGener) gen() interface{} {
 
 	n := rand.Int() % len(tzs)
 	return tzs[n]
-}
-
-func (g *dateTimeUnitStrGener) gen() interface{} {
-	dateTimes := []string{
-		"DAY",
-		"WEEK",
-		"MONTH",
-		"QUARTER",
-		"YEAR",
-		"DAY_MICROSECOND",
-		"DAY_SECOND",
-		"DAY_MINUTE",
-		"DAY_HOUR",
-		"YEAR_MONTH",
-	}
-
-	n := g.randGen.Intn(len(dateTimes))
-	return dateTimes[n]
 }
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
