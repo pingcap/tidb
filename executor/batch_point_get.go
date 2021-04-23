@@ -419,7 +419,7 @@ func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64,
 	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime)
 	if txnCtx.IsPessimistic {
 		lctx.ReturnValues = true
-		lctx.Values = make(map[string]kv.ReturnedValue, len(keys))
+		lctx.Values = make(map[string]tikvstore.ReturnedValue, len(keys))
 	}
 	err := doLockKeys(ctx, seCtx, lctx, keys...)
 	if err != nil {

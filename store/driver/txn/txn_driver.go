@@ -32,6 +32,7 @@ type tikvTxn struct {
 
 // NewTiKVTxn returns a new Transaction.
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
+	txn.SetOption(tikvstore.KVFilter, TiDBKVFilter{})
 	return &tikvTxn{txn, make(map[int64]*model.TableInfo)}
 }
 
@@ -114,6 +115,17 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	}
 }
 
+// SetVars sets variables to the transaction.
+func (txn *tikvTxn) SetVars(vars interface{}) {
+	if vs, ok := vars.(*tikv.Variables); ok {
+		txn.KVTxn.SetVars(vs)
+	}
+}
+
+func (txn *tikvTxn) GetVars() interface{} {
+	return txn.KVTxn.GetVars()
+}
+
 func (txn *tikvTxn) extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikvstore.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())
@@ -140,4 +152,12 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 		return extractKeyExistsErrFromHandle(key, value, tblInfo)
 	}
 	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
+}
+
+// TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.
+type TiDBKVFilter struct{}
+
+// IsUnnecessaryKeyValue defines which kinds of KV pairs from TiDB needn't be committed.
+func (f TiDBKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
+	return tablecodec.IsUntouchedIndexKValue(key, value)
 }
