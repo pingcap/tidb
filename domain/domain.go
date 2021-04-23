@@ -648,34 +648,6 @@ func (do *Domain) Close() {
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
-type ddlCallback struct {
-	ddl.BaseCallback
-	do *Domain
-}
-
-// OnChanged overrides ddl Callback interface.
-func (c *ddlCallback) OnChanged(err error) error {
-	if err != nil {
-		return err
-	}
-	logutil.BgLogger().Info("performing DDL change, must reload")
-
-	err = c.do.Reload()
-	if err != nil {
-		logutil.BgLogger().Error("performing DDL change failed", zap.Error(err))
-	}
-
-	return nil
-}
-
-// OnSchemaStateChanged overrides the ddl Callback interface.
-func (c *ddlCallback) OnSchemaStateChanged() {
-	err := c.do.Reload()
-	if err != nil {
-		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
-	}
-}
-
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
@@ -747,13 +719,11 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
-	if ddl.CustomizedDDLHook != nil {
-		copyOne := ddl.CustomizedDDLHook
-		copyOne.Do = do
-		callback = copyOne
-	} else {
-		callback = &ddlCallback{do: do}
+	newCallbackFunc, err := ddl.GetCustomizedHook("default_hook")
+	if err != nil {
+		return errors.Trace(err)
 	}
+	callback = newCallbackFunc(do)
 	d := do.ddl
 	do.ddl = ddl.NewDDL(
 		ctx,
@@ -763,7 +733,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
 	)
-	err := do.ddl.Start(sysCtxPool)
+	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
 		return err
 	}

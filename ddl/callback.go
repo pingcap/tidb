@@ -16,10 +16,10 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
@@ -54,6 +54,8 @@ type Callback interface {
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
+	// SetDomain is called when the assign the domain to callback.
+	SetDomain(do DomainReloader)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -85,58 +87,9 @@ func (c *BaseCallback) OnWatched(ctx context.Context) {
 	// Nothing to do.
 }
 
-// TestDDLCallback is used to customize user callback themselves.
-type TestDDLCallback struct {
-	*BaseCallback
-	// We recommended to pass the domain parameter to the test ddl callback, it will ensure
-	// domain to reload schema before your ddl stepping into the next state change.
-	Do DomainReloader
-
-	onJobRunBefore         func(*model.Job)
-	OnJobRunBeforeExported func(*model.Job)
-	onJobUpdated           func(*model.Job)
-	OnJobUpdatedExported   func(*model.Job)
-	onWatched              func(ctx context.Context)
-}
-
-var (
-	// CustomizedDDLHook is used to store the user specified ddl hook when TiDB starts.
-	//
-	// ********************************* Special Customized Instance ****************************************
-	CustomizedDDLHook *TestDDLCallback
-
-	customizedCallBackRegisterMap = map[string]*TestDDLCallback{}
-)
-
-func init() {
-	// init the callback action.
-	columnTypeChangeTiCaseSpecialCallBack := &TestDDLCallback{}
-	columnTypeChangeTiCaseSpecialCallBack.onJobRunBefore = func(job *model.Job) {
-		// Only block the ctc type ddl here.
-		if job.Type != model.ActionModifyColumn {
-			return
-		}
-		switch job.SchemaState {
-		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
-			logutil.BgLogger().Warn(fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()))
-			time.Sleep(500 * time.Millisecond)
-		}
-	}
-
-	// init the callback register.
-	customizedCallBackRegisterMap["ctc_hook"] = columnTypeChangeTiCaseSpecialCallBack
-
-	// init the trigger
-	if s := os.Getenv("DDL_HOOK"); len(s) > 0 {
-		s = strings.ToLower(s)
-		s = strings.TrimSpace(s)
-		hook, ok := customizedCallBackRegisterMap[s]
-		if !ok {
-			logutil.BgLogger().Error(fmt.Sprintf("bad ddl hook %s", s))
-			os.Exit(1)
-		}
-		CustomizedDDLHook = hook
-	}
+// SetDomain implements Callback.SetDomain interface.
+func (c *BaseCallback) SetDomain(do DomainReloader) {
+	// Nothing to do.
 }
 
 // DomainReloader is used to avoid import loop.
@@ -144,14 +97,22 @@ type DomainReloader interface {
 	Reload() error
 }
 
-// OnChanged mock the same behavior with the main ddl hook.
-func (tc *TestDDLCallback) OnChanged(err error) error {
+// ****************************** Start of Customized DDL Callback Instance ****************************************
+
+// DefaultCallback is the default callback that TiDB will use.
+type DefaultCallback struct {
+	*BaseCallback
+	do DomainReloader
+}
+
+// OnChanged overrides ddl Callback interface.
+func (c *DefaultCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
 	}
 	logutil.BgLogger().Info("performing DDL change, must reload")
 
-	err = tc.Do.Reload()
+	err = c.do.Reload()
 	if err != nil {
 		logutil.BgLogger().Error("performing DDL change failed", zap.Error(err))
 	}
@@ -159,51 +120,98 @@ func (tc *TestDDLCallback) OnChanged(err error) error {
 	return nil
 }
 
-// OnSchemaStateChanged mock the same behavior with the main ddl hook.
-func (tc *TestDDLCallback) OnSchemaStateChanged() {
-	if tc.Do != nil {
-		if err := tc.Do.Reload(); err != nil {
-			log.Warn("reload failed on schema state changed", zap.Error(err))
-		}
+// OnSchemaStateChanged overrides the ddl Callback interface.
+func (c *DefaultCallback) OnSchemaStateChanged() {
+	err := c.do.Reload()
+	if err != nil {
+		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
+	}
+}
+
+// SetDomain is used to assign the domain.
+func (c *DefaultCallback) SetDomain(do DomainReloader) {
+	c.do = do
+}
+
+func newDefaultCallBack(do DomainReloader) Callback {
+	return &DefaultCallback{do: do}
+}
+
+// ****************************** End of Default DDL Callback Instance *********************************************
+
+// ****************************** Start of CTC DDL Callback Instance ***********************************************
+
+// CtcCallback is the customized callback that TiDB will use.
+type ctcCallback struct {
+	*BaseCallback
+	do DomainReloader
+}
+
+// OnChanged overrides ddl Callback interface.
+func (c *ctcCallback) OnChanged(err error) error {
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Info("performing DDL change, must reload")
+
+	err = c.do.Reload()
+	if err != nil {
+		logutil.BgLogger().Error("performing DDL change failed", zap.Error(err))
+	}
+	return nil
+}
+
+// OnSchemaStateChanged overrides the ddl Callback interface.
+func (c *ctcCallback) OnSchemaStateChanged() {
+	err := c.do.Reload()
+	if err != nil {
+		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
 	}
 }
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
-func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
+func (c *ctcCallback) OnJobRunBefore(job *model.Job) {
 	log.Info("on job run before", zap.String("job", job.String()))
-	if tc.OnJobRunBeforeExported != nil {
-		tc.OnJobRunBeforeExported(job)
+	// Only block the ctc type ddl here.
+	if job.Type != model.ActionModifyColumn {
 		return
 	}
-	if tc.onJobRunBefore != nil {
-		tc.onJobRunBefore(job)
-		return
+	switch job.SchemaState {
+	case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+		logutil.BgLogger().Warn(fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()))
+		time.Sleep(500 * time.Millisecond)
 	}
-
-	tc.BaseCallback.OnJobRunBefore(job)
 }
 
-// OnJobUpdated is used to run the user customized logic of `OnJobUpdated` first.
-func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
-	log.Info("on job updated", zap.String("job", job.String()))
-	if tc.OnJobUpdatedExported != nil {
-		tc.OnJobUpdatedExported(job)
-		return
-	}
-	if tc.onJobUpdated != nil {
-		tc.onJobUpdated(job)
-		return
-	}
-
-	tc.BaseCallback.OnJobUpdated(job)
+// SetDomain is used to assign the domain.
+func (c *ctcCallback) SetDomain(do DomainReloader) {
+	c.do = do
 }
 
-// OnWatched is used to run the user customized logic of `OnWatched` first.
-func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
-	if tc.onWatched != nil {
-		tc.onWatched(ctx)
-		return
-	}
+func newCtcCallBack(do DomainReloader) Callback {
+	return &ctcCallback{do: do}
+}
 
-	tc.BaseCallback.OnWatched(ctx)
+// ****************************** End of CTC DDL Callback Instance ***************************************************
+
+var (
+	customizedCallBackRegisterMap = map[string]func(do DomainReloader) Callback{}
+)
+
+func init() {
+	// init the callback register map.
+	customizedCallBackRegisterMap["default_hook"] = newDefaultCallBack
+	customizedCallBackRegisterMap["ctc_hook"] = newCtcCallBack
+}
+
+// GetCustomizedHook get the hook registered in the hookMap.
+func GetCustomizedHook(s string) (func(do DomainReloader) Callback, error) {
+	s = strings.ToLower(s)
+	s = strings.TrimSpace(s)
+	fact, ok := customizedCallBackRegisterMap[s]
+	if !ok {
+		logutil.BgLogger().Error(fmt.Sprintf("bad ddl hook %s", s))
+		return nil, errors.Errorf("ddl hook `%s` is not found in hook registered map", s)
+	}
+	return fact, nil
 }
