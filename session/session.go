@@ -353,6 +353,9 @@ func (s *session) SetCollation(coID int) error {
 	if err != nil {
 		return err
 	}
+	// If new collations are enabled, switch to the default
+	// collation if this one is not supported.
+	co = collate.SubstituteMissingCollationToDefault(co)
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
@@ -509,6 +512,16 @@ func (s *session) doCommit(ctx context.Context) error {
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 }
 
+// errIsNoisy is used to filter DUPLCATE KEY errors.
+// These can observed by users in INFORMATION_SCHEMA.CLIENT_ERRORS_SUMMARY_GLOBAL instead.
+//
+// The rationale for filtering these errors is because they are "client generated errors". i.e.
+// of the errors defined in kv/error.go, these look to be clearly related to a client-inflicted issue,
+// and the server is only responsible for handling the error correctly. It does not need to log.
+func errIsNoisy(err error) bool {
+	return kv.ErrKeyExists.Equal(err)
+}
+
 func (s *session) doCommitWithRetry(ctx context.Context) error {
 	defer func() {
 		s.GetSessionVars().SetTxnIsolationLevelOneShotStateForNextTxn()
@@ -546,7 +559,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
-		} else {
+		} else if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("can not retry txn",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
@@ -562,9 +575,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	s.recordOnTransactionExecution(err, counter, duration)
 
 	if err != nil {
-		logutil.Logger(ctx).Warn("commit failed",
-			zap.String("finished txn", s.txn.GoString()),
-			zap.Error(err))
+		if !errIsNoisy(err) {
+			logutil.Logger(ctx).Warn("commit failed",
+				zap.String("finished txn", s.txn.GoString()),
+				zap.Error(err))
+		}
 		return err
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
@@ -2550,6 +2565,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableExchangePartition,
 	variable.TiDBAllowFallbackToTiKV,
 	variable.TiDBEnableDynamicPrivileges,
+	variable.CTEMaxRecursionDepth,
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.

@@ -59,7 +59,7 @@ type KVTxn struct {
 	commitTS  uint64
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	setCnt    int64
-	vars      *tidbkv.Variables
+	vars      *kv.Variables
 	committer *twoPhaseCommitter
 	lockedCnt int
 
@@ -94,7 +94,7 @@ func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, repl
 		startTS:   startTS,
 		startTime: time.Now(),
 		valid:     true,
-		vars:      tidbkv.DefaultVars,
+		vars:      kv.DefaultVars,
 	}
 	newTiKVTxn.SetOption(kv.TxnScope, txnScope)
 	return newTiKVTxn, nil
@@ -113,7 +113,7 @@ func newTiKVTxnWithExactStaleness(store *KVStore, txnScope string, prevSec uint6
 var SetSuccess = false
 
 // SetVars sets variables to the transaction.
-func (txn *KVTxn) SetVars(vars *tidbkv.Variables) {
+func (txn *KVTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
 	failpoint.Inject("probeSetVars", func(val failpoint.Value) {
@@ -124,7 +124,7 @@ func (txn *KVTxn) SetVars(vars *tidbkv.Variables) {
 }
 
 // GetVars gets variables from the transaction.
-func (txn *KVTxn) GetVars() *tidbkv.Variables {
+func (txn *KVTxn) GetVars() *kv.Variables {
 	return txn.vars
 }
 
@@ -654,6 +654,9 @@ func (txn *KVTxn) GetSnapshot() *KVSnapshot {
 // SetBinlogExecutor sets the method to perform binlong synchronization.
 func (txn *KVTxn) SetBinlogExecutor(binlog BinlogExecutor) {
 	txn.binlog = binlog
+	if txn.committer != nil {
+		txn.committer.binlog = binlog
+	}
 }
 
 // GetClusterID returns store's cluster id.
