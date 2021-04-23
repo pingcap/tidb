@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -109,7 +110,14 @@ func int32ToBoolStr(i int32) string {
 	return BoolOff
 }
 
-func checkCharacterValid(normalizedValue string, argName string) (string, error) {
+func checkCollation(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	if _, err := collate.GetCollationByName(normalizedValue); err != nil {
+		return normalizedValue, errors.Trace(err)
+	}
+	return normalizedValue, nil
+}
+
+func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
 		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
 	}
