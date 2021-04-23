@@ -32,17 +32,18 @@ type mockStorage struct {
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
-func NewMockStorage(tikvStore *tikv.KVStore) kv.Storage {
+func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	return &mockStorage{
 		KVStore:  tikvStore,
 		Store:    coprStore,
 		memCache: kv.NewCacheDB(),
-	}
+	}, nil
+
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {

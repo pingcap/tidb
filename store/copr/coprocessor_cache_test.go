@@ -196,3 +196,9 @@ func (s *testCoprocessorSuite) TestGetSet(c *C) {
 	c.Assert(v, NotNil)
 	c.Assert(v.Data, DeepEquals, []byte("bar"))
 }
+
+func (s *testCoprocessorSuite) TestIssue24118(c *C) {
+	cache, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: -1})
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
+}
