@@ -26,14 +26,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	pmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	atomic2 "go.uber.org/atomic"
@@ -423,16 +421,8 @@ func GetSysVars() map[string]*SysVar {
 	return sysVars
 }
 
-var (
-	// PluginVarNames is global plugin var names set.
-	PluginVarNames           []string
-	errUnknownSystemVariable = dbterror.ClassVariable.NewStd(mysql.ErrUnknownSystemVariable)
-	errValueNotSupportedWhen = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("%s = OFF is not supported when %s = ON", nil))
-	// ErrFunctionsNoopImpl is an error to say the behavior is protected by the tidb_enable_noop_functions sysvar.
-	// This is copied from expression.ErrFunctionsNoopImpl to prevent circular dependencies.
-	// It needs to be public for tests.
-	ErrFunctionsNoopImpl = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
-)
+// PluginVarNames is global plugin var names set.
+var PluginVarNames []string
 
 func init() {
 	sysVars = make(map[string]*SysVar)
