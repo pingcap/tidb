@@ -279,5 +279,11 @@
       "select (select c from t2 where t2.a = t1.a and t2.b = 1) from t1",
       "select (select c from t2 where t2.a = t1.a and (t2.b = 1 or t2.b = 2)) from t1"
     ]
+  },
+  {
+    "name": "TestIssue24095",
+    "cases": [
+      "select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;"
+    ]
   }
 ]
