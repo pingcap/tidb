@@ -502,30 +502,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	}
 	tps := e.getRetTpsByHandle()
 	idxID := e.getIndexPlanRootID()
-	results := make([]distsql.SelectResult, 0, 1)
-	for _, kvRange := range kvRanges {
-		var builder distsql.RequestBuilder
-		kvReq, err := builder.SetKeyRanges(kvRange).
-			SetDAGRequest(e.dagPB).
-			SetStartTS(e.startTS).
-			SetDesc(e.desc).
-			SetKeepOrder(e.keepOrder).
-			SetStreaming(e.indexStreaming).
-			SetFromSessionVars(e.ctx.GetSessionVars()).
-			SetMemTracker(tracker).
-			SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
-			Build()
-		if err != nil {
-			return err
-		}
-		// Since the first read only need handle information. So its returned col is only 1.
-		result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
-		if err != nil {
-			return err
-		}
-		results = append(results, result)
-	}
-
 	e.idxWorkerWg.Add(1)
 	go func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
@@ -540,16 +516,40 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			maxChunkSize:    e.maxChunkSize,
 			PushedLimit:     e.PushedLimit,
 		}
-		for i, result := range results {
+		var builder distsql.RequestBuilder
+		builder.SetDAGRequest(e.dagPB).
+			SetStartTS(e.startTS).
+			SetDesc(e.desc).
+			SetKeepOrder(e.keepOrder).
+			SetStreaming(e.indexStreaming).
+			SetFromSessionVars(e.ctx.GetSessionVars()).
+			SetMemTracker(tracker).
+			SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx))
+
+		for partTblIdx, kvRange := range kvRanges {
+			// init kvReq, result and worker for this partition
+			kvReq, err := builder.SetKeyRanges(kvRange).Build()
+			if err != nil {
+				worker.syncErr(err)
+				break
+			}
+			result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
+			if err != nil {
+				worker.syncErr(err)
+				break
+			}
 			worker.batchSize = initBatchSize
 			if worker.batchSize > worker.maxBatchSize {
 				worker.batchSize = worker.maxBatchSize
 			}
 			if e.partitionTableMode {
-				worker.partitionTable = e.prunedPartitions[i]
+				worker.partitionTable = e.prunedPartitions[partTblIdx]
 			}
+
+			// fetch data from this partition
 			ctx1, cancel := context.WithCancel(ctx)
-			if _, err := worker.fetchHandles(ctx1, result); err != nil {
+			_, fetchErr := worker.fetchHandles(ctx1, result)
+			if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
 				e.feedback.Invalidate()
 			}
 			cancel()
@@ -557,6 +557,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
 			}
 			e.ctx.StoreQueryFeedback(e.feedback)
+			if fetchErr != nil {
+				break // if any error occurs, exit after releasing all resources
+			}
 		}
 		close(workCh)
 		close(e.resultCh)
@@ -734,6 +737,14 @@ type indexWorker struct {
 	partitionTable table.PhysicalTable
 }
 
+func (w *indexWorker) syncErr(err error) {
+	doneCh := make(chan error, 1)
+	doneCh <- err
+	w.resultCh <- &lookupTableTask{
+		doneCh: doneCh,
+	}
+}
+
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
@@ -745,11 +756,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.String("stack", string(buf)))
 			err4Panic := errors.Errorf("%v", r)
-			doneCh := make(chan error, 1)
-			doneCh <- err4Panic
-			w.resultCh <- &lookupTableTask{
-				doneCh: doneCh,
-			}
+			w.syncErr(err4Panic)
 			if err != nil {
 				err = errors.Trace(err4Panic)
 			}
@@ -768,11 +775,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
 		finishFetch := time.Now()
 		if err != nil {
-			doneCh := make(chan error, 1)
-			doneCh <- err
-			w.resultCh <- &lookupTableTask{
-				doneCh: doneCh,
-			}
+			w.syncErr(err)
 			return count, err
 		}
 		count += scannedKeys
