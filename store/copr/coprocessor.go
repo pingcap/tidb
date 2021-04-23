@@ -912,8 +912,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *tikv.Backoffer, rpcCtx *t
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	resp.respTime = costTime
-	sd := &execdetails.ScanDetail{}
-	td := execdetails.TimeDetail{}
+	sd := &util.ScanDetail{}
+	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {

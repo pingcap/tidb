@@ -924,7 +924,7 @@ func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 			logutil.Logger(ctx).Info("2PC cleanup failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS),
 				zap.Bool("isPessimistic", c.isPessimistic), zap.Bool("isOnePC", c.isOnePC()))
 		} else {
-			logutil.Logger(ctx).Info("2PC clean up done",
+			logutil.Logger(ctx).Debug("2PC clean up done",
 				zap.Uint64("txnStartTS", c.startTS), zap.Bool("isPessimistic", c.isPessimistic),
 				zap.Bool("isOnePC", c.isOnePC()))
 		}
@@ -1116,13 +1116,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		logutil.SetTag(ctx, "commitTs", commitTS)
 	}
 
-	if c.sessionID > 0 {
-		failpoint.Inject("beforeSchemaCheck", func() {
-			c.ttlManager.close()
-			failpoint.Return()
-		})
-	}
-
 	if !c.isAsyncCommit() {
 		tryAmend := c.isPessimistic && c.sessionID > 0 && c.txn.schemaAmender != nil
 		if !tryAmend {
@@ -1146,7 +1139,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				if err != nil {
 					logutil.Logger(ctx).Info("schema check after amend failed, it means the schema version changed again",
 						zap.Uint64("startTS", c.startTS),
-						zap.Uint64("amendTS", c.commitTS),
+						zap.Uint64("amendTS", commitTS),
 						zap.Int64("amendedSchemaVersion", relatedSchemaChange.LatestInfoSchema.SchemaMetaVersion()),
 						zap.Uint64("newCommitTS", newCommitTS))
 					return errors.Trace(err)
@@ -1157,7 +1150,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 	atomic.StoreUint64(&c.commitTS, commitTS)
 
-	if c.store.oracle.IsExpired(c.startTS, tidbkv.MaxTxnTimeUse, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) {
+	if c.store.oracle.IsExpired(c.startTS, MaxTxnTimeUse, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) {
 		err = errors.Errorf("session %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.sessionID, c.startTS, c.commitTS)
 		return err
