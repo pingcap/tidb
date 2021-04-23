@@ -14,18 +14,31 @@
 package copr
 
 import (
+	"os"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type testCoprocessorCacheSuite struct {
 }
 
 var _ = Suite(&testCoprocessorCacheSuite{})
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	TestingT(t)
+}
 
 func (s *testCoprocessorSuite) TestBuildCacheKey(c *C) {
 	req := coprocessor.Request{
@@ -86,8 +99,8 @@ func (s *testCoprocessorSuite) TestDisable(c *C) {
 	c.Assert(v, Equals, false)
 
 	cache, err = newCoprCache(&config.CoprocessorCache{CapacityMB: 0.1, AdmissionMaxResultMB: 1})
-	c.Assert(err, NotNil)
-	c.Assert(cache, IsNil)
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
 
 	cache, err = newCoprCache(&config.CoprocessorCache{CapacityMB: 0.001})
 	c.Assert(err, NotNil)
@@ -198,7 +211,6 @@ func (s *testCoprocessorSuite) TestGetSet(c *C) {
 }
 
 func (s *testCoprocessorSuite) TestIssue24118(c *C) {
-	cache, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: -1})
-	c.Assert(err, IsNil)
-	c.Assert(cache, NotNil)
+	_, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: -1})
+	c.Assert(err.Error(), Equals, "Capacity should >= 0")
 }
