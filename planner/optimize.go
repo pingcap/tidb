@@ -14,6 +14,7 @@
 package planner
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"runtime/trace"
@@ -313,6 +314,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 }
 
 func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRecord, string) {
+	isInternal := ctx.GetSessionVars().InRestrictedSQL
 	// When the domain is initializing, the bind will be nil.
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, ""
@@ -322,10 +324,42 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 		return nil, ""
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	var buf bytes.Buffer
+	if !isInternal {
+		allSessionRecord := sessionHandle.GetAllBindRecord()
+		buf.WriteString("normalizedSQL: ")
+		buf.WriteString(normalizedSQL)
+		buf.WriteString(" Session Bind Record: ")
+		for _, r := range allSessionRecord {
+			buf.WriteString("[OriginalSQL: ")
+			buf.WriteString(r.OriginalSQL)
+			buf.WriteString(" DB: ")
+			buf.WriteString(r.Db)
+			buf.WriteString(" Binds: ")
+			for _, b := range r.Bindings {
+				buf.WriteString(" [BindSQL: ")
+				buf.WriteString(b.BindSQL)
+				buf.WriteString(" Status: ")
+				buf.WriteString(b.Status)
+				buf.WriteString(" Charset: ")
+				buf.WriteString(b.Charset)
+				buf.WriteString(" Collation: ")
+				buf.WriteString(b.Collation)
+				buf.WriteString("]")
+			}
+			buf.WriteString("]")
+		}
+	}
 	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, "")
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
+			if !isInternal {
+				buf.WriteString(" Find session bind successfully")
+			}
 			return bindRecord, metrics.ScopeSession
+		}
+		if !isInternal {
+			buf.WriteString(" Failed to find session binding")
 		}
 		return nil, ""
 	}
@@ -333,7 +367,38 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if globalHandle == nil {
 		return nil, ""
 	}
+	if !isInternal {
+		allGlobalRecord := globalHandle.GetAllBindRecord()
+		buf.WriteString(" Global Bind Record: ")
+		for _, r := range allGlobalRecord {
+			buf.WriteString(" [OriginalSQL: ")
+			buf.WriteString(r.OriginalSQL)
+			buf.WriteString(" DB: ")
+			buf.WriteString(r.Db)
+			buf.WriteString(" Binds: ")
+			for _, b := range r.Bindings {
+				buf.WriteString(" [BindSQL: ")
+				buf.WriteString(b.BindSQL)
+				buf.WriteString(" Status: ")
+				buf.WriteString(b.Status)
+				buf.WriteString(" Charset: ")
+				buf.WriteString(b.Charset)
+				buf.WriteString(" Collation: ")
+				buf.WriteString(b.Collation)
+				buf.WriteString("]")
+			}
+			buf.WriteString("]")
+		}
+	}
 	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
+	if !isInternal {
+		if bindRecord != nil && bindRecord.HasUsingBinding() {
+			buf.WriteString(" Find global bind successfully")
+		} else {
+			buf.WriteString(" Failed to find global binding")
+		}
+		logutil.BgLogger().Info(buf.String())
+	}
 	return bindRecord, metrics.ScopeGlobal
 }
 
