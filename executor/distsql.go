@@ -527,6 +527,13 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx))
 
 		for partTblIdx, kvRange := range kvRanges {
+			// check if executor is closed
+			select {
+			case <-e.finished:
+				break
+			default:
+			}
+
 			// init kvReq, result and worker for this partition
 			kvReq, err := builder.SetKeyRanges(kvRange).Build()
 			if err != nil {
