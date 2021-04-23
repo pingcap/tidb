@@ -15,6 +15,7 @@ package copr
 
 import (
 	"context"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
@@ -24,6 +25,11 @@ import (
 )
 
 type testCoprocessorSuite struct {
+}
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
 }
 
 var _ = Suite(&testCoprocessorSuite{})
