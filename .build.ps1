@@ -224,7 +224,7 @@ task Build -Inputs ($sources + 'go.mod', 'go.sum') -Outputs $Target {
     
     $build += @(
         '-ldflags', "`"$flags`"",
-        '-o', $Target, 'tidb-server/main.go'
+        '-o', $Target, 'tidb-server/main/main.go'
     )
 
     $Task.Data = $env:GOOS
