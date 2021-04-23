@@ -3100,6 +3100,12 @@ func (s *testIntegrationSuite) TestIssue22850(c *C) {
 	tk.MustQuery("SELECT @v:=(SELECT 1 FROM t1 t2 LEFT JOIN t1 ON t1.a GROUP BY t1.a) FROM t1").Check(testkit.Rows()) // work fine
 }
 
+func (s *testIntegrationSuite) TestGetVarOnDifferentType(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @a = 1")
+	tk.MustQuery("select @a := @a + 1.000").Check(testkit.Rows("2.000"))
+}
+
 // #22949: test HexLiteral Used in GetVar expr
 func (s *testIntegrationSuite) TestGetVarExprWithHexLiteral(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
