@@ -3172,6 +3172,10 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 
 	tmp, _ := b.is.TableByID(ts.Table.ID)
 	partitions, err := partitionPruning(b.ctx, tmp.(table.PartitionedTable), v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	ret.partitionTableMode, ret.prunedPartitions = true, partitions
 	return ret
 }
