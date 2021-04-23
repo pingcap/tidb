@@ -21,12 +21,11 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/tidb/util/logutil"
-
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type coprCache struct {
@@ -64,7 +63,7 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 	}
 	if config.CapacityMB < 0 {
 		logutil.BgLogger().Info("Capacity should >= 0")
-		return nil, nil
+		return nil, errors.New("Capacity should >= 0")
 	}
 	capacityInBytes := int64(config.CapacityMB * 1024.0 * 1024.0)
 	if capacityInBytes == 0 {
