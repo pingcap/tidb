@@ -47,6 +47,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -552,19 +553,15 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	}
 	e.ctx.GetSessionVars().CurrentDBChanged = dbname.O != e.ctx.GetSessionVars().CurrentDB
 	e.ctx.GetSessionVars().CurrentDB = dbname.O
-	// character_set_database is the character set used by the default database.
-	// The server sets this variable whenever the default database changes.
-	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
 	sessionVars := e.ctx.GetSessionVars()
-	err := sessionVars.SetSystemVar(variable.CharsetDatabase, dbinfo.Charset)
-	if err != nil {
-		return err
-	}
 	dbCollate := dbinfo.Collate
 	if dbCollate == "" {
-		// Since we have checked the charset, the dbCollate here shouldn't be "".
 		dbCollate = getDefaultCollate(dbinfo.Charset)
 	}
+	// If new collations are enabled, switch to the default
+	// collation if this one is not supported.
+	// The SetSystemVar will also update the CharsetDatabase
+	dbCollate = collate.SubstituteMissingCollationToDefault(dbCollate)
 	return sessionVars.SetSystemVar(variable.CollationDatabase, dbCollate)
 }
 
