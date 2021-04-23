@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tidb-server/internal"
 )
 
 var isCoverageServer = "0"
@@ -27,7 +28,7 @@ var isCoverageServer = "0"
 // and it is used to generate coverage_server.
 func TestRunMain(t *testing.T) {
 	if isCoverageServer == "1" {
-		main()
+		internal.Main()
 	}
 }
 
@@ -46,7 +47,7 @@ func (t *testMainSuite) TestSetGlobalVars(c *C) {
 		conf.IsolationRead.Engines = []string{"tikv", "tidb"}
 		conf.MemQuotaQuery = 9999999
 	})
-	setGlobalVars()
+	internal.SetGlobalVars()
 
 	c.Assert(variable.GetSysVar(variable.TiDBIsolationReadEngines).Value, Equals, "tikv, tidb")
 	c.Assert(variable.GetSysVar(variable.TIDBMemQuotaQuery).Value, Equals, "9999999")

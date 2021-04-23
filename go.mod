@@ -37,6 +37,7 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
+	github.com/oraluben/go-fuzz v0.0.0-00010101000000-000000000000
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19
 	github.com/pingcap/br v5.0.0-nightly.0.20210419090151-03762465b589+incompatible
@@ -89,3 +90,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/oraluben/go-fuzz => ../go-fuzz

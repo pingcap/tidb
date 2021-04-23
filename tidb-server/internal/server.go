@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package internal
 
 import (
 	"context"
@@ -150,7 +150,7 @@ var (
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
 )
 
-func main() {
+func Main() {
 	help := flag.Bool("help", false, "show the usage")
 	flag.Parse()
 	if *help {
@@ -170,7 +170,7 @@ func main() {
 		terror.MustNil(err)
 		checkTempStorageQuota()
 	}
-	setGlobalVars()
+	SetGlobalVars()
 	setCPUAffinity()
 	setupLog()
 	setHeapProfileTracker()
@@ -486,7 +486,7 @@ func overrideConfig(cfg *config.Config) {
 	}
 }
 
-func setGlobalVars() {
+func SetGlobalVars() {
 	cfg := config.GetGlobalConfig()
 
 	// Disable automaxprocs log
