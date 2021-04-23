@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
@@ -122,6 +123,20 @@ func (*testSessionSuite) TestSession(c *C) {
 	c.Assert(ss.WarningCount(), Equals, uint16(0))
 }
 
+func (*testSessionSuite) TestAllocMPPID(c *C) {
+	ctx := mock.NewContext()
+
+	seVar := ctx.GetSessionVars()
+	c.Assert(seVar, NotNil)
+
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(1))
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(2))
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(3))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(1))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(2))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(3))
+}
+
 func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	ctx := mock.NewContext()
 
@@ -138,11 +153,11 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	execDetail := execdetails.ExecDetails{
 		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
-		ScanDetail: &execdetails.ScanDetail{
+		ScanDetail: &util.ScanDetail{
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
 		},
-		TimeDetail: execdetails.TimeDetail{
+		TimeDetail: util.TimeDetail{
 			ProcessTime: time.Second * time.Duration(2),
 			WaitTime:    time.Minute,
 		},

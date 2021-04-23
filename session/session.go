@@ -68,6 +68,7 @@ import (
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -76,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -507,6 +509,16 @@ func (s *session) doCommit(ctx context.Context) error {
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 }
 
+// errIsNoisy is used to filter DUPLCATE KEY errors.
+// These can observed by users in INFORMATION_SCHEMA.CLIENT_ERRORS_SUMMARY_GLOBAL instead.
+//
+// The rationale for filtering these errors is because they are "client generated errors". i.e.
+// of the errors defined in kv/error.go, these look to be clearly related to a client-inflicted issue,
+// and the server is only responsible for handling the error correctly. It does not need to log.
+func errIsNoisy(err error) bool {
+	return kv.ErrKeyExists.Equal(err)
+}
+
 func (s *session) doCommitWithRetry(ctx context.Context) error {
 	defer func() {
 		s.GetSessionVars().SetTxnIsolationLevelOneShotStateForNextTxn()
@@ -544,7 +556,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
-		} else {
+		} else if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("can not retry txn",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
@@ -560,9 +572,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	s.recordOnTransactionExecution(err, counter, duration)
 
 	if err != nil {
-		logutil.Logger(ctx).Warn("commit failed",
-			zap.String("finished txn", s.txn.GoString()),
-			zap.Error(err))
+		if !errIsNoisy(err) {
+			logutil.Logger(ctx).Warn("commit failed",
+				zap.String("finished txn", s.txn.GoString()),
+				zap.Error(err))
+		}
 		return err
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
@@ -583,8 +597,8 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	var commitDetail *execdetails.CommitDetails
-	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	var commitDetail *tikvutil.CommitDetails
+	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
@@ -678,7 +692,7 @@ func (s *session) isTxnRetryableError(err error) bool {
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	var err error
 	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
-		err = tikv.ErrLockExpire
+		err = tikvstore.ErrLockExpire
 	} else {
 		return nil
 	}
@@ -964,15 +978,13 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if name == variable.TiDBSlowLogMasking {
 		name = variable.TiDBRedactLog
 	}
-	if name == variable.SQLModeVar {
-		value = mysql.FormatSQLModeStr(value)
-		if _, err := mysql.GetSQLMode(value); err != nil {
-			return err
-		}
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	var sVal string
 	var err error
-	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
+	sVal, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal)
 	if err != nil {
 		return err
 	}
@@ -1049,7 +1061,7 @@ func (s *session) getTiDBTableValue(name, val string) (string, error) {
 	// Run validation on the tblValue. This will return an error if it can't be validated,
 	// but will also make it more consistent: disTribuTeD -> DISTRIBUTED etc
 	tblValue = trueFalseToOnOff(tblValue)
-	validatedVal, err := variable.ValidateSetSystemVar(s.sessionVars, name, tblValue, variable.ScopeGlobal)
+	validatedVal, err := variable.GetSysVar(name).Validate(s.sessionVars, tblValue, variable.ScopeGlobal)
 	if err != nil {
 		logutil.Logger(context.Background()).Warn("restoring sysvar value since validating mysql.tidb value failed",
 			zap.Error(err),
@@ -1355,6 +1367,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	metrics.SessionRestrictedSQLCounter.Inc()
 
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
 	rs, err := se.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		se.sessionVars.StmtCtx.AppendError(err)
@@ -1436,6 +1449,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				zap.String("session", s.String()))
 		}
 		return nil, err
+	}
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
 	}
 	return recordSet, nil
 }
@@ -1610,9 +1633,18 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 
 func (s *session) preparedStmtExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
+	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
+	}
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
 	logQuery(st.OriginText(), s.sessionVars)
@@ -1659,6 +1691,17 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
 	logQuery(stmt.GetTextToLog(), s.sessionVars)
+
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
+	}
 
 	// run ExecStmt
 	var resultSet sqlexec.RecordSet
@@ -2029,7 +2072,6 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
-		s.GetSessionVars().IntPrimaryKeyDefaultAsClustered = true
 	}
 	return s, err
 }
@@ -2063,7 +2105,9 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
-		s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		if GetIndexUsageSyncLease() > 0 {
+			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		}
 	}
 
 	return s, nil
@@ -2236,7 +2280,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	dom.TelemetryLoop(se4)
+	dom.TelemetryReportLoop(se4)
+	dom.TelemetryRotateSubWindowLoop(se4)
 
 	se5, err := createSession(store)
 	if err != nil {
@@ -2516,6 +2561,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableExchangePartition,
 	variable.TiDBAllowFallbackToTiKV,
+	variable.TiDBEnableDynamicPrivileges,
+	variable.CTEMaxRecursionDepth,
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
@@ -2539,7 +2586,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 			vars = append(vars, variable.PluginVarNames...)
 		}
 
-		stmt, err := s.ParseWithParams(context.TODO(), "select HIGH_PRIORITY * from mysql.global_variables where variable_name in (%?)", vars)
+		stmt, err := s.ParseWithParams(context.TODO(), "select HIGH_PRIORITY * from mysql.global_variables where variable_name in (%?) order by VARIABLE_NAME", vars)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -2557,7 +2604,9 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	for _, row := range rows {
 		varName := row.GetString(0)
 		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
-		if _, ok := vars.GetSystemVar(varName); !ok {
+		// `collation_server` is related to `character_set_server`, set `character_set_server` will also set `collation_server`.
+		// We have to make sure we set the `collation_server` with right value.
+		if _, ok := vars.GetSystemVar(varName); !ok || varName == variable.CollationServer {
 			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
 			if err != nil {
 				return err
@@ -2620,8 +2669,8 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
 func (s *session) RefreshTxnCtx(ctx context.Context) error {
-	var commitDetail *execdetails.CommitDetails
-	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	var commitDetail *tikvutil.CommitDetails
+	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommit(ctx)
 	if commitDetail != nil {
 		s.GetSessionVars().StmtCtx.MergeExecDetails(nil, commitDetail)
@@ -2855,4 +2904,9 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 
 func (s *session) SetPort(port string) {
 	s.sessionVars.Port = port
+}
+
+// GetTxnWriteThroughputSLI implements the Context interface.
+func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return &s.txn.writeSLI
 }

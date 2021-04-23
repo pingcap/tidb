@@ -16,7 +16,6 @@ package kv
 import (
 	"context"
 	"crypto/tls"
-	"sync"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -37,10 +35,6 @@ import (
 // Append UnCommitIndexKVFlag to the value indicate the index key/value is no need to commit.
 const UnCommitIndexKVFlag byte = '1'
 
-// MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
-// We use it to abort the transaction to guarantee GC worker will not influence it.
-const MaxTxnTimeUse = 24 * 60 * 60 * 1000
-
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
@@ -48,6 +42,9 @@ var (
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
+
+// FlagsOp  describes KeyFlags modify operation. TODO:remove it when br is ready
+type FlagsOp = tikvstore.FlagsOp
 
 // Getter is the interface for the Get method.
 type Getter interface {
@@ -97,15 +94,6 @@ type RetrieverMutator interface {
 	Mutator
 }
 
-// MemBufferIterator is an Iterator with KeyFlags related functions.
-type MemBufferIterator interface {
-	Iterator
-	HasValue() bool
-	Flags() KeyFlags
-	UpdateFlags(...FlagsOp)
-	Handle() MemKeyHandle
-}
-
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
 type MemBuffer interface {
 	RetrieverMutator
@@ -119,26 +107,11 @@ type MemBuffer interface {
 	RUnlock()
 
 	// GetFlags returns the latest flags associated with key.
-	GetFlags(Key) (KeyFlags, error)
-	// IterWithFlags returns a MemBufferIterator.
-	IterWithFlags(k Key, upperBound Key) MemBufferIterator
-	// IterReverseWithFlags returns a reversed MemBufferIterator.
-	IterReverseWithFlags(k Key) MemBufferIterator
+	GetFlags(Key) (tikvstore.KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
-	SetWithFlags(Key, []byte, ...FlagsOp) error
-	// UpdateFlags update the flags associated with key.
-	UpdateFlags(Key, ...FlagsOp)
+	SetWithFlags(Key, []byte, ...tikvstore.FlagsOp) error
 	// DeleteWithFlags delete key with the given KeyFlags
-	DeleteWithFlags(Key, ...FlagsOp) error
-
-	GetKeyByHandle(MemKeyHandle) []byte
-	GetValueByHandle(MemKeyHandle) ([]byte, bool)
-
-	// Reset reset the MemBuffer to initial states.
-	Reset()
-	// DiscardValues releases the memory used by all values.
-	// NOTE: any operation need value will panic after this function.
-	DiscardValues()
+	DeleteWithFlags(Key, ...tikvstore.FlagsOp) error
 
 	// Staging create a new staging buffer inside the MemBuffer.
 	// Subsequent writes will be temporarily stored in this new staging buffer.
@@ -150,22 +123,19 @@ type MemBuffer interface {
 	// If the changes are not published by `Release`, they will be discarded.
 	Cleanup(StagingHandle)
 	// InspectStage used to inspect the value updates in the given stage.
-	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
+	InspectStage(StagingHandle, func(Key, tikvstore.KeyFlags, []byte))
 
-	// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
-	SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error)
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 	SnapshotGetter() Getter
 	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
 	SnapshotIter(k, upperbound Key) Iterator
 
-	// Size returns sum of keys and values length.
-	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
-	// Dirty returns whether the root staging buffer is updated.
-	Dirty() bool
 }
+
+// LockCtx contains information for LockKeys method.
+type LockCtx = tikvstore.LockCtx
 
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
@@ -220,28 +190,6 @@ type Transaction interface {
 	// GetIndexName returns the cached index name.
 	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
 	GetTableInfo(id int64) *model.TableInfo
-}
-
-// LockCtx contains information for LockKeys method.
-type LockCtx struct {
-	Killed                *uint32
-	ForUpdateTS           uint64
-	LockWaitTime          int64
-	WaitStartTime         time.Time
-	PessimisticLockWaited *int32
-	LockKeysDuration      *int64
-	LockKeysCount         *int32
-	ReturnValues          bool
-	Values                map[string]ReturnedValue
-	ValuesLock            sync.Mutex
-	LockExpired           *uint32
-	Stats                 *execdetails.LockKeysDetails
-}
-
-// ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
-type ReturnedValue struct {
-	Value         []byte
-	AlreadyLocked bool
 }
 
 // Client is used to send request to KV layer.

@@ -202,6 +202,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
 			handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals)
 			if err != nil {
+				if kv.ErrNotExist.Equal(err) {
+					return nil
+				}
 				return err
 			}
 			e.handle, err = kv.NewCommonHandle(handleBytes)
@@ -320,7 +323,7 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 		seVars := e.ctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, e.lockWaitTime)
 		lockCtx.ReturnValues = true
-		lockCtx.Values = map[string]kv.ReturnedValue{}
+		lockCtx.Values = map[string]tikvstore.ReturnedValue{}
 		err := doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
 			return err
@@ -472,6 +475,7 @@ func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tbl
 func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo, handle kv.Handle,
 	rowVal []byte, chk *chunk.Chunk) error {
 	pkCols := tables.TryGetCommonPkColumnIds(tblInfo)
+	prefixColIDs := tables.PrimaryPrefixColumnIDs(tblInfo)
 	colID2CutPos := make(map[int64]int, schema.Len())
 	for _, col := range schema.Columns {
 		if _, ok := colID2CutPos[col.ID]; !ok {
@@ -492,7 +496,7 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 			chk.AppendNull(i)
 			continue
 		}
-		ok, err := tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder, pkCols)
+		ok, err := tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder, pkCols, prefixColIDs)
 		if err != nil {
 			return err
 		}
@@ -517,7 +521,8 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
+func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk,
+	decoder *codec.Decoder, pkCols []int64, prefixColIDs []int64) (bool, error) {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
@@ -529,7 +534,7 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {
 		for i, hid := range pkCols {
-			if col.ID == hid {
+			if col.ID == hid && notPKPrefixCol(hid, prefixColIDs) {
 				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)
 				if err != nil {
 					return false, errors.Trace(err)
@@ -539,6 +544,15 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 		}
 	}
 	return false, nil
+}
+
+func notPKPrefixCol(colID int64, prefixColIDs []int64) bool {
+	for _, pCol := range prefixColIDs {
+		if pCol == colID {
+			return false
+		}
+	}
+	return true
 }
 
 func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
@@ -566,7 +580,7 @@ func (e *runtimeStatsWithSnapshot) Clone() execdetails.RuntimeStats {
 	newRs := &runtimeStatsWithSnapshot{}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+		newRs.SnapshotRuntimeStats = snapshotStats
 	}
 	return newRs
 }
@@ -580,7 +594,7 @@ func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
 	if tmp.SnapshotRuntimeStats != nil {
 		if e.SnapshotRuntimeStats == nil {
 			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			e.SnapshotRuntimeStats = snapshotStats
 			return
 		}
 		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)

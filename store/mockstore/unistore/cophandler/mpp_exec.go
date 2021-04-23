@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -108,11 +108,10 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 type exchSenderExec struct {
 	baseMPPExec
 
-	exchangeSender *tipb.ExchangeSender
-	tunnels        []*ExchangerTunnel
-	outputOffsets  []uint32
-	exchangeTp     tipb.ExchangeType
-	hashKeyOffset  int
+	tunnels       []*ExchangerTunnel
+	outputOffsets []uint32
+	exchangeTp    tipb.ExchangeType
+	hashKeyOffset int
 }
 
 func (e *exchSenderExec) open() error {

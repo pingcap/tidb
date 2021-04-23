@@ -38,9 +38,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -138,7 +138,7 @@ func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
 	if err != nil {
 		// Unistore's gc is based on compaction filter.
 		// So skip the error check if err == nil.
-		c.Assert(err, Equals, kv.ErrNotExist)
+		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 	}
 }
 
