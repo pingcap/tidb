@@ -160,24 +160,24 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 			// desc select * from t2 where t2.a between 10 and 15;
 			// determine whether the partition key is int
 			if pe.(*expression.Column).RetType.EvalType() == types.ETInt {
-				num_partitions := len(pi.Definitions)
+				numPartitions := len(pi.Definitions)
 
-				pos_high, highIsNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+				posHigh, highIsNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
 				if err != nil {
 					return nil, nil, err
 				}
 
-				pos_low, lowIsNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
+				posLow, lowIsNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
 				if err != nil {
 					return nil, nil, err
 				}
 
 				// to do: consider whether the range is closed or open
-				range_scalar := pos_high - pos_low
+				rangeScalar := posHigh - posLow
 
 				// if range is less than the number of partitions, there will be unsed partitions we can prune out.
-				if range_scalar < int64(num_partitions) && !highIsNull && !lowIsNull {
-					for i := pos_low; i <= pos_high; i++ {
+				if rangeScalar < int64(numPartitions) && !highIsNull && !lowIsNull {
+					for i := posLow; i <= posHigh; i++ {
 						idx := math.Abs(i % int64(pi.Num))
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
