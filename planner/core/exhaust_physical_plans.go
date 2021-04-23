@@ -2546,32 +2546,32 @@ func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 //	if !prop.IsEmpty() {
 //		return nil, true, nil
 //	}
-//	if p.Cte.seedPartLogicalPlan != nil {
+//	if p.CTE.seedPartLogicalPlan != nil {
 //		// Already built it.
-//		return []PhysicalPlan{PhysicalCTE{Cte: p.Cte}.Init(p.ctx, p.stats)}, true, nil
+//		return []PhysicalPlan{PhysicalCTE{CTE: p.CTE}.Init(p.ctx, p.stats)}, true, nil
 //	}
-//	sp, _, err := DoOptimize(context.TODO(), p.ctx, p.Cte.optFlag, p.Cte.seedPartLogicalPlan)
+//	sp, _, err := DoOptimize(context.TODO(), p.ctx, p.CTE.optFlag, p.CTE.seedPartLogicalPlan)
 //	if err != nil {
 //		return nil, false, err
 //	}
-//	if p.Cte.recursivePartLogicalPlan != nil {
-//		rp, _, err := DoOptimize(context.TODO(), p.ctx, p.Cte.optFlag, p.Cte.recursivePartLogicalPlan)
+//	if p.CTE.recursivePartLogicalPlan != nil {
+//		rp, _, err := DoOptimize(context.TODO(), p.ctx, p.CTE.optFlag, p.CTE.recursivePartLogicalPlan)
 //		if err != nil {
 //			return nil, false, err
 //		}
-//		p.Cte.recursiveTask = rp
+//		p.CTE.recursiveTask = rp
 //	}
 //
 //	t := &rootTask{p: sp, cst: sp.statsInfo().RowCount}
-//	p.Cte.cteTask = sp
-//	if p.Cte.recursivePartLogicalPlan != nil {
-//		rp, _, err := DoOptimize(context.TODO(), p.ctx, p.Cte.optFlag, p.Cte.recursivePartLogicalPlan)
+//	p.CTE.cteTask = sp
+//	if p.CTE.recursivePartLogicalPlan != nil {
+//		rp, _, err := DoOptimize(context.TODO(), p.ctx, p.CTE.optFlag, p.CTE.recursivePartLogicalPlan)
 //		if err != nil {
 //			return nil, false, err
 //		}
-//		p.Cte.recursiveTask = rp
+//		p.CTE.recursiveTask = rp
 //	}
-//	return []PhysicalPlan{PhysicalCTE{Cte: p.Cte}.Init(p.ctx, p.stats)}, true, nil
+//	return []PhysicalPlan{PhysicalCTE{CTE: p.CTE}.Init(p.ctx, p.stats)}, true, nil
 //}
 
 func (p *LogicalCTETable) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {

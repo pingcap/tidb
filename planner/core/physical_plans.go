@@ -1368,7 +1368,7 @@ type PhysicalCTE struct {
 
 	SeedPlan  PhysicalPlan
 	RecurPlan PhysicalPlan
-	Cte       *CTEClass
+	CTE       *CTEClass
 }
 
 // PhysicalCTETable is for CTE table.

@@ -1908,7 +1908,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 		}
 	}
 
-	pcte := PhysicalCTE{SeedPlan: sp, RecurPlan: rp, Cte: p.cte}.Init(p.ctx, p.stats)
+	pcte := PhysicalCTE{SeedPlan: sp, RecurPlan: rp, CTE: p.cte}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
 	t = &rootTask{pcte, sp.statsInfo().RowCount}
 	p.cte.cteTask = t

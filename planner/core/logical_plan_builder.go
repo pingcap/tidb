@@ -1357,11 +1357,11 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 	//if setOpr.With != nil {
 	//	// Check CTE name must be unique.
 	//	nameMap := make(map[string]struct{})
-	//	for _, Cte := range setOpr.With.CTEs {
-	//		if _, ok := nameMap[Cte.Name.L]; ok {
+	//	for _, CTE := range setOpr.With.CTEs {
+	//		if _, ok := nameMap[CTE.Name.L]; ok {
 	//			return nil, errors.New("Not unique table/alias")
 	//		}
-	//		nameMap[Cte.Name.L] = struct{}{}
+	//		nameMap[CTE.Name.L] = struct{}{}
 	//	}
 	//	l := len(setOpr.With.CTEs)
 	//	defer func() {
@@ -3615,7 +3615,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			if cte.def.Name.L == tn.Name.L {
 				if cte.isBuilding {
 					if cte.nonRecursive {
-						// Can't see this Cte, try outer definition.
+						// Can't see this CTE, try outer definition.
 						continue
 					}
 
@@ -3629,7 +3629,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					p.SetOutputNames(cte.seedLP.OutputNames())
 					return p, nil
 				}
-				p := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, idForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
+				p := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IdForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(cte.seedLP.Schema())
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				return p, nil

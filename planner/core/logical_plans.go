@@ -1176,7 +1176,7 @@ type CTEClass struct {
 	seedPartLogicalPlan      LogicalPlan
 	recursivePartLogicalPlan LogicalPlan
 	cteTask                  task
-	idForStorage             int
+	IdForStorage             int
 	optFlag                  uint64
 }
 
