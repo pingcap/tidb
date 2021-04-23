@@ -247,6 +247,13 @@ func (n *Join) Accept(v Visitor) (Node, bool) {
 		}
 		n.On = node.(*OnCondition)
 	}
+	for i, col := range n.Using {
+		node, ok = col.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Using[i] = node.(*ColumnName)
+	}
 	return v.Leave(n)
 }
 
