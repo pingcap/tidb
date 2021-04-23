@@ -22,4 +22,6 @@ var (
 	ErrInvalidConstraintFormat = errors.New("label constraint should be in format '{+|-}key=value'")
 	// ErrUnsupportedConstraint is from constraint.go.
 	ErrUnsupportedConstraint = errors.New("unsupported label constraint")
+	// ErrConflictingConstraints is from constraints.go.
+	ErrConflictingConstraints = errors.New("conflicting label constraints")
 )
