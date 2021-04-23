@@ -19,6 +19,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -30,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 var _ = SerialSuites(&testEvaluatorSerialSuites{})
@@ -74,6 +77,16 @@ type testEvaluatorSerialSuites struct {
 
 func (s *testEvaluatorSuiteBase) SetUpSuite(c *C) {
 	s.Parser = parser.New()
+	fpname := "github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"
+	err := failpoint.Enable(fpname, "return(true)")
+	if err != nil {
+		panic(errors.Errorf("enable global failpoint `%s` failed: %v", fpname, err))
+	}
+	// Some test depends on the values of timeutil.SystemLocation()
+	// If we don't SetSystemTZ() here, the value would change unpredictable.
+	// Affectd by the order whether a testsuite runs before or after integration test.
+	// Note, SetSystemTZ() is a sync.Once operation.
+	timeutil.SetSystemTZ("system")
 }
 
 func (s *testEvaluatorSuiteBase) TearDownSuite(c *C) {

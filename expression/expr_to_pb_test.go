@@ -20,7 +20,6 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -32,14 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
-
-func init() {
-	fpname := "github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"
-	err := failpoint.Enable(fpname, "return(true)")
-	if err != nil {
-		panic(errors.Errorf("enable global failpoint `%s` failed: %v", fpname, err))
-	}
-}
 
 type dataGen4Expr2PbTest struct {
 }
