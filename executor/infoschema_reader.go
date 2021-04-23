@@ -1884,7 +1884,7 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 			continue
 		}
 		for _, rule := range bundle.Rules {
-			constraint, err := placement.RestoreLabelConstraintList(rule.LabelConstraints)
+			constraint, err := rule.LabelConstraints.Restore()
 			if err != nil {
 				return errors.Wrapf(err, "Restore rule %s in bundle %s failed", rule.ID, bundle.ID)
 			}
