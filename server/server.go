@@ -37,6 +37,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+
 	// For pprof
 	_ "net/http/pprof"
 	"os"
@@ -561,9 +562,14 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 func (s *Server) ShowTxnList() [][]types.Datum {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := make([][]types.Datum, len(s.clients))
+	rs := [][]types.Datum{}
 	for _, client := range s.clients {
-		rs = append(rs, client.ctx.Session.TxnInfo())
+		if client.ctx.Session != nil {
+			info := client.ctx.Session.TxnInfo()
+			if info != nil {
+				rs = append(rs, info)
+			}
+		}
 	}
 	return rs
 }

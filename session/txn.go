@@ -72,8 +72,6 @@ type TxnState struct {
 	stagingHandle kv.StagingHandle
 	mutations     map[int64]*binlog.TableMutation
 	writeSLI      sli.TxnWriteThroughputSLI
-	// human readable startTime
-	startTime time.Time
 	// todo: Shall we parse startTs to get it?
 	// Pros: Save memory, some how is the "global" timestamp in a cluster(so for the CLUSTER_TIDB_TRX, this field would be more useful)
 	// Cons: May different with result of "NOW()"
@@ -188,7 +186,7 @@ func (txn *TxnState) GoString() string {
 }
 
 func (txn *TxnState) changeInvalidToValid(kvTxn kv.Transaction) {
-	txn.startTime = time.Now()
+	txn.humanReadableStartTime = time.Now()
 	txn.Transaction = kvTxn
 	txn.initStmtBuf()
 	txn.txnFuture = nil
@@ -213,7 +211,7 @@ func (txn *TxnState) changePendingToValid(ctx context.Context) error {
 		txn.Transaction = nil
 		return err
 	}
-	txn.startTime = time.Now()
+	txn.humanReadableStartTime = time.Now()
 	txn.Transaction = t
 	txn.initStmtBuf()
 	return nil
@@ -361,6 +359,10 @@ func keyNeedToLock(k, v []byte, flags tikvstore.KeyFlags) bool {
 
 // Datum dump the TxnState to Datum for displaying in `TIDB_TRX`
 func (txn *TxnState) Datum() []types.Datum {
+	logutil.BgLogger().Info("txnState.Datum", zap.String("txn", txn.GoString()))
+	if txn.pending() {
+		return nil
+	}
 	var blockStartTime interface{}
 	if txn.blockStartTime == nil {
 		blockStartTime = nil

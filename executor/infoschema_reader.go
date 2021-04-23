@@ -52,14 +52,12 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.etcd.io/etcd/clientv3"
-	"go.uber.org/zap"
 )
 
 type memtableRetriever struct {
@@ -1993,7 +1991,6 @@ func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) error {
 	if sm == nil {
 		return nil
 	}
-	logutil.BgLogger().Info("----------", zap.Any("---", sm))
 	e.rows = sm.ShowTxnList()
 	return nil
 }
