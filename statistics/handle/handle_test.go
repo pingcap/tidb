@@ -2734,3 +2734,38 @@ func (s *testSerialStatsSuite) TestCorrelationWithDefinedCollate(c *C) {
 	c.Assert(rows[0][3], Equals, "[b,c]")
 	c.Assert(rows[0][5], Equals, "-1.000000")
 }
+
+func (s *testSerialStatsSuite) TestFastAnalyzeColumnHistWithNullValue(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int)")
+	testKit.MustExec("insert into t values (1), (2), (3), (4), (NULL)")
+	testKit.MustExec("set @@tidb_enable_fast_analyze=1")
+	defer testKit.MustExec("set @@tidb_enable_fast_analyze=0")
+	testKit.MustExec("analyze table t with 0 topn, 2 buckets")
+	// If NULL is in hist, the min(lower_bound) will be "".
+	testKit.MustQuery("select min(lower_bound) from mysql.stats_buckets").Check(testkit.Rows("1"))
+}
+
+func (s *testStatsSuite) TestStatsCacheUpdateSkip(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	do := s.do
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("insert into t values(1, 2)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	statsTbl1 := h.GetTableStats(tableInfo)
+	c.Assert(statsTbl1.Pseudo, IsFalse)
+	h.Update(is)
+	statsTbl2 := h.GetTableStats(tableInfo)
+	c.Assert(statsTbl1, Equals, statsTbl2)
+}
