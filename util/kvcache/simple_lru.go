@@ -87,7 +87,8 @@ func (l *SimpleLRUCache) Get(key Key) (value Value, ok bool) {
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
-func (l *SimpleLRUCache) Put(key Key, value Value) {
+// Evicted key value pair will be processed by func optKvFunc
+func (l *SimpleLRUCache) Put(key Key, value Value, optKvFunc ...func(k Key, v Value)) {
 	hash := string(key.Hash())
 	element, exists := l.elements[hash]
 	if exists {
@@ -126,6 +127,12 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		if lru == nil {
 			break
 		}
+
+		// append evicted record to optDroppedKvs list
+		for _, fn := range optKvFunc {
+			fn(lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value)
+		}
+
 		l.cache.Remove(lru)
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
@@ -137,6 +144,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 			}
 		}
 	}
+
 }
 
 // Delete deletes the key-value pair from the LRU Cache.

@@ -63,11 +63,14 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
+	droppedKv := make(map[Key]Value)
 
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
-		lru.Put(keys[i], vals[i])
+		lru.Put(keys[i], vals[i], func(k Key, v Value){
+			droppedKv[k] = v
+		})
 	}
 	c.Assert(lru.size, Equals, lru.capacity)
 	c.Assert(lru.size, Equals, uint(3))
@@ -103,6 +106,11 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 		c.Assert(value, Equals, vals[i])
 
 		root = root.Next()
+	}
+
+	// test dropped key-value pair
+	for i := 0; i < len(droppedKv); i++ {
+		c.Assert(droppedKv[keys[i]], Equals, vals[i])
 	}
 	// test for end of double-linked list
 	c.Assert(root, IsNil)
