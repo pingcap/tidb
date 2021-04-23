@@ -556,7 +556,6 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	sessionVars := e.ctx.GetSessionVars()
 	dbCollate := dbinfo.Collate
 	if dbCollate == "" {
-		// Since we have checked the charset, the dbCollate here shouldn't be "".
 		dbCollate = getDefaultCollate(dbinfo.Charset)
 	}
 	// If new collations are enabled, switch to the default
