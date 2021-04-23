@@ -1,5 +1,6 @@
 #!groovy
 
+#test CI
 node {
     def TIDB_TEST_BRANCH = "master"
     def TIKV_BRANCH = "master"
