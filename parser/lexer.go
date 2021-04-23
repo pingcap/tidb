@@ -130,6 +130,21 @@ func (s *Scanner) AppendError(err error) {
 	s.errs = append(s.errs, err)
 }
 
+func (s *Scanner) getNextToken() int {
+	r := s.r
+	tok, pos, lit := s.scan()
+	if tok == identifier {
+		tok = handleIdent(&yySymType{})
+	}
+	if tok == identifier {
+		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
+			tok = tok1
+		}
+	}
+	s.r = r
+	return tok
+}
+
 // Lex returns a token and store the token value in v.
 // Scanner satisfies yyLexer interface.
 // 0 and invalid are special token id this function would return:
@@ -164,6 +179,14 @@ func (s *Scanner) Lex(v *yySymType) int {
 
 	if tok == not && s.sqlMode.HasHighNotPrecedenceMode() {
 		return not2
+	}
+	if tok == as && s.getNextToken() == of {
+		_, pos, lit = s.scan()
+		v.ident = fmt.Sprintf("%s %s", v.ident, lit)
+		s.lastKeyword = asof
+		s.lastScanOffset = pos.Offset
+		v.offset = pos.Offset
+		return asof
 	}
 
 	switch tok {
