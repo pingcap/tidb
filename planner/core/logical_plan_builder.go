@@ -5658,7 +5658,18 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 	if isRecursive {
 		err = b.splitSeedAndRecursive(ctx, cte.Query.Query, cte.Name)
 	} else {
-		p, err = b.buildResultSetNode(ctx, cte.Query)
+		p, err = b.buildResultSetNode(ctx, cte.Query.Query)
+		if err != nil {
+			return nil, err
+		}
+
+		err = b.adjustCTEPlanSchema(p, cte)
+		if err != nil {
+			return nil, err
+		}
+
+		cInfo := b.outerCTEs[len(b.outerCTEs)-1]
+		cInfo.seedLP = p
 	}
 	if err != nil {
 		return nil, err
@@ -5667,28 +5678,36 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 }
 
 func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultSetNode, cteName model.CIStr) error {
-	cteInfo := b.outerCTEs[len(b.outerCTEs)-1]
+	cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 	switch x := (cte).(type) {
 	case *ast.SetOprStmt:
-		//if x.With != nil {
-		//	// Check CTE name must be unique.
-		//	nameMap := make(map[string]struct{})
-		//	for _, cte := range x.With.CTEs {
-		//		if _, ok := nameMap[cte.Name.L]; ok {
-		//			return errors.New("Not unique table/alias")
-		//		}
-		//		nameMap[cte.Name.L] = struct{}{}
-		//	}
-		//	l := len(x.With.CTEs)
-		//	for _, cte := range x.With.CTEs {
-		//		b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, false, true, &LogicalCTE{}})
-		//		_, err := b.buildCte(ctx, cte, false)
-		//		if err != nil {
-		//			return err
-		//		}
-		//	}
-		//	b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
-		//}
+		if x.With != nil {
+			// Check CTE name must be unique.
+			nameMap := make(map[string]struct{})
+			for _, cte := range x.With.CTEs {
+				if _, ok := nameMap[cte.Name.L]; ok {
+					return errors.New("Not unique table/alias")
+				}
+				nameMap[cte.Name.L] = struct{}{}
+			}
+			l := len(x.With.CTEs)
+			for _, cte := range x.With.CTEs {
+				b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, false, true, false, nil, nil, b.allocIDForCTEStorage, 0})
+				b.allocIDForCTEStorage++
+				saveFlag := b.optFlag
+				b.optFlag = 0
+				_, err := b.buildCte(ctx, cte, x.With.IsRecursive)
+				if err != nil {
+					return err
+				}
+				b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
+				b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
+				b.optFlag = saveFlag
+			}
+			defer func() {
+				b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+			}()
+		}
 
 		seed := make([]LogicalPlan, 0)
 		recursive := make([]LogicalPlan, 0)
@@ -5726,14 +5745,14 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			}
 
 			if expectSeed {
-				if cteInfo.useRecursive == true {
+				if cInfo.useRecursive == true {
 					if i == 0 {
 						return errors.New("No seed part")
 					}
 
 					// It's the recursive part. Build the seed part, and build this recursive part again.
 					expectSeed = false
-					cteInfo.useRecursive = false
+					cInfo.useRecursive = false
 
 					saveSelect := x.SelectList.Selects
 					x.SelectList.Selects = x.SelectList.Selects[:i]
@@ -5744,22 +5763,12 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 						return err
 					}
 
-					outPutNames := p.OutputNames()
-					for _, name := range outPutNames {
-						name.TblName = cteInfo.def.Name
-						name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+					err = b.adjustCTEPlanSchema(p, cInfo.def)
+					if err != nil {
+						return err
 					}
-					if len(cteInfo.def.ColNameList) > 0 {
-						if len(cteInfo.def.ColNameList) != len(p.OutputNames()) {
-							return errors.New("CTE columns length is not consistent.")
-						}
-						for i, n := range cteInfo.def.ColNameList {
-							outPutNames[i].ColName = n
-						}
-					}
-					p.SetOutputNames(outPutNames)
 
-					cteInfo.seedLP = p
+					cInfo.seedLP = p
 					i--
 					continue
 				}
@@ -5772,10 +5781,10 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 				if err != nil {
 					return err
 				}
-				if cteInfo.useRecursive == false {
+				if cInfo.useRecursive == false {
 					return errors.New("Recursive Common Table Expression should have one or more non-recursive query blocks followed by one or more recursive ones")
 				}
-				cteInfo.useRecursive = false
+				cInfo.useRecursive = false
 				recursive = append(recursive, p)
 				tmpAfterSetOptsForRecur = append(tmpAfterSetOptsForRecur, afterSetOperator)
 			}
@@ -5786,14 +5795,32 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 		if err != nil {
 			return err
 		}
-		cteInfo.recurLP = recurPart
+		cInfo.recurLP = recurPart
 		return nil
 	default:
 		p, err := b.buildResultSetNode(ctx, x)
 		if err != nil {
 			return err
 		}
-		cteInfo.seedLP = p
+		cInfo.seedLP = p
 		return nil
 	}
+}
+
+func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExpression) error {
+	outPutNames := p.OutputNames()
+	for _, name := range outPutNames {
+		name.TblName = def.Name
+		name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if len(def.ColNameList) > 0 {
+		if len(def.ColNameList) != len(p.OutputNames()) {
+			return errors.New("CTE columns length is not consistent.")
+		}
+		for i, n := range def.ColNameList {
+			outPutNames[i].ColName = n
+		}
+	}
+	p.SetOutputNames(outPutNames)
+	return nil
 }
