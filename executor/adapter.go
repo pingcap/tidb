@@ -577,8 +577,8 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		seVars := sctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
-		var lockKeyStats *execdetails.LockKeysDetails
-		ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
+		var lockKeyStats *util.LockKeysDetails
+		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
 		if lockKeyStats != nil {
@@ -788,14 +788,14 @@ func (a *ExecStmt) logAudit() {
 }
 
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
-func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc {
+func FormatSQL(sql string) stringutil.StringerFunc {
 	return func() string {
 		cfg := config.GetGlobalConfig()
 		length := len(sql)
 		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
-		return QueryReplacer.Replace(sql) + pps.String()
+		return QueryReplacer.Replace(sql)
 	}
 }
 
@@ -840,13 +840,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 			totalTiFlashQueryFailCounter.Inc()
 		}
 	}
-	prevStmt := a.GetTextToLog()
-	if sessVars.EnableRedactLog {
-		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
-	} else {
-		pps := types.CloneRow(sessVars.PreparedParams)
-		sessVars.PrevStmt = FormatSQL(prevStmt, pps)
-	}
+	sessVars.PrevStmt = FormatSQL(a.GetTextToLog())
 
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
@@ -884,15 +878,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if (!enable || costTime < threshold) && !force {
 		return
 	}
-	var sql stringutil.StringerFunc
-	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
-	if sessVars.EnableRedactLog {
-		sql = FormatSQL(normalizedSQL, nil)
-	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
-		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
-	} else {
-		sql = FormatSQL(a.Text, sessVars.PreparedParams)
-	}
+	sql := FormatSQL(a.GetTextToLog())
+	_, digest := sessVars.StmtCtx.SQLDigest()
 
 	var indexNames string
 	if len(sessVars.StmtCtx.IndexNames) > 0 {
@@ -918,6 +905,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
 		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
+	}
+	var tikvExecDetail util.ExecDetails
+	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
+	if tikvExecDetailRaw != nil {
+		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
@@ -948,9 +940,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PlanFromCache:     sessVars.FoundInPlanCache,
 		PlanFromBinding:   sessVars.FoundInBinding,
 		RewriteInfo:       sessVars.RewritePhaseInfo,
-		KVTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitKVRespDuration)),
-		PDTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)),
-		BackoffTotal:      time.Duration(atomic.LoadInt64(&stmtDetail.BackoffDuration)),
+		KVTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitKVRespDuration)),
+		PDTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitPDRespDuration)),
+		BackoffTotal:      time.Duration(atomic.LoadInt64(&tikvExecDetail.BackoffDuration)),
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
 		ExecRetryCount:    a.retryCount,
 	}
@@ -1114,6 +1106,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if stmtDetailRaw != nil {
 		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
 	}
+	var tikvExecDetail util.ExecDetails
+	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
+	if tikvExecDetailRaw != nil {
+		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
+	}
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:     sql,
@@ -1142,6 +1139,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		PlanInBinding:   sessVars.FoundInBinding,
 		ExecRetryCount:  a.retryCount,
 		StmtExecDetails: stmtDetail,
+		TiKVExecDetails: tikvExecDetail,
 		Prepared:        a.isPreparedStmt,
 	}
 	if a.retryCount > 0 {
@@ -1153,12 +1151,13 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 // GetTextToLog return the query text to log.
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
-	if a.Ctx.GetSessionVars().EnableRedactLog {
-		sql, _ = a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.EnableRedactLog {
+		sql, _ = sessVars.StmtCtx.SQLDigest()
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {
-		sql = a.Text
+		sql = sessVars.StmtCtx.OriginalSQL + sessVars.PreparedParams.String()
 	}
 	return sql
 }

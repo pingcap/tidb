@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -246,6 +247,9 @@ func (s *testSuite10) TestPaddingCommonHandle(c *C) {
 }
 
 func (s *testSuite2) TestInsertReorgDelete(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -332,6 +336,16 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t (a year);`)
 	_, err = tk.Exec(`insert into t values(2156);`)
 	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
+}
+
+func (s *testSuite3) TestInsertValueForCastDecimalField(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a decimal(15,2));`)
+	tk.MustExec(`insert into t1 values (1111111111111.01);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`1111111111111.01`))
+	tk.MustQuery(`select cast(a as decimal) from t1;`).Check(testkit.Rows(`9999999999`))
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {

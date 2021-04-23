@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -34,7 +35,7 @@ func TestString(t *testing.T) {
 		CopTime:      time.Second + 3*time.Millisecond,
 		BackoffTime:  time.Second,
 		RequestCount: 1,
-		CommitDetail: &CommitDetails{
+		CommitDetail: &util.CommitDetails{
 			GetCommitTsTime:   time.Second,
 			PrewriteTime:      time.Second,
 			CommitTime:        time.Second,
@@ -57,7 +58,7 @@ func TestString(t *testing.T) {
 			PrewriteRegionNum: 1,
 			TxnRetry:          1,
 		},
-		ScanDetail: &ScanDetail{
+		ScanDetail: &util.ScanDetail{
 			ProcessedKeys:             10,
 			TotalKeys:                 100,
 			RocksdbDeleteSkippedCount: 1,
@@ -66,7 +67,7 @@ func TestString(t *testing.T) {
 			RocksdbBlockReadCount:     1,
 			RocksdbBlockReadByte:      100,
 		},
-		TimeDetail: TimeDetail{
+		TimeDetail: util.TimeDetail{
 			ProcessTime: 2*time.Second + 5*time.Millisecond,
 			WaitTime:    time.Second,
 		},
@@ -102,7 +103,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask(tableScanID, "tikv", "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
 	stats.RecordOneCopTask(aggID, "tikv", "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
 	stats.RecordOneCopTask(aggID, "tikv", "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
-	scanDetail := &ScanDetail{
+	scanDetail := &util.ScanDetail{
 		TotalKeys:                 15,
 		ProcessedKeys:             10,
 		RocksdbDeleteSkippedCount: 5,
@@ -150,7 +151,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatalf(cop.String())
 	}
 
-	zeroScanDetail := ScanDetail{}
+	zeroScanDetail := util.ScanDetail{}
 	if zeroScanDetail.String() != "" {
 		t.Fatalf(zeroScanDetail.String())
 	}
@@ -165,7 +166,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, 1, "tablescan_"+strconv.Itoa(tableScanID)))
 	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, 1, "aggregation_"+strconv.Itoa(aggID)))
 	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, 1, "aggregation_"+strconv.Itoa(aggID)))
-	scanDetail := &ScanDetail{
+	scanDetail := &util.ScanDetail{
 		TotalKeys:                 10,
 		ProcessedKeys:             10,
 		RocksdbDeleteSkippedCount: 10,
@@ -204,7 +205,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	}
 }
 func TestRuntimeStatsWithCommit(t *testing.T) {
-	commitDetail := &CommitDetails{
+	commitDetail := &util.CommitDetails{
 		GetCommitTsTime:   time.Second,
 		PrewriteTime:      time.Second,
 		CommitTime:        time.Second,
@@ -236,7 +237,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 	if stats.String() != expect {
 		t.Fatalf("%v != %v", stats.String(), expect)
 	}
-	lockDetail := &LockKeysDetails{
+	lockDetail := &util.LockKeysDetails{
 		TotalTime:       time.Second,
 		RegionNum:       2,
 		LockKeys:        10,
@@ -281,7 +282,7 @@ func TestRootRuntimeStats(t *testing.T) {
 	concurrency := &RuntimeStatsWithConcurrencyInfo{}
 	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("worker", 15))
 	stmtStats.RegisterStats(pid, concurrency)
-	commitDetail := &CommitDetails{
+	commitDetail := &util.CommitDetails{
 		GetCommitTsTime:   time.Second,
 		PrewriteTime:      time.Second,
 		CommitTime:        time.Second,

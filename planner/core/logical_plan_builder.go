@@ -2676,7 +2676,7 @@ func checkColFuncDepend(
 			Name:   colInfo.Name,
 		}
 		pIdx, err := expression.FindFieldName(p.OutputNames(), pkName)
-		if err != nil {
+		if err != nil || pIdx < 0 {
 			primaryFuncDepend = false
 			break
 		}
@@ -3625,9 +3625,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, dbName)
-	if err != nil {
-		return nil, err
+	// Skip storage engine check for CreateView.
+	if b.capFlag&canExpandAST == 0 {
+		possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, dbName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Try to substitute generate column only if there is an index on generate column.
@@ -3727,12 +3730,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
-			DBName:      dbName,
-			TblName:     tableInfo.Name,
-			ColName:     col.Name,
-			OrigTblName: tableInfo.Name,
-			OrigColName: col.Name,
-			Hidden:      col.Hidden,
+			DBName:            dbName,
+			TblName:           tableInfo.Name,
+			ColName:           col.Name,
+			OrigTblName:       tableInfo.Name,
+			OrigColName:       col.Name,
+			Hidden:            col.Hidden,
+			NotExplicitUsable: col.State != model.StatePublic,
 		})
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
@@ -3963,7 +3967,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
-			terror.ErrorNotEqual(err, ErrNoSuchTable) {
+			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
+			terror.ErrorNotEqual(err, ErrInternal) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		return nil, err
@@ -4228,9 +4233,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}()
 
 	// update subquery table should be forbidden
-	var asNameList []string
-	asNameList = extractTableSourceAsNames(update.TableRefs.TableRefs, asNameList, true)
-	for _, asName := range asNameList {
+	var notUpdatableTbl []string
+	notUpdatableTbl = extractTableSourceAsNames(update.TableRefs.TableRefs, notUpdatableTbl, true)
+	for _, asName := range notUpdatableTbl {
 		for _, assign := range update.List {
 			if assign.Column.Table.L == asName {
 				return nil, ErrNonUpdatableTable.GenWithStackByArgs(asName, "UPDATE")
@@ -4304,7 +4309,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	var updateTableList []*ast.TableName
 	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
-	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updateTableList, update.List, p)
+	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updateTableList, update.List, p, notUpdatableTbl)
 	if err != nil {
 		return nil, err
 	}
@@ -4381,16 +4386,8 @@ func CheckUpdateList(assignFlags []int, updt *Update) error {
 	return nil
 }
 
-func (b *PlanBuilder) buildUpdateLists(
-	ctx context.Context,
-	tableList []*ast.TableName,
-	list []*ast.Assignment,
-	p LogicalPlan,
-) (newList []*expression.Assignment,
-	po LogicalPlan,
-	allAssignmentsAreConstant bool,
-	e error,
-) {
+func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan,
+	notUpdatableTbl []string) (newList []*expression.Assignment, po LogicalPlan, allAssignmentsAreConstant bool, e error) {
 	b.curClause = fieldList
 	// modifyColumns indicates which columns are in set list,
 	// and if it is set to `DEFAULT`
@@ -4426,8 +4423,18 @@ func (b *PlanBuilder) buildUpdateLists(
 	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
-
 	for _, tn := range tableList {
+		// Only generate virtual to updatable table, skip not updatable table(i.e. table in update's subQuery)
+		updatable := true
+		for _, nTbl := range notUpdatableTbl {
+			if tn.Name.L == nTbl {
+				updatable = false
+				break
+			}
+		}
+		if !updatable {
+			continue
+		}
 		tableInfo := tn.TableInfo
 		tableVal, found := b.is.TableByID(tableInfo.ID)
 		if !found {

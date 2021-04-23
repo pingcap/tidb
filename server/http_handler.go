@@ -227,8 +227,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion startKey", curRegion.StartKey),
-				zap.Stringer("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion", curRegion),
 				zap.Reflect("kvResp", kvResp),
 				zap.Error(err))
 			return nil, errors.Trace(err)
@@ -239,8 +238,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion startKey", curRegion.StartKey),
-				zap.Stringer("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion", curRegion),
 				zap.Reflect("kvResp", kvResp),
 				zap.Stringer("error", err))
 			continue
@@ -251,8 +249,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion startKey", curRegion.StartKey),
-				zap.Stringer("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion", curRegion),
 				zap.Reflect("kvResp", kvResp),
 				zap.String("error", data.GetError()))
 			return nil, errors.New(data.GetError())
@@ -270,7 +267,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 		if len(curRegion.EndKey) == 0 {
 			return nil, nil
 		}
-		startKey = curRegion.EndKey
+		startKey = kv.Key(curRegion.EndKey)
 	}
 }
 
@@ -732,9 +729,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			switch asyncCommit {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOff)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOn)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -755,9 +752,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			switch onePC {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOff)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOn)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
