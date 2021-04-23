@@ -390,12 +390,6 @@ func MustPrewritePessimisticPutErr(pk []byte, key []byte, value []byte, startTs 
 	store.c.Assert(err, NotNil)
 }
 
-func MustPrewritePessimisticErr(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
-	isPessimisticLock []bool, forUpdateTs uint64, store *TestStore) {
-	err := PrewritePessimistic(pk, key, value, startTs, lockTTL, isPessimisticLock, forUpdateTs, store)
-	store.c.Assert(err, NotNil)
-}
-
 func MustCommitKeyPut(key, val []byte, startTs, commitTs uint64, store *TestStore) {
 	err := store.MvccStore.Commit(store.newReqCtx(), [][]byte{key}, startTs, commitTs)
 	store.c.Assert(err, IsNil)
