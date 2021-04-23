@@ -407,6 +407,17 @@ const (
 	renameView
 )
 
+type cteInfo struct {
+	def          *ast.CommonTableExpression
+	useRecursive bool
+	isBuilding   bool
+	isDistinct   bool
+	seedLP       LogicalPlan
+	recurLP      LogicalPlan
+	storageID    int
+	optFlag      uint64
+}
+
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
@@ -414,7 +425,8 @@ type PlanBuilder struct {
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
-	outerCTEs    []*ast.CommonTableExpression
+	outerCTEs    []*cteInfo
+	cteId2Plan   map[int]LogicalPlan
 	// outerRecursiveCheck
 	outerRecursiveCheck []bool
 	// colMapper stores the column that must be pre-resolved.
@@ -475,7 +487,8 @@ type PlanBuilder struct {
 	// isForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
-	isForUpdateRead bool
+	isForUpdateRead      bool
+	allocIDForCTEStorage int
 }
 
 type handleColHelper struct {
@@ -588,7 +601,8 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 	return &PlanBuilder{
 		ctx:                 sctx,
 		is:                  is,
-		outerCTEs:           make([]*ast.CommonTableExpression, 0),
+		outerCTEs:           make([]*cteInfo, 0),
+		cteId2Plan:          make(map[int]LogicalPlan),
 		outerRecursiveCheck: make([]bool, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},

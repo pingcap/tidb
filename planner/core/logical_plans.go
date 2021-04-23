@@ -1169,3 +1169,27 @@ type LogicalShowDDLJobs struct {
 
 	JobNumber int64
 }
+
+// CTEClass holds the information and plan for a CTE.
+type CTEClass struct {
+	isDistinct               bool
+	seedPartLogicalPlan      LogicalPlan
+	recursivePartLogicalPlan LogicalPlan
+	cteTask                  task
+	idForStorage             int
+	optFlag                  uint64
+}
+
+// LogicalCTE is for CTE.
+type LogicalCTE struct {
+	logicalSchemaProducer
+
+	cte *CTEClass
+}
+
+// LogicalCTETable is for CTE table
+type LogicalCTETable struct {
+	logicalSchemaProducer
+
+	idForStorage int
+}

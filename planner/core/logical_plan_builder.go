@@ -1354,21 +1354,21 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
-	if setOpr.With != nil {
-		// Check CTE name must be unique.
-		nameMap := make(map[string]struct{})
-		for _, cte := range setOpr.With.CTEs {
-			if _, ok := nameMap[cte.Name.L]; ok {
-				return nil, errors.New("Not unique table/alias")
-			}
-			nameMap[cte.Name.L] = struct{}{}
-		}
-		l := len(setOpr.With.CTEs)
-		defer func() {
-			b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
-		}()
-		b.outerCTEs = append(b.outerCTEs, setOpr.With.CTEs...)
-	}
+	//if setOpr.With != nil {
+	//	// Check CTE name must be unique.
+	//	nameMap := make(map[string]struct{})
+	//	for _, cte := range setOpr.With.CTEs {
+	//		if _, ok := nameMap[cte.Name.L]; ok {
+	//			return nil, errors.New("Not unique table/alias")
+	//		}
+	//		nameMap[cte.Name.L] = struct{}{}
+	//	}
+	//	l := len(setOpr.With.CTEs)
+	//	defer func() {
+	//		b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+	//	}()
+	//	b.outerCTEs = append(b.outerCTEs, setOpr.With.CTEs...)
+	//}
 
 	// Because INTERSECT has higher precedence than UNION and EXCEPT. We build it first.
 	selectPlans := make([]LogicalPlan, 0, len(setOpr.SelectList.Selects))
@@ -3335,17 +3335,23 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			}
 			nameMap[cte.Name.L] = struct{}{}
 		}
-		//l := len(sel.With.CTEs)
-		//defer func() {
-		//	b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
-		//}()
-		//b.outerCTEs = append(b.outerCTEs, sel.With.CTEs...)
+		l := len(sel.With.CTEs)
 		for _, cte := range sel.With.CTEs {
+			b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, false, true, false, nil, nil, b.allocIDForCTEStorage, 0})
+			b.allocIDForCTEStorage++
+			saveFlag := b.optFlag
+			b.optFlag = 0
 			_, err := b.buildCte(ctx, cte, sel.With.IsRecursive)
 			if err != nil {
 				return nil, err
 			}
+			b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
+			b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
+			b.optFlag = saveFlag
 		}
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+		}()
 	}
 
 	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
@@ -3598,47 +3604,34 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
-func (b *PlanBuilder) buildDataSourceFromCTE(ctx context.Context, cte *ast.CommonTableExpression) (LogicalPlan, error) {
-	p, err := b.buildResultSetNode(ctx, cte.Query.Query)
-	if err != nil {
-		return nil, err
-	}
-	outPutNames := p.OutputNames()
-	for _, name := range outPutNames {
-		name.TblName = cte.Name
-		name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-	}
-
-	if len(cte.ColNameList) > 0 {
-		if len(cte.ColNameList) != len(p.OutputNames()) {
-			return nil, errors.New("CTE columns length is not consistent.")
-		}
-		for i, n := range cte.ColNameList {
-			outPutNames[i].ColName = n
-		}
-	}
-	p.SetOutputNames(outPutNames)
-	return p, nil
-}
-
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	dbName := tn.Schema
 	sessionVars := b.ctx.GetSessionVars()
 
-	//if dbName.L == "" {
-	//	// Try CTE
-	//	last := len(b.outerCTEs)-1
-	//	for i := len(b.outerCTEs)-1; i >= 0; i-- {
-	//		cte := b.outerCTEs[i]
-	//		if cte.Name.L == tn.Name.L {
-	//			defer func() {
-	//			}()
-	//			return b.buildDataSourceFromCTE(ctx, cte)
-	//		}
-	//	}
-	//
-	//	dbName = model.NewCIStr(sessionVars.CurrentDB)
-	//}
+	if dbName.L == "" {
+		// Try CTE
+		for i := len(b.outerCTEs) - 1; i >= 0; i-- {
+			cte := b.outerCTEs[i]
+			if cte.def.Name.L == tn.Name.L {
+				if cte.isBuilding {
+					// Building the recursive part.
+					cte.useRecursive = true
+					if cte.seedLP == nil {
+						return nil, errors.New("First meet recursive")
+					}
+					p := LogicalCTETable{idForStorage: cte.storageID}.Init(b.ctx, b.getSelectOffset())
+					p.SetSchema(cte.seedLP.Schema())
+					p.SetOutputNames(cte.seedLP.OutputNames())
+					return p, nil
+				}
+				p := LogicalCTE{cte: &CTEClass{isDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, idForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
+				p.SetSchema(cte.seedLP.Schema())
+				p.SetOutputNames(cte.seedLP.OutputNames())
+				return p, nil
+			}
+		}
+		dbName = model.NewCIStr(sessionVars.CurrentDB)
+	}
 
 	tbl, err := b.is.TableByName(dbName, tn.Name)
 	if err != nil {
@@ -4319,22 +4312,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	b.inUpdateStmt = true
 	b.isForUpdateRead = true
 
-	if update.With != nil {
-		// Check CTE name must be unique.
-		nameMap := make(map[string]struct{})
-		for _, cte := range update.With.CTEs {
-			if _, ok := nameMap[cte.Name.L]; ok {
-				return nil, errors.New("Not unique table/alias")
-			}
-			nameMap[cte.Name.L] = struct{}{}
-		}
-		l := len(update.With.CTEs)
-		defer func() {
-			b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
-		}()
-		b.outerCTEs = append(b.outerCTEs, update.With.CTEs...)
-	}
-
 	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs)
 	if err != nil {
 		return nil, err
@@ -4657,22 +4634,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 
 	b.inDeleteStmt = true
 	b.isForUpdateRead = true
-
-	if delete.With != nil {
-		// Check CTE name must be unique.
-		nameMap := make(map[string]struct{})
-		for _, cte := range delete.With.CTEs {
-			if _, ok := nameMap[cte.Name.L]; ok {
-				return nil, errors.New("Not unique table/alias")
-			}
-			nameMap[cte.Name.L] = struct{}{}
-		}
-		l := len(delete.With.CTEs)
-		defer func() {
-			b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
-		}()
-		b.outerCTEs = append(b.outerCTEs, delete.With.CTEs...)
-	}
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {
@@ -5694,67 +5655,145 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 }
 
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
-
-	_, _, err = b.splitSeedAndRecursive(ctx, cte.Query.Query, cte.Name)
+	if isRecursive {
+		err = b.splitSeedAndRecursive(ctx, cte.Query.Query, cte.Name)
+	} else {
+		p, err = b.buildResultSetNode(ctx, cte.Query)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return nil, nil
 }
 
-func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultSetNode, cteName model.CIStr) (LogicalPlan, LogicalPlan, error) {
+func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultSetNode, cteName model.CIStr) error {
+	cteInfo := b.outerCTEs[len(b.outerCTEs)-1]
 	switch x := (cte).(type) {
 	case *ast.SetOprStmt:
-		if x.With != nil {
-			// Check CTE name must be unique.
-			nameMap := make(map[string]struct{})
-			for _, cte := range x.With.CTEs {
-				if _, ok := nameMap[cte.Name.L]; ok {
-					return nil, nil, errors.New("Not unique table/alias")
-				}
-				nameMap[cte.Name.L] = struct{}{}
-			}
-			l := len(x.With.CTEs)
-			defer func() {
-				b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
-			}()
-			b.outerCTEs = append(b.outerCTEs, x.With.CTEs...)
-			for _, cte := range x.With.CTEs {
-				_, err := b.buildCte(ctx, cte, false)
-				if err != nil {
-					return nil, nil, err
-				}
-			}
-		}
+		//if x.With != nil {
+		//	// Check CTE name must be unique.
+		//	nameMap := make(map[string]struct{})
+		//	for _, cte := range x.With.CTEs {
+		//		if _, ok := nameMap[cte.Name.L]; ok {
+		//			return errors.New("Not unique table/alias")
+		//		}
+		//		nameMap[cte.Name.L] = struct{}{}
+		//	}
+		//	l := len(x.With.CTEs)
+		//	for _, cte := range x.With.CTEs {
+		//		b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, false, true, &LogicalCTE{}})
+		//		_, err := b.buildCte(ctx, cte, false)
+		//		if err != nil {
+		//			return err
+		//		}
+		//	}
+		//	b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+		//}
 
 		seed := make([]LogicalPlan, 0)
 		recursive := make([]LogicalPlan, 0)
+		var tmpAfterSetOptsForSeed []*ast.SetOprType
+		tmpAfterSetOptsForRecur := []*ast.SetOprType{nil}
 
-		// Find the first union
-		for i, sel := x.SelectList.AfterSetOperator {
-
-		}
-
-		for _, sel := range x.SelectList.Selects {
-			p, err := b.buildResultSetNode(ctx, sel)
-			if err != nil {
-				return nil, nil, err
+		expectSeed := true
+		for i := 0; i < len(x.SelectList.Selects); i++ {
+			var afterSetOperator *ast.SetOprType
+			switch x := x.SelectList.Selects[i].(type) {
+			case *ast.SelectStmt:
+				afterSetOperator = x.AfterSetOperator
+			case *ast.SetOprSelectList:
+				afterSetOperator = x.AfterSetOperator
 			}
-			if b.findRecursivePart {
-				recursive = append(recursive, p)
-			} else {
+			var p LogicalPlan
+			var err error
+			//if afterSetOperator == nil || ( *afterSetOperator != ast.Union && *afterSetOperator != ast.UnionAll) {
+			//	temOpr := x
+			//	temOpr.SelectList.Selects = temOpr.SelectList.Selects[:i+1]
+			//	p, err = b.buildSetOpr(ctx, temOpr)
+			//	if err != nil {
+			//		return err
+			//	}
+			//	tmpAfterSetOptsForSeed = append(afterSetOperator, t)
+			//	seed = append(seed, p)
+			//	break
+			//}
+
+			switch y := x.SelectList.Selects[i].(type) {
+			case *ast.SelectStmt:
+				p, err = b.buildSelect(ctx, y)
+			case *ast.SetOprSelectList:
+				p, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: y})
+			}
+
+			if expectSeed {
+				if cteInfo.useRecursive == true {
+					if i == 0 {
+						return errors.New("No seed part")
+					}
+
+					// It's the recursive part. Build the seed part, and build this recursive part again.
+					expectSeed = false
+					cteInfo.useRecursive = false
+
+					saveSelect := x.SelectList.Selects
+					x.SelectList.Selects = x.SelectList.Selects[:i]
+					p, err = b.buildSetOpr(ctx, x)
+					x.SelectList.Selects = saveSelect
+
+					if err != nil {
+						return err
+					}
+
+					outPutNames := p.OutputNames()
+					for _, name := range outPutNames {
+						name.TblName = cteInfo.def.Name
+						name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+					}
+					if len(cteInfo.def.ColNameList) > 0 {
+						if len(cteInfo.def.ColNameList) != len(p.OutputNames()) {
+							return errors.New("CTE columns length is not consistent.")
+						}
+						for i, n := range cteInfo.def.ColNameList {
+							outPutNames[i].ColName = n
+						}
+					}
+					p.SetOutputNames(outPutNames)
+
+					cteInfo.seedLP = p
+					i--
+					continue
+				}
+				if err != nil {
+					return err
+				}
 				seed = append(seed, p)
+				tmpAfterSetOptsForSeed = append(tmpAfterSetOptsForSeed, afterSetOperator)
+			} else {
+				if err != nil {
+					return err
+				}
+				if cteInfo.useRecursive == false {
+					return errors.New("Recursive Common Table Expression should have one or more non-recursive query blocks followed by one or more recursive ones")
+				}
+				cteInfo.useRecursive = false
+				recursive = append(recursive, p)
+				tmpAfterSetOptsForRecur = append(tmpAfterSetOptsForRecur, afterSetOperator)
 			}
+
 		}
 
-		if b.findRecursivePart && len(seed) == 0 {
-			return nil, nil, errors.New("No seed part")
-		}
-	default:
-		p, err := b.Build(ctx, x)
+		recurPart, err := b.buildUnion(ctx, recursive, tmpAfterSetOptsForRecur)
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
-		return p, nil, nil
+		cteInfo.recurLP = recurPart
+		return nil
+	default:
+		p, err := b.buildResultSetNode(ctx, x)
+		if err != nil {
+			return err
+		}
+		cteInfo.seedLP = p
+		return nil
 	}
 }
