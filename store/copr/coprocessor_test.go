@@ -24,12 +24,12 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 )
 
-type testCoprocessorSuite struct {
-}
-
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	TestingT(t)
+}
+
+type testCoprocessorSuite struct {
 }
 
 var _ = Suite(&testCoprocessorSuite{})
