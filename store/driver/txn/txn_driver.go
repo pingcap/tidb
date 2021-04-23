@@ -115,6 +115,17 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	}
 }
 
+// SetVars sets variables to the transaction.
+func (txn *tikvTxn) SetVars(vars interface{}) {
+	if vs, ok := vars.(*tikv.Variables); ok {
+		txn.KVTxn.SetVars(vs)
+	}
+}
+
+func (txn *tikvTxn) GetVars() interface{} {
+	return txn.KVTxn.GetVars()
+}
+
 func (txn *tikvTxn) extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikvstore.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())
