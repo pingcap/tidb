@@ -51,7 +51,21 @@ func TestT(t *testing.T) {
 
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
+	fpname := "github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"
+	err := failpoint.Enable(fpname, "return(true)")
+	if err != nil {
+		t.Fatalf("enable global failpoint `%s` failed: %v", fpname, err)
+	}
+	// Some test depends on the values of timeutil.SystemLocation()
+	// If we don't SetSystemTZ() here, the value would change unpredictable.
+	// Affectd by the order whether a testsuite runs before or after integration test.
+	// Note, SetSystemTZ() is a sync.Once operation.
+	timeutil.SetSystemTZ("system")
 	TestingT(t)
+	err = failpoint.Disable(fpname)
+	if err != nil {
+		t.Fatalf("disable global failpoint `%s` failed: %v", fpname, err)
+	}
 }
 
 type testEvaluatorSuiteBase struct {
@@ -77,16 +91,6 @@ type testEvaluatorSerialSuites struct {
 
 func (s *testEvaluatorSuiteBase) SetUpSuite(c *C) {
 	s.Parser = parser.New()
-	fpname := "github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"
-	err := failpoint.Enable(fpname, "return(true)")
-	if err != nil {
-		panic(errors.Errorf("enable global failpoint `%s` failed: %v", fpname, err))
-	}
-	// Some test depends on the values of timeutil.SystemLocation()
-	// If we don't SetSystemTZ() here, the value would change unpredictable.
-	// Affectd by the order whether a testsuite runs before or after integration test.
-	// Note, SetSystemTZ() is a sync.Once operation.
-	timeutil.SetSystemTZ("system")
 }
 
 func (s *testEvaluatorSuiteBase) TearDownSuite(c *C) {
