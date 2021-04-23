@@ -3095,9 +3095,11 @@ func (s *testIntegrationSuite) TestIndexMergeTableFilter(c *C) {
 func (s *testIntegrationSuite) TestIssue22850(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("CREATE TABLE t1 (a int(11))")
-	tk.MustQuery("SELECT @v:=(SELECT 1 FROM t1 t2 LEFT JOIN t1 ON t1.a GROUP BY t1.a) FROM t1").Check(testkit.Rows()) // work fine
+	tk.MustExec("drop table if exists tb_test")
+	tk.MustExec("CREATE TABLE tb_test (c_id int NULL)")
+	tk.MustExec("insert into tb_test(c_id) value(1)")
+	tk.MustExec("set @row_number:= 0")
+	tk.MustQuery("select @row_number:= @row_number+1.00000 as count_of_group from tb_test").Check(testkit.Rows("1.00000"))
 }
 
 func (s *testIntegrationSuite) TestGetVarOnDifferentType(c *C) {
