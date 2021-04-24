@@ -96,7 +96,7 @@ type IndexMergeReaderExecutor struct {
 	memTracker *memory.Tracker
 
 	// checkIndexValue is used to check the consistency of the index data.
-	*checkIndexValue
+	*checkIndexValue // nolint:unused
 
 	partialPlans [][]plannercore.PhysicalPlan
 	tblPlans     []plannercore.PhysicalPlan
