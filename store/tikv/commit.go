@@ -127,7 +127,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 				return res
 			}
 			if c.isAsyncCommit() {
-				logutil.Logger(bo.ctx).Error("2pc failed to commit keys",
+				logutil.Logger(bo.ctx).Error("2PC failed commit secondary key",
 					zap.Error(err),
 					zap.Uint64("txnStartTS", c.startTS),
 					zap.Uint64("commitTS", c.commitTS),
