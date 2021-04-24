@@ -6905,6 +6905,23 @@ func testDropIndexesIfExists(c *C, store kv.Storage) {
 	)
 }
 
+func testDropIndexesFromPartitionedTable(c *C, store kv.Storage) {
+	tk := testkit.NewTestKitWithInit(c, store)
+	tk.MustExec("use test_db;")
+	tk.MustExec("drop table if exists test_drop_indexes_from_partitioned_table;")
+	tk.MustExec(`
+		create table test_drop_indexes_from_partitioned_table (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2))
+		partition by range(id) (partition p0 values less than (6), partition p1 values less than maxvalue);
+	`)
+	for i := 0; i < 20; i++ {
+		tk.MustExec("insert into test_drop_indexes_from_partitioned_table values (?, ?, ?)", i, i, i)
+	}
+	if _, err := tk.Exec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i2;"); true {
+		c.Assert(err, IsNil)
+	}
+
+}
+
 func (s *testDBSuite5) TestDropIndexes(c *C) {
 	// drop multiple indexes
 	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));"
@@ -6919,4 +6936,5 @@ func (s *testDBSuite5) TestDropIndexes(c *C) {
 	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
 	testCancelDropIndexes(c, s.store, s.dom.DDL())
 	testDropIndexesIfExists(c, s.store)
+	testDropIndexesFromPartitionedTable(c, s.store)
 }
