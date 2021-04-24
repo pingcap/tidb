@@ -405,7 +405,8 @@ func (txn *KVTxn) onCommitted(err error) {
 		if err != nil {
 			info.ErrMsg = err.Error()
 		}
-		infoStr, _ := json.Marshal(info) // nolint:errcheck
+		infoStr, err2 := json.Marshal(info)
+		_ = err2
 		txn.commitCallback(string(infoStr), err)
 	}
 }
