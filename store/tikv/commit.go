@@ -126,11 +126,19 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 				}
 				return res
 			}
-			logutil.Logger(bo.ctx).Error("2PC failed commit key after primary key committed",
-				zap.Error(err),
-				zap.Uint64("txnStartTS", c.startTS),
-				zap.Uint64("commitTS", c.commitTS),
-				zap.Strings("keys", hexBatchKeys(keys)))
+			if c.isAsyncCommit() {
+				logutil.Logger(bo.ctx).Error("2pc failed to commit keys",
+					zap.Error(err),
+					zap.Uint64("txnStartTS", c.startTS),
+					zap.Uint64("commitTS", c.commitTS),
+					zap.Strings("keys", hexBatchKeys(keys)))
+			} else {
+				logutil.Logger(bo.ctx).Error("2PC failed commit key after primary key committed",
+					zap.Error(err),
+					zap.Uint64("txnStartTS", c.startTS),
+					zap.Uint64("commitTS", c.commitTS),
+					zap.Strings("keys", hexBatchKeys(keys)))
+			}
 			return errors.Trace(err)
 		}
 		if batch.isPrimary {
@@ -145,14 +153,9 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		}
 		return err
 	}
-
-	// if batch is not primary key then return immediately
-	// Group that contains primary key is always the first except async commit.
-	if !batch.isPrimary {
-		return nil
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Group that contains primary key is always the first.
 	// We mark transaction's status committed when we receive the first success response.
 	c.mu.committed = true
 	return nil
