@@ -528,10 +528,14 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 
 		for partTblIdx, kvRange := range kvRanges {
 			// check if executor is closed
+			finished := false
 			select {
 			case <-e.finished:
-				break
+				finished = true
 			default:
+			}
+			if finished {
+				break
 			}
 
 			// init kvReq, result and worker for this partition
