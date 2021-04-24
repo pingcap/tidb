@@ -1226,12 +1226,14 @@ func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.Sampl
 	sc := e.ctx.GetSessionVars().StmtCtx
 	data := make([][]byte, 0, len(collector.Samples))
 	fmSketch := statistics.NewFMSketch(maxSketchSize)
+	notNullSamples := make([]*statistics.SampleItem, 0, len(collector.Samples))
 	for i, sample := range collector.Samples {
 		sample.Ordinal = i
 		if sample.Value.IsNull() {
 			collector.NullCount++
 			continue
 		}
+		notNullSamples = append(notNullSamples, sample)
 		err := fmSketch.InsertValue(sc, sample.Value)
 		if err != nil {
 			return nil, nil, nil, nil, err
@@ -1245,6 +1247,7 @@ func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.Sampl
 	// Build CMSketch.
 	cmSketch, topN, ndv, scaleRatio := statistics.NewCMSketchAndTopN(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]), data, uint32(e.opts[ast.AnalyzeOptNumTopN]), uint64(rowCount))
 	// Build Histogram.
+	collector.Samples = notNullSamples
 	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), ID, collector, tp, rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
 	return hist, cmSketch, topN, fmSketch, err
 }
