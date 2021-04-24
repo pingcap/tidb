@@ -17,7 +17,6 @@ import (
 	"context"
 	"math"
 	"math/rand"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser/terror"
@@ -94,28 +93,13 @@ func BackOff(attempts uint) int {
 	return int(sleep)
 }
 
-// mockCommitErrorEnable uses to enable `mockCommitError` and only mock error once.
-var mockCommitErrorEnable = int64(0)
-
-// MockCommitErrorEnable exports for gofail testing.
-func MockCommitErrorEnable() {
-	atomic.StoreInt64(&mockCommitErrorEnable, 1)
-}
-
-// MockCommitErrorDisable exports for gofail testing.
-func MockCommitErrorDisable() {
-	atomic.StoreInt64(&mockCommitErrorEnable, 0)
-}
-
-// IsMockCommitErrorEnable exports for gofail testing.
-func IsMockCommitErrorEnable() bool {
-	return atomic.LoadInt64(&mockCommitErrorEnable) == 1
-}
-
 // TxnInfo is used to keep track the info of a committed transaction (mainly for diagnosis and testing)
 type TxnInfo struct {
-	TxnScope string `json:"txn_scope"`
-	StartTS  uint64 `json:"start_ts"`
-	CommitTS uint64 `json:"commit_ts"`
-	ErrMsg   string `json:"error,omitempty"`
+	TxnScope            string `json:"txn_scope"`
+	StartTS             uint64 `json:"start_ts"`
+	CommitTS            uint64 `json:"commit_ts"`
+	TxnCommitMode       string `json:"txn_commit_mode"`
+	AsyncCommitFallback bool   `json:"async_commit_fallback"`
+	OnePCFallback       bool   `json:"one_pc_fallback"`
+	ErrMsg              string `json:"error,omitempty"`
 }

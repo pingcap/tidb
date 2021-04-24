@@ -50,23 +50,6 @@ func newLonglong(value int64) *Constant {
 	}
 }
 
-func newDate(year, month, day int) *Constant {
-	return newTimeConst(year, month, day, 0, 0, 0, mysql.TypeDate)
-}
-
-func newTimestamp(yy, mm, dd, hh, min, ss int) *Constant {
-	return newTimeConst(yy, mm, dd, hh, min, ss, mysql.TypeTimestamp)
-}
-
-func newTimeConst(yy, mm, dd, hh, min, ss int, tp uint8) *Constant {
-	var tmp types.Datum
-	tmp.SetMysqlTime(types.NewTime(types.FromDate(yy, mm, dd, 0, 0, 0, 0), tp, types.DefaultFsp))
-	return &Constant{
-		Value:   tmp,
-		RetType: types.NewFieldType(tp),
-	}
-}
-
 func newFunction(funcName string, args ...Expression) Expression {
 	typeLong := types.NewFieldType(mysql.TypeLonglong)
 	return NewFunctionInternal(mock.NewContext(), funcName, typeLong, args...)
@@ -271,8 +254,8 @@ func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
 	c.Assert(mysql.TypeTimestamp, Equals, cstTime.GetType().Tp)
 	c.Assert(mysql.TypeDuration, Equals, cstDuration.GetType().Tp)
 	c.Assert(mysql.TypeBlob, Equals, cstBytes.GetType().Tp)
-	c.Assert(mysql.TypeBit, Equals, cstBinary.GetType().Tp)
-	c.Assert(mysql.TypeBit, Equals, cstBit.GetType().Tp)
+	c.Assert(mysql.TypeVarString, Equals, cstBinary.GetType().Tp)
+	c.Assert(mysql.TypeVarString, Equals, cstBit.GetType().Tp)
 	c.Assert(mysql.TypeFloat, Equals, cstFloat32.GetType().Tp)
 	c.Assert(mysql.TypeDouble, Equals, cstFloat64.GetType().Tp)
 	c.Assert(mysql.TypeEnum, Equals, cstEnum.GetType().Tp)

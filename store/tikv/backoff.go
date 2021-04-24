@@ -25,10 +25,10 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -92,7 +92,8 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 		}
 		logutil.BgLogger().Debug("backoff",
 			zap.Int("base", base),
-			zap.Int("sleep", sleep))
+			zap.Int("sleep", sleep),
+			zap.Int("attempts", attempts))
 
 		realSleep := sleep
 		// when set maxSleepMs >= 0 in `tikv.BackoffWithMaxSleep` will force sleep maxSleepMs milliseconds.
@@ -192,25 +193,25 @@ func (t BackoffType) String() string {
 func (t BackoffType) TError() error {
 	switch t {
 	case BoTiKVRPC:
-		return ErrTiKVServerTimeout
+		return kv.ErrTiKVServerTimeout
 	case BoTiFlashRPC:
-		return ErrTiFlashServerTimeout
+		return kv.ErrTiFlashServerTimeout
 	case BoTxnLock, BoTxnLockFast, boTxnNotFound:
-		return ErrResolveLockTimeout
+		return kv.ErrResolveLockTimeout
 	case BoPDRPC:
-		return ErrPDServerTimeout
+		return kv.ErrPDServerTimeout
 	case BoRegionMiss:
-		return ErrRegionUnavailable
+		return kv.ErrRegionUnavailable
 	case boTiKVServerBusy:
-		return ErrTiKVServerBusy
+		return kv.ErrTiKVServerBusy
 	case boTiFlashServerBusy:
-		return ErrTiFlashServerBusy
+		return kv.ErrTiFlashServerBusy
 	case boStaleCmd:
-		return ErrTiKVStaleCommand
+		return kv.ErrTiKVStaleCommand
 	case boMaxTsNotSynced:
-		return ErrTiKVMaxTimestampNotSynced
+		return kv.ErrTiKVMaxTimestampNotSynced
 	}
-	return ErrUnknown
+	return kv.ErrUnknown
 }
 
 // Maximum total sleep time(in ms) for kv/cop commands.
@@ -308,7 +309,7 @@ func (b *Backoffer) Backoff(typ BackoffType, err error) error {
 // BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
 // and never sleep more than maxSleepMs for each sleep.
 func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err error) error {
-	if strings.Contains(err.Error(), mismatchClusterID) {
+	if strings.Contains(err.Error(), kv.MismatchClusterID) {
 		logutil.BgLogger().Fatal("critical error", zap.Error(err))
 	}
 	select {
@@ -354,16 +355,16 @@ func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err err
 	}
 	b.backoffTimes[typ]++
 
-	stmtExec := b.ctx.Value(execdetails.StmtExecDetailKey)
+	stmtExec := b.ctx.Value(util.ExecDetailsKey)
 	if stmtExec != nil {
-		detail := stmtExec.(*execdetails.StmtExecDetails)
+		detail := stmtExec.(*util.ExecDetails)
 		atomic.AddInt64(&detail.BackoffDuration, int64(realSleep)*int64(time.Millisecond))
 		atomic.AddInt64(&detail.BackoffCount, 1)
 	}
 
 	if b.vars != nil && b.vars.Killed != nil {
 		if atomic.LoadUint32(b.vars.Killed) == 1 {
-			return ErrQueryInterrupted
+			return kv.ErrQueryInterrupted
 		}
 	}
 
