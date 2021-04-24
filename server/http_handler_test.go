@@ -1156,10 +1156,10 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(variable.ProcessGeneralLog.Load(), IsTrue)
 	val, err := variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOn)
+	c.Assert(val, Equals, variable.On)
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOn)
+	c.Assert(val, Equals, variable.On)
 
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
@@ -1175,10 +1175,10 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOff)
+	c.Assert(val, Equals, variable.Off)
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOff)
+	c.Assert(val, Equals, variable.Off)
 	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold
