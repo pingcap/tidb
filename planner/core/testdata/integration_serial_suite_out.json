@@ -2556,10 +2556,6 @@
     ]
   },
   {
-    "Name": "TestIssue23887",
-    "Cases": null
-  },
-  {
     "Name": "TestMergeContinuousSelections",
     "Cases": [
       {
