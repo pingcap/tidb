@@ -69,23 +69,6 @@ func (n nextPartitionForTableReader) nextPartition(ctx context.Context, tbl tabl
 	return n.exec, nil
 }
 
-type nextPartitionForIndexLookUp struct {
-	*innerPartitionInfo
-	exec *IndexLookUpExecutor
-}
-
-func (n nextPartitionForIndexLookUp) GetInnerPartitionInfo() *innerPartitionInfo {
-	return n.innerPartitionInfo
-}
-
-func (n nextPartitionForIndexLookUp) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
-	n.exec.table = tbl
-	if n.innerPartitionInfo != nil && !n.isFullPartition {
-		n.exec.ranges = n.nextRange[tbl.GetPhysicalID()]
-	}
-	return n.exec, nil
-}
-
 type nextPartitionForIndexReader struct {
 	*innerPartitionInfo
 	exec *IndexReaderExecutor
