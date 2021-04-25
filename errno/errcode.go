@@ -854,6 +854,7 @@ const (
 	ErrPKIndexCantBeInvisible                                = 3522
 	ErrRoleNotGranted                                        = 3530
 	ErrLockAcquireFailAndNoWaitSet                           = 3572
+	ErrInvalidRecrusiveCTEReference                          = 3577
 	ErrWindowNoSuchWindow                                    = 3579
 	ErrWindowCircularityInWindowGraph                        = 3580
 	ErrWindowNoChildPartitioning                             = 3581

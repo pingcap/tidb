@@ -418,6 +418,7 @@ type cteInfo struct {
 	storageID     int
 	optFlag       uint64
 	enterSubquery bool
+	recursiveRef  bool
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -489,8 +490,9 @@ type PlanBuilder struct {
 	// isForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
-	isForUpdateRead      bool
-	allocIDForCTEStorage int
+	isForUpdateRead             bool
+	allocIDForCTEStorage        int
+	buildingRecursivePartForCTE bool
 }
 
 type handleColHelper struct {

@@ -305,6 +305,11 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 		p = b.buildTableDual()
 		return
 	}
+	defer func() {
+		for _, cte := range b.outerCTEs {
+			cte.recursiveRef = false
+		}
+	}()
 	return b.buildResultSetNode(ctx, from.TableRefs)
 }
 
@@ -316,8 +321,12 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		var isTableName bool
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
+			ci := b.prepareCTECheckForSubQuery()
+			defer resetCTECheckForSubQuery(ci)
 			p, err = b.buildSelect(ctx, v)
 		case *ast.SetOprStmt:
+			ci := b.prepareCTECheckForSubQuery()
+			defer resetCTECheckForSubQuery(ci)
 			p, err = b.buildSetOpr(ctx, v)
 		case *ast.TableName:
 			p, err = b.buildDataSource(ctx, v, &x.AsName)
@@ -668,6 +677,11 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	rightPlan, err := b.buildResultSetNode(ctx, joinNode.Right)
 	if err != nil {
 		return nil, err
+	}
+
+	// The recursive part in CTE must not be on the right side of a LEFT JOIN.
+	if _, ok := rightPlan.(*LogicalCTETable); ok && joinNode.Tp == ast.LeftJoin {
+		return nil, errors.New("In recursive query block of Recursive Common Table Expression 'cte', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints")
 	}
 
 	handleMap1 := b.handleHelper.popMap()
@@ -3301,6 +3315,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
 	}()
+	if b.buildingRecursivePartForCTE {
+		if sel.Distinct || sel.OrderBy != nil || sel.GroupBy != nil || len(sel.WindowSpecs) > 0 {
+			return nil, errors.New("This version of MySQL doesn't yet support 'ORDER BY over UNION in recursive Common Table Expression'")
+		}
+	}
 	enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
 	if sel.SelectStmtOpts != nil {
 		if sel.SelectStmtOpts.CalcFoundRows && !enableNoopFuncs {
@@ -3337,7 +3356,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 		l := len(sel.With.CTEs)
 		for _, cte := range sel.With.CTEs {
-			b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !sel.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0, false})
+			b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !sel.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0, false, false})
 			b.allocIDForCTEStorage++
 			saveFlag := b.optFlag
 			b.optFlag = 0
@@ -3439,6 +3458,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg {
+		if b.buildingRecursivePartForCTE {
+			return nil, errors.New("Recursive Common Table Expression 'cte2' can contain neither aggregation nor window functions in recursive query block")
+		}
+
 		aggFuncs, totalMap = b.extractAggFuncsInSelectFields(sel.Fields.Fields)
 		// len(aggFuncs) == 0 and sel.GroupBy == nil indicates that all the aggregate functions inside the SELECT fields
 		// are actually correlated aggregates from the outer query, which have already been built in the outer query.
@@ -3625,10 +3648,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 						return nil, errors.New("First meet recursive")
 					}
 
-					if cte.enterSubquery {
-						return nil, errors.New("In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery")
+					if cte.enterSubquery || cte.recursiveRef {
+						return nil, ErrInvalidRecursiveCTEReference.FastGenByArgs(tn.Name.String())
 					}
 
+					cte.recursiveRef = true
 					p := LogicalCTETable{idForStorage: cte.storageID}.Init(b.ctx, b.getSelectOffset())
 					p.SetSchema(cte.seedLP.Schema())
 					p.SetOutputNames(cte.seedLP.OutputNames())
@@ -5667,7 +5691,10 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
 	if isRecursive {
+		saveCheck := b.buildingRecursivePartForCTE
+		b.buildingRecursivePartForCTE = false
 		err = b.splitSeedAndRecursive(ctx, cte.Query.Query, cte.Name)
+		b.buildingRecursivePartForCTE = saveCheck
 	} else {
 		p, err = b.buildResultSetNode(ctx, cte.Query.Query)
 		if err != nil {
@@ -5703,7 +5730,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			}
 			l := len(x.With.CTEs)
 			for _, cte := range x.With.CTEs {
-				b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !x.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0, false})
+				b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !x.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0, false, false})
 				b.allocIDForCTEStorage++
 				saveFlag := b.optFlag
 				b.optFlag = 0
@@ -5726,6 +5753,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 		tmpAfterSetOptsForRecur := []*ast.SetOprType{nil}
 
 		expectSeed := true
+		// TODO: handle intersect/except.
 		for i := 0; i < len(x.SelectList.Selects); i++ {
 			var afterSetOperator *ast.SetOprType
 			switch x := x.SelectList.Selects[i].(type) {
@@ -5781,6 +5809,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 
 					cInfo.seedLP = p
 					i--
+					b.buildingRecursivePartForCTE = true
 					continue
 				}
 				if err != nil {
@@ -5837,4 +5866,21 @@ func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExp
 	}
 	p.SetOutputNames(outPutNames)
 	return nil
+}
+
+func (b *PlanBuilder) prepareCTECheckForSubQuery() []*cteInfo {
+	modifiedCTE := make([]*cteInfo, 0)
+	for _, cte := range b.outerCTEs {
+		if cte.isBuilding && !cte.enterSubquery {
+			cte.enterSubquery = true
+			modifiedCTE = append(modifiedCTE, cte)
+		}
+	}
+	return modifiedCTE
+}
+
+func resetCTECheckForSubQuery(ci []*cteInfo) {
+	for _, cte := range ci {
+		cte.enterSubquery = false
+	}
 }
