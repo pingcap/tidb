@@ -96,7 +96,7 @@ Regarding where these two handlers are used.
 
 `pingcap/log` is a wrapper around zap, and as mentioned below the two terms are equivalently interchangeable.
 
-Similar to `logrus`, the init method of zap -- `func InitZapLogger(cfg *LogConfig) error` -- may initialize two zap handlers.
+Similar to `logrus`, the init method of zap `func InitZapLogger(cfg *LogConfig) error` may initialize two zap handlers.
 
 - The global zap handler, the default log handler for the entire repo, through which the vast majority of logs are emitted.
 - Slow query zap handler, which is only initialized and not used.
