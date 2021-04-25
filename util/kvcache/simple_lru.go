@@ -59,8 +59,8 @@ type SimpleLRUCache struct {
 	elements map[string]*list.Element
 
 	// onEvict function will be called if any eviction happened
-	onEvict  func(Key, Value)
-	cache    *list.List
+	onEvict func(Key, Value)
+	cache   *list.List
 }
 
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".

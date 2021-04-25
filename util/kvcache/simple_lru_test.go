@@ -65,7 +65,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	vals := make([]int64, 5)
 	droppedKv := make(map[Key]Value)
 
-	lru.SetOnEvict(func(key Key,value Value){
+	lru.SetOnEvict(func(key Key, value Value) {
 		droppedKv[key] = value
 	})
 	for i := 0; i < 5; i++ {
