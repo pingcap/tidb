@@ -65,12 +65,13 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	vals := make([]int64, 5)
 	droppedKv := make(map[Key]Value)
 
+	lru.SetOnEvict(func(key Key,value Value){
+		droppedKv[key] = value
+	})
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
-		lru.Put(keys[i], vals[i], func(k Key, v Value) {
-			droppedKv[k] = v
-		})
+		lru.Put(keys[i], vals[i])
 	}
 	c.Assert(lru.size, Equals, lru.capacity)
 	c.Assert(lru.size, Equals, uint(3))

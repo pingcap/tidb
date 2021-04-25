@@ -57,6 +57,9 @@ type SimpleLRUCache struct {
 	quota    uint64
 	guard    float64
 	elements map[string]*list.Element
+
+	// onEvict function will be called if any eviction happened
+	onEvict  func(Key, Value)
 	cache    *list.List
 }
 
@@ -72,8 +75,14 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 		quota:    quota,
 		guard:    guard,
 		elements: make(map[string]*list.Element),
+		onEvict:  nil,
 		cache:    list.New(),
 	}
+}
+
+// SetOnEvict set the function called on each eviction.
+func (l *SimpleLRUCache) SetOnEvict(onEvict func(Key, Value)) {
+	l.onEvict = onEvict
 }
 
 // Get tries to find the corresponding value according to the given key.
@@ -87,8 +96,7 @@ func (l *SimpleLRUCache) Get(key Key) (value Value, ok bool) {
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
-// Evicted key value pair will be processed by func optKvFunc
-func (l *SimpleLRUCache) Put(key Key, value Value, optKvFunc ...func(k Key, v Value)) {
+func (l *SimpleLRUCache) Put(key Key, value Value) {
 	hash := string(key.Hash())
 	element, exists := l.elements[hash]
 	if exists {
@@ -128,9 +136,8 @@ func (l *SimpleLRUCache) Put(key Key, value Value, optKvFunc ...func(k Key, v Va
 			break
 		}
 
-		// pass key-value pair to optional functions
-		for _, fn := range optKvFunc {
-			fn(lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value)
+		if l.onEvict != nil {
+			l.onEvict(lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value)
 		}
 
 		l.cache.Remove(lru)
