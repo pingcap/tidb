@@ -730,7 +730,8 @@ func getDefaultCollate(charsetName string) string {
 			return c.DefaultCollation
 		}
 	}
-	return ""
+	// The charset is invalid, return server default.
+	return charset.CollationUTF8MB4
 }
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.
