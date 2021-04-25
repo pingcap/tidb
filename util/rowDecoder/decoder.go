@@ -57,14 +57,8 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 
 	tps := make([]*types.FieldType, len(cols))
 	for _, col := range cols {
-		if col.ChangeStateInfo == nil {
-			tps[col.Offset] = &col.FieldType
-		} else {
-			// Since changing column in the mutRow will be set with relative column's old value in the process of column-type-change,
-			// we should set fieldType as the relative column does. Otherwise it may get a panic, take change json to int as an example,
-			// setting json value to a int type column in mutRow will panic because it lacks of offset array.
-			tps[col.Offset] = &cols[col.ChangeStateInfo.DependencyColumnOffset].FieldType
-		}
+		// Even for changing column in column type change, we target field type uniformly.
+		tps[col.Offset] = &col.FieldType
 	}
 	var pkCols []int64
 	switch {
@@ -104,8 +98,12 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	for _, dCol := range rd.colMap {
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
-		if ok || dCol.GenExpr != nil {
+		if ok {
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+			continue
+		}
+		if dCol.GenExpr != nil {
+			// skip for now, latter we will eval it.
 			continue
 		}
 		if dCol.Col.ChangeStateInfo != nil {
@@ -174,4 +172,85 @@ func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[
 // Please make sure calling DecodeAndEvalRowWithMap first.
 func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
 	return rd.mutRow.ToRow()
+}
+
+// DecodeTheExistedColumnMap is used by ddl column-type-change first column reorg stage.
+// In the function, we only decode the existed column in the row and fill the default value.
+// For changing column, we shouldn't decode it here, because we will do a unified cast operation latter.
+// For generated column, we didn't decode it here too, because the eval process will depend on the changing column.
+func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	var err error
+	if rowcodec.IsNewFormat(b) {
+		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
+	} else {
+		row, err = tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
+	}
+	if err != nil {
+		return nil, err
+	}
+	row, err = tablecodec.DecodeHandleToDatumMap(handle, rd.pkCols, rd.colTypes, decodeLoc, row)
+	if err != nil {
+		return nil, err
+	}
+	for _, dCol := range rd.colMap {
+		colInfo := dCol.Col.ColumnInfo
+		val, ok := row[colInfo.ID]
+		if ok {
+			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+			continue
+		}
+		if dCol.GenExpr != nil {
+			// skip for now, latter we will eval it.
+			continue
+		}
+		// Get the default value of the column in the generated column expression.
+		val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
+		if err != nil {
+			return nil, err
+		}
+		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+	}
+	// return the existed column map here.
+	return row, nil
+}
+
+func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	keys := make([]int, 0, len(rd.colMap))
+	ids := make(map[int]int, len(rd.colMap))
+	for k, col := range rd.colMap {
+		keys = append(keys, col.Col.Offset)
+		ids[col.Col.Offset] = int(k)
+	}
+	sort.Ints(keys)
+	for _, id := range keys {
+		col := rd.colMap[int64(ids[id])]
+		if col.GenExpr == nil {
+			continue
+		}
+		// Eval the column value
+		val, err := col.GenExpr.Eval(rd.mutRow.ToRow())
+		if err != nil {
+			return nil, err
+		}
+		val, err = table.CastValue(ctx, val, col.Col.ColumnInfo, false, true)
+		if err != nil {
+			return nil, err
+		}
+
+		if val.Kind() == types.KindMysqlTime && sysLoc != time.UTC {
+			t := val.GetMysqlTime()
+			if t.Type() == mysql.TypeTimestamp {
+				err := t.ConvertTimeZone(sysLoc, time.UTC)
+				if err != nil {
+					return nil, err
+				}
+				val.SetMysqlTime(t)
+			}
+		}
+		rd.mutRow.SetValue(col.Col.Offset, val.GetValue())
+
+		row[int64(ids[id])] = val
+	}
+	// return the existed and evaluated column map here.
+	return row, nil
 }

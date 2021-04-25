@@ -966,10 +966,11 @@ func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 	relativeCol := cols[col.ChangeStateInfo.DependencyColumnOffset]
 	idxColumnVal, ok := rowMap[relativeCol.ID]
 	if ok {
-		// It needs cast values here when filling back column or index values in "modify/change column" statement.
-		if ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
-			return idxColumnVal, false, nil
-		}
+		// For non-ddl statement like update-where, it will fetch the old row out and insert it into kv again.
+		// Since update statement can see the writable columns, it is responsible for the casting relative column here.
+		// old row : a-b-[nil]
+		// new row : a-b-[a']
+		// Thus the writable new row is corresponding to Write-Only constraints.
 		idxColumnVal, err := table.CastValue(ctx, rowMap[relativeCol.ID], col.ColumnInfo, false, false)
 		// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
 		if err != nil {

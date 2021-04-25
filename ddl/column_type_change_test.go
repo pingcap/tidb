@@ -1752,3 +1752,27 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	c.Assert(job.ErrorCount, Equals, int64(4))
 	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
 }
+
+// Close issue #24253
+func (s *testColumnTypeChangeSuite) TestChangeIntToBitWillPanicInBackfillIndexes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+	}()
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` int(11) DEFAULT NULL," +
+		"  `b` varchar(10) DEFAULT NULL," +
+		"  `c` decimal(10,2) DEFAULT NULL," +
+		"  KEY `idx1` (`a`)," +
+		"  UNIQUE KEY `idx2` (`a`)," +
+		"  KEY `idx3` (`a`,`b`)," +
+		"  KEY `idx4` (`a`,`b`,`c`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t values(19,1,1),(17,2,2)")
+	tk.MustExec("alter table t modify a bit(5) not null")
+}
