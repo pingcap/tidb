@@ -15,9 +15,9 @@ package unionstore
 
 import (
 	"bytes"
+	"math"
 	"reflect"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -72,8 +72,8 @@ func newMemDB() *MemDB {
 	db.allocator.init()
 	db.root = nullAddr
 	db.stages = make([]memdbCheckpoint, 0, 2)
-	db.entrySizeLimit = atomic.LoadUint64(&tidbkv.TxnEntrySizeLimit)
-	db.bufferSizeLimit = atomic.LoadUint64(&tidbkv.TxnTotalSizeLimit)
+	db.entrySizeLimit = math.MaxUint64
+	db.bufferSizeLimit = math.MaxUint64
 	return db
 }
 
