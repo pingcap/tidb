@@ -65,6 +65,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
+<<<<<<< HEAD
 	maxMemDroppedKv := make(map[Key]Value)
 	zeroQuotaDroppedKv := make(map[Key]Value)
 
@@ -75,6 +76,12 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	// test onEvict function on 0 value of quota
 	lruZeroQuota.SetOnEvict(func(key Key, value Value) {
 		zeroQuotaDroppedKv[key] = value
+=======
+	droppedKv := make(map[Key]Value)
+
+	lru.SetOnEvict(func(key Key, value Value) {
+		droppedKv[key] = value
+>>>>>>> 73b5e54c6... util/kvcache: enhance kvcache (#24242)
 	})
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
@@ -88,13 +95,21 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	c.Assert(lruZeroQuota.size, Equals, lruMaxMem.size)
 
 	// test for non-existent elements
+<<<<<<< HEAD
 	c.Assert(len(maxMemDroppedKv), Equals, 2)
+=======
+	c.Assert(len(droppedKv), Equals, 2)
+>>>>>>> 73b5e54c6... util/kvcache: enhance kvcache (#24242)
 	for i := 0; i < 2; i++ {
 		element, exists := lruMaxMem.elements[string(keys[i].Hash())]
 		c.Assert(exists, IsFalse)
 		c.Assert(element, IsNil)
+<<<<<<< HEAD
 		c.Assert(maxMemDroppedKv[keys[i]], Equals, vals[i])
 		c.Assert(zeroQuotaDroppedKv[keys[i]], Equals, vals[i])
+=======
+		c.Assert(droppedKv[keys[i]], Equals, vals[i])
+>>>>>>> 73b5e54c6... util/kvcache: enhance kvcache (#24242)
 	}
 
 	// test for existent elements
