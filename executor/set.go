@@ -102,26 +102,11 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 
-		syns := e.getSynonyms(name)
-		// Set system variable
-		for _, n := range syns {
-			err := e.setSysVariable(n, v)
-			if err != nil {
-				return err
-			}
+		if err := e.setSysVariable(name, v); err != nil {
+			return err
 		}
 	}
 	return nil
-}
-
-func (e *SetExecutor) getSynonyms(varName string) []string {
-	synonyms, ok := variable.SynonymsSysVariables[varName]
-	if ok {
-		return synonyms
-	}
-
-	synonyms = []string{varName}
-	return synonyms
 }
 
 func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) error {
@@ -212,6 +197,10 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		// autocommit, timezone, query cache
 		logutil.BgLogger().Debug(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
+
+	// These are server instance scoped variables, and have special semantics.
+	// i.e. after SET SESSION, other users sessions will reflect the new value.
+	// TODO: in future these could be better managed as a post-set hook.
 
 	valStrToBoolStr := variable.BoolToOnOff(variable.TiDBOptOn(valStr))
 

@@ -976,35 +976,37 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	return sysVar, nil
 }
 
-// SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
-func (s *session) SetGlobalSysVar(name, value string) error {
-	if name == variable.TiDBSlowLogMasking {
-		name = variable.TiDBRedactLog
-	}
-	sv := variable.GetSysVar(name)
-	if sv == nil {
-		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	var sVal string
-	var err error
-	sVal, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal)
-	if err != nil {
-		return err
-	}
-	name = strings.ToLower(name)
-	// update mysql.tidb if required.
-	if s.varFromTiDBTable(name) {
-		if err = s.setTiDBTableValue(name, sVal); err != nil {
-			return err
-		}
-	}
-	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
-	stmt, err := s.ParseWithParams(context.TODO(), "REPLACE %n.%n VALUES (%?, %?)", mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+// SetGlobalSysVarOnly updates the internal value without calling the SetGlobal hook.
+// This is useful if you want to prevent recursion in the case that you want to keep two variables in sync.
+func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
+	stmt, err := s.ParseWithParams(context.TODO(), "REPLACE %n.%n VALUES (%?, %?)", mysql.SystemDB, mysql.GlobalVariablesTable, name, value)
 	if err != nil {
 		return err
 	}
 	_, _, err = s.ExecRestrictedStmt(context.TODO(), stmt)
 	return err
+}
+
+// SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
+func (s *session) SetGlobalSysVar(name, value string) (err error) {
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	if value, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal); err != nil {
+		return err
+	}
+	if err = sv.SetGlobalFromHook(s.sessionVars, value); err != nil {
+		return err
+	}
+
+	// update mysql.tidb if required.
+	if s.varFromTiDBTable(sv.Name) {
+		if err = s.setTiDBTableValue(sv.Name, value); err != nil {
+			return err
+		}
+	}
+	return s.SetGlobalSysVarOnly(sv.Name, value)
 }
 
 // setTiDBTableValue handles tikv_* sysvars which need to update mysql.tidb
