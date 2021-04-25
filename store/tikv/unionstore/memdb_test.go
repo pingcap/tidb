@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -71,8 +70,6 @@ func (s *testMemDBSuite) TestGetSet(c *C) {
 
 func (s *testMemDBSuite) TestBigKV(c *C) {
 	db := newMemDB()
-	db.entrySizeLimit = math.MaxUint64
-	db.bufferSizeLimit = math.MaxUint64
 	db.Set([]byte{1}, make([]byte, 80<<20))
 	c.Assert(db.vlog.blockSize, Equals, maxBlockSize)
 	c.Assert(len(db.vlog.blocks), Equals, 1)
