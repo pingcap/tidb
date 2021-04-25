@@ -2504,8 +2504,8 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	for range p.children {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
-				ExpectedCnt: prop.ExpectedCnt, 
-				TaskTp: property.MppTaskType, 
+				ExpectedCnt: prop.ExpectedCnt,
+				TaskTp:      property.MppTaskType,
 			})
 		} else {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt})
@@ -2517,8 +2517,8 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		chReqProps = make([]*property.PhysicalProperty, 0, len(p.children))
 		for range p.children {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
-				ExpectedCnt: prop.ExpectedCnt, 
-				TaskTp: property.MppTaskType, 
+				ExpectedCnt: prop.ExpectedCnt,
+				TaskTp:      property.MppTaskType,
 			})
 		}
 		mppUA := PhysicalUnionAll{}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)

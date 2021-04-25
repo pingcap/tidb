@@ -132,7 +132,7 @@ func flattenPlanForUnionAll(stack []PhysicalPlan, forest *[]*PhysicalExchangeSen
 			return errors.Trace(err)
 		}
 		*forest = append(*forest, p.(*PhysicalExchangeSender))
-		for i := 1; i < len(stack); i++{
+		for i := 1; i < len(stack); i++ {
 			if _, ok := stack[i].(*PhysicalUnionAll); ok {
 				continue
 			}
@@ -193,7 +193,7 @@ func buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
 	return fragments, nil
 }
 
-func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment,  error) {
+func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment, error) {
 	frags, err := buildFragments(s)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
