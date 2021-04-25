@@ -128,7 +128,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value, optKvFunc ...func(k Key, v Va
 			break
 		}
 
-		// append evicted record to optDroppedKvs list
+		// pass key-value pair to optional functions
 		for _, fn := range optKvFunc {
 			fn(lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value)
 		}
@@ -144,7 +144,6 @@ func (l *SimpleLRUCache) Put(key Key, value Value, optKvFunc ...func(k Key, v Va
 			}
 		}
 	}
-
 }
 
 // Delete deletes the key-value pair from the LRU Cache.
