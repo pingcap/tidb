@@ -15,6 +15,7 @@ package txn
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -33,6 +34,11 @@ type tikvTxn struct {
 // NewTiKVTxn returns a new Transaction.
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	txn.SetOption(tikvstore.KVFilter, TiDBKVFilter{})
+
+	entryLimit := atomic.LoadUint64(&kv.TxnEntrySizeLimit)
+	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
+
 	return &tikvTxn{txn, make(map[int64]*model.TableInfo)}
 }
 
