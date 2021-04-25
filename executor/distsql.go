@@ -161,7 +161,7 @@ type IndexReaderExecutor struct {
 	physicalTableID int64
 	ranges          []*ranger.Range
 	partitions      []table.PhysicalTable
-	partRangeMap    map[int64][]*ranger.Range
+	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
 
 	// kvRanges are only used for union scan.
 	kvRanges []kv.KeyRange
