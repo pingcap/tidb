@@ -542,6 +542,7 @@ func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	return nil
 }
 
+// DeleteTrueExprs deletes the surely true expressions
 func DeleteTrueExprs(p LogicalPlan, conds []expression.Expression) []expression.Expression {
 	newConds := make([]expression.Expression, 0, len(conds))
 	for _, cond := range conds {
@@ -557,9 +558,8 @@ func DeleteTrueExprs(p LogicalPlan, conds []expression.Expression) []expression.
 		sc := p.SCtx().GetSessionVars().StmtCtx
 		if isTrue, err := con.Value.ToBool(sc); err == nil && isTrue == 1 {
 			continue
-		} else {
-			newConds = append(newConds, cond)
 		}
+		newConds = append(newConds, cond)
 	}
 	return newConds
 }
