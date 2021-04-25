@@ -170,7 +170,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 	}
 }
 
-func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.Variables) kv.Response {
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
@@ -209,7 +209,7 @@ type batchCopIterator struct {
 	// Batch results are stored in respChan.
 	respChan chan *batchCopResponse
 
-	vars *kv.Variables
+	vars *tikv.Variables
 
 	memTracker *memory.Tracker
 

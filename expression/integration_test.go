@@ -4720,7 +4720,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) testTiDBIsOwnerFunc(c *C) {
+func (s *testIntegrationSuite) TestTiDBIsOwnerFunc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
 	result := tk.MustQuery("select tidb_is_ddl_owner()")
