@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -32,8 +31,16 @@ import (
 	"go.uber.org/zap"
 )
 
+// Used for pessimistic lock wait time
+// these two constants are special for lock protocol with tikv
+// 0 means always wait, -1 means nowait, others meaning lock wait in milliseconds
+var (
+	LockAlwaysWait = int64(0)
+	LockNoWait     = int64(-1)
+)
+
 type actionPessimisticLock struct {
-	*tidbkv.LockCtx
+	*kv.LockCtx
 }
 type actionPessimisticRollback struct{}
 
@@ -99,14 +106,14 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		if action.LockWaitTime > 0 {
 			timeLeft := action.LockWaitTime - (time.Since(lockWaitStartTime)).Milliseconds()
 			if timeLeft <= 0 {
-				req.PessimisticLock().WaitTimeout = tidbkv.LockNoWait
+				req.PessimisticLock().WaitTimeout = LockNoWait
 			} else {
 				req.PessimisticLock().WaitTimeout = timeLeft
 			}
 		}
 		failpoint.Inject("PessimisticLockErrWriteConflict", func() error {
 			time.Sleep(300 * time.Millisecond)
-			return tidbkv.ErrWriteConflict
+			return &kv.ErrWriteConflict{WriteConflict: nil}
 		})
 		startTime := time.Now()
 		resp, err := c.store.SendReq(bo, req, batch.region, ReadTimeoutShort)
@@ -138,7 +145,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if action.ReturnValues {
 				action.ValuesLock.Lock()
 				for i, mutation := range mutations {
-					action.Values[string(mutation.Key)] = tidbkv.ReturnedValue{Value: lockResp.Values[i]}
+					action.Values[string(mutation.Key)] = kv.ReturnedValue{Value: lockResp.Values[i]}
 				}
 				action.ValuesLock.Unlock()
 			}
@@ -176,9 +183,9 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		// If msBeforeTxnExpired is not zero, it means there are still locks blocking us acquiring
 		// the pessimistic lock. We should return acquire fail with nowait set or timeout error if necessary.
 		if msBeforeTxnExpired > 0 {
-			if action.LockWaitTime == tidbkv.LockNoWait {
+			if action.LockWaitTime == LockNoWait {
 				return kv.ErrLockAcquireFailAndNoWaitSet
-			} else if action.LockWaitTime == tidbkv.LockAlwaysWait {
+			} else if action.LockWaitTime == LockAlwaysWait {
 				// do nothing but keep wait
 			} else {
 				// the lockWaitTime is set, we should return wait timeout if we are still blocked by a lock
@@ -230,7 +237,7 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 	return nil
 }
 
-func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *tidbkv.LockCtx, mutations CommitterMutations) error {
+func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {
 	if c.sessionID > 0 {
 		failpoint.Inject("beforePessimisticLock", func(val failpoint.Value) {
 			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like

@@ -347,3 +347,6 @@ func (s *KVStore) SetTiKVClient(client Client) {
 func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
 }
+
+// Variables defines the variables used by TiKV storage.
+type Variables = kv.Variables

@@ -20,8 +20,6 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/ngaut/unistore/lockstore"
-	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -34,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
+	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -200,30 +200,6 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	for _, col := range e.columnInfos {
 		ft := fieldTypeFromPBColumn(col)
 		e.fieldTps = append(e.fieldTps, ft)
-	}
-}
-
-func (e *evalContext) fillColumnInfo(fieldTypes []*tipb.FieldType) {
-	e.columnInfos = make([]*tipb.ColumnInfo, 0, len(fieldTypes))
-	e.fieldTps = make([]*types.FieldType, 0, len(fieldTypes))
-	for i, pbType := range fieldTypes {
-		e.columnInfos = append(e.columnInfos, &tipb.ColumnInfo{ColumnId: int64(i),
-			Tp: pbType.Tp, Collation: pbType.Collate, ColumnLen: pbType.Flen,
-			Decimal: pbType.Decimal, Flag: int32(pbType.Flag)})
-		// todo fill collate and charset field
-		e.fieldTps = append(e.fieldTps, &types.FieldType{Tp: byte(pbType.Tp),
-			Flag: uint(pbType.Flag), Flen: int(pbType.Flen), Decimal: int(pbType.Decimal)})
-	}
-}
-
-func (e *evalContext) fillColumnInfoFromTPs(fieldTypes []*types.FieldType) {
-	e.columnInfos = make([]*tipb.ColumnInfo, 0, len(fieldTypes))
-	e.fieldTps = append(e.fieldTps, fieldTypes...)
-	for i, fieldType := range fieldTypes {
-		pbType := expression.ToPBFieldType(fieldType)
-		e.columnInfos = append(e.columnInfos, &tipb.ColumnInfo{ColumnId: int64(i),
-			Tp: pbType.Tp, Collation: pbType.Collate, ColumnLen: pbType.Flen,
-			Decimal: pbType.Decimal, Flag: int32(pbType.Flag)})
 	}
 }
 

@@ -24,21 +24,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-)
-
-type commitDetailCtxKeyType struct{}
-type lockKeysDetailCtxKeyType struct{}
-
-var (
-	// CommitDetailCtxKey presents CommitDetail info key in context.
-	CommitDetailCtxKey = commitDetailCtxKeyType{}
-
-	// LockKeysDetailCtxKey presents LockKeysDetail info key in context.
-	LockKeysDetailCtxKey = lockKeysDetailCtxKeyType{}
 )
 
 // ExecDetails contains execution detail information.
@@ -50,10 +38,10 @@ type ExecDetails struct {
 	BackoffSleep     map[string]time.Duration
 	BackoffTimes     map[string]int
 	RequestCount     int
-	CommitDetail     *CommitDetails
-	LockKeysDetail   *LockKeysDetails
-	ScanDetail       *ScanDetail
-	TimeDetail       TimeDetail
+	CommitDetail     *util.CommitDetails
+	LockKeysDetail   *util.LockKeysDetails
+	ScanDetail       *util.ScanDetail
+	TimeDetail       util.TimeDetail
 }
 
 type stmtExecDetailKeyType struct{}
@@ -63,10 +51,6 @@ var StmtExecDetailKey = stmtExecDetailKeyType{}
 
 // StmtExecDetails contains stmt level execution detail info.
 type StmtExecDetails struct {
-	BackoffCount         int64
-	BackoffDuration      int64
-	WaitKVRespDuration   int64
-	WaitPDRespDuration   int64
 	WriteSQLRespDuration time.Duration
 }
 
@@ -550,7 +534,7 @@ type CopRuntimeStats struct {
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
 	stats      map[string][]*basicCopRuntimeStats
-	scanDetail *ScanDetail
+	scanDetail *util.ScanDetail
 	// do not use kv.StoreType because it will meet cycle import error
 	storeType string
 }
@@ -854,7 +838,7 @@ func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType string) *Co
 	if !ok {
 		copStats = &CopRuntimeStats{
 			stats:      make(map[string][]*basicCopRuntimeStats),
-			scanDetail: &ScanDetail{},
+			scanDetail: &util.ScanDetail{},
 			storeType:  storeType,
 		}
 		e.copStats[planID] = copStats
@@ -884,7 +868,7 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, addres
 }
 
 // RecordScanDetail records a specific cop tasks's cop detail.
-func (e *RuntimeStatsColl) RecordScanDetail(planID int, storeType string, detail *ScanDetail) {
+func (e *RuntimeStatsColl) RecordScanDetail(planID int, storeType string, detail *util.ScanDetail) {
 	copStats := e.GetOrCreateCopStats(planID, storeType)
 	copStats.scanDetail.Merge(detail)
 }
@@ -979,8 +963,8 @@ func (e *RuntimeStatsWithConcurrencyInfo) Merge(rs RuntimeStats) {
 
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
 type RuntimeStatsWithCommit struct {
-	Commit   *CommitDetails
-	LockKeys *LockKeysDetails
+	Commit   *util.CommitDetails
+	LockKeys *util.LockKeysDetails
 }
 
 // Tp implements the RuntimeStats interface.
@@ -996,14 +980,14 @@ func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 	}
 	if tmp.Commit != nil {
 		if e.Commit == nil {
-			e.Commit = &CommitDetails{}
+			e.Commit = &util.CommitDetails{}
 		}
 		e.Commit.Merge(tmp.Commit)
 	}
 
 	if tmp.LockKeys != nil {
 		if e.LockKeys == nil {
-			e.LockKeys = &LockKeysDetails{}
+			e.LockKeys = &util.LockKeysDetails{}
 		}
 		e.LockKeys.Merge(tmp.LockKeys)
 	}

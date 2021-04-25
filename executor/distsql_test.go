@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"runtime/pprof"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -70,7 +72,8 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(tblID, 100)
+	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
 
 	ctx := context.Background()
 	// Send coprocessor request when the table split.
@@ -258,6 +261,67 @@ func (s *testSuite3) TestPushLimitDownIndexLookUpReader(c *C) {
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 limit 1").Check(testkit.Rows("2 2 2"))
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1").Check(testkit.Rows("3 3 3"))
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1").Check(testkit.Rows("4 4 4"))
+}
+
+func (s *testSuite3) TestPartitionTableIndexLookUpReader(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (a int, b int, key(a))
+	partition by range (a) (
+	partition p1 values less than (10),
+	partition p2 values less than (20),
+	partition p3 values less than (30),
+	partition p4 values less than (40))`)
+	tk.MustExec(`insert into t values (1, 1), (2, 2), (11, 11), (12, 12), (21, 21), (22, 22), (31, 31), (32, 32)`)
+	tk.MustExec(`set tidb_partition_prune_mode='dynamic'`)
+
+	tk.MustQuery("select * from t where a>=1 and a<=1").Sort().Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t where a>=1 and a<=2").Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery("select * from t where a>=1 and a<12").Sort().Check(testkit.Rows("1 1", "11 11", "2 2"))
+	tk.MustQuery("select * from t where a>=1 and a<15").Sort().Check(testkit.Rows("1 1", "11 11", "12 12", "2 2"))
+	tk.MustQuery("select * from t where a>15 and a<32").Sort().Check(testkit.Rows("21 21", "22 22", "31 31"))
+	tk.MustQuery("select * from t where a>30").Sort().Check(testkit.Rows("31 31", "32 32"))
+	tk.MustQuery("select * from t where a>=1 and a<15 order by a").Check(testkit.Rows("1 1", "2 2", "11 11", "12 12"))
+	tk.MustQuery("select * from t where a>=1 and a<15 order by a limit 1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t where a>=1 and a<15 order by a limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
+}
+
+func (s *testSuite3) TestPartitionTableRandomlyIndexLookUpReader(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (a int, b int, key(a))
+		partition by range (a) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30),
+		partition p4 values less than (40))`)
+	tk.MustExec("create table tnormal (a int, b int, key(a))")
+	values := make([]string, 0, 128)
+	for i := 0; i < 128; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(40), rand.Intn(40)))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
+	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
+
+	randRange := func() (int, int) {
+		a, b := rand.Intn(40), rand.Intn(40)
+		if a > b {
+			return b, a
+		}
+		return a, b
+	}
+	for i := 0; i < 256; i++ {
+		la, ra := randRange()
+		lb, rb := randRange()
+		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
+		tk.MustQuery("select * from t use index(a) where " + cond).Sort().Check(
+			tk.MustQuery("select * from tnormal where " + cond).Sort().Rows())
+	}
 }
 
 func (s *testSuite3) TestIndexLookUpStats(c *C) {
