@@ -1267,7 +1267,7 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *PhysicalUnionAll) attack2MppTasks(tasks ...task) task {
+func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 	t := &mppTask{p: p}
 	childPlans := make([]PhysicalPlan, 0, len(tasks))
 	var childMaxCost float64
@@ -1277,7 +1277,7 @@ func (p *PhysicalUnionAll) attack2MppTasks(tasks ...task) task {
 			if childCost > childMaxCost {
 				childMaxCost = childCost
 			}
-			childPlans = append(childPlans, mpp.plan())		
+			childPlans = append(childPlans, mpp.plan())
 		} else {
 			return invalidTask
 		}
@@ -1290,7 +1290,7 @@ func (p *PhysicalUnionAll) attack2MppTasks(tasks ...task) task {
 
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	if _, ok := tasks[0].(*mppTask); ok {
-		return p.attach2Task(tasks...)
+		return p.attach2MppTasks(tasks...)
 	}
 	t := &rootTask{p: p}
 	childPlans := make([]PhysicalPlan, 0, len(tasks))

@@ -384,11 +384,7 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 		self:     newSelf,
 	}
 	for _, child := range p.children {
-		cloned, err := child.Clone()
-		if err != nil {
-			return nil, err
-		}
-		base.children = append(base.children, cloned)
+		base.children = append(base.children, child)
 	}
 	for _, prop := range p.childrenReqProps {
 		base.childrenReqProps = append(base.childrenReqProps, prop.CloneEssentialFields())
