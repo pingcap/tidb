@@ -1861,13 +1861,21 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
 		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
 	}
+	showSamples := true
+	if sem.IsEnabled() {
+		// When SEM is enabled, the PROCESS privilege is required to see samples
+		// This helps prevent the case that data could leak to a CloudAdmin user
+		if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+			showSamples = pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv)
+		}
+	}
 	switch tableName {
 	case infoschema.TableStatementsSummary,
 		infoschema.ClusterTableStatementsSummary:
-		e.rows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum(user, isSuper)
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum(user, isSuper, showSamples)
 	case infoschema.TableStatementsSummaryHistory,
 		infoschema.ClusterTableStatementsSummaryHistory:
-		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper, showSamples)
 	}
 	switch tableName {
 	case infoschema.ClusterTableStatementsSummary,

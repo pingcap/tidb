@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 const (
@@ -69,6 +70,8 @@ var (
 func Enable() {
 	atomic.StoreInt32(&semEnabled, 1)
 	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.On)
+	// write to log so users understand why some operations are weird.
+	logutil.BgLogger().Info("tidb-server is operating with security enhanced mode (SEM) enabled")
 }
 
 // Disable disables SEM. This is intended to be used by the test-suite.

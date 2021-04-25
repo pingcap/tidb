@@ -324,7 +324,7 @@ func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 }
 
 // ToCurrentDatum converts current statement summaries to datum.
-func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isSuper bool) [][]types.Datum {
+func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isSuper bool, showSamples bool) [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	beginTime := ssMap.beginTimeForCurInterval
@@ -332,7 +332,7 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isS
 
 	rows := make([][]types.Datum, 0, len(values))
 	for _, value := range values {
-		record := value.(*stmtSummaryByDigest).toCurrentDatum(beginTime, user, isSuper)
+		record := value.(*stmtSummaryByDigest).toCurrentDatum(beginTime, user, isSuper, showSamples)
 		if record != nil {
 			rows = append(rows, record)
 		}
@@ -341,7 +341,7 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isS
 }
 
 // ToHistoryDatum converts history statements summaries to datum.
-func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isSuper bool) [][]types.Datum {
+func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isSuper bool, showSamples bool) [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	ssMap.Unlock()
@@ -349,7 +349,7 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isS
 	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
-		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, user, isSuper)
+		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, user, isSuper, showSamples)
 		rows = append(rows, records...)
 	}
 	return rows
@@ -563,7 +563,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 	}
 }
 
-func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, user *auth.UserIdentity, isSuper bool) []types.Datum {
+func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, user *auth.UserIdentity, isSuper bool, showSamples bool) []types.Datum {
 	var ssElement *stmtSummaryByDigestElement
 
 	ssbd.Lock()
@@ -581,10 +581,10 @@ func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, u
 	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval || !isAuthed {
 		return nil
 	}
-	return ssElement.toDatum(ssbd)
+	return ssElement.toDatum(ssbd, showSamples)
 }
 
-func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, user *auth.UserIdentity, isSuper bool) [][]types.Datum {
+func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, user *auth.UserIdentity, isSuper bool, showSamples bool) [][]types.Datum {
 	// Collect all history summaries to an array.
 	ssElements := ssbd.collectHistorySummaries(historySize)
 
@@ -595,7 +595,7 @@ func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, user *auth.User
 			_, isAuthed = ssElement.authUsers[user.Username]
 		}
 		if isAuthed {
-			rows = append(rows, ssElement.toDatum(ssbd))
+			rows = append(rows, ssElement.toDatum(ssbd, showSamples))
 		}
 	}
 	return rows
@@ -851,7 +851,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
 }
 
-func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
+func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest, showSamples bool) []types.Datum {
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
@@ -865,6 +865,14 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 	for key := range ssElement.authUsers {
 		sampleUser = key
 		break
+	}
+
+	// Samples may be required to be hidden for security reasons
+	sampleSQL := ssElement.sampleSQL
+	prevSQL := ssElement.prevSQL
+	if !showSamples {
+		sampleSQL = ""
+		prevSQL = ""
 	}
 
 	// Actually, there's a small chance that endTime is out of date, but it's hard to keep it up to date all the time.
@@ -953,8 +961,8 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssElement.planInCache,
 		ssElement.planCacheHits,
 		ssElement.planInBinding,
-		ssElement.sampleSQL,
-		ssElement.prevSQL,
+		sampleSQL,
+		prevSQL,
 		ssbd.planDigest,
 		plan,
 	)

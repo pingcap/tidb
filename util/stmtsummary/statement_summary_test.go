@@ -620,7 +620,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums := s.ssMap.ToCurrentDatum(nil, true)
+	datums := s.ssMap.ToCurrentDatum(nil, true, true)
 	c.Assert(len(datums), Equals, 1)
 	n := types.NewTime(types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval, 0)), mysql.TypeTimestamp, types.DefaultFsp)
 	e := types.NewTime(types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval+1800, 0)), mysql.TypeTimestamp, types.DefaultFsp)
@@ -654,7 +654,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		t, t, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
 	match(c, datums[0], expectedDatum...)
-	datums = s.ssMap.ToHistoryDatum(nil, true)
+	datums = s.ssMap.ToHistoryDatum(nil, true, true)
 	c.Assert(len(datums), Equals, 1)
 	match(c, datums[0], expectedDatum...)
 }
@@ -682,7 +682,7 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 		}
 
 		// There would be 32 summaries.
-		datums := s.ssMap.ToCurrentDatum(nil, true)
+		datums := s.ssMap.ToCurrentDatum(nil, true, true)
 		c.Assert(len(datums), Equals, loops)
 	}
 
@@ -691,7 +691,7 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 	}
 	wg.Wait()
 
-	datums := s.ssMap.ToCurrentDatum(nil, true)
+	datums := s.ssMap.ToCurrentDatum(nil, true, true)
 	c.Assert(len(datums), Equals, loops)
 }
 
@@ -834,7 +834,7 @@ func (s *testStmtSummarySuite) TestSetMaxStmtCountParallel(c *C) {
 
 	wg.Wait()
 
-	datums := s.ssMap.ToCurrentDatum(nil, true)
+	datums := s.ssMap.ToCurrentDatum(nil, true, true)
 	c.Assert(len(datums), Equals, 1)
 }
 
@@ -850,7 +850,7 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums := s.ssMap.ToCurrentDatum(nil, true)
+	datums := s.ssMap.ToCurrentDatum(nil, true, true)
 	c.Assert(len(datums), Equals, 0)
 
 	// Set true in session scope, it will overwrite global scope.
@@ -858,7 +858,7 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	c.Assert(err, IsNil)
 
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums = s.ssMap.ToCurrentDatum(nil, true)
+	datums = s.ssMap.ToCurrentDatum(nil, true, true)
 	c.Assert(len(datums), Equals, 1)
 
 	// Set false in global scope, it shouldn't work.
@@ -871,7 +871,7 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	stmtExecInfo2.NormalizedSQL = "normalized_sql2"
 	stmtExecInfo2.Digest = "digest2"
 	s.ssMap.AddStatement(stmtExecInfo2)
-	datums = s.ssMap.ToCurrentDatum(nil, true)
+	datums = s.ssMap.ToCurrentDatum(nil, true, true)
 	c.Assert(len(datums), Equals, 2)
 
 	// Unset in session scope.
@@ -879,7 +879,7 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	c.Assert(err, IsNil)
 	s.ssMap.beginTimeForCurInterval = now + 60
 	s.ssMap.AddStatement(stmtExecInfo2)
-	datums = s.ssMap.ToCurrentDatum(nil, true)
+	datums = s.ssMap.ToCurrentDatum(nil, true, true)
 	c.Assert(len(datums), Equals, 0)
 
 	// Unset in global scope.
@@ -887,7 +887,7 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	c.Assert(err, IsNil)
 	s.ssMap.beginTimeForCurInterval = now + 60
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums = s.ssMap.ToCurrentDatum(nil, true)
+	datums = s.ssMap.ToCurrentDatum(nil, true, true)
 	c.Assert(len(datums), Equals, 1)
 
 	// Set back.
@@ -915,7 +915,7 @@ func (s *testStmtSummarySuite) TestEnableSummaryParallel(c *C) {
 			c.Assert(err, IsNil)
 			s.ssMap.AddStatement(stmtExecInfo1)
 			// Try to read it.
-			s.ssMap.ToHistoryDatum(nil, true)
+			s.ssMap.ToHistoryDatum(nil, true, true)
 		}
 		err := s.ssMap.SetEnabled("1", false)
 		c.Assert(err, IsNil)
@@ -1049,12 +1049,12 @@ func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 			c.Assert(ssElement.beginTime, Equals, now+20)
 		}
 	}
-	datum := s.ssMap.ToHistoryDatum(nil, true)
+	datum := s.ssMap.ToHistoryDatum(nil, true, true)
 	c.Assert(len(datum), Equals, 10)
 
 	err = s.ssMap.SetHistorySize("5", false)
 	c.Assert(err, IsNil)
-	datum = s.ssMap.ToHistoryDatum(nil, true)
+	datum = s.ssMap.ToHistoryDatum(nil, true, true)
 	c.Assert(len(datum), Equals, 5)
 }
 
@@ -1180,17 +1180,17 @@ func (s *testStmtSummarySuite) TestAccessPrivilege(c *C) {
 	user := &auth.UserIdentity{Username: "user"}
 	badUser := &auth.UserIdentity{Username: "bad_user"}
 
-	datums := s.ssMap.ToCurrentDatum(user, false)
+	datums := s.ssMap.ToCurrentDatum(user, false, false)
 	c.Assert(len(datums), Equals, loops)
-	datums = s.ssMap.ToCurrentDatum(badUser, false)
+	datums = s.ssMap.ToCurrentDatum(badUser, false, false)
 	c.Assert(len(datums), Equals, 0)
-	datums = s.ssMap.ToCurrentDatum(badUser, true)
+	datums = s.ssMap.ToCurrentDatum(badUser, true, false)
 	c.Assert(len(datums), Equals, loops)
 
-	datums = s.ssMap.ToHistoryDatum(user, false)
+	datums = s.ssMap.ToHistoryDatum(user, false, false)
 	c.Assert(len(datums), Equals, loops)
-	datums = s.ssMap.ToHistoryDatum(badUser, false)
+	datums = s.ssMap.ToHistoryDatum(badUser, false, false)
 	c.Assert(len(datums), Equals, 0)
-	datums = s.ssMap.ToHistoryDatum(badUser, true)
+	datums = s.ssMap.ToHistoryDatum(badUser, true, false)
 	c.Assert(len(datums), Equals, loops)
 }
