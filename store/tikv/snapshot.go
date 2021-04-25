@@ -53,7 +53,7 @@ type KVSnapshot struct {
 	notFillCache    bool
 	syncLog         bool
 	keyOnly         bool
-	vars            *tidbkv.Variables
+	vars            *kv.Variables
 	replicaReadSeed uint32
 	resolvedLocks   *util.TSSet
 
@@ -91,7 +91,7 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 		store:           store,
 		version:         ts,
 		priority:        pb.CommandPri_Normal,
-		vars:            tidbkv.DefaultVars,
+		vars:            kv.DefaultVars,
 		replicaReadSeed: replicaReadSeed,
 		resolvedLocks:   util.NewTSSet(5),
 	}

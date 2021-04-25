@@ -235,9 +235,26 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	return nil
 }
 
+// Run the validation function before setting a variable
+// This helps normalize values and not depend on user input directly.
+// It should technically not be required since the setCharset function
+// has already performed its own validation. It also helps maintain consistency
+// since eventually SET without validate may become be illegal.
+func (e *SetExecutor) validateAndSetVar(name, val string) (err error) {
+	sysVar := variable.GetSysVar(name)
+	if sysVar == nil {
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	val, err = sysVar.Validate(e.ctx.GetSessionVars(), val, variable.ScopeSession)
+	if err != nil {
+		return err
+	}
+	return e.ctx.GetSessionVars().SetSystemVar(name, val)
+}
+
 func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	var err error
-	if len(co) == 0 {
+	if co == "" {
 		if co, err = charset.GetDefaultCollation(cs); err != nil {
 			return err
 		}
@@ -250,21 +267,21 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 			return charset.ErrCollationCharsetMismatch.GenWithStackByArgs(coll.Name, cs)
 		}
 	}
-	sessionVars := e.ctx.GetSessionVars()
 	if isSetName {
 		for _, v := range variable.SetNamesVariables {
-			if err = sessionVars.SetSystemVar(v, cs); err != nil {
+			if err = e.validateAndSetVar(v, cs); err != nil {
 				return errors.Trace(err)
 			}
 		}
-		return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
+		return errors.Trace(e.validateAndSetVar(variable.CollationConnection, co))
 	}
 	// Set charset statement, see also https://dev.mysql.com/doc/refman/8.0/en/set-character-set.html.
 	for _, v := range variable.SetCharsetVariables {
-		if err = sessionVars.SetSystemVar(v, cs); err != nil {
+		if err = e.validateAndSetVar(v, cs); err != nil {
 			return errors.Trace(err)
 		}
 	}
+	sessionVars := e.ctx.GetSessionVars()
 	csDb, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CharsetDatabase)
 	if err != nil {
 		return err
@@ -273,11 +290,11 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	if err != nil {
 		return err
 	}
-	err = sessionVars.SetSystemVar(variable.CharacterSetConnection, csDb)
+	err = e.validateAndSetVar(variable.CharacterSetConnection, csDb)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDb))
+	return errors.Trace(e.validateAndSetVar(variable.CollationConnection, coDb))
 }
 
 func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value types.Datum, err error) {

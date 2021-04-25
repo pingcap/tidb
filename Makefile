@@ -54,6 +54,7 @@ check-static: tools/bin/golangci-lint
 	  --enable=ineffassign \
 	  --enable=typecheck \
 	  --enable=varcheck \
+	  --enable=unused \
 	  --enable=structcheck \
 	  --enable=deadcode \
 	  $$($(PACKAGE_DIRECTORIES))
