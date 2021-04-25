@@ -883,6 +883,12 @@ type PhysicalExchangeReceiver struct {
 	basePhysicalPlan
 
 	Tasks []*kv.MPPTask
+	frags []*Fragment
+}
+
+// Clone implment PhysicalPlan interface.
+func (p *PhysicalExchangeReceiver) Clone() (PhysicalPlan, error) {
+	return &(*p), nil
 }
 
 // GetExchangeSender return the connected sender of this receiver. We assume that its child must be a receiver.
@@ -897,10 +903,16 @@ type PhysicalExchangeSender struct {
 	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
 	HashCols     []*expression.Column
-	// Tasks is the mpp task for current PhysicalExchangeSender
+	// Tasks is the mpp task for current PhysicalExchangeSender.
+	// Currently it's only used for showing explain result.
 	Tasks []*kv.MPPTask
 
 	Fragment *Fragment
+}
+
+// Clone implment PhysicalPlan interface.
+func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
+	return &(*p), nil
 }
 
 // Clone implements PhysicalPlan interface.
