@@ -23,49 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-// CheckLabelConstraints will check labels, and build Constraints for rule.
-func CheckLabelConstraints(labels []string) ([]Constraint, error) {
-	constraints := make([]Constraint, 0, len(labels))
-	for _, str := range labels {
-		label, err := NewConstraint(strings.TrimSpace(str))
-		if err != nil {
-			return constraints, err
-		}
-
-		pass := true
-
-		for _, cnst := range constraints {
-			if label.Key == cnst.Key {
-				sameOp := label.Op == cnst.Op
-				sameVal := label.Values[0] == cnst.Values[0]
-				// no following cases:
-				// 1. duplicated constraint
-				// 2. no instance can meet: +dc=sh, -dc=sh
-				// 3. can not match multiple instances: +dc=sh, +dc=bj
-				if sameOp && sameVal {
-					pass = false
-					break
-				} else if (!sameOp && sameVal) || (sameOp && !sameVal && label.Op == In) {
-					s1, err := label.Restore()
-					if err != nil {
-						s1 = err.Error()
-					}
-					s2, err := cnst.Restore()
-					if err != nil {
-						s2 = err.Error()
-					}
-					return constraints, errors.Errorf("conflicting constraints '%s' and '%s'", s1, s2)
-				}
-			}
-		}
-
-		if pass {
-			constraints = append(constraints, label)
-		}
-	}
-	return constraints, nil
-}
-
 // ObjectIDFromGroupID extracts the db/table/partition ID from the group ID
 func ObjectIDFromGroupID(groupID string) (int64, error) {
 	// If the rule doesn't come from TiDB, skip it.
@@ -77,24 +34,6 @@ func ObjectIDFromGroupID(groupID string) (int64, error) {
 		return 0, errors.Errorf("Rule %s doesn't include an id", groupID)
 	}
 	return id, nil
-}
-
-// RestoreLabelConstraintList converts the label constraints to a readable string.
-func RestoreLabelConstraintList(constraints []Constraint) (string, error) {
-	var sb strings.Builder
-	for i, constraint := range constraints {
-		sb.WriteByte('"')
-		conStr, err := constraint.Restore()
-		if err != nil {
-			return "", err
-		}
-		sb.WriteString(conStr)
-		sb.WriteByte('"')
-		if i < len(constraints)-1 {
-			sb.WriteByte(',')
-		}
-	}
-	return sb.String(), nil
 }
 
 // BuildPlacementDropBundle builds the bundle to drop placement rules.

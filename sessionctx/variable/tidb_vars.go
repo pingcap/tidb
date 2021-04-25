@@ -674,6 +674,7 @@ const (
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
+	DefCTEMaxRecursionDepth            = 1000
 )
 
 // Process global variables.
@@ -696,7 +697,7 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	CapturePlanBaseline                   = serverGlobalVariable{globalVal: BoolOff}
+	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 )

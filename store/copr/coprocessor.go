@@ -63,7 +63,11 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
+	vars, ok := variables.(*tikv.Variables)
+	if !ok {
+		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
+	}
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars)
@@ -241,7 +245,7 @@ type copIterator struct {
 	// Otherwise, results are stored in respChan.
 	respChan chan *copResponse
 
-	vars *kv.Variables
+	vars *tikv.Variables
 
 	memTracker *memory.Tracker
 
@@ -268,7 +272,7 @@ type copIteratorWorker struct {
 	req      *kv.Request
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
-	vars     *kv.Variables
+	vars     *tikv.Variables
 	*tikv.ClientHelper
 
 	memTracker *memory.Tracker
@@ -912,8 +916,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *tikv.Backoffer, rpcCtx *t
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	resp.respTime = costTime
-	sd := &execdetails.ScanDetail{}
-	td := execdetails.TimeDetail{}
+	sd := &util.ScanDetail{}
+	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
