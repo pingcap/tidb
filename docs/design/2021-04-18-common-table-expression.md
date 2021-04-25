@@ -46,7 +46,7 @@ There are two kinds of CTE:
         cte2 AS (SELECT c2 FROM t2)
     SELECT cte1.c1, cte2.c2 FROM cte1, cte2 WHERE cte1.c1 = cte2.c2 AND cte1.c1 = 100;
     ```
-2. recursive CTE, which can be used to do hierarchical queries. Recursive CTE normally consists of seed part and recursive part.
+2. recursive CTE, which can be used to do hierarchical queries. Recursive CTE normally consists of the seed part and the recursive part.
    Seed part will generate the origin data, the remaining computation will be done by recursive part.
 
     ```
@@ -62,19 +62,19 @@ There are two kinds of CTE:
 ### Overview
 There are two ways to implement CTE:
 1. Merge: just like view, CTE is expanded on where it's used.
-2. Materialization: use temporary storage to store the result of CTE, and read the temporary storage when use CTE.
+2. Materialization: use temporary storage to store the result of CTE, and read the temporary storage when using CTE.
 
 `Merge` is normally a better way to implement CTE, because optimizer can pushdown predicates from outer query to inner query.
 But when CTE is referenced multiple times, `Materialization` will be better. And recursive CTE can only be implemented by `Materialization`.
 
-For simplicity, this design doc only use `Materialization` to implement both non-recursive and recursive CTE.
+For simplicity, this design doc only uses `Materialization` to implement both non-recursive and recursive CTE.
 So there is no need to consider how to choose between these two methods, so as to reduce the chance of bugs.
 And in the near future, `Merge` will be definitely supported to implement non-recursive CTE.
 
 `RowContainer` will be used to store the materialized result.
 The result will first reside in memory, and when the memory usage exceeds `tidb_mem_quota_query`, intermediate results will be spilled to disk.
 
-For recursive CTE, the optimizer has no way to accurately know the number of iteration. So we use seed part's cost as CTE's cost.
+For recursive CTE, the optimizer has no way to accurately know the number of iterations. So we use the seed part's cost as CTE's cost.
 Also we will add a system variable `cte_max_recursion_depth` to control the max iteration number.
 If the maximum iteration number is reached, an error will be returned.
 
@@ -93,10 +93,10 @@ type LogicalCTE struct {
 ```
 
 `LogicalCTE` is logical operator for CTE:
-1. `isDistinct` is true if CTE is recursive and `UNION [DISTINCT]` is used to connected seed part and recursive part.
-2. `seedPartPlanID` is the plan id of seed part's logical plan. We will add a map[PlanID]Plan in stmt ctx to record plans used by CTE.
-    Different reference of the same CTE will use same seed/recursive part's plan.
-3. `recursivePartPlanID` is the plan id of recursive part's logical plan.
+1. `isDistinct` is true if CTE is recursive and `UNION [DISTINCT]` is used to connect the seed part and the recursive part.
+2. `seedPartPlanID` is the plan id of the seed part's logical plan. We will add a map[PlanID]Plan in stmt ctx to record plans used by CTE.
+    Different references of the same CTE will use same seed/recursive part's plan.
+3. `recursivePartPlanID` is the plan id of the recursive part's logical plan.
 
 ```Go
 type LogicalCTETable struct {
@@ -140,21 +140,21 @@ When the last user calls Close(), the `CTEStorage` will really be closed.
 In parsing phase, definition of CTE will be parsed as a subtree of the outermost select stmt.
 
 #### Logical Plan
-The parsing phase will generate a AST tree, which will be used to generate `LogicalCTE`. This stage will complete the following steps:
+The parsing phase will generate an AST tree, which will be used to generate `LogicalCTE`. This stage will complete the following steps:
 1. Build logical plans of seed part and recursive part and store their plan id. The plans will be stored to a map in stmt ctx.
-2. Do some validation check.
+2. Do some validation checks.
 
     2.1 mutual recursive(cte1 -> cte2 -> cte1) is not supported.
 
     2.2 column num of seed part and recursive part are same.
     
-    2.3 all seed parts should follows recursive parts.
+    2.3 all seed parts should follow recursive parts.
 
     2.4 recursive query blocks with UNION DISTINCT then UNION ALL are not supported.
 
     2.5 recursive parts cannot include: `ORDER BY`, `Aggregate Function`, `Window Function`, `DISTINCT`.
 
-3. Recognize same CTE. If there are multiple references to the same CTE, `seedPartPlanID` and `recursivePartPlanID` of these references should be same.
+3. Recognize the same CTE. If there are multiple references to the same CTE, `seedPartPlanID` and `recursivePartPlanID` of these references should be same.
    These plans will only be optimized only once.
 
 We use the following SQL to illustrate:
@@ -178,7 +178,7 @@ The Physical Plan will be like:
 Three structures will be constructed:
 1. `CTEExec`: Evaluate seed part and recursive part iteratively.
 2. `CTETableReaderExec`: Read result of previous iteration and return result to parent operator.
-3. `CTEStorage`: This is where the materialized results stored. `CTEExec` will write it and `CTETableReaderExec` will read it.
+3. `CTEStorage`: This is where the materialized results are stored. `CTEExec` will write it and `CTETableReaderExec` will read it.
 
 The executor tree will be like:
 
@@ -205,13 +205,13 @@ The filling of `CTEStorage` is done by `CTEExec` and `CTETableReaderExec` togeth
 ![cte_computation](./imgs/cte_computation.png)
 
 The data of iter_0 is generated by computing seed part and stored into `CTEStorage`. Data of iter_i is generated as follows:
-1. `CTEExec` call child's next() method, then `CTETableReaderExec` will read iter_i-1 data from `CTEStorage`.
+1. `CTEExec` calls child's next() method, then `CTETableReaderExec` will read iter_i-1 data from `CTEStorage`.
 2. Data is returned to `Selection`.
 3. `Selection` filter data and return it to `CTEExec`.
 4. `CTEExec` stores the result to `CTEStorage`, and the result labeled as iter_1 data.
 
 The above steps will continue to iterate until:
-1. No data is generated by recursive part.
+1. No data is generated by the recursive part.
 2. Iteration number reaches `cte_max_recursion_depth`.
 3. Execution time reaches `max_execution_time`
 
@@ -223,7 +223,7 @@ The above steps will continue to iterate until:
 2. Define a new CTE within a CTE.
 3. Use CTE in subquery.
 4. Use CTE in UPDATE/DELETE/INSERT statements.
-5. CTE name conflicts with other table name.
+5. CTE name conflicts with other table names.
 6. Join CTE with other tables/CTE.
 7. Use expression with CTE.
 
@@ -248,7 +248,7 @@ The memory usage, disk usage and QPS should be reported.
 
 CTE is a new feature and it will not affect the overall performance.
 But for now we only use `Materialization` to implement non-recursive CTE.
-In some scenario, the performance may not as good as implementations which use `Merge`.
+In some scenario, the performance may not be as good as implementations which use `Merge`.
 
 ## Investigation & Alternatives
 
@@ -256,7 +256,7 @@ In some scenario, the performance may not as good as implementations which use `
 Most mainstream DBMS use `Merge` and `Materialization` to implement non-recursive cte, while recursive cte can only be implemented with `Materialization`.
 `Merge` is preferred when there are no side effects, such as random()/cur_timestamp() is used in subquery.
 But when CTE is referenced multiple times, `Materialization` may be better.
-Also user can control which method to use explicitly by using hint.
+Also users can control which method to use explicitly by using hints.
 
 ### Materialization
 For `Materialization`, most DBMS use some kind of container to store materialized result,
