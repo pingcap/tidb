@@ -625,7 +625,6 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	}
 
 	if s.txn.Valid() {
-		s.txn.State = TxnRollingBack
 		terror.Log(s.txn.Rollback())
 	}
 	if ctx.Value(inCloseSession{}) == nil {

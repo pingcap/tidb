@@ -72,16 +72,11 @@ type TxnState struct {
 	stagingHandle kv.StagingHandle
 	mutations     map[int64]*binlog.TableMutation
 	writeSLI      sli.TxnWriteThroughputSLI
-	// todo: Shall we parse startTs to get it?
-	// Pros: Save memory, some how is the "global" timestamp in a cluster(so for the CLUSTER_TIDB_TRX, this field would be more useful)
-	// Cons: May different with result of "NOW()"
-	humanReadableStartTime time.Time
 	// digest of SQL current running
 	CurrentSQLDigest string
 	// current executing state
 	State TxnRunningState
 	// last trying to block start time
-	// todo: currently even if stmtState is not Blocking, blockStartTime is not nil (showing last block), is it the preferred behaviour?
 	blockStartTime *time.Time
 }
 
@@ -97,6 +92,7 @@ func (txn *TxnState) CacheTableInfo(id int64, info *model.TableInfo) {
 
 func (txn *TxnState) init() {
 	txn.mutations = make(map[int64]*binlog.TableMutation)
+	txn.State = TxnRunningNormal
 }
 
 func (txn *TxnState) initStmtBuf() {
@@ -186,8 +182,8 @@ func (txn *TxnState) GoString() string {
 }
 
 func (txn *TxnState) changeInvalidToValid(kvTxn kv.Transaction) {
-	txn.humanReadableStartTime = time.Now()
 	txn.Transaction = kvTxn
+	txn.State = TxnRunningNormal
 	txn.initStmtBuf()
 	txn.txnFuture = nil
 }
@@ -211,8 +207,8 @@ func (txn *TxnState) changePendingToValid(ctx context.Context) error {
 		txn.Transaction = nil
 		return err
 	}
-	txn.humanReadableStartTime = time.Now()
 	txn.Transaction = t
+	txn.State = TxnRunningNormal
 	txn.initStmtBuf()
 	return nil
 }
@@ -293,6 +289,7 @@ func (txn *TxnState) Commit(ctx context.Context) error {
 // Rollback overrides the Transaction interface.
 func (txn *TxnState) Rollback() error {
 	defer txn.reset()
+	txn.State = TxnRollingBack
 	return txn.Transaction.Rollback()
 }
 
@@ -300,7 +297,10 @@ func (txn *TxnState) Rollback() error {
 func (txn *TxnState) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	originState := txn.State
 	txn.State = TxnLockWaiting
+	t := time.Now()
+	txn.blockStartTime = &t
 	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
+	txn.blockStartTime = nil
 	txn.State = originState
 	return err
 }
@@ -359,7 +359,6 @@ func keyNeedToLock(k, v []byte, flags tikvstore.KeyFlags) bool {
 
 // Datum dump the TxnState to Datum for displaying in `TIDB_TRX`
 func (txn *TxnState) Datum() []types.Datum {
-	logutil.BgLogger().Info("txnState.Datum", zap.String("txn", txn.GoString()))
 	if txn.pending() {
 		return nil
 	}
@@ -369,9 +368,10 @@ func (txn *TxnState) Datum() []types.Datum {
 	} else {
 		blockStartTime = types.NewTime(types.FromGoTime(*txn.blockStartTime), mysql.TypeTimestamp, 0)
 	}
+	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(txn.StartTS())*1e6)
 	return types.MakeDatums(
 		txn.StartTS(),
-		types.NewTime(types.FromGoTime(txn.humanReadableStartTime), mysql.TypeTimestamp, 0),
+		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, 0),
 		txn.CurrentSQLDigest,
 		txn.State,
 		blockStartTime)
