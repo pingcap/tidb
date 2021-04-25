@@ -976,6 +976,17 @@ type PhysicalUnionAll struct {
 	physicalSchemaProducer
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalUnionAll) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalUnionAll)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	return cloned, nil
+}
+
 // AggMppRunMode defines the running mode of aggregation in MPP
 type AggMppRunMode int
 

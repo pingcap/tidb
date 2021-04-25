@@ -426,10 +426,10 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists x1")
-	tk.MustExec("create table x1(a int primary key, b int);")
+	tk.MustExec("create table x1(a int , b int);")
 	tk.MustExec("alter table x1 set tiflash replica 1")
 	tk.MustExec("drop table if exists x2")
-	tk.MustExec("create table x2(a int primary key, b int);")
+	tk.MustExec("create table x2(a int , b int);")
 	tk.MustExec("alter table x2 set tiflash replica 1")
 	tb := testGetTableByName(c, tk.Se, "test", "x1")
 	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
@@ -442,7 +442,8 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 	tk.MustExec("insert into x2 values (5, 1), (2, 2), (3, 3), (4, 4)")
 
 	// test join + union (join + select)
-	tk.MustQuery("select x1.a, x.a from x1 left join (select x2.b a, x1.b from x1 join x2 on x1.a = x2.b union all select * from x1 ) x on x1.a = x.a order by x1.a").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2", "3 3", "4 4", "4 4"))
+	tk.MustQuery("select x1.a, x.a from x1 left join (select x2.b a, x1.b from x1 join x2 on x1.a = x2.b union all select * from x1 ) x on x1.a = x.a order by x1.a").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2", "3 3", "3 3", "4 4", "4 4"))
+	tk.MustQuery("select x1.a, x.a from x1 left join (select count(*) a, sum(b) b from x1 group by a union all select * from x2 ) x on x1.a = x.a order by x1.a").Check(testkit.Rows("1 1", "1 1", "1 1", "1 1", "2 2", "3 3", "4 4"))
 }
 
 func (s *tiflashTestSuite) TestMppApply(c *C) {
