@@ -165,31 +165,17 @@ func (s *testInferTypeSuite) createTestCase4Constants() []typeInferTestCase {
 		{"123e-5", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 7, types.UnspecifiedLength},
 		{"-123e-5", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
 		{"NULL", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag, 0, 0},
-<<<<<<< HEAD
 		{"TRUE", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},
 		{"FALSE", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},
 		{"'1234'", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 4, types.UnspecifiedLength},
 		{"_utf8'1234'", mysql.TypeVarString, charset.CharsetUTF8, 0, 4, types.UnspecifiedLength},
 		{"_binary'1234'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 4, types.UnspecifiedLength},
-		{"b'0001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
-		{"b'000100001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
-		{"b'0000000000010000'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"b'0001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"b'000100001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"b'0000000000010000'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 		{"x'10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 3, 0},
 		{"x'ff10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 6, 0},
 		{"x'0000000000000000ff10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 30, 0},
-=======
-		{"TRUE", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag | mysql.NotNullFlag, 1, 0},
-		{"FALSE", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag | mysql.NotNullFlag, 1, 0},
-		{"'1234'", mysql.TypeVarString, charset.CharsetUTF8MB4, 0 | mysql.NotNullFlag, 4, types.UnspecifiedLength},
-		{"_utf8'1234'", mysql.TypeVarString, charset.CharsetUTF8, 0 | mysql.NotNullFlag, 4, types.UnspecifiedLength},
-		{"_binary'1234'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 4, types.UnspecifiedLength},
-		{"b'0001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 3, 0},
-		{"b'000100001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 6, 0},
-		{"b'0000000000010000'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 6, 0},
-		{"x'10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag | mysql.NotNullFlag, 3, 0},
-		{"x'ff10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag | mysql.NotNullFlag, 6, 0},
-		{"x'0000000000000000ff10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag | mysql.NotNullFlag, 30, 0},
->>>>>>> 2c67a8011... expression: fix wrong flen infer for bit constant (#23867)
 	}
 }
 
