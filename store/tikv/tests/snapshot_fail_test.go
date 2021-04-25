@@ -206,7 +206,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set([]byte("k1"), []byte("v1"))
+	c.Assert(txn.Set([]byte("k1"), []byte("v1")), IsNil)
 	err = txn.Set([]byte("k2"), []byte("v2"))
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, false)
