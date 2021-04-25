@@ -496,6 +496,8 @@ func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r e
 }
 
 func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.CompareSubqueryExpr) (ast.Node, bool) {
+	ci := er.prepareCTECheckForSubQuery()
+	defer er.resetCTECheckForSubQuery(ci)
 	v.L.Accept(er)
 	if er.err != nil {
 		return v, true
@@ -770,6 +772,8 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 }
 
 func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.ExistsSubqueryExpr) (ast.Node, bool) {
+	ci := er.prepareCTECheckForSubQuery()
+	defer er.resetCTECheckForSubQuery(ci)
 	subq, ok := v.Sel.(*ast.SubqueryExpr)
 	if !ok {
 		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
@@ -835,6 +839,8 @@ out:
 }
 
 func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.PatternInExpr) (ast.Node, bool) {
+	ci := er.prepareCTECheckForSubQuery()
+	defer er.resetCTECheckForSubQuery(ci)
 	asScalar := er.asScalar
 	er.asScalar = true
 	v.Expr.Accept(er)
@@ -944,6 +950,8 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 }
 
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.SubqueryExpr) (ast.Node, bool) {
+	ci := er.prepareCTECheckForSubQuery()
+	defer er.resetCTECheckForSubQuery(ci)
 	np, err := er.buildSubquery(ctx, v)
 	if err != nil {
 		er.err = err
@@ -2070,4 +2078,21 @@ func datumToJSONObject(d *types.Datum) (interface{}, error) {
 		return nil, nil
 	}
 	return d.ToString()
+}
+
+func (er *expressionRewriter) prepareCTECheckForSubQuery() []*cteInfo {
+	modifiedCTE := make([]*cteInfo, 0)
+	for _, cte := range er.b.outerCTEs {
+		if cte.isBuilding && !cte.enterSubquery {
+			cte.enterSubquery = true
+			modifiedCTE = append(modifiedCTE, cte)
+		}
+	}
+	return modifiedCTE
+}
+
+func (er *expressionRewriter) resetCTECheckForSubQuery(ci []*cteInfo) {
+	for _, cte := range ci {
+		cte.enterSubquery = false
+	}
 }

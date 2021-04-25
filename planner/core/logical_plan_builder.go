@@ -3337,7 +3337,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 		l := len(sel.With.CTEs)
 		for _, cte := range sel.With.CTEs {
-			b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !sel.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0})
+			b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !sel.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0, false})
 			b.allocIDForCTEStorage++
 			saveFlag := b.optFlag
 			b.optFlag = 0
@@ -3624,11 +3624,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					if cte.seedLP == nil {
 						return nil, errors.New("First meet recursive")
 					}
+
+					if cte.enterSubquery {
+						return nil, errors.New("In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery")
+					}
+
 					p := LogicalCTETable{idForStorage: cte.storageID}.Init(b.ctx, b.getSelectOffset())
 					p.SetSchema(cte.seedLP.Schema())
 					p.SetOutputNames(cte.seedLP.OutputNames())
 					return p, nil
 				}
+
 				p := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IdForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(cte.seedLP.Schema())
 				p.SetOutputNames(cte.seedLP.OutputNames())
@@ -5697,7 +5703,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			}
 			l := len(x.With.CTEs)
 			for _, cte := range x.With.CTEs {
-				b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !x.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0})
+				b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !x.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0, false})
 				b.allocIDForCTEStorage++
 				saveFlag := b.optFlag
 				b.optFlag = 0

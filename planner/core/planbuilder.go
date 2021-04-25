@@ -408,15 +408,16 @@ const (
 )
 
 type cteInfo struct {
-	def          *ast.CommonTableExpression
-	nonRecursive bool
-	useRecursive bool
-	isBuilding   bool
-	isDistinct   bool
-	seedLP       LogicalPlan
-	recurLP      LogicalPlan
-	storageID    int
-	optFlag      uint64
+	def           *ast.CommonTableExpression
+	nonRecursive  bool
+	useRecursive  bool
+	isBuilding    bool
+	isDistinct    bool
+	seedLP        LogicalPlan
+	recurLP       LogicalPlan
+	storageID     int
+	optFlag       uint64
+	enterSubquery bool
 }
 
 // PlanBuilder builds Plan from an ast.Node.
