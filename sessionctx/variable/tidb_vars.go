@@ -547,6 +547,8 @@ const (
 	TiDBGCConcurrency = "tidb_gc_concurrency"
 	// TiDBGCScanLockMode enables the green GC feature (default)
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
+	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
+	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 )
 
 // Default TiDB system variable values.
@@ -672,6 +674,7 @@ const (
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
+	DefCTEMaxRecursionDepth            = 1000
 )
 
 // Process global variables.
@@ -694,7 +697,7 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	CapturePlanBaseline                   = serverGlobalVariable{globalVal: BoolOff}
+	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 )

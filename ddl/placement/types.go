@@ -15,9 +15,6 @@ package placement
 
 import (
 	"encoding/json"
-	"strings"
-
-	"github.com/pingcap/errors"
 )
 
 // Refer to https://github.com/tikv/pd/issues/2701 .
@@ -39,64 +36,19 @@ const (
 	Learner PeerRoleType = "learner"
 )
 
-// LabelConstraintOp defines how a LabelConstraint matches a store.
-type LabelConstraintOp string
-
-const (
-	// In restricts the store label value should in the value list.
-	// If label does not exist, `in` is always false.
-	In LabelConstraintOp = "in"
-	// NotIn restricts the store label value should not in the value list.
-	// If label does not exist, `notIn` is always true.
-	NotIn LabelConstraintOp = "notIn"
-	// Exists restricts the store should have the label.
-	Exists LabelConstraintOp = "exists"
-	// NotExists restricts the store should not have the label.
-	NotExists LabelConstraintOp = "notExists"
-)
-
-// LabelConstraint is used to filter store when trying to place peer of a region.
-type LabelConstraint struct {
-	Key    string            `json:"key,omitempty"`
-	Op     LabelConstraintOp `json:"op,omitempty"`
-	Values []string          `json:"values,omitempty"`
-}
-
-// Restore converts the LabelConstraint to a string.
-func (c *LabelConstraint) Restore() (string, error) {
-	var sb strings.Builder
-	for i, value := range c.Values {
-		switch c.Op {
-		case In:
-			sb.WriteString("+")
-		case NotIn:
-			sb.WriteString("-")
-		default:
-			return "", errors.Errorf("Unsupported label constraint operation: %s", c.Op)
-		}
-		sb.WriteString(c.Key)
-		sb.WriteString("=")
-		sb.WriteString(value)
-		if i < len(c.Values)-1 {
-			sb.WriteString(",")
-		}
-	}
-	return sb.String(), nil
-}
-
 // Rule is the placement rule. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
 type Rule struct {
-	GroupID          string            `json:"group_id"`
-	ID               string            `json:"id"`
-	Index            int               `json:"index,omitempty"`
-	Override         bool              `json:"override,omitempty"`
-	StartKeyHex      string            `json:"start_key"`
-	EndKeyHex        string            `json:"end_key"`
-	Role             PeerRoleType      `json:"role"`
-	Count            int               `json:"count"`
-	LabelConstraints []LabelConstraint `json:"label_constraints,omitempty"`
-	LocationLabels   []string          `json:"location_labels,omitempty"`
-	IsolationLevel   string            `json:"isolation_level,omitempty"`
+	GroupID          string       `json:"group_id"`
+	ID               string       `json:"id"`
+	Index            int          `json:"index,omitempty"`
+	Override         bool         `json:"override,omitempty"`
+	StartKeyHex      string       `json:"start_key"`
+	EndKeyHex        string       `json:"end_key"`
+	Role             PeerRoleType `json:"role"`
+	Count            int          `json:"count"`
+	LabelConstraints Constraints  `json:"label_constraints,omitempty"`
+	LocationLabels   []string     `json:"location_labels,omitempty"`
+	IsolationLevel   string       `json:"isolation_level,omitempty"`
 }
 
 // Clone is used to duplicate a RuleOp for safe modification.
