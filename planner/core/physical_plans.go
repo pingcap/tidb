@@ -891,7 +891,13 @@ type PhysicalExchangeReceiver struct {
 
 // Clone implment PhysicalPlan interface.
 func (p *PhysicalExchangeReceiver) Clone() (PhysicalPlan, error) {
-	return &(*p), nil
+	np := new(PhysicalExchangeReceiver)
+	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.basePhysicalPlan = *base
+	return np, nil
 }
 
 // GetExchangeSender return the connected sender of this receiver. We assume that its child must be a receiver.
