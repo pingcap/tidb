@@ -38,32 +38,38 @@ type Fragment struct {
 
 	// following fields are filled after scheduling.
 	ExchangeSender *PhysicalExchangeSender // data exporter
+
+	IsRoot bool
 }
 
 type mppTaskGenerator struct {
 	ctx     sessionctx.Context
 	startTS uint64
 	is      infoschema.InfoSchema
+	frags   []*Fragment
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*kv.MPPTask, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
 	g := &mppTaskGenerator{ctx: ctx, startTS: startTs, is: is}
 	return g.generateMPPTasks(sender)
 }
 
-func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MPPTask, error) {
+func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
 	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)))
 	tidbTask := &kv.MPPTask{
 		StartTs: e.startTS,
 		ID:      -1,
 	}
-	rootTasks, err := e.generateMPPTasksForFragment(s)
+	_, frags, err := e.generateMPPTasksForExchangeSender(s)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s.TargetTasks = []*kv.MPPTask{tidbTask}
-	return rootTasks, nil
+	for _, frag := range frags {
+		frag.ExchangeSender.TargetTasks = []*kv.MPPTask{tidbTask}
+		frag.IsRoot = true
+	}
+	return e.frags, nil
 }
 
 type mppAddr struct {
@@ -105,6 +111,8 @@ func (f *Fragment) init(p PhysicalPlan) error {
 		f.TableScan = x
 	case *PhysicalExchangeReceiver:
 		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
+	case *PhysicalUnionAll:
+		return errors.New("unexpected union all detected")
 	default:
 		for _, ch := range p.Children() {
 			if err := f.init(ch); err != nil {
@@ -115,20 +123,96 @@ func (f *Fragment) init(p PhysicalPlan) error {
 	return nil
 }
 
-func newFragment(s *PhysicalExchangeSender) (*Fragment, error) {
-	f := &Fragment{ExchangeSender: s}
-	s.Fragment = f
-	err := f.init(s)
-	return f, errors.Trace(err)
+func flattenPlanForUnionAll(stack []PhysicalPlan, forest *[]*PhysicalExchangeSender) error {
+	cur := stack[len(stack)-1]
+	switch x := cur.(type) {
+	case *PhysicalTableScan, *PhysicalExchangeReceiver: // This should be the leave node.
+		p, err := stack[0].Clone()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		*forest = append(*forest, p.(*PhysicalExchangeSender))
+		for i := 1; i < len(stack); i++{
+			if _, ok := stack[i].(*PhysicalUnionAll); ok {
+				continue
+			}
+			ch, err := stack[i].Clone()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if join, ok := p.(*PhysicalHashJoin); ok {
+				join.SetChild(1-join.InnerChildIdx, ch)
+			} else {
+				p.SetChildren(ch)
+			}
+			p = ch
+		}
+	case *PhysicalHashJoin:
+		stack = append(stack, x.children[1-x.InnerChildIdx])
+		err := flattenPlanForUnionAll(stack, forest)
+		stack = stack[:len(stack)-1]
+		return errors.Trace(err)
+	case *PhysicalUnionAll:
+		for _, ch := range x.children {
+			stack = append(stack, ch)
+			err := flattenPlanForUnionAll(stack, forest)
+			stack = stack[:len(stack)-1]
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	default:
+		if len(cur.Children()) != 1 {
+			return errors.New("unexpected plan " + cur.ExplainID().String())
+		}
+		ch := cur.Children()[0]
+		stack = append(stack, ch)
+		err := flattenPlanForUnionAll(stack, forest)
+		stack = stack[:len(stack)-1]
+		return errors.Trace(err)
+	}
+	return nil
 }
 
-func (e *mppTaskGenerator) generateMPPTasksForFragment(s *PhysicalExchangeSender) (tasks []*kv.MPPTask, err error) {
-	f, err := newFragment(s)
+func buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
+	forest := make([]*PhysicalExchangeSender, 0, 1)
+	err := flattenPlanForUnionAll([]PhysicalPlan{s}, &forest)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	fragments := make([]*Fragment, 0, len(forest))
+	for _, s := range forest {
+		f := &Fragment{ExchangeSender: s}
+		s.Fragment = f
+		err := f.init(s)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		fragments = append(fragments, f)
+	}
+	return fragments, nil
+}
+
+func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment,  error) {
+	frags, err := buildFragments(s)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	results := make([]*kv.MPPTask, 0, len(frags))
+	for _, f := range frags {
+		tasks, err := e.generateMPPTasksForFragment(f)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		results = append(results, tasks...)
+	}
+	e.frags = append(e.frags, frags...)
+	return results, frags, nil
+}
+
+func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
 	for _, r := range f.ExchangeReceivers {
-		r.Tasks, err = e.generateMPPTasksForFragment(r.GetExchangeSender())
+		r.Tasks, r.frags, err = e.generateMPPTasksForExchangeSender(r.GetExchangeSender())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -149,8 +233,9 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(s *PhysicalExchangeSender
 		return nil, errors.New("cannot find mpp task")
 	}
 	for _, r := range f.ExchangeReceivers {
-		s := r.GetExchangeSender()
-		s.TargetTasks = tasks
+		for _, frag := range r.frags {
+			frag.ExchangeSender.TargetTasks = tasks
+		}
 	}
 	f.ExchangeSender.Tasks = tasks
 	return tasks, nil
