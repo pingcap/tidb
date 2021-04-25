@@ -55,6 +55,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 		})
 	}
 
+	// build a map that maintains the fixed order between nodes
 	for _, edge := range s.directedEdges {
 		nodeSet := s.directMap[edge[0]]
 		if nodeSet == nil {
@@ -86,13 +87,16 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 		}
 	}
 
+	// firstly order node by cost
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
 
+	// secondly adjust the order through a fixed order between nodes
 	for key, set := range s.directMap {
 		keyIdx := -1
 		lowerStart := -1
+		// find the minimum index of the node after the keys in a fixed order
 		for idx, node := range s.curJoinGroup {
 			if key == node.p {
 				keyIdx = idx
@@ -164,6 +168,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) 
 
 func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode LogicalPlan) (LogicalPlan, []expression.Expression) {
 	var usedEdges []*expression.ScalarFunction
+	// the node which are greater in fixed order must join preferentially
 	for _, node := range []LogicalPlan{leftNode, leftNode} {
 		for _, remainPlan := range s.remainJoinGroup {
 			if _, ok := s.directMap[remainPlan.p][node]; ok {

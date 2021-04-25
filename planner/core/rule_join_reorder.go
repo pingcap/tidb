@@ -106,6 +106,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		}
 		originalSchema := p.Schema()
 
+		// not support outer join reorder in pd
 		isSupportDP := true
 		for _, joinType := range joinTypes {
 			if joinType != InnerJoin {
