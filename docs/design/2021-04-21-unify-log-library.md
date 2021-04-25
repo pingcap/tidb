@@ -2,24 +2,23 @@
 
 - Author(s): [Yifan Xu](https://github.com/SabaPing)
 - Last updated:  Apr 12, 2021
-- Discussion at: N/A
+- Discussion at: https://github.com/pingcap/tidb/pull/24181
+- Tracking issue: https://github.com/pingcap/tidb/issues/24190
 
 ## Motivation or Background
-
-Tidb as a distributed system can be divided into several components.
 
 Except for slow query logs, all other logs must satisfy the [unified-log-format RFC standard](https://github.com/tikv/rfcs/blob/master/text/2018-12-19-unified-log-format.md).
 
 However, in practice, it was found that the format of logs is confusing, as shown in the following four points:
 
-- There are fewer logging configuration instructions in the documentation. We need to enrich document especially what logs each component will emits, and what the format of the logs are.
-- The configured logging parameters do not match the runtime logging, e.g. `tidb_stderr` is configured with text format, but the logging is in json format.
+- There are few logging configuration instructions in the document. We need to enrich document especially the type and the format of logs each component would emit.
+- The configured logging parameters do not match the runtime logging, e.g. `tidb_stderr` is configured with text format, but the log is in json format.
 - The logs of some components do not meet the [unified-log-format RFC standard](https://github.com/tikv/rfcs/blob/master/text/2018-12-19-unified-log-format.md), e.g. `tiflash_cluster_manager`.
 - Duplicate logs, e.g. `pd_stderr` will emit both text and json logs with duplicate content (but with a few subtle differences in timestamps).
 
 ## Logging code for each component
 
-### [pingcap/log (github.com)](https://github.com/pingcap/log)
+### [pingcap/log](https://github.com/pingcap/log)
 
 As a common logging library for PingCAP golang projects, it does the following things:
 
@@ -29,9 +28,9 @@ As a common logging library for PingCAP golang projects, it does the following t
 - Encapsulates the logic of the rolling file.
 - Provides global log handler and related methods for package dimension.
 
-`pingcap/log` has a strong limitation -- it cannot customize the encoder for the text format. This problem has been fixed by a community contributor, see [Feature/register zap encoder by 9547 - Pull Request #14 - pingcap/log ( github.com)](https://github.com/pingcap/log/pull/14).
+`pingcap/log` once had a strong limitation, that it couldn't customize the encoder for the text format. This problem had been [fixed by @9547](https://github.com/pingcap/log/pull/14).
 
-When PD and TiDB-operator were using `pingcap/log`, there was no custom encoder function yet, so they implemented one by themselves respectively, but accidentally wrote out a circular dependency. This problem is also fixed by the same community contributor, see [logutil: replace etcd.defaultlogger with pingcap's text encoder by 9547 - Pull Request #3480 - tikv/pd (github.com)](https://github.com/tikv/pd/pull/3480), for details.
+When PD and TiDB-operator were using `pingcap/log`, there was no custom encoder function yet, so they implemented one by themselves respectively, but accidentally wrote out a circular dependency. Currently, customize encoder [implemented by @9547](https://github.com/tikv/pd/pull/3480) and thus we can clear this tech debt.
 
 ### TiDB
 
@@ -39,19 +38,20 @@ Log library dependencies:
 
 ![tidb-log-dependency](./imgs/tidb-log-dependency.png)
 
-For historical reasons, TiDB has two third-party logging libraries -- `logrus` and `pingcap/log`, with `pingcap/log` wrapping another layer on top of `zap`.
+For historical reasons, TiDB has two third-party logging libraries, `logrus` and `pingcap/log`. `pingcap/log` is a wrapper of `zap`.
 
-TiDB's logs can be divided by business into two types: slow query logs and remaining other logs. 
-As mentioned above, the two types of logs are emitted through two different logging libraries, which results in separate configurations for the two types of logs and requires writing additional configuration conversion code.
+Logs of TiDB can be divided into two types, slow query logs and the other logs. 
+As mentioned above, these two types of logs are emitted through two different logging libraries, which results in separate configurations for the two types of logs and requires writing additional configuration conversion code.
 
-TiDB-specific logging logic -- such as logger initialization, logger configuration, etc. -- is written inside `util/logutil/log.go`. 
-Note this file, which is one of the main culprits of circular dependencies. The following briefly describes the key logic in `util/logutil/log.go` -- the two init methods, and the four log handlers.
+TiDB-specific logging logic is written inside `util/logutil/log.go`, e.g., logger initialization, logger configuration, and so on.
 
-#### Logrus
+Note this file, which is one of the main culprits of circular dependencies. The following briefly describes the key logic in `util/logutil/log.go`, two init methods and four log handlers.
 
-The init method of `logrus` -- `func InitLogger(cfg *LogConfig) error` -- may initialize two `logrus` handlers.
+#### logrus
 
-First, there is necessarily the standard log handler (package level handler) of `logrus`. `initLogger` first initializes the standard logger according to the configuration.
+The init method of `logrus` may initialize two `logrus` handlers.
+
+First, it is necessary to initialize the standard log handler (package level handler). `initLogger` first initializes the standard logger according to the configuration.
 
 ```go
 func InitLogger(cfg *LogConfig) error {
@@ -92,7 +92,7 @@ Regarding where these two handlers are used.
 - Some historical legacy code, such as `cmd/importer/parser.go`, which uses the standard logger by `logrus`.
 - Slow query log all uses the slow query log handler created by `logrus`, code in `executor/adapter.go`.
 
-#### [pingcap/log (github.com)](https://github.com/pingcap/log)
+#### [pingcap/log](https://github.com/pingcap/log)
 
 `pingcap/log` is a wrapper around zap, and as mentioned below the two terms are equivalently interchangeable.
 
@@ -103,7 +103,7 @@ Similar to `logrus`, the init method of zap -- `func InitZapLogger(cfg *LogConfi
   
 `InitZapLogger`'s logic is very similar to `logrus`' above, so I won't repeat it here.
 
-#### GRPC Logger
+#### gRPC Logger
 
 I almost forgot that there is a fish in the net, which is not in `util/logutil/log.go`. In `main.go` there is a bunch of grpc logger initialization code.
 
@@ -127,7 +127,7 @@ Log library dependencies:
 
 #### Logrus
 
-`logrus`的初始化代码在`pkg/logutil/log.go`：
+The initialization of `logrus` locates at `pkg/logutil/log.go`：
 
 ```go
 // cfg is the config initialized when PD started
@@ -157,7 +157,7 @@ There is only one `logrus` handler inside the entire PD codebase.
 
 Only the etcd, grpc, and draft components use the `logrus` handler.
 
-#### [pingcap/log (github.com)](https://github.com/pingcap/log)
+#### [pingcap/log](https://github.com/pingcap/log)
 
 There is only one zap log handler inside the entire PD codebase, and its initialization is inline `cmd/pd-server/main.go`.
 
@@ -188,7 +188,7 @@ The following code is from `pkg/lightning/log/log.go`, which calls TiDB's `InitL
 ```go
 // InitLogger initializes Lightning's and also the TiDB library's loggers.
 func InitLogger(cfg *Config, tidbLoglevel string) error {
-   // logutil就是tidb的util/logutil/log.go
+   // import logutil "github.com/tidb/util/logutil/log.go"
    logutil.InitLogger(&logutil.LogConfig{Config: pclog.Config{Level: tidbLoglevel}})
 
    logCfg := &pclog.Config{
@@ -221,9 +221,9 @@ To refactor TiDB's logging functionality, you must first change BR to remove the
 
 ## What to do?
 
-There must be something wrong with the engineering of these codes above, and they must be changed, but the cost of changing them is not small.
+There must be something wrong with the engineering of these codes above, and they must be changed. But the cost to change them is not small.
 
-Principle: For long-term consideration, you can't 💩 on 💩. The speed of output can be sacrificed in time if necessary.
+Rationale - for long-term consideration, we should maintain code quality. The speed of output can be sacrificed in time if necessary.
 
 To do these things:
 
