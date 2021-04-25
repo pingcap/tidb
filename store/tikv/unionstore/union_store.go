@@ -139,6 +139,12 @@ func (us *KVUnionStore) GetOption(opt int) interface{} {
 	return us.opts[opt]
 }
 
+// SetEntrySizeLimit sets the size limit for each entry and total buffer.
+func (us *KVUnionStore) SetEntrySizeLimit(entryLimit, bufferLimit uint64) {
+	us.memBuffer.entrySizeLimit = entryLimit
+	us.memBuffer.bufferSizeLimit = bufferLimit
+}
+
 type options map[int]interface{}
 
 func (opts options) Get(opt int) (interface{}, bool) {
