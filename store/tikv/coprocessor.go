@@ -1149,9 +1149,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	resp.respTime = costTime
-<<<<<<< HEAD
-	if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
-=======
 	sd := &execdetails.ScanDetail{}
 	td := execdetails.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
@@ -1163,19 +1160,13 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			sd.MergeFromScanDetailV2(scanDetailV2)
 		}
 	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
 			td.MergeFromTimeDetail(timeDetail)
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-<<<<<<< HEAD
-				resp.detail.TotalKeys += scanDetail.Write.Total
-				resp.detail.ProcessedKeys += scanDetail.Write.Processed
-=======
 				sd.ProcessedKeys = scanDetail.Write.Processed
 				sd.TotalKeys = scanDetail.Write.Total
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 			}
 		}
 	}

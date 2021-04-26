@@ -942,21 +942,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
 	} else {
 		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
-<<<<<<< HEAD
 		if sessVars.InRestrictedSQL {
 			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
-			totalCopProcHistogramInternal.Observe(execDetail.ProcessTime.Seconds())
-			totalCopWaitHistogramInternal.Observe(execDetail.WaitTime.Seconds())
+			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 		} else {
 			totalQueryProcHistogramGeneral.Observe(costTime.Seconds())
-			totalCopProcHistogramGeneral.Observe(execDetail.ProcessTime.Seconds())
-			totalCopWaitHistogramGeneral.Observe(execDetail.WaitTime.Seconds())
+			totalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 		}
-=======
-		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
-		metrics.TotalCopProcHistogram.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-		metrics.TotalCopWaitHistogram.Observe(execDetail.TimeDetail.WaitTime.Seconds())
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 		var userString string
 		if sessVars.User != nil {
 			userString = sessVars.User.String()

@@ -513,13 +513,8 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.CopTime += details.CopTime
 		sc.mu.execDetails.BackoffTime += details.BackoffTime
 		sc.mu.execDetails.RequestCount++
-<<<<<<< HEAD
-		sc.mu.execDetails.TotalKeys += details.TotalKeys
-		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
-=======
 		sc.MergeScanDetail(details.ScanDetail)
 		sc.MergeTimeDetail(details.TimeDetail)
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
 	if commitDetails != nil {
@@ -529,9 +524,7 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 			sc.mu.execDetails.CommitDetail.Merge(commitDetails)
 		}
 	}
-<<<<<<< HEAD
 	sc.mu.Unlock()
-=======
 }
 
 // MergeScanDetail merges scan details into self.
@@ -550,7 +543,6 @@ func (sc *StatementContext) MergeScanDetail(scanDetail *execdetails.ScanDetail) 
 func (sc *StatementContext) MergeTimeDetail(timeDetail execdetails.TimeDetail) {
 	sc.mu.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
 	sc.mu.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.

@@ -713,15 +713,6 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	if sei.ExecDetail.BackoffTime > ssElement.maxBackoffTime {
 		ssElement.maxBackoffTime = sei.ExecDetail.BackoffTime
 	}
-<<<<<<< HEAD
-	ssElement.sumTotalKeys += sei.ExecDetail.TotalKeys
-	if sei.ExecDetail.TotalKeys > ssElement.maxTotalKeys {
-		ssElement.maxTotalKeys = sei.ExecDetail.TotalKeys
-	}
-	ssElement.sumProcessedKeys += sei.ExecDetail.ProcessedKeys
-	if sei.ExecDetail.ProcessedKeys > ssElement.maxProcessedKeys {
-		ssElement.maxProcessedKeys = sei.ExecDetail.ProcessedKeys
-=======
 
 	if sei.ExecDetail.ScanDetail != nil {
 		ssElement.sumTotalKeys += sei.ExecDetail.ScanDetail.TotalKeys
@@ -732,27 +723,6 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		if sei.ExecDetail.ScanDetail.ProcessedKeys > ssElement.maxProcessedKeys {
 			ssElement.maxProcessedKeys = sei.ExecDetail.ScanDetail.ProcessedKeys
 		}
-		ssElement.sumRocksdbDeleteSkippedCount += sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount
-		if sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount > ssElement.maxRocksdbDeleteSkippedCount {
-			ssElement.maxRocksdbDeleteSkippedCount = sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount
-		}
-		ssElement.sumRocksdbKeySkippedCount += sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount
-		if sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount > ssElement.maxRocksdbKeySkippedCount {
-			ssElement.maxRocksdbKeySkippedCount = sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount
-		}
-		ssElement.sumRocksdbBlockCacheHitCount += sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount
-		if sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount > ssElement.maxRocksdbBlockCacheHitCount {
-			ssElement.maxRocksdbBlockCacheHitCount = sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount
-		}
-		ssElement.sumRocksdbBlockReadCount += sei.ExecDetail.ScanDetail.RocksdbBlockReadCount
-		if sei.ExecDetail.ScanDetail.RocksdbBlockReadCount > ssElement.maxRocksdbBlockReadCount {
-			ssElement.maxRocksdbBlockReadCount = sei.ExecDetail.ScanDetail.RocksdbBlockReadCount
-		}
-		ssElement.sumRocksdbBlockReadByte += sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
-		if sei.ExecDetail.ScanDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte {
-			ssElement.maxRocksdbBlockReadByte = sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
-		}
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 	}
 
 	// txn

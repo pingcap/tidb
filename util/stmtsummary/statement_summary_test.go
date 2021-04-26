@@ -101,17 +101,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		maxWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
 		sumBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
 		maxBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
-<<<<<<< HEAD
-		sumTotalKeys:         stmtExecInfo1.ExecDetail.TotalKeys,
-		maxTotalKeys:         stmtExecInfo1.ExecDetail.TotalKeys,
-		sumProcessedKeys:     stmtExecInfo1.ExecDetail.ProcessedKeys,
-		maxProcessedKeys:     stmtExecInfo1.ExecDetail.ProcessedKeys,
-=======
 		sumTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
 		maxTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
 		sumProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
 		maxProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 		sumGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
 		maxGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
 		sumPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
@@ -185,8 +178,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 			CalleeAddress: "202",
 			BackoffTime:   180,
 			RequestCount:  20,
-			TotalKeys:     6000,
-			ProcessedKeys: 1500,
 			CommitDetail: &execdetails.CommitDetails{
 				GetCommitTsTime:   500,
 				PrewriteTime:      50000,
@@ -205,8 +196,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				PrewriteRegionNum: 100,
 				TxnRetry:          10,
 			},
-<<<<<<< HEAD
-=======
 			ScanDetail: &execdetails.ScanDetail{
 				TotalKeys:                 6000,
 				ProcessedKeys:             1500,
@@ -220,7 +209,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				ProcessTime: 1500,
 				WaitTime:    150,
 			},
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 		},
 		StmtCtx: &stmtctx.StatementContext{
 			StmtType:   "Select",
@@ -251,17 +239,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.maxWaitTime = stmtExecInfo2.ExecDetail.TimeDetail.WaitTime
 	expectedSummaryElement.sumBackoffTime += stmtExecInfo2.ExecDetail.BackoffTime
 	expectedSummaryElement.maxBackoffTime = stmtExecInfo2.ExecDetail.BackoffTime
-<<<<<<< HEAD
-	expectedSummaryElement.sumTotalKeys += stmtExecInfo2.ExecDetail.TotalKeys
-	expectedSummaryElement.maxTotalKeys = stmtExecInfo2.ExecDetail.TotalKeys
-	expectedSummaryElement.sumProcessedKeys += stmtExecInfo2.ExecDetail.ProcessedKeys
-	expectedSummaryElement.maxProcessedKeys = stmtExecInfo2.ExecDetail.ProcessedKeys
-=======
 	expectedSummaryElement.sumTotalKeys += stmtExecInfo2.ExecDetail.ScanDetail.TotalKeys
 	expectedSummaryElement.maxTotalKeys = stmtExecInfo2.ExecDetail.ScanDetail.TotalKeys
 	expectedSummaryElement.sumProcessedKeys += stmtExecInfo2.ExecDetail.ScanDetail.ProcessedKeys
 	expectedSummaryElement.maxProcessedKeys = stmtExecInfo2.ExecDetail.ScanDetail.ProcessedKeys
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 	expectedSummaryElement.sumGetCommitTsTime += stmtExecInfo2.ExecDetail.CommitDetail.GetCommitTsTime
 	expectedSummaryElement.maxGetCommitTsTime = stmtExecInfo2.ExecDetail.CommitDetail.GetCommitTsTime
 	expectedSummaryElement.sumPrewriteTime += stmtExecInfo2.ExecDetail.CommitDetail.PrewriteTime
@@ -324,8 +305,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 			CalleeAddress: "302",
 			BackoffTime:   18,
 			RequestCount:  2,
-			TotalKeys:     600,
-			ProcessedKeys: 150,
 			CommitDetail: &execdetails.CommitDetails{
 				GetCommitTsTime:   50,
 				PrewriteTime:      5000,
@@ -344,8 +323,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				PrewriteRegionNum: 10,
 				TxnRetry:          1,
 			},
-<<<<<<< HEAD
-=======
 			ScanDetail: &execdetails.ScanDetail{
 				TotalKeys:                 600,
 				ProcessedKeys:             150,
@@ -359,7 +336,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				ProcessTime: 150,
 				WaitTime:    15,
 			},
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 		},
 		StmtCtx: &stmtctx.StatementContext{
 			StmtType:   "Select",
@@ -381,13 +357,8 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.sumProcessTime += stmtExecInfo3.ExecDetail.TimeDetail.ProcessTime
 	expectedSummaryElement.sumWaitTime += stmtExecInfo3.ExecDetail.TimeDetail.WaitTime
 	expectedSummaryElement.sumBackoffTime += stmtExecInfo3.ExecDetail.BackoffTime
-<<<<<<< HEAD
-	expectedSummaryElement.sumTotalKeys += stmtExecInfo3.ExecDetail.TotalKeys
-	expectedSummaryElement.sumProcessedKeys += stmtExecInfo3.ExecDetail.ProcessedKeys
-=======
 	expectedSummaryElement.sumTotalKeys += stmtExecInfo3.ExecDetail.ScanDetail.TotalKeys
 	expectedSummaryElement.sumProcessedKeys += stmtExecInfo3.ExecDetail.ScanDetail.ProcessedKeys
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 	expectedSummaryElement.sumGetCommitTsTime += stmtExecInfo3.ExecDetail.CommitDetail.GetCommitTsTime
 	expectedSummaryElement.sumPrewriteTime += stmtExecInfo3.ExecDetail.CommitDetail.PrewriteTime
 	expectedSummaryElement.sumCommitTime += stmtExecInfo3.ExecDetail.CommitDetail.CommitTime
@@ -590,8 +561,6 @@ func generateAnyExecInfo() *StmtExecInfo {
 			CalleeAddress: "129",
 			BackoffTime:   80,
 			RequestCount:  10,
-			TotalKeys:     1000,
-			ProcessedKeys: 500,
 			CommitDetail: &execdetails.CommitDetails{
 				GetCommitTsTime:   100,
 				PrewriteTime:      10000,
@@ -610,8 +579,6 @@ func generateAnyExecInfo() *StmtExecInfo {
 				PrewriteRegionNum: 20,
 				TxnRetry:          2,
 			},
-<<<<<<< HEAD
-=======
 			ScanDetail: &execdetails.ScanDetail{
 				TotalKeys:                 1000,
 				ProcessedKeys:             500,
@@ -625,7 +592,6 @@ func generateAnyExecInfo() *StmtExecInfo {
 				ProcessTime: 500,
 				WaitTime:    50,
 			},
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 		},
 		StmtCtx: &stmtctx.StatementContext{
 			StmtType:   "Select",
@@ -661,22 +627,10 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
 		int64(stmtExecInfo1.CompileLatency), stmtExecInfo1.CopTasks.NumCopTasks, int64(stmtExecInfo1.CopTasks.MaxProcessTime),
 		stmtExecInfo1.CopTasks.MaxProcessAddress, int64(stmtExecInfo1.CopTasks.MaxWaitTime),
-<<<<<<< HEAD
-		stmtExecInfo1.CopTasks.MaxWaitAddress, int64(stmtExecInfo1.ExecDetail.ProcessTime), int64(stmtExecInfo1.ExecDetail.ProcessTime),
-		int64(stmtExecInfo1.ExecDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.BackoffTime),
-		int64(stmtExecInfo1.ExecDetail.BackoffTime), stmtExecInfo1.ExecDetail.TotalKeys, stmtExecInfo1.ExecDetail.TotalKeys,
-		stmtExecInfo1.ExecDetail.ProcessedKeys, stmtExecInfo1.ExecDetail.ProcessedKeys,
-=======
 		stmtExecInfo1.CopTasks.MaxWaitAddress, int64(stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime), int64(stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime),
 		int64(stmtExecInfo1.ExecDetail.TimeDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.TimeDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.BackoffTime),
 		int64(stmtExecInfo1.ExecDetail.BackoffTime), stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys, stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
 		stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys, stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
-		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount),
-		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbKeySkippedCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbKeySkippedCount),
-		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount),
-		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadCount),
-		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadByte), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadByte),
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime),
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.CommitTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.CommitTime),
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime),

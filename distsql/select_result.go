@@ -277,13 +277,10 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
-<<<<<<< HEAD
-=======
 	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], copStats.ScanDetail)
 	}
 
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
@@ -345,15 +342,11 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime = append(s.copRespTime, respTime)
-<<<<<<< HEAD
-	s.procKeys = append(s.procKeys, copStats.ProcessedKeys)
-=======
 	if copStats.ScanDetail != nil {
 		s.procKeys = append(s.procKeys, copStats.ScanDetail.ProcessedKeys)
 	} else {
 		s.procKeys = append(s.procKeys, 0)
 	}
->>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 
 	for k, v := range copStats.BackoffSleep {
 		s.backoffSleep[k] += v
