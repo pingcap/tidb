@@ -54,8 +54,6 @@ type Callback interface {
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
-	// SetDomain is called when the assign the domain to callback.
-	SetDomain(do DomainReloader)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -84,11 +82,6 @@ func (c *BaseCallback) OnJobUpdated(job *model.Job) {
 
 // OnWatched implements Callback.OnWatched interface.
 func (c *BaseCallback) OnWatched(ctx context.Context) {
-	// Nothing to do.
-}
-
-// SetDomain implements Callback.SetDomain interface.
-func (c *BaseCallback) SetDomain(do DomainReloader) {
 	// Nothing to do.
 }
 
@@ -126,11 +119,6 @@ func (c *DefaultCallback) OnSchemaStateChanged() {
 	if err != nil {
 		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
 	}
-}
-
-// SetDomain is used to assign the domain.
-func (c *DefaultCallback) SetDomain(do DomainReloader) {
-	c.do = do
 }
 
 func newDefaultCallBack(do DomainReloader) Callback {
@@ -182,11 +170,6 @@ func (c *ctcCallback) OnJobRunBefore(job *model.Job) {
 		logutil.BgLogger().Warn(fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()))
 		time.Sleep(500 * time.Millisecond)
 	}
-}
-
-// SetDomain is used to assign the domain.
-func (c *ctcCallback) SetDomain(do DomainReloader) {
-	c.do = do
 }
 
 func newCTCCallBack(do DomainReloader) Callback {
