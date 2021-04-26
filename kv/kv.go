@@ -35,10 +35,6 @@ import (
 // Append UnCommitIndexKVFlag to the value indicate the index key/value is no need to commit.
 const UnCommitIndexKVFlag byte = '1'
 
-// MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
-// We use it to abort the transaction to guarantee GC worker will not influence it.
-const MaxTxnTimeUse = 24 * 60 * 60 * 1000
-
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
@@ -180,9 +176,9 @@ type Transaction interface {
 	// GetUnionStore returns the UnionStore binding to this transaction.
 	GetUnionStore() UnionStore
 	// SetVars sets variables to the transaction.
-	SetVars(vars *Variables)
+	SetVars(vars interface{})
 	// GetVars gets variables from the transaction.
-	GetVars() *Variables
+	GetVars() interface{}
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	// Do not use len(value) == 0 or value == nil to represent non-exist.
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
@@ -199,7 +195,7 @@ type Transaction interface {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
+	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -428,11 +424,3 @@ type SplittableStore interface {
 	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
-
-// Used for pessimistic lock wait time
-// these two constants are special for lock protocol with tikv
-// 0 means always wait, -1 means nowait, others meaning lock wait in milliseconds
-var (
-	LockAlwaysWait = int64(0)
-	LockNoWait     = int64(-1)
-)

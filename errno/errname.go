@@ -399,6 +399,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrViewNoInsertFieldList:                    mysql.Message("Can not insert into join view '%-.192s.%-.192s' without fields list", nil),
 	ErrViewDeleteMergeView:                      mysql.Message("Can not delete from join view '%-.192s.%-.192s'", nil),
 	ErrCannotUser:                               mysql.Message("Operation %s failed for %.256s", nil),
+	ErrGrantRole:                                mysql.Message("Unknown authorization ID %.256s", nil),
 	ErrXaerNota:                                 mysql.Message("XAERNOTA: Unknown XID", nil),
 	ErrXaerInval:                                mysql.Message("XAERINVAL: Invalid arguments (or unsupported command)", nil),
 	ErrXaerRmfail:                               mysql.Message("XAERRMFAIL: The command cannot be executed when global transaction is in the  %.64s state", nil),

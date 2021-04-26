@@ -170,7 +170,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 	}
 }
 
-func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.Variables) kv.Response {
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
@@ -209,7 +209,7 @@ type batchCopIterator struct {
 	// Batch results are stored in respChan.
 	respChan chan *batchCopResponse
 
-	vars *kv.Variables
+	vars *tikv.Variables
 
 	memTracker *memory.Tracker
 
@@ -323,7 +323,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backo
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
 	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
-	var regionInfos []*coprocessor.RegionInfo
+	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.copTasks))
 	for _, task := range task.copTasks {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
 			RegionId: task.task.region.GetID(),
