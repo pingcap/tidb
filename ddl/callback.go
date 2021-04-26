@@ -141,7 +141,8 @@ func newDefaultCallBack(do DomainReloader) Callback {
 
 // ****************************** Start of CTC DDL Callback Instance ***********************************************
 
-// CtcCallback is the customized callback that TiDB will use.
+// ctcCallback is the customized callback that TiDB will use.
+// ctc is named from column type change, here after we call them ctc for short.
 type ctcCallback struct {
 	*BaseCallback
 	do DomainReloader
@@ -188,7 +189,7 @@ func (c *ctcCallback) SetDomain(do DomainReloader) {
 	c.do = do
 }
 
-func newCtcCallBack(do DomainReloader) Callback {
+func newCTCCallBack(do DomainReloader) Callback {
 	return &ctcCallback{do: do}
 }
 
@@ -201,7 +202,7 @@ var (
 func init() {
 	// init the callback register map.
 	customizedCallBackRegisterMap["default_hook"] = newDefaultCallBack
-	customizedCallBackRegisterMap["ctc_hook"] = newCtcCallBack
+	customizedCallBackRegisterMap["ctc_hook"] = newCTCCallBack
 }
 
 // GetCustomizedHook get the hook registered in the hookMap.

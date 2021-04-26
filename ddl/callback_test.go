@@ -52,7 +52,7 @@ type TestDDLCallback struct {
 	onWatched              func(ctx context.Context)
 }
 
-// OnChanged mock the same behavior with the main ddl hook.
+// OnChanged mock the same behavior with the main DDL hook.
 func (tc *TestDDLCallback) OnChanged(err error) error {
 	if err != nil {
 		return err

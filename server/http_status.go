@@ -301,7 +301,7 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/test/{mod}/{op}", &testHandler{tikvHandlerTool, 0})
 	})
 
-	// ddlhook is enabled only for tests so we can substitute the callback in the ddl.
+	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
 	router.Handle("/test/ddl/hook", &ddlHookHandler{tikvHandlerTool.Store.(kv.Storage)})
 
 	var (
