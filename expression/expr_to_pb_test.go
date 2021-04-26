@@ -144,7 +144,6 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeBit, 1))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeSet, 2))
-	colExprs = append(colExprs, dg.genColumn(mysql.TypeEnum, 3))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeGeometry, 4))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeUnspecified, 5))
 
@@ -180,6 +179,7 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeBlob, 21))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeVarString, 22))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeString, 23))
+	colExprs = append(colExprs, dg.genColumn(mysql.TypeEnum, 24))
 	pushed, remained = PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, len(colExprs))
 	c.Assert(len(remained), Equals, 0)
@@ -209,6 +209,7 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 		"{\"tp\":201,\"val\":\"gAAAAAAAABU=\",\"sig\":0,\"field_type\":{\"tp\":252,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAABY=\",\"sig\":0,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"},\"has_distinct\":false}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAABc=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABg=\",\"sig\":0,\"field_type\":{\"tp\":247,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false}",
 	}
 	for i, pbExpr := range pbExprs {
 		c.Assert(pbExprs, NotNil)
