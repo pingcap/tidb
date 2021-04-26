@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -396,9 +395,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 	c.txnSize = size
 
-	if size > int(tidbkv.TxnTotalSizeLimit) {
-		return tidbkv.ErrTxnTooLarge.GenWithStackByArgs(size)
-	}
 	const logEntryCount = 10000
 	const logSize = 4 * 1024 * 1024 // 4MB
 	if c.mutations.Len() > logEntryCount || size > logSize {
