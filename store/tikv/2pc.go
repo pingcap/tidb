@@ -326,7 +326,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	sizeHint := txn.us.GetMemBuffer().Len()
 	c.mutations = newMemBufferMutations(sizeHint, memBuf)
 	c.isPessimistic = txn.IsPessimistic()
-	filter := txn.getKVFilter()
+	filter := txn.kvFilter
 
 	var err error
 	for it := memBuf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {

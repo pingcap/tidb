@@ -1031,7 +1031,7 @@ func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
 	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
 	noValueIndexKey := []byte("t00000001_i000000002")
 	txn := s.begin(c)
-	txn.SetOption(kv.KVFilter, drivertxn.TiDBKVFilter{})
+	txn.SetKVFilter(drivertxn.TiDBKVFilter{})
 	err := txn.Set(untouchedIndexKey, untouchedIndexValue)
 	c.Assert(err, IsNil)
 	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now(), LockWaitTime: tikv.LockNoWait}

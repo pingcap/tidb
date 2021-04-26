@@ -33,7 +33,7 @@ type tikvTxn struct {
 
 // NewTiKVTxn returns a new Transaction.
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
-	txn.SetOption(tikvstore.KVFilter, TiDBKVFilter{})
+	txn.SetKVFilter(TiDBKVFilter{})
 
 	entryLimit := atomic.LoadUint64(&kv.TxnEntrySizeLimit)
 	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
