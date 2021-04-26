@@ -777,15 +777,13 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 						// see issue #22079: https://github.com/pingcap/tidb/issues/22079 for details
 						if start > 0 && pruner.lessThan.data[start-1] == dataForPrune.c && (pruner.lessThan.data[start]-1) == dataForPrune.c {
 							continue
-						} else {
-							newConds = append(newConds, cond)
 						}
 					}
-				// todo: other predicates lie on the boundary of partitions might be removed as well.
 				default:
-					newConds = append(newConds, cond)
+					continue
 				}
 			}
+			newConds = append(newConds, cond)
 		}
 		*condsToBePruned = newConds
 	}
