@@ -145,7 +145,7 @@ func (*testSysVarSuite) TestIntValidation(c *C) {
 }
 
 func (*testSysVarSuite) TestEnumValidation(c *C) {
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "123", Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	vars := NewSessionVars()
 
 	_, err := sv.Validate(vars, "randomstring", ScopeSession)
