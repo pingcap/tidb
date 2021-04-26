@@ -56,7 +56,6 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	defer dom.Close()
 
-	handle := infoschema.NewCache(16)
 	dbName := model.NewCIStr("Test")
 	tbName := model.NewCIStr("T")
 	colName := model.NewCIStr("A")
@@ -125,8 +124,7 @@ func (*testSuite) TestT(c *C) {
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
-	builder.Build()
-	is := handle.Get()
+	is := builder.Build()
 
 	schemaNames := is.AllSchemaNames()
 	c.Assert(schemaNames, HasLen, 4)
@@ -212,8 +210,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
-	builder.Build()
-	is = handle.Get()
+	is = builder.Build()
 	schema, ok = is.SchemaByID(dbID)
 	c.Assert(ok, IsTrue)
 	c.Assert(len(schema.Tables), Equals, 1)
@@ -263,12 +260,10 @@ func (*testSuite) TestInfoTables(c *C) {
 		err := store.Close()
 		c.Assert(err, IsNil)
 	}()
-	handle := infoschema.NewCache(16)
+
 	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, 0)
 	c.Assert(err, IsNil)
-	builder.Build()
-	is := handle.Get()
-	c.Assert(is, NotNil)
+	is := builder.Build()
 
 	infoTables := []string{
 		"SCHEMATA",
@@ -330,12 +325,9 @@ func (*testSuite) TestGetBundle(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	handle := infoschema.NewCache(16)
 	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, 0)
 	c.Assert(err, IsNil)
-	builder.Build()
-
-	is := handle.Get()
+	is := builder.Build()
 
 	bundle := &placement.Bundle{
 		ID: placement.PDBundleID,
