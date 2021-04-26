@@ -88,6 +88,7 @@ type IndexMergeReaderExecutor struct {
 	// All fields above are immutable.
 
 	tblWorkerWg    sync.WaitGroup
+	idxWorkerWg    sync.WaitGroup
 	processWokerWg sync.WaitGroup
 	finished       chan struct{}
 
@@ -167,20 +168,19 @@ func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	e.startIndexMergeProcessWorker(ctx, workCh, fetchCh)
 
 	var err error
-	var partialWorkerWg sync.WaitGroup
 	for i := 0; i < len(e.partialPlans); i++ {
-		partialWorkerWg.Add(1)
+		e.idxWorkerWg.Add(1)
 		if e.indexes[i] != nil {
-			err = e.startPartialIndexWorker(ctx, exitCh, fetchCh, i, &partialWorkerWg)
+			err = e.startPartialIndexWorker(ctx, exitCh, fetchCh, i)
 		} else {
-			err = e.startPartialTableWorker(ctx, exitCh, fetchCh, i, &partialWorkerWg)
+			err = e.startPartialTableWorker(ctx, exitCh, fetchCh, i)
 		}
 		if err != nil {
-			partialWorkerWg.Done()
+			e.idxWorkerWg.Done()
 			break
 		}
 	}
-	go e.waitPartialWorkersAndCloseFetchChan(&partialWorkerWg, fetchCh)
+	go e.waitPartialWorkersAndCloseFetchChan(fetchCh)
 	if err != nil {
 		close(exitCh)
 		return err
@@ -190,8 +190,8 @@ func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	return nil
 }
 
-func (e *IndexMergeReaderExecutor) waitPartialWorkersAndCloseFetchChan(partialWorkerWg *sync.WaitGroup, fetchCh chan *lookupTableTask) {
-	partialWorkerWg.Wait()
+func (e *IndexMergeReaderExecutor) waitPartialWorkersAndCloseFetchChan(fetchCh chan *lookupTableTask) {
+	e.idxWorkerWg.Wait()
 	close(fetchCh)
 }
 
@@ -213,7 +213,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 	}()
 }
 
-func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int, partialWorkerWg *sync.WaitGroup) error {
+func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) error {
 	if e.runtimeStats != nil {
 		collExec := true
 		e.dagPBs[workID].CollectExecutionSummaries = &collExec
@@ -234,7 +234,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialIndexWorker").End()
-		defer partialWorkerWg.Done()
+		defer e.idxWorkerWg.Done()
 		util.WithRecovery(
 			func() {
 				var builder distsql.RequestBuilder
@@ -306,8 +306,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	return nil
 }
 
-func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int,
-	partialWorkerWg *sync.WaitGroup) error {
+func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) error {
 	ts := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan)
 
 	tbls := make([]table.Table, 0, 1)
@@ -321,7 +320,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialTableWorker").End()
-		defer partialWorkerWg.Done()
+		defer e.idxWorkerWg.Done()
 		util.WithRecovery(
 			func() {
 				partialTableReader := &TableReaderExecutor{
