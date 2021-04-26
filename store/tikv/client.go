@@ -17,7 +17,6 @@ package tikv
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"io"
 	"math"
 	"runtime/trace"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/debugpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -388,13 +389,9 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 				affectRow = len(r.Pairs)
 			}
 			if execDetail != nil {
-				readByte := float64(execDetail.GetScanDetailV2().GetReadBytes())
+				readByte := execDetail.GetScanDetailV2().GetReadBytes()
 				readTime := float64(execDetail.GetTimeDetail().GetKvReadWallTimeMs())
-				if readByte < 1*1024*1024 && affectRow < 20 {
-					metrics.TiKVSmallReadDuration.Observe(readTime)
-				} else {
-					metrics.TiKVLargeReadThroughput.Observe(readByte / readTime)
-				}
+				sli.ObserveReadSLI(uint64(affectRow), readByte, readTime)
 			}
 			return resp, nil
 		}

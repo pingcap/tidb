@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
+	tikvmetrics "github.com/pingcap/tidb/store/tikv/metrics"
 )
 
 // TxnWriteThroughputSLI uses to report transaction write throughput metrics for SLI.
@@ -94,12 +95,12 @@ func (t *TxnWriteThroughputSLI) IsInvalid() bool {
 
 const (
 	smallTxnAffectRow = 20
-	smallTxnWriteSize = 1 * 1024 * 1024 // 1MB
+	smallTxnByte      = 1 * 1024 * 1024 // 1MB
 )
 
 // IsSmallTxn exports for testing.
 func (t *TxnWriteThroughputSLI) IsSmallTxn() bool {
-	return t.affectRow <= smallTxnAffectRow && t.writeSize <= smallTxnWriteSize
+	return t.affectRow <= smallTxnAffectRow && t.writeSize <= smallTxnByte
 }
 
 // Reset exports for testing.
@@ -116,4 +117,12 @@ func (t *TxnWriteThroughputSLI) Reset() {
 func (t *TxnWriteThroughputSLI) String() string {
 	return fmt.Sprintf("invalid: %v, affectRow: %v, writeSize: %v, readKeys: %v, writeKeys: %v, writeTime: %v",
 		t.invalid, t.affectRow, t.writeSize, t.readKeys, t.writeKeys, t.writeTime.String())
+}
+
+func ObserveReadSLI(affectRow uint64, readByte uint64, readTime float64) {
+	if affectRow <= smallTxnAffectRow && readByte <= smallTxnByte {
+		tikvmetrics.TiKVSmallReadDuration.Observe(readTime)
+	} else {
+		tikvmetrics.TiKVLargeReadThroughput.Observe(float64(readByte) / smallTxnByte / (readTime / 1000))
+	}
 }
