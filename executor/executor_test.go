@@ -8165,8 +8165,6 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s")
 }
 
-<<<<<<< HEAD
-=======
 func (s *testSuite) TestIssue23993(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -8216,7 +8214,6 @@ func (s *testSuiteP2) TestProjectionBitType(c *C) {
 	tk.MustQuery("(select * from t1 where false) union(select * from t1 for update);").Check(testkit.Rows("1 \x01\xd5\xe4\xcf\u007f"))
 }
 
->>>>>>> d4b6a4417... expression: fix cast real, decimal to time (#24120)
 func (s *testSuite) TestIssue23609(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
