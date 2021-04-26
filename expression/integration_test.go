@@ -8853,7 +8853,7 @@ PARTITION BY RANGE (c) (
 		} else {
 			c.Assert(checkErr, IsNil)
 		}
-		if checkErr != nil {
+		if res != nil {
 			res.Close()
 		}
 		failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
