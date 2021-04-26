@@ -210,6 +210,14 @@
           "└─Selection 750.00 cop[tikv]  or(and(le(test_partition.t8.a, 10), ge(test_partition.t8.a, 8)), or(and(le(test_partition.t8.a, 13), ge(test_partition.t8.a, 11)), and(le(test_partition.t8.a, 16), ge(test_partition.t8.a, 14))))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t8 where a < 12 and a > 9",
+        "Result": [
+          "TableReader 250.00 root partition:p4,p5 data:Selection",
+          "└─Selection 250.00 cop[tikv]  gt(test_partition.t8.a, 9), lt(test_partition.t8.a, 12)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"         
+        ]
       }
     ]
   },

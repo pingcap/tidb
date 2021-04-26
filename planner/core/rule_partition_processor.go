@@ -172,7 +172,13 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 					return nil, nil, err
 				}
 
-				// to do: consider whether the range is closed or open
+				// consider whether the range is closed or open
+				if r.LowExclude {
+					posLow++
+				}
+				if r.HighExclude {
+					posHigh--
+				}
 				rangeScalar := posHigh - posLow
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
