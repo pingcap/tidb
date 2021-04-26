@@ -2445,84 +2445,8 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 		}
 	}
 }
-<<<<<<< HEAD
-=======
-
-func (s *session) checkPlacementPolicyBeforeCommit() error {
-	var err error
-	// Get the txnScope of the transaction we're going to commit.
-	txnScope := s.GetSessionVars().TxnCtx.TxnScope
-	if txnScope == "" {
-		txnScope = oracle.GlobalTxnScope
-	}
-	if txnScope != oracle.GlobalTxnScope {
-		is := infoschema.GetInfoSchema(s)
-		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
-		for physicalTableID := range deltaMap {
-			var tableName string
-			var partitionName string
-			tblInfo, _, partInfo := is.FindTableByPartitionID(physicalTableID)
-			if tblInfo != nil && partInfo != nil {
-				tableName = tblInfo.Meta().Name.String()
-				partitionName = partInfo.Name.String()
-			} else {
-				tblInfo, _ := is.TableByID(physicalTableID)
-				tableName = tblInfo.Meta().Name.String()
-			}
-			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
-			if !ok {
-				errMsg := fmt.Sprintf("table %v doesn't have placement policies with txn_scope %v",
-					tableName, txnScope)
-				if len(partitionName) > 0 {
-					errMsg = fmt.Sprintf("table %v's partition %v doesn't have placement policies with txn_scope %v",
-						tableName, partitionName, txnScope)
-				}
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
-				break
-			}
-			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
-			if !ok {
-				errMsg := fmt.Sprintf("table %v's leader placement policy is not defined", tableName)
-				if len(partitionName) > 0 {
-					errMsg = fmt.Sprintf("table %v's partition %v's leader placement policy is not defined", tableName, partitionName)
-				}
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
-				break
-			}
-			if dcLocation != txnScope {
-				errMsg := fmt.Sprintf("table %v's leader location %v is out of txn_scope %v", tableName, dcLocation, txnScope)
-				if len(partitionName) > 0 {
-					errMsg = fmt.Sprintf("table %v's partition %v's leader location %v is out of txn_scope %v",
-						tableName, partitionName, dcLocation, txnScope)
-				}
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
-				break
-			}
-			// FIXME: currently we assume the physicalTableID is the partition ID. In future, we should consider the situation
-			// if the physicalTableID belongs to a Table.
-			partitionID := physicalTableID
-			tbl, _, partitionDefInfo := is.FindTableByPartitionID(partitionID)
-			if tbl != nil {
-				tblInfo := tbl.Meta()
-				state := tblInfo.Partition.GetStateByID(partitionID)
-				if state == model.StateGlobalTxnOnly {
-					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-						fmt.Sprintf("partition %s of table %s can not be written by local transactions when its placement policy is being altered",
-							tblInfo.Name, partitionDefInfo.Name))
-					break
-				}
-			}
-		}
-	}
-	return err
-}
-
-func (s *session) SetPort(port string) {
-	s.sessionVars.Port = port
-}
 
 // GetTxnWriteThroughputSLI implements the Context interface.
 func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 	return &s.txn.writeSLI
 }
->>>>>>> f9708e604... *: collect transaction write duration/throughput metrics for SLI/SLO (#23462)

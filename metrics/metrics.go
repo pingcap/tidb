@@ -173,14 +173,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ServerInfo)
 	prometheus.MustRegister(TokenGauge)
 	prometheus.MustRegister(ConfigStatus)
-<<<<<<< HEAD
-=======
-	prometheus.MustRegister(TiFlashQueryTotalCounter)
 	prometheus.MustRegister(SmallTxnWriteDuration)
 	prometheus.MustRegister(TxnWriteThroughput)
-
-	tikvmetrics.InitMetrics(TiDB, TiKVClient)
-	tikvmetrics.RegisterMetrics()
-	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
->>>>>>> f9708e604... *: collect transaction write duration/throughput metrics for SLI/SLO (#23462)
 }

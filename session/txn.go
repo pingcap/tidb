@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/sli"
 	"runtime/trace"
 	"strings"
 	"sync/atomic"
@@ -33,11 +34,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/util/memory"
-=======
-	"github.com/pingcap/tidb/util/sli"
->>>>>>> f9708e604... *: collect transaction write duration/throughput metrics for SLI/SLO (#23462)
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
@@ -54,21 +51,15 @@ type TxnState struct {
 	kv.Transaction
 	txnFuture *txnFuture
 
-<<<<<<< HEAD
 	stmtBuf      kv.MemBuffer
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
-=======
-	initCnt       int
-	stagingHandle kv.StagingHandle
-	mutations     map[int64]*binlog.TableMutation
-	writeSLI      sli.TxnWriteThroughputSLI
-}
->>>>>>> f9708e604... *: collect transaction write duration/throughput metrics for SLI/SLO (#23462)
 
 	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	// doNotCommit flag may be set when StmtCommit fail.
 	doNotCommit error
+
+	writeSLI sli.TxnWriteThroughputSLI
 }
 
 func (st *TxnState) init() {

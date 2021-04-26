@@ -213,17 +213,11 @@ func (c *Context) GoCtx() context.Context {
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
-<<<<<<< HEAD
-=======
-// StoreIndexUsage strores the index usage information.
-func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
-
 // GetTxnWriteThroughputSLI implements the sessionctx.Context interface.
 func (c *Context) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 	return &sli.TxnWriteThroughputSLI{}
 }
 
->>>>>>> f9708e604... *: collect transaction write duration/throughput metrics for SLI/SLO (#23462)
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit(tracker *memory.Tracker) error {
 	return nil
