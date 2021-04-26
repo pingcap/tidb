@@ -374,7 +374,10 @@ func (txn *TxnState) Datum() []types.Datum {
 		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, 0),
 		txn.CurrentSQLDigest,
 		txn.State,
-		blockStartTime)
+		blockStartTime,
+		txn.Transaction.Len(),
+		txn.Transaction.Size(),
+	)
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {

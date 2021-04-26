@@ -4267,13 +4267,14 @@ func (s *testTxnStateSuite) TestBasic(c *C) {
 	c.Assert(info[3].GetInt64(), Equals, int64(session.TxnRunningNormal))
 	// blockStartTime
 	c.Assert(info[4].IsNull(), Equals, true)
+	// [5] and [6] are len and size, which will covered in TestLenAndSize
 	// sessionId
-	c.Assert(info[5].GetUint64(), Equals, tk.Se.GetSessionVars().ConnectionID)
+	c.Assert(info[7].GetUint64(), Equals, tk.Se.GetSessionVars().ConnectionID)
 	// username
-	c.Assert(info[6].IsNull(), Equals, true)
+	c.Assert(info[8].IsNull(), Equals, true)
 	// schema name
-	c.Assert(info[7].GetString(), Equals, "test")
-	tk.MustExec("COMMIT;")
+	c.Assert(info[9].GetString(), Equals, "test")
+	tk.MustExec("commit;")
 }
 
 func (s *testTxnStateSuite) TestBlocked(c *C) {
@@ -4286,12 +4287,27 @@ func (s *testTxnStateSuite) TestBlocked(c *C) {
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		tk2.MustExec("select * from t where a = 1 for update;")
-		tk2.MustExec("COMMIT;")
+		tk2.MustExec("commit;")
 	}()
 	time.Sleep(200 * time.Millisecond)
 	// state
 	c.Assert(tk2.Se.TxnInfo()[3].GetInt64(), Equals, int64(session.TxnLockWaiting))
 	// blockStartTime
 	c.Assert(tk2.Se.TxnInfo()[4].IsNull(), Equals, false)
-	tk.MustExec("COMMIT;")
+	tk.MustExec("commit;")
+}
+
+func (s *testTxnStateSuite) TestLenAndSize(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("insert into t(a) values (1);")
+	info := tk.Se.TxnInfo()
+	c.Assert(info[5].GetInt64(), Equals, int64(1))
+	c.Assert(info[6].GetInt64(), Equals, int64(29))
+	tk.MustExec("insert into t(a) values (2);")
+	info = tk.Se.TxnInfo()
+	c.Assert(info[5].GetInt64(), Equals, int64(2))
+	c.Assert(info[6].GetInt64(), Equals, int64(58))
+	tk.MustExec("commit;")
 }
