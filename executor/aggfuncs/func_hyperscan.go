@@ -39,7 +39,10 @@ var (
 )
 
 const (
+	// DefPartialResult4HsBuildDbAgg is the size of partialResult4HsBuildDbAgg
 	DefPartialResult4HsBuildDbAgg = int64(unsafe.Sizeof(partialResult4HsBuildDbAgg{}))
+	// DefHsPatternStructSize is the size of hs.Pattern
+	DefHsPatternStructSize = int64(unsafe.Sizeof(hs.Pattern{}))
 )
 
 func init() {
@@ -155,7 +158,7 @@ func (e *hsBuildDbAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 		}
 		pat.Id = pid
 		p.patterns = append(p.patterns, pat)
-		memDelta += int64(len(patternStr))
+		memDelta += (int64(len(patternStr)) + DefHsPatternStructSize)
 	}
 	return memDelta, nil
 }
