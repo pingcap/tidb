@@ -414,19 +414,13 @@ func handleAnalyzeFullSamplingReq(
 			collators[i] = collate.GetCollator(ft.Collate)
 		}
 	}
-	colGroups := make([][]int64, 0, len(analyzeReq.ColReq.ColumnGroups))
-	for _, group := range analyzeReq.ColReq.ColumnGroups {
-		colOffsets := make([]int64, len(group.ColumnOffsets))
-		copy(colOffsets, group.ColumnOffsets)
-		colGroups = append(colGroups, colOffsets)
-	}
 	colReq := analyzeReq.ColReq
 	builder := &statistics.RowSampleBuilder{
 		Sc:              sc,
 		RecordSet:       e,
 		ColsFieldType:   fts,
 		Collators:       collators,
-		ColGroups:       colGroups,
+		NewColGroups:    analyzeReq.ColReq.ColumnGroups,
 		MaxSampleSize:   int(colReq.SampleSize),
 		MaxFMSketchSize: int(colReq.SketchSize),
 		Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),

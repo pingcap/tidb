@@ -93,6 +93,7 @@ type RowSampleBuilder struct {
 	ColsFieldType   []*types.FieldType
 	Collators       []collate.Collator
 	ColGroups       [][]int64
+	NewColGroups    []*tipb.AnalyzeColumnGroup
 	MaxSampleSize   int
 	MaxFMSketchSize int
 	Rng             *rand.Rand
@@ -104,12 +105,12 @@ type RowSampleBuilder struct {
 func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 	collector := &RowSampleCollector{
 		Samples:       make(WeightedRowSampleHeap, 0, s.MaxSampleSize),
-		NullCount:     make([]int64, len(s.ColsFieldType)+len(s.ColGroups)),
-		FMSketches:    make([]*FMSketch, 0, len(s.ColsFieldType)+len(s.ColGroups)),
-		TotalSizes:    make([]int64, len(s.ColsFieldType)+len(s.ColGroups)),
+		NullCount:     make([]int64, len(s.ColsFieldType)+len(s.NewColGroups)),
+		FMSketches:    make([]*FMSketch, 0, len(s.ColsFieldType)+len(s.NewColGroups)),
+		TotalSizes:    make([]int64, len(s.ColsFieldType)+len(s.NewColGroups)),
 		MaxSampleSize: s.MaxSampleSize,
 	}
-	for i := 0; i < len(s.ColsFieldType)+len(s.ColGroups); i++ {
+	for i := 0; i < len(s.ColsFieldType)+len(s.NewColGroups); i++ {
 		collector.FMSketches = append(collector.FMSketches, NewFMSketch(s.MaxFMSketchSize))
 	}
 	ctx := context.TODO()
@@ -123,6 +124,7 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 		if chk.NumRows() == 0 {
 			return collector, nil
 		}
+		originalColDatum := make([]types.Datum, len(s.RecordSet.Fields()))
 		collector.Count += int64(chk.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, s.RecordSet.Fields())
@@ -133,6 +135,7 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 					if err != nil {
 						return nil, err
 					}
+
 					decodedVal.SetBytesAsString(s.Collators[i].Key(decodedVal.GetString()), decodedVal.Collation(), uint32(decodedVal.Length()))
 					encodedKey, err := tablecodec.EncodeValue(s.Sc, nil, decodedVal)
 					if err != nil {
@@ -145,7 +148,7 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 			if err != nil {
 				return nil, err
 			}
-			err = collector.collectColumnGroups(s.Sc, datums, s.ColGroups)
+			err = collector.collectColumnGroups(s.Sc, datums, nil, nil, s.NewColGroups)
 			if err != nil {
 				return nil, err
 			}
@@ -179,19 +182,19 @@ func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols [
 	return nil
 }
 
-func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64) error {
+func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, originalColDatum []types.Datum, collator []collate.Collator, colGroups []*tipb.AnalyzeColumnGroup) error {
 	colLen := len(cols)
 	datumBuffer := make([]types.Datum, 0, len(cols))
 	for i, group := range colGroups {
 		datumBuffer = datumBuffer[:0]
 		hasNull := true
-		for _, c := range group {
+		for _, c := range group.ColumnOffsets {
 			datumBuffer = append(datumBuffer, cols[c])
 			hasNull = hasNull && cols[c].IsNull()
 			s.TotalSizes[colLen+i] += int64(len(cols[c].GetBytes())) - 1
 		}
 		// We don't maintain the null counts information for the multi-column group
-		if hasNull && len(group) == 1 {
+		if hasNull && len(group.ColumnOffsets) == 1 {
 			s.NullCount[colLen+i]++
 			continue
 		}
