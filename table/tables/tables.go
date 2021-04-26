@@ -544,11 +544,11 @@ func NewCommonAddRecordCtx(size int) *CommonAddRecordCtx {
 
 // TryGetCommonPkColumnIds get the IDs of primary key column if the table has common handle.
 func TryGetCommonPkColumnIds(tbl *model.TableInfo) []int64 {
-	var pkColIds []int64
 	if !tbl.IsCommonHandle {
 		return nil
 	}
 	pkIdx := FindPrimaryIndex(tbl)
+	pkColIds := make([]int64, 0, len(pkIdx.Columns))
 	for _, idxCol := range pkIdx.Columns {
 		pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
 	}
@@ -572,12 +572,12 @@ func PrimaryPrefixColumnIDs(tbl *model.TableInfo) (prefixCols []int64) {
 
 // TryGetCommonPkColumns get the primary key columns if the table has common handle.
 func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
-	var pkCols []*table.Column
 	if !tbl.Meta().IsCommonHandle {
 		return nil
 	}
 	pkIdx := FindPrimaryIndex(tbl.Meta())
 	cols := tbl.Cols()
+	pkCols := make([]*table.Column, 0, len(pkIdx.Columns))
 	for _, idxCol := range pkIdx.Columns {
 		pkCols = append(pkCols, cols[idxCol.Offset])
 	}
@@ -1443,71 +1443,6 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 		if len(idx.Meta().Columns) == 1 && strings.EqualFold(idx.Meta().Columns[0].Name.L, name) {
 			return idx
-		}
-	}
-	return nil
-}
-
-// CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore check whether recordID key or unique index key exists. if not exists, return nil,
-// otherwise return kv.ErrKeyExists error.
-func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, data []types.Datum) error {
-	physicalTableID := t.Meta().ID
-	if pt, ok := t.(*partitionedTable); ok {
-		info := t.Meta().GetPartitionInfo()
-		pid, err := pt.locatePartition(sctx, info, data)
-		if err != nil {
-			return err
-		}
-		partition := pt.GetPartition(pid)
-		physicalTableID = partition.GetPhysicalID()
-	}
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return err
-	}
-
-	// Check primary key exists.
-	{
-		prefix := tablecodec.GenTableRecordPrefix(physicalTableID)
-		recordKey := tablecodec.EncodeRecordKey(prefix, recordID)
-		_, err = txn.Get(ctx, recordKey)
-		if err == nil {
-			handleStr := getDuplicateErrorHandleString(t, recordID, data)
-			return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
-		} else if !kv.ErrNotExist.Equal(err) {
-			return err
-		}
-	}
-
-	// Check unique key exists.
-	{
-		for _, idx := range t.Indices() {
-			if !IsIndexWritable(idx) {
-				continue
-			}
-			if !idx.Meta().Unique {
-				continue
-			}
-			vals, err := idx.FetchValues(data, nil)
-			if err != nil {
-				return err
-			}
-			key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, vals, recordID, nil)
-			if err != nil {
-				return err
-			}
-			_, err = txn.Get(ctx, key)
-			if kv.IsErrNotFound(err) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			entryKey, err := genIndexKeyStr(vals)
-			if err != nil {
-				return err
-			}
-			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name.String())
 		}
 	}
 	return nil

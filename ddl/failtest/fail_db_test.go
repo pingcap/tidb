@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -237,7 +238,8 @@ func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(tblID, 100)
+	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
 
 	tk.MustExec("alter table t add index idx_b(b)")
 	tk.MustExec("admin check index t idx_b")
@@ -375,7 +377,8 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 
 	splitCount := 100
 	// Split table to multi region.
-	s.cluster.SplitTable(tbl.Meta().ID, splitCount)
+	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), splitCount)
 
 	err = ddlutil.LoadDDLReorgVars(tk.Se)
 	c.Assert(err, IsNil)

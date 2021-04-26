@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -303,9 +302,7 @@ func newTwoPhaseCommitter(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, err
 			ch: make(chan struct{}),
 		},
 		isPessimistic: txn.IsPessimistic(),
-		binlog: &binlogExecutor{
-			txn: txn,
-		},
+		binlog:        txn.binlog,
 	}, nil
 }
 
@@ -316,6 +313,12 @@ func (c *twoPhaseCommitter) extractKeyExistsErr(err *kv.ErrKeyExist) error {
 	return errors.Trace(err)
 }
 
+// KVFilter is a filter that filters out unnecessary KV pairs.
+type KVFilter interface {
+	// IsUnnecessaryKeyValue returns whether this KV pair should be committed.
+	IsUnnecessaryKeyValue(key, value []byte, flags kv.KeyFlags) bool
+}
+
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	var size, putCnt, delCnt, lockCnt, checkCnt int
 
@@ -324,6 +327,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	sizeHint := txn.us.GetMemBuffer().Len()
 	c.mutations = newMemBufferMutations(sizeHint, memBuf)
 	c.isPessimistic = txn.IsPessimistic()
+	filter := txn.getKVFilter()
 
 	var err error
 	for it := memBuf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
@@ -342,10 +346,14 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		} else {
 			value = it.Value()
 			if len(value) > 0 {
-				if tablecodec.IsUntouchedIndexKValue(key, value) {
+				isUnnecessaryKV := filter != nil && filter.IsUnnecessaryKeyValue(key, value, flags)
+				if isUnnecessaryKV {
 					if !flags.HasLocked() {
 						continue
 					}
+					// If the key was locked before, we should prewrite the lock even if
+					// the KV needn't be committed according to the filter. Otherwise, we
+					// were forgetting removing pessimistic locks added before.
 					op = pb.Op_Lock
 					lockCnt++
 				} else {
@@ -388,9 +396,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 	c.txnSize = size
 
-	if size > int(tidbkv.TxnTotalSizeLimit) {
-		return tidbkv.ErrTxnTooLarge.GenWithStackByArgs(size)
-	}
 	const logEntryCount = 10000
 	const logSize = 4 * 1024 * 1024 // 4MB
 	if c.mutations.Len() > logEntryCount || size > logSize {
@@ -692,10 +697,10 @@ const (
 type ttlManager struct {
 	state   ttlManagerState
 	ch      chan struct{}
-	lockCtx *tidbkv.LockCtx
+	lockCtx *kv.LockCtx
 }
 
-func (tm *ttlManager) run(c *twoPhaseCommitter, lockCtx *tidbkv.LockCtx) {
+func (tm *ttlManager) run(c *twoPhaseCommitter, lockCtx *kv.LockCtx) {
 	// Run only once.
 	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateUninitialized), uint32(stateRunning)) {
 		return
@@ -915,7 +920,7 @@ func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 			logutil.Logger(ctx).Info("2PC cleanup failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS),
 				zap.Bool("isPessimistic", c.isPessimistic), zap.Bool("isOnePC", c.isOnePC()))
 		} else {
-			logutil.Logger(ctx).Info("2PC clean up done",
+			logutil.Logger(ctx).Debug("2PC clean up done",
 				zap.Uint64("txnStartTS", c.startTS), zap.Bool("isPessimistic", c.isPessimistic),
 				zap.Bool("isOnePC", c.isOnePC()))
 		}
@@ -1107,13 +1112,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		logutil.SetTag(ctx, "commitTs", commitTS)
 	}
 
-	if c.sessionID > 0 {
-		failpoint.Inject("beforeSchemaCheck", func() {
-			c.ttlManager.close()
-			failpoint.Return()
-		})
-	}
-
 	if !c.isAsyncCommit() {
 		tryAmend := c.isPessimistic && c.sessionID > 0 && c.txn.schemaAmender != nil
 		if !tryAmend {
@@ -1137,7 +1135,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				if err != nil {
 					logutil.Logger(ctx).Info("schema check after amend failed, it means the schema version changed again",
 						zap.Uint64("startTS", c.startTS),
-						zap.Uint64("amendTS", c.commitTS),
+						zap.Uint64("amendTS", commitTS),
 						zap.Int64("amendedSchemaVersion", relatedSchemaChange.LatestInfoSchema.SchemaMetaVersion()),
 						zap.Uint64("newCommitTS", newCommitTS))
 					return errors.Trace(err)
@@ -1148,7 +1146,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 	atomic.StoreUint64(&c.commitTS, commitTS)
 
-	if c.store.oracle.IsExpired(c.startTS, tidbkv.MaxTxnTimeUse, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) {
+	if c.store.oracle.IsExpired(c.startTS, MaxTxnTimeUse, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) {
 		err = errors.Errorf("session %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.sessionID, c.startTS, c.commitTS)
 		return err
@@ -1281,7 +1279,7 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 	c.doingAmend = true
 	defer func() { c.doingAmend = false }()
 	if keysNeedToLock.Len() > 0 {
-		lCtx := &tidbkv.LockCtx{
+		lCtx := &kv.LockCtx{
 			Killed:        c.lockCtx.Killed,
 			ForUpdateTS:   c.forUpdateTS,
 			LockWaitTime:  c.lockCtx.LockWaitTime,
@@ -1455,7 +1453,7 @@ func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 }
 
 func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
-	return c.txn.us.GetOption(kv.BinlogInfo) != nil
+	return c.binlog != nil
 }
 
 // TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's

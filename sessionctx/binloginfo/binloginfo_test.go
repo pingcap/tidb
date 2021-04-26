@@ -416,9 +416,9 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 }
 
 func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit"), IsNil)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -538,6 +538,19 @@ func (s *testBinlogSuite) TestPartitionedTable(c *C) {
 	for i := 1; i < 10; i++ {
 		c.Assert(tids[i], Equals, tids[0])
 	}
+}
+
+func (s *testBinlogSuite) TestPessimisticLockThenCommit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t select 1, 1")
+	tk.MustExec("commit")
+	prewriteVal := getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 1)
 }
 
 func (s *testBinlogSuite) TestDeleteSchema(c *C) {
