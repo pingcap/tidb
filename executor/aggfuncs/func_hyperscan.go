@@ -17,19 +17,23 @@ package aggfuncs
 
 import (
 	"encoding/base64"
-	"fmt"
 	"strconv"
 	"unsafe"
 
 	hs "github.com/blacktear23/gohs/hyperscan"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var (
+	errIncorrectParameterCount = dbterror.ClassExpression.NewStd(mysql.ErrWrongParamcountToNativeFct)
+
 	// All the AggFunc implementations for "HS_BUILDDB" are listed here
 	_ AggFunc = (*hsBuildDbAgg)(nil)
 )
@@ -38,7 +42,11 @@ const (
 	DefPartialResult4HsBuildDbAgg = int64(unsafe.Sizeof(partialResult4HsBuildDbAgg{}))
 )
 
-func buildHsBuildDb(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func init() {
+	extensionAggFuncBuilders[ast.AggFuncHSBuildDB] = buildHsBuildDb
+}
+
+func buildHsBuildDb(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
@@ -98,31 +106,48 @@ func (e *hsBuildDbAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Parti
 func (e *hsBuildDbAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4HsBuildDbAgg)(pr)
 	for _, row := range rowsInGroup {
-		id, err := e.args[0].Eval(row)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
+		var (
+			pid        = 0
+			patternStr string
+			err        error
+		)
+		if len(e.args) == 1 {
+			pattern, err := e.args[0].Eval(row)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			patternStr, err = pattern.ToString()
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
 
-		pid := 0
-		if !id.IsNull() {
-			if idStr, err := id.ToString(); err == nil {
-				npid, err := strconv.ParseInt(idStr, 10, 64)
-				if err == nil {
-					pid = int(npid)
+		} else if len(e.args) == 2 {
+			id, err := e.args[0].Eval(row)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+
+			if !id.IsNull() {
+				if idStr, err := id.ToString(); err == nil {
+					npid, err := strconv.ParseInt(idStr, 10, 64)
+					if err == nil {
+						pid = int(npid)
+					}
 				}
 			}
-		}
 
-		pattern, err := e.args[1].Eval(row)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
+			pattern, err := e.args[1].Eval(row)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
 
-		patternStr, err := pattern.ToString()
-		if err != nil {
-			return 0, errors.Trace(err)
+			patternStr, err = pattern.ToString()
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+		} else {
+			return 0, errIncorrectParameterCount.GenWithStackByArgs(ast.AggFuncHSBuildDB)
 		}
-		fmt.Println(pid, patternStr)
 		patternStr = stringutil.Copy(patternStr)
 		pat, err := hs.ParsePattern(patternStr)
 		if err != nil {
