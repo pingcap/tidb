@@ -194,7 +194,7 @@ func GetCustomizedHook(s string) (func(do DomainReloader) Callback, error) {
 	s = strings.TrimSpace(s)
 	fact, ok := customizedCallBackRegisterMap[s]
 	if !ok {
-		logutil.BgLogger().Error("bad ddl hook "+s)
+		logutil.BgLogger().Error("bad ddl hook " + s)
 		return nil, errors.Errorf("ddl hook `%s` is not found in hook registered map", s)
 	}
 	return fact, nil
