@@ -1,7 +1,7 @@
 # Global Kill
 
 - Author(s):     [pingyu](https://github.com/pingyu) (Ping Yu)
-- Last updated:  2021-04-22
+- Last updated:  2021-04-26
 - Discussion at: https://github.com/pingcap/tidb/issues/8854
 
 ## Abstract
@@ -68,10 +68,22 @@ Bit 63 is always __ZERO__, making `connId` in range of non-negative int64, to be
 #### 5. local connId
 `local connId` is allocated by each TiDB instance on establishing connections auto-incrementally.
 
-On system being busy and/or with long running SQL, `local connId` is possible to be integer-overflow and/or used up, especially on 32 bits `connId`. So we will check `local connId` existed or not before allocation, upgrade to 64 bits if `local connId` exhausted in 32 bits `connId`, or return _"too many connections"_ error in 64 bits `connId`.
+On system being busy and/or with long running SQL, `local connId` is possible to be integer-overflow and/or used up, especially on 32 bits `connId`. So we will check `local connId` existed or not before allocation (by maintaining a map of connection ids).
+a) In 32 bits `connId`, upgrade to 64 bits if `local connId` exhausted, or after retried more than 10 times (to avoid spending too much time in allocation).
+b) In 64 bits `connId`, return _"Too many connections"_ error if exhausted.
 
 #### 6. global kill
 On processing `KILL x` command, first extract `serverId` from `x`. Then if `serverId` aims to a remote TiDB instance, get the address from [`CLUSTER_INFO`](https://docs.pingcap.com/tidb/stable/information-schema-cluster-info#cluster_info), and redirect the command to it by "Coprocessor API" provided by the remote TiDB, along with the original user authentication.
+
+#### 7. summary
+|      | 32 bits | 64 bits |
+| ---- | ---- | ---- |
+| ServerId pool size | 2^11 | 2^22 - 2^11 |
+| ServerId allocation | Random of __Unused__ serverIds acquired from PD within pool. Retry if unavailable. Upgrade to 64 bits while failed more than 3 times | Random of __All__ serverIds within pool. Retry if unavailable |
+| Local connId pool size | 2^20 | 2^40 |
+| Local connId allocation | Auto-increment within pool. Flip to zero when overflow. Upgrade to 64 bits while exhausted or retried more than 10 times | Auto-increment within pool. Flip to zero when overflow. Return "Too many connections" if exhausted |
+
+
 
 ## Compatibility
 
