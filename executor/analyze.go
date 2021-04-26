@@ -721,13 +721,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 	}
 	for _, sample := range rootRowCollector.Samples {
 		for i := range sample.Columns {
-			// logutil.BgLogger().Warn("new analyze", zap.String("raw col", fmt.Sprintf("%v", sample.Columns[i].GetBytes())))
 			sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
 			if err != nil {
-				logutil.BgLogger().Warn("wrong encoded value",
-					zap.String("bytes value", fmt.Sprintf("%v", sample.Columns[i].GetBytes())),
-					zap.Int("kind", int(e.colsInfo[i].FieldType.Tp)),
-				)
 				return 0, nil, nil, nil, err
 			}
 			if sample.Columns[i].Kind() == types.KindBytes {
