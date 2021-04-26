@@ -695,7 +695,7 @@ func (s *session) isTxnRetryableError(err error) bool {
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	var err error
 	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
-		err = tikvstore.ErrLockExpire
+		err = kv.ErrLockExpire
 	} else {
 		return nil
 	}
