@@ -1204,6 +1204,12 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	} else {
 		e.buildTypes, e.probeTypes = rightTypes, leftTypes
 	}
+	for _, key := range e.buildKeys {
+		e.buildTypes[key.Index].Flag = key.RetType.Flag
+	}
+	for _, key := range e.probeKeys {
+		e.probeTypes[key.Index].Flag = key.RetType.Flag
+	}
 	return e
 }
 
