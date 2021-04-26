@@ -913,10 +913,7 @@ type PhysicalExchangeSender struct {
 	ExchangeType tipb.ExchangeType
 	HashCols     []*expression.Column
 	// Tasks is the mpp task for current PhysicalExchangeSender.
-	// Currently it's only used for showing explain result.
 	Tasks []*kv.MPPTask
-
-	Fragment *Fragment
 }
 
 // Clone implment PhysicalPlan interface.
