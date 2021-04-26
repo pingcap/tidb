@@ -624,6 +624,7 @@ func (e *IndexMergeReaderExecutor) Close() error {
 	close(e.finished)
 	e.processWokerWg.Wait()
 	e.tblWorkerWg.Wait()
+	e.idxWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
 	// TODO: how to store e.feedbacks
