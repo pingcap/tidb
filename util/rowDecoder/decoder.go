@@ -98,12 +98,8 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	for _, dCol := range rd.colMap {
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
-		if ok {
+		if ok || dCol.GenExpr != nil {
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
-			continue
-		}
-		if dCol.GenExpr != nil {
-			// skip for now, latter we will eval it.
 			continue
 		}
 		if dCol.Col.ChangeStateInfo != nil {
@@ -176,8 +172,8 @@ func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
 
 // DecodeTheExistedColumnMap is used by ddl column-type-change first column reorg stage.
 // In the function, we only decode the existed column in the row and fill the default value.
-// For changing column, we shouldn't decode it here, because we will do a unified cast operation latter.
-// For generated column, we didn't decode it here too, because the eval process will depend on the changing column.
+// For changing column, we shouldn't cast it here, because we will do a unified cast operation latter.
+// For generated column, we didn't cast it here too, because the eval process will depend on the changing column.
 func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
@@ -195,12 +191,8 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 	for _, dCol := range rd.colMap {
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
-		if ok {
+		if ok || dCol.GenExpr != nil || dCol.Col.ChangeStateInfo != nil {
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
-			continue
-		}
-		if dCol.GenExpr != nil {
-			// skip for now, latter we will eval it.
 			continue
 		}
 		// Get the default value of the column in the generated column expression.
@@ -214,6 +206,8 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 	return row, nil
 }
 
+// EvalRemainedExprColumnMap is used by ddl column-type-change first column reorg stage.
+// It is always called after DecodeTheExistedColumnMap to finish the generated column evaluation.
 func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	keys := make([]int, 0, len(rd.colMap))
 	ids := make(map[int]int, len(rd.colMap))

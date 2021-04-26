@@ -1775,4 +1775,14 @@ func (s *testColumnTypeChangeSuite) TestChangeIntToBitWillPanicInBackfillIndexes
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 	tk.MustExec("insert into t values(19,1,1),(17,2,2)")
 	tk.MustExec("alter table t modify a bit(5) not null")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` bit(5) NOT NULL,\n" +
+		"  `b` varchar(10) DEFAULT NULL,\n" +
+		"  `c` decimal(10,2) DEFAULT NULL,\n" +
+		"  KEY `idx1` (`a`),\n" +
+		"  UNIQUE KEY `idx2` (`a`),\n" +
+		"  KEY `idx3` (`a`,`b`),\n" +
+		"  KEY `idx4` (`a`,`b`,`c`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
 }
