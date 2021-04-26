@@ -83,6 +83,7 @@ var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
 var _ = Suite(&testClusteredSuite{})
 var _ = SerialSuites(&testClusteredSerialSuite{})
+var _ = SerialSuites(&testTxnStateSuite{})
 
 type testSessionSuiteBase struct {
 	cluster cluster.Cluster
@@ -4242,4 +4243,29 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	err = stmt.Restore(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(sb.String(), Equals, "SELECT 3")
+}
+
+type testTxnStateSuite struct {
+	testSessionSuiteBase
+}
+
+func (s *testTxnStateSuite) TestBasic(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1);")
+	tk.MustExec("begin;")
+	tk.MustExec("select * from t for update;")
+	info := tk.Se.TxnInfo()
+	// startTs
+	c.Assert(info[0].Kind(), Equals, types.KindUint64)
+	// human readable start time
+	c.Assert(info[1].Kind(), Equals, types.KindMysqlTime)
+	digest := info[2].GetString()
+	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
+	c.Assert(digest, Equals, expectedDigest)
+	// running state
+	c.Assert(info[3].GetInt64(), Equals, int64(session.TxnRunningNormal))
+	// blockStartTime
+	c.Assert(info[4].IsNull(), Equals, true)
 }
