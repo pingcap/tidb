@@ -730,7 +730,7 @@ func intersectionRange(start, end, newStart, newEnd int) (int, int) {
 }
 
 func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, tbl table.PartitionedTable, conds []expression.Expression,
-	columns []*expression.Column, names types.NameSlice) (partitionRangeOR, error) {
+	columns []*expression.Column, names types.NameSlice, condsToBePruned *[]expression.Expression) (partitionRangeOR, error) {
 	partExpr, err := tbl.(partitionTable).PartitionExpr()
 	if err != nil {
 		return nil, err
@@ -763,31 +763,37 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 	}
 	result = partitionRangeForCNFExpr(ctx, conds, &pruner, result)
 	// remove useless predicates after partition pruning
-	for idx, cond := range conds {
-		if dataForPrune, ok := pruner.extractDataForPrune(ctx, cond); ok {
-			switch dataForPrune.op {
-			case ast.EQ:
-				unsigned := mysql.HasUnsignedFlag(pruner.col.RetType.Flag)
-				start, _ := pruneUseBinarySearch(pruner.lessThan, dataForPrune, unsigned)
-				// if the type of partition key is Int
-				if pk, ok := partExpr.Expr.(*expression.Column); ok && pk.RetType.EvalType() == types.ETInt {
-					// see if can be removed
-					// see issue #22079: https://github.com/pingcap/tidb/issues/22079 for details
-					if start > 0 && pruner.lessThan.data[start-1] == dataForPrune.c && (pruner.lessThan.data[start]-1) == dataForPrune.c {
-						conds = append(conds[:idx], conds[idx+1:]...) // todo: check if it's correct, check the order of pruner.lessThan
+	if condsToBePruned != nil {
+		newConds := make([]expression.Expression, 0, len(*condsToBePruned))
+		for _, cond := range *condsToBePruned {
+			if dataForPrune, ok := pruner.extractDataForPrune(ctx, cond); ok {
+				switch dataForPrune.op {
+				case ast.EQ:
+					unsigned := mysql.HasUnsignedFlag(pruner.col.RetType.Flag)
+					start, _ := pruneUseBinarySearch(pruner.lessThan, dataForPrune, unsigned)
+					// if the type of partition key is Int
+					if pk, ok := partExpr.Expr.(*expression.Column); ok && pk.RetType.EvalType() == types.ETInt {
+						// see if can be removed
+						// see issue #22079: https://github.com/pingcap/tidb/issues/22079 for details
+						if start > 0 && pruner.lessThan.data[start-1] == dataForPrune.c && (pruner.lessThan.data[start]-1) == dataForPrune.c {
+							continue
+						} else {
+							newConds = append(newConds, cond)
+						}
 					}
+				// todo: other predicates lie on the boundary of partitions might be removed as well.
+				default:
+					newConds = append(newConds, cond)
 				}
-			// todo: other predicates lie on the boundary of partitions might be removed as well.
-			default:
-				continue
 			}
 		}
+		*condsToBePruned = newConds
 	}
 	return result, nil
 }
 
 func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	used, err := s.pruneRangePartition(ds.ctx, pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names)
+	used, err := s.pruneRangePartition(ds.ctx, pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names, &ds.pushedDownConds)
 	if err != nil {
 		return nil, err
 	}
