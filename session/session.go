@@ -1029,9 +1029,9 @@ func (s *session) setTiDBTableValue(name, val string) error {
 // but sysvars use the convention ON/OFF.
 func trueFalseToOnOff(str string) string {
 	if strings.EqualFold("true", str) {
-		return variable.BoolOn
+		return variable.On
 	} else if strings.EqualFold("false", str) {
-		return variable.BoolOff
+		return variable.Off
 	}
 	return str
 }
