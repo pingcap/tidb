@@ -5776,11 +5776,14 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			//	break
 			//}
 
+			var afterOpr *ast.SetOprType
 			switch y := x.SelectList.Selects[i].(type) {
 			case *ast.SelectStmt:
 				p, err = b.buildSelect(ctx, y)
+				afterOpr = y.AfterSetOperator
 			case *ast.SetOprSelectList:
 				p, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: y})
+				afterOpr = y.AfterSetOperator
 			}
 
 			if expectSeed {
@@ -5800,6 +5803,10 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 
 					if err != nil {
 						return err
+					}
+
+					if afterOpr != nil {
+						cInfo.isDistinct = *afterOpr == ast.Union
 					}
 
 					err = b.adjustCTEPlanSchema(p, cInfo.def)
