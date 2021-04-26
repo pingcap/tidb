@@ -68,6 +68,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildVarSamp(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevSamp:
 		return buildStddevSamp(aggFuncDesc, ordinal)
+	case ast.AggFuncHSBuildDB:
+		return buildHsBuildDb(aggFuncDesc, ordinal)
 	}
 	return nil
 }
