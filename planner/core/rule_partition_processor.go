@@ -779,8 +779,6 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 							continue
 						}
 					}
-				default:
-					continue
 				}
 			}
 			newConds = append(newConds, cond)
