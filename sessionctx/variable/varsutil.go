@@ -152,9 +152,7 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 	if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
 		returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
-		if skipIsolationLevelCheck, err := GetSessionSystemVar(vars, TiDBSkipIsolationLevelCheck); err != nil {
-			return normalizedValue, err
-		} else if !TiDBOptOn(skipIsolationLevelCheck) {
+		if !vars.EnableNoopFuncs {
 			return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
 		}
 		vars.StmtCtx.AppendWarning(returnErr)

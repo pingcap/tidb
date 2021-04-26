@@ -121,8 +121,11 @@ type SysVar struct {
 // SetSessionFromHook calls the SetSession func if it exists.
 func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 	if sv.SetSession != nil {
-		return sv.SetSession(s, val)
+		if err := sv.SetSession(s, val); err != nil {
+			return err
+		}
 	}
+	s.systems[sv.Name] = val
 	return nil
 }
 
@@ -561,6 +564,9 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 5.7 compatible"},
 	{Scope: ScopeGlobal | ScopeSession, Name: TxnIsolation, Value: "REPEATABLE-READ", Type: TypeEnum, PossibleValues: []string{"READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		// MySQL appends a warning here for tx_isolation is deprecated
+		// TiDB doesn't currently, but may in future. It is still commonly used by applications
+		// So it might be noisy to do so.
 		return checkIsolationLevel(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
 		s.systems[TransactionIsolation] = val
