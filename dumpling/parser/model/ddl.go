@@ -215,6 +215,9 @@ type Job struct {
 	SchemaState SchemaState     `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
 	SnapshotVer uint64 `json:"snapshot_ver"`
+	// RealStartTS uses timestamp allocated by TSO.
+	// Now it's the TS when we actually start the job.
+	RealStartTS uint64 `json:"real_start_ts"`
 	// StartTS uses timestamp allocated by TSO.
 	// Now it's the TS when we put the job to TiKV queue.
 	StartTS uint64 `json:"start_ts"`
