@@ -243,9 +243,11 @@ func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
 	atomic.AddUint64(&sd.RocksdbBlockReadByte, scanDetail.RocksdbBlockReadByte)
 }
 
+var zeroScanDetail = ScanDetail{}
+
 // String implements the fmt.Stringer interface.
 func (sd *ScanDetail) String() string {
-	if sd == nil {
+	if sd == nil || *sd == zeroScanDetail {
 		return ""
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
@@ -530,9 +532,12 @@ func (crs *CopRuntimeStats) String() string {
 			FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
 			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
 	}
-	if detail := crs.scanDetail; detail != nil {
-		buf.WriteString(", ")
-		buf.WriteString(detail.String())
+	if crs.scanDetail != nil {
+		detail := crs.scanDetail.String()
+		if detail != "" {
+			buf.WriteString(", ")
+			buf.WriteString(detail)
+		}
 	}
 	return buf.String()
 }
