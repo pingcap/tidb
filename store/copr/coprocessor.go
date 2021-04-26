@@ -317,6 +317,7 @@ func (rs *copResponse) GetStartKey() kv.Key {
 }
 
 func (rs *copResponse) GetCopRuntimeStats() *CopRuntimeStats {
+	rs.pbResp.GetExecDetailsV2()
 	return rs.detail
 }
 
@@ -735,22 +736,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *tikv.Backoffer, task *copTas
 		worker.logTimeCopTask(costTime, task, bo, resp)
 	}
 	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
-	switch r := resp.Resp.(type) {
-	case *coprocessor.Response:
-		selResp := &tipb.SelectResponse{}
-		proto.Unmarshal(r.Data, selResp)
-		if selResp != nil && len(selResp.GetExecutionSummaries()) > 0 {
-			readExecution := selResp.GetExecutionSummaries()[0]
-			affectRow := int(readExecution.GetNumProducedRows())
-			readTime := float64(readExecution.GetTimeProcessedNs()) / 1000000
-			readByte := r.GetExecDetailsV2().GetScanDetailV2().GetReadBytes()
-			if affectRow < 20 && readByte < 1024*1024 {
-				metrics.TiKVSmallReadDuration.Observe(readTime)
-			} else {
-				metrics.TiKVLargeReadThroughput.Observe(float64(readByte) / (1024 * 1024) / (readTime / 1000))
-			}
-		}
-	}
 	if task.cmdType == tikvrpc.CmdCopStream {
 		return worker.handleCopStreamResult(bo, rpcCtx, resp.Resp.(*tikvrpc.CopStreamResponse), task, ch, costTime)
 	}
