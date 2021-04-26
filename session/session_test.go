@@ -4267,6 +4267,13 @@ func (s *testTxnStateSuite) TestBasic(c *C) {
 	c.Assert(info[3].GetInt64(), Equals, int64(session.TxnRunningNormal))
 	// blockStartTime
 	c.Assert(info[4].IsNull(), Equals, true)
+	// sessionId
+	c.Assert(info[5].GetUint64(), Equals, tk.Se.GetSessionVars().ConnectionID)
+	// username
+	c.Assert(info[6].IsNull(), Equals, true)
+	// schema name
+	c.Assert(info[7].GetString(), Equals, "test")
+	tk.MustExec("COMMIT;")
 }
 
 func (s *testTxnStateSuite) TestBlocked(c *C) {
@@ -4279,7 +4286,12 @@ func (s *testTxnStateSuite) TestBlocked(c *C) {
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		tk2.MustExec("select * from t where a = 1 for update;")
+		tk2.MustExec("COMMIT;")
 	}()
 	time.Sleep(200 * time.Millisecond)
+	// state
 	c.Assert(tk2.Se.TxnInfo()[3].GetInt64(), Equals, int64(session.TxnLockWaiting))
+	// blockStartTime
+	c.Assert(tk2.Se.TxnInfo()[4].IsNull(), Equals, false)
+	tk.MustExec("COMMIT;")
 }

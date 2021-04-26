@@ -444,7 +444,21 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 }
 
 func (s *session) TxnInfo() []types.Datum {
-	return s.txn.Datum()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	txnDatum := s.txn.Datum()
+	if txnDatum == nil {
+		return nil
+	}
+	var username interface{} = nil
+	if s.sessionVars.User != nil {
+		username = s.sessionVars.User.Username
+	}
+	return append(txnDatum,
+		types.NewDatum(s.sessionVars.ConnectionID),
+		types.NewDatum(username),
+		types.NewDatum(s.sessionVars.CurrentDB),
+	)
 }
 
 func (s *session) doCommit(ctx context.Context) error {

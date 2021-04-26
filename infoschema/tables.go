@@ -1340,9 +1340,12 @@ var tableClientErrorsSummaryByHostCols = []columnInfo{
 var tableTiDBTrxCols = []columnInfo{
 	{name: "ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag},
 	{name: "START_TIME", tp: mysql.TypeTimestamp, size: 26, comment: "Start time of the transaction"},
-	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of the sql the transaction are currently running"},
+	{name: "DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of the sql the transaction are currently running"},
 	{name: "STATE", tp: mysql.TypeLonglong, size: 64, comment: "Current running state of the transaction"},
 	{name: "WAITING_START_TIME", tp: mysql.TypeTimestamp, size: 26, comment: "Current lock waiting's start time"},
+	{name: "SESSION_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Which session this transaction belongs to"},
+	{name: "USER", tp: mysql.TypeVarchar, size: 16, comment: "The user who open this session"},
+	{name: "DB", tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
