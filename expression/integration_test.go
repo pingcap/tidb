@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -9121,4 +9122,21 @@ func (s *testIntegrationSuite) TestIssue23925(c *C) {
 	tk.MustExec("create table t(a int, b set('Alice','Bob') DEFAULT NULL);")
 	tk.MustExec("insert into t value(1,'Bob');")
 	tk.MustQuery("select max(b) + 0 from t group by a;").Check(testkit.Rows("2"))
+}
+
+func (s *testIntegrationSuite) TestCTEInvalidUsage(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	// A CTE can refer to CTEs defined earlier in the same WITH clause, but not those defined later.
+	tk.MustGetErrCode("with cte1 as (select * from cte2), cte2 as (select 1) select * from cte1;", errno.ErrNoSuchTable)
+	// A CTE in a given query block can refer to CTEs defined in query blocks at a more outer level, but not CTEs defined in query blocks at a more inner level.
+	// MySQL allows this statement, and it should be a bug of MySQL. PostgreSQL also reports an error.
+	tk.MustGetErrCode("with cte1 as (select * from cte2)  select * from (with cte2 as (select 2) select * from cte1 ) q;", errno.ErrNoSuchTable)
+	// Aggregation function is not allowed in the recursive part.
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select sum(n) from cte group by n) select * from cte;", errno.ErrCTERecursiveForbidsAggregation)
+	// Window function is not allowed in the recursive part.
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select row_number() over(partition by n) from cte ) select * from cte;", errno.ErrCTERecursiveForbidsAggregation)
 }

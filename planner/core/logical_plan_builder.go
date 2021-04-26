@@ -3316,8 +3316,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.popTableHints()
 	}()
 	if b.buildingRecursivePartForCTE {
-		if sel.Distinct || sel.OrderBy != nil || sel.GroupBy != nil || len(sel.WindowSpecs) > 0 {
-			return nil, errors.New("This version of MySQL doesn't yet support 'ORDER BY over UNION in recursive Common Table Expression'")
+		if sel.Distinct || sel.OrderBy != nil {
+			return nil, ErrNotSupportedYet.GenWithStack("This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'")
+		}
+		if sel.GroupBy != nil || len(sel.WindowSpecs) > 0 {
+			return nil, ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
 	}
 	enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
@@ -3346,31 +3349,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.With != nil {
-		// Check CTE name must be unique.
-		nameMap := make(map[string]struct{})
-		for _, cte := range sel.With.CTEs {
-			if _, ok := nameMap[cte.Name.L]; ok {
-				return p, errors.New("Not unique table/alias")
-			}
-			nameMap[cte.Name.L] = struct{}{}
-		}
-		l := len(sel.With.CTEs)
-		for _, cte := range sel.With.CTEs {
-			b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !sel.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0, false, false})
-			b.allocIDForCTEStorage++
-			saveFlag := b.optFlag
-			b.optFlag = 0
-			_, err := b.buildCte(ctx, cte, sel.With.IsRecursive)
-			if err != nil {
-				return nil, err
-			}
-			b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
-			b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
-			b.optFlag = saveFlag
-		}
+		l := len(b.outerCTEs)
 		defer func() {
-			b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+			b.outerCTEs = b.outerCTEs[:l]
 		}()
+		err = b.buildWith(ctx, sel.With)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
@@ -3457,9 +3443,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	b.handleHelper.pushMap(nil)
 
 	hasAgg := b.detectSelectAgg(sel)
+	needBuildAgg := hasAgg
 	if hasAgg {
 		if b.buildingRecursivePartForCTE {
-			return nil, errors.New("Recursive Common Table Expression 'cte2' can contain neither aggregation nor window functions in recursive query block")
+			return nil, ErrCTERecursiveForbidsAggregation.GenWithStackByArgs(b.genCTETableNameForError())
 		}
 
 		aggFuncs, totalMap = b.extractAggFuncsInSelectFields(sel.Fields.Fields)
@@ -3467,10 +3454,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// are actually correlated aggregates from the outer query, which have already been built in the outer query.
 		// The only thing we need to do is to find them from b.correlatedAggMap in buildProjection.
 		if len(aggFuncs) == 0 && sel.GroupBy == nil {
-			hasAgg = false
+			needBuildAgg = false
 		}
 	}
-	if hasAgg {
+	if needBuildAgg {
 		var aggIndexMap map[int]int
 		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
 		if err != nil {
@@ -3649,7 +3636,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					}
 
 					if cte.enterSubquery || cte.recursiveRef {
-						return nil, ErrInvalidRecursiveCTEReference.FastGenByArgs(tn.Name.String())
+						return nil, ErrInvalidRequiresSingleReference.FastGenByArgs(tn.Name.String())
 					}
 
 					cte.recursiveRef = true
@@ -5890,4 +5877,40 @@ func resetCTECheckForSubQuery(ci []*cteInfo) {
 	for _, cte := range ci {
 		cte.enterSubquery = false
 	}
+}
+
+func (b *PlanBuilder) genCTETableNameForError() string {
+	name := ""
+	for i := len(b.outerCTEs)-1; i >= 0; i-- {
+		if b.outerCTEs[i].isBuilding {
+			name = b.outerCTEs[i].def.Name.String()
+			break
+		}
+	}
+	return name
+}
+
+func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
+	// Check CTE name must be unique.
+	nameMap := make(map[string]struct{})
+	for _, cte := range w.CTEs {
+		if _, ok := nameMap[cte.Name.L]; ok {
+			return errors.New("Not unique table/alias")
+		}
+		nameMap[cte.Name.L] = struct{}{}
+	}
+	for _, cte := range w.CTEs {
+		b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !w.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0, false, false})
+		b.allocIDForCTEStorage++
+		saveFlag := b.optFlag
+		b.optFlag = 0
+		_, err := b.buildCte(ctx, cte, w.IsRecursive)
+		if err != nil {
+			return err
+		}
+		b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
+		b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
+		b.optFlag = saveFlag
+	}
+	return nil
 }

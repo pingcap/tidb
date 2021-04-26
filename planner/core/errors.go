@@ -88,7 +88,9 @@ var (
 	ErrUnresolvedHintName              = dbterror.ClassOptimizer.NewStd(mysql.ErrUnresolvedHintName)
 	ErrNotHintUpdatable                = dbterror.ClassOptimizer.NewStd(mysql.ErrNotHintUpdatable)
 	ErrWarnConflictingHint             = dbterror.ClassOptimizer.NewStd(mysql.ErrWarnConflictingHint)
-	ErrInvalidRecursiveCTEReference    = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidRecrusiveCTEReference)
+	ErrCTERecursiveForbidsAggregation  = dbterror.ClassOptimizer.NewStd(mysql.ErrCTERecursiveForbidsAggregation)
+	ErrCTERecursiveForbiddenJoinOrder  = dbterror.ClassOptimizer.NewStd(mysql.ErrCTERecursiveForbiddenJoinOrder)
+	ErrInvalidRequiresSingleReference  = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidRequiresSingleReference)
 	// Since we cannot know if user logged in with a password, use message of ErrAccessDeniedNoPassword instead
 	ErrAccessDenied = dbterror.ClassOptimizer.NewStdErr(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
 	ErrBadNull      = dbterror.ClassOptimizer.NewStd(mysql.ErrBadNull)

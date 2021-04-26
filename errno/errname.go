@@ -901,7 +901,12 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnsupportedConstraintCheck:                            mysql.Message("%s is not supported", nil),
 	ErrDynamicPrivilegeNotRegistered:                         mysql.Message("Dynamic privilege '%s' is not registered with the server.", nil),
 	ErrIllegalPrivilegeLevel:                                 mysql.Message("Illegal privilege level specified for %s", nil),
-	ErrInvalidRecrusiveCTEReference:                          mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must be referenced only once, and not in any subquery", nil),
+	ErrCTERecursiveRequiresUnion:                             mysql.Message("Recursive Common Table Expression '%s' should contain a UNION", nil),
+	ErrCTERecursiveRequiresNonRecursiveFirst:                 mysql.Message("Recursive Common Table Expression '%s' should have one or more non-recursive query blocks followed by one or more recursive ones", nil),
+	ErrCTERecursiveForbidsAggregation:                        mysql.Message("Recursive Common Table Expression '%s' can contain neither aggregation nor window functions in recursive query block", nil),
+	ErrCTERecursiveForbiddenJoinOrder:                        mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints", nil),
+	ErrInvalidRequiresSingleReference:                        mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must be referenced only once, and not in any subquery", nil),
+	ErrCTEMaxRecursionDepth:                                  mysql.Message("Recursive query aborted after %u iterations. Try increasing @@cte_max_recursion_depth to a larger value", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),
