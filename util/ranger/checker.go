@@ -15,6 +15,7 @@ package ranger
 
 import (
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -159,6 +160,9 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	col, ok := expr.(*expression.Column)
 	if !ok {
+		return false
+	}
+	if col.GetType().Tp == mysql.TypeEnum {
 		return false
 	}
 	return c.colUniqueID == col.UniqueID
