@@ -8838,8 +8838,7 @@ PARTITION BY RANGE (c) (
 		c.Log(testcase.name)
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
-		_, err = tk.Exec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
-		c.Assert(err, IsNil)
+		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		res, err := tk.Exec(testcase.sql)
 		_, resErr := session.GetRows4Test(context.Background(), tk.Se, res)
 		var checkErr error
