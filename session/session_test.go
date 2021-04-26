@@ -4251,10 +4251,9 @@ type testTxnStateSuite struct {
 
 func (s *testTxnStateSuite) TestBasic(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("use test;")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1);")
-	tk.MustExec("begin;")
+	tk.MustExec("begin pessimistic;")
 	tk.MustExec("select * from t for update;")
 	info := tk.Se.TxnInfo()
 	// startTs
@@ -4268,4 +4267,19 @@ func (s *testTxnStateSuite) TestBasic(c *C) {
 	c.Assert(info[3].GetInt64(), Equals, int64(session.TxnRunningNormal))
 	// blockStartTime
 	c.Assert(info[4].IsNull(), Equals, true)
+}
+
+func (s *testTxnStateSuite) TestBlocked(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1);")
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("select * from t where a = 1 for update;")
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("select * from t where a = 1 for update;")
+	}()
+	time.Sleep(200 * time.Millisecond)
+	c.Assert(tk2.Se.TxnInfo()[3].GetInt64(), Equals, int64(session.TxnLockWaiting))
 }
