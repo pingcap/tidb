@@ -42,16 +42,27 @@ type Fragment struct {
 	IsRoot bool
 }
 
+type tasksAndFrags struct {
+	tasks []*kv.MPPTask
+	frags []*Fragment
+}
+
 type mppTaskGenerator struct {
 	ctx     sessionctx.Context
 	startTS uint64
 	is      infoschema.InfoSchema
 	frags   []*Fragment
+	cache   map[int]tasksAndFrags
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
 func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
-	g := &mppTaskGenerator{ctx: ctx, startTS: startTs, is: is}
+	g := &mppTaskGenerator{
+		ctx:     ctx,
+		startTS: startTs,
+		is:      is,
+		cache:   make(map[int]tasksAndFrags),
+	}
 	return g.generateMPPTasks(sender)
 }
 
@@ -183,8 +194,7 @@ func buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
 	fragments := make([]*Fragment, 0, len(forest))
 	for _, s := range forest {
 		f := &Fragment{ExchangeSender: s}
-		s.Fragment = f
-		err := f.init(s)
+		err = f.init(s)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -194,6 +204,9 @@ func buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
 }
 
 func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment, error) {
+	if cached, ok := e.cache[s.ID()]; ok {
+		return cached.tasks, cached.frags, nil
+	}
 	frags, err := buildFragments(s)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -207,6 +220,7 @@ func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchange
 		results = append(results, tasks...)
 	}
 	e.frags = append(e.frags, frags...)
+	e.cache[s.ID()] = tasksAndFrags{results, frags}
 	return results, frags, nil
 }
 
@@ -234,7 +248,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	}
 	for _, r := range f.ExchangeReceivers {
 		for _, frag := range r.frags {
-			frag.ExchangeSender.TargetTasks = tasks
+			frag.ExchangeSender.TargetTasks = append(frag.ExchangeSender.TargetTasks, tasks...)
 		}
 	}
 	f.ExchangeSender.Tasks = tasks

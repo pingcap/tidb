@@ -453,7 +453,15 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("insert into x3 values (2, 2), (2, 3), (2, 4)")
+	// test nested union all
 	tk.MustQuery("select count(*) from (select a, b from x1 union all select a, b from x3 union all (select x1.a, x3.b from (select * from x3 union all select * from x2) x3 left join x1 on x3.a = x1.b))").Check(testkit.Rows("14"))
+	// test union all join union all
+	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count=100000")
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(6)`)
+	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
+	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+
 }
 
 func (s *tiflashTestSuite) TestMppApply(c *C) {
