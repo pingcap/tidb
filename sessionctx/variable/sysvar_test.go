@@ -89,7 +89,6 @@ func (*testSysVarSuite) TestError(c *C) {
 }
 
 func (*testSysVarSuite) TestSynonyms(c *C) {
-
 	sysVar := GetSysVar(TxnIsolation)
 	c.Assert(sysVar, NotNil)
 
@@ -100,8 +99,8 @@ func (*testSysVarSuite) TestSynonyms(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
 
-	// Enable noop funcs
-	c.Assert(GetSysVar(TiDBEnableNoopFuncs).SetSessionFromHook(vars, "ON"), IsNil)
+	// Enable Skip isolation check
+	c.Assert(GetSysVar(TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"), IsNil)
 
 	// Serializable is now permitted.
 	_, err = sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
