@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -38,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/prometheus/client_golang/prometheus"
 	zap "go.uber.org/zap"
 )
@@ -397,16 +395,12 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 	c.txnSize = size
 
-	if size > int(tidbkv.TxnTotalSizeLimit) {
-		return tidbkv.ErrTxnTooLarge.GenWithStackByArgs(size)
-	}
 	const logEntryCount = 10000
 	const logSize = 4 * 1024 * 1024 // 4MB
 	if c.mutations.Len() > logEntryCount || size > logSize {
-		tableID := tablecodec.DecodeTableID(c.mutations.GetKey(0))
 		logutil.BgLogger().Info("[BIG_TXN]",
 			zap.Uint64("session", c.sessionID),
-			zap.Int64("table ID", tableID),
+			zap.String("key sample", kv.StrKey(c.mutations.GetKey(0))),
 			zap.Int("size", size),
 			zap.Int("keys", c.mutations.Len()),
 			zap.Int("puts", putCnt),
@@ -924,7 +918,7 @@ func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 			logutil.Logger(ctx).Info("2PC cleanup failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS),
 				zap.Bool("isPessimistic", c.isPessimistic), zap.Bool("isOnePC", c.isOnePC()))
 		} else {
-			logutil.Logger(ctx).Info("2PC clean up done",
+			logutil.Logger(ctx).Debug("2PC clean up done",
 				zap.Uint64("txnStartTS", c.startTS), zap.Bool("isPessimistic", c.isPessimistic),
 				zap.Bool("isOnePC", c.isOnePC()))
 		}
@@ -1116,13 +1110,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		logutil.SetTag(ctx, "commitTs", commitTS)
 	}
 
-	if c.sessionID > 0 {
-		failpoint.Inject("beforeSchemaCheck", func() {
-			c.ttlManager.close()
-			failpoint.Return()
-		})
-	}
-
 	if !c.isAsyncCommit() {
 		tryAmend := c.isPessimistic && c.sessionID > 0 && c.txn.schemaAmender != nil
 		if !tryAmend {
@@ -1146,7 +1133,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				if err != nil {
 					logutil.Logger(ctx).Info("schema check after amend failed, it means the schema version changed again",
 						zap.Uint64("startTS", c.startTS),
-						zap.Uint64("amendTS", c.commitTS),
+						zap.Uint64("amendTS", commitTS),
 						zap.Int64("amendedSchemaVersion", relatedSchemaChange.LatestInfoSchema.SchemaMetaVersion()),
 						zap.Uint64("newCommitTS", newCommitTS))
 					return errors.Trace(err)

@@ -721,13 +721,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 	}
 	for _, sample := range rootRowCollector.Samples {
 		for i := range sample.Columns {
-			// logutil.BgLogger().Warn("new analyze", zap.String("raw col", fmt.Sprintf("%v", sample.Columns[i].GetBytes())))
 			sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
 			if err != nil {
-				logutil.BgLogger().Warn("wrong encoded value",
-					zap.String("bytes value", fmt.Sprintf("%v", sample.Columns[i].GetBytes())),
-					zap.Int("kind", int(e.colsInfo[i].FieldType.Tp)),
-				)
 				return 0, nil, nil, nil, err
 			}
 			if sample.Columns[i].Kind() == types.KindBytes {
@@ -752,7 +747,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 			FMSketch:  rootRowCollector.FMSketches[i],
 			TotalSize: rootRowCollector.TotalSizes[i],
 		}
-		hg, topn, err := statistics.BuildColumnHistAndTopNOnRowSample(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collector, &col.FieldType)
+		hg, topn, err := statistics.BuildHistAndTopNOnRowSample(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collector, &col.FieldType, true)
 		if err != nil {
 			return 0, nil, nil, nil, err
 		}
@@ -782,7 +777,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 			FMSketch:  rootRowCollector.FMSketches[colLen+i],
 			TotalSize: rootRowCollector.TotalSizes[colLen+i],
 		}
-		hg, topn, err := statistics.BuildMultiColHistAndTopNOnRowSample(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), idx.ID, collector, types.NewFieldType(mysql.TypeBlob))
+		hg, topn, err := statistics.BuildHistAndTopNOnRowSample(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), idx.ID, collector, types.NewFieldType(mysql.TypeBlob), false)
 		if err != nil {
 			return 0, nil, nil, nil, err
 		}
@@ -1381,12 +1376,14 @@ func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.Sampl
 	sc := e.ctx.GetSessionVars().StmtCtx
 	data := make([][]byte, 0, len(collector.Samples))
 	fmSketch := statistics.NewFMSketch(maxSketchSize)
+	notNullSamples := make([]*statistics.SampleItem, 0, len(collector.Samples))
 	for i, sample := range collector.Samples {
 		sample.Ordinal = i
 		if sample.Value.IsNull() {
 			collector.NullCount++
 			continue
 		}
+		notNullSamples = append(notNullSamples, sample)
 		err := fmSketch.InsertValue(sc, sample.Value)
 		if err != nil {
 			return nil, nil, nil, nil, err
@@ -1400,6 +1397,7 @@ func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.Sampl
 	// Build CMSketch.
 	cmSketch, topN, ndv, scaleRatio := statistics.NewCMSketchAndTopN(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]), data, uint32(e.opts[ast.AnalyzeOptNumTopN]), uint64(rowCount))
 	// Build Histogram.
+	collector.Samples = notNullSamples
 	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), ID, collector, tp, rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
 	return hist, cmSketch, topN, fmSketch, err
 }

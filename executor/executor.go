@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table"
@@ -948,7 +949,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
 	if e.Lock.LockType == ast.SelectLockForUpdateNoWait {
-		lockWaitTime = kv.LockNoWait
+		lockWaitTime = tikv.LockNoWait
 	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
@@ -1550,6 +1551,10 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.Trace(result.err)
 	}
 
+	if result.chk.NumCols() != req.NumCols() {
+		return errors.Errorf("Internal error: UnionExec chunk column count mismatch, req: %d, result: %d",
+			req.NumCols(), result.chk.NumCols())
+	}
 	req.SwapColumns(result.chk)
 	result.src <- result.chk
 	return nil
@@ -1646,8 +1651,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
-		// Make sure the sql_mode is strict when checking column default value.
 		sc.InCreateOrAlterStmt = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true

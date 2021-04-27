@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -47,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -403,7 +401,7 @@ type SessionVars struct {
 	TxnCtx *TransactionContext
 
 	// KVVars is the variables for KV storage.
-	KVVars *kv.Variables
+	KVVars *tikvstore.Variables
 
 	// txnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
 	txnIsolationLevelOneShot struct {
@@ -785,7 +783,7 @@ type SessionVars struct {
 	EnableAmendPessimisticTxn bool
 
 	// LastTxnInfo keeps track the info of last committed transaction.
-	LastTxnInfo kv.TxnInfo
+	LastTxnInfo string
 
 	// LastQueryInfo keeps track the info of last query.
 	LastQueryInfo QueryInfo
@@ -826,6 +824,10 @@ type SessionVars struct {
 
 	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
 	EnableDynamicPrivileges bool
+
+	// CTEMaxRecursionDepth indicates The common table expression (CTE) maximum recursion depth.
+	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
+	CTEMaxRecursionDepth int
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1020,7 +1022,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 	}
-	vars.KVVars = kv.NewVariables(&vars.Killed)
+	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:     DefIndexLookupConcurrency,
 		indexSerialScanConcurrency: DefIndexSerialScanConcurrency,
@@ -1368,62 +1370,13 @@ func (s *SessionVars) ClearStmtVars() {
 }
 
 // SetSystemVar sets the value of a system variable for session scope.
-// Validation has already been performed, and the values have been normalized.
+// Validation is expected to be performed before calling this function,
+// and the values should been normalized.
 // i.e. oN / on / 1 => ON
 func (s *SessionVars) SetSystemVar(name string, val string) error {
-	switch name {
-	case CollationConnection, CollationDatabase, CollationServer:
-		coll, err := collate.GetCollationByName(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
-			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
-			if err != nil {
-				return err
-			}
-		}
-		switch name {
-		case CollationConnection:
-			s.systems[CollationConnection] = coll.Name
-			s.systems[CharacterSetConnection] = coll.CharsetName
-		case CollationDatabase:
-			s.systems[CollationDatabase] = coll.Name
-			s.systems[CharsetDatabase] = coll.CharsetName
-		case CollationServer:
-			s.systems[CollationServer] = coll.Name
-			s.systems[CharacterSetServer] = coll.CharsetName
-		}
-		val = coll.Name
-	case CharacterSetConnection, CharacterSetClient, CharacterSetResults,
-		CharacterSetServer, CharsetDatabase, CharacterSetFilesystem:
-		if val == "" {
-			if name == CharacterSetResults {
-				s.systems[CharacterSetResults] = ""
-				return nil
-			}
-			return ErrWrongValueForVar.GenWithStackByArgs(name, "NULL")
-		}
-		cht, coll, err := charset.GetCharsetInfo(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
-			cht, coll = charset.GetDefaultCharsetAndCollate()
-		}
-		switch name {
-		case CharacterSetConnection:
-			s.systems[CollationConnection] = coll
-			s.systems[CharacterSetConnection] = cht
-		case CharsetDatabase:
-			s.systems[CollationDatabase] = coll
-			s.systems[CharsetDatabase] = cht
-		case CharacterSetServer:
-			s.systems[CollationServer] = coll
-			s.systems[CharacterSetServer] = cht
-		}
-		val = cht
-	default:
-		sv := GetSysVar(name)
-		if err := sv.SetSessionFromHook(s, val); err != nil {
-			return err
-		}
+	sv := GetSysVar(name)
+	if err := sv.SetSessionFromHook(s, val); err != nil {
+		return err
 	}
 	s.systems[name] = val
 	return nil
