@@ -736,6 +736,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 	for i, col := range e.colsInfo {
 		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
 		for _, row := range rootRowCollector.Samples {
+			if row.Columns[i].IsNull() {
+				continue
+			}
 			sampleItems = append(sampleItems, &statistics.SampleItem{
 				Value: row.Columns[i],
 			})
@@ -743,7 +746,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 		collector := &statistics.SampleCollector{
 			Samples:   sampleItems,
 			NullCount: rootRowCollector.NullCount[i],
-			Count:     rootRowCollector.Count,
+			Count:     rootRowCollector.Count - rootRowCollector.NullCount[i],
 			FMSketch:  rootRowCollector.FMSketches[i],
 			TotalSize: rootRowCollector.TotalSizes[i],
 		}
@@ -759,6 +762,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 	for i, idx := range e.indexes {
 		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
 		for _, row := range rootRowCollector.Samples {
+			if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
+				continue
+			}
 			b := make([]byte, 0, 8)
 			for _, col := range idx.Columns {
 				b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
@@ -773,7 +779,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 		collector := &statistics.SampleCollector{
 			Samples:   sampleItems,
 			NullCount: rootRowCollector.NullCount[colLen+i],
-			Count:     rootRowCollector.Count,
+			Count:     rootRowCollector.Count - rootRowCollector.NullCount[colLen+i],
 			FMSketch:  rootRowCollector.FMSketches[colLen+i],
 			TotalSize: rootRowCollector.TotalSizes[colLen+i],
 		}
