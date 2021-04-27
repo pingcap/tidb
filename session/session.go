@@ -2734,6 +2734,16 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 		if err != nil {
 			return err
 		}
+	case ast.TimestampBoundMaxStaleness:
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetMaxPrevSec(option.PrevSec))
+		if err != nil {
+			return err
+		}
+	case ast.TimestampBoundMinReadTimestamp:
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetMinStartTS(option.StartTS))
+		if err != nil {
+			return err
+		}
 	default:
 		// For unsupported staleness txn cases, fallback to NewTxn
 		return s.NewTxn(ctx)
