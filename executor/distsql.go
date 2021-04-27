@@ -219,13 +219,6 @@ func (e *IndexReaderExecutor) buildKeyRanges(sc *stmtctx.StatementContext, range
 	return distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
 }
 
-func (e *IndexReaderExecutor) buildPartitionTableKeyRanges(sc *stmtctx.StatementContext, physicalIDs []int64) ([]kv.KeyRange, error) {
-	if e.index.ID == -1 {
-		return distsql.CommonHandleRangesToKVRanges(sc, physicalIDs, e.ranges)
-	}
-	return distsql.IndexRangesToKVRangesForTables(sc, physicalIDs, e.index.ID, e.ranges, e.feedback)
-}
-
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	var err error
