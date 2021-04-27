@@ -36,7 +36,7 @@ type BatchGetter interface {
 type Getter interface {
 	// Get gets the value for key k from kv store.
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
-	Get(_ context.Context, k kv.Key) ([]byte, error)
+	Get(ctx context.Context, k kv.Key) ([]byte, error)
 }
 
 // BufferBatchGetter is the type for BatchGet with MemBuffer.
