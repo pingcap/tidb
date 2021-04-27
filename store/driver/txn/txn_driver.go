@@ -126,6 +126,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 			txn:     txn.KVTxn,
 			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
 		})
+	case tikvstore.SyncLog:
+		txn.SetSyncLog()
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}

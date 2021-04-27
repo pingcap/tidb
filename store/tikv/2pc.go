@@ -426,7 +426,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	c.hasNoNeedCommitKeys = checkCnt > 0
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = getTxnPriority(txn)
-	c.syncLog = getTxnSyncLog(txn)
+	c.syncLog = txn.synclog
 	c.setDetail(commitDetail)
 	return nil
 }
@@ -1654,13 +1654,6 @@ func getTxnPriority(txn *KVTxn) pb.CommandPri {
 		return PriorityToPB(pri.(int))
 	}
 	return pb.CommandPri_Normal
-}
-
-func getTxnSyncLog(txn *KVTxn) bool {
-	if syncOption := txn.us.GetOption(kv.SyncLog); syncOption != nil {
-		return syncOption.(bool)
-	}
-	return false
 }
 
 // PriorityToPB converts priority type to wire type.
