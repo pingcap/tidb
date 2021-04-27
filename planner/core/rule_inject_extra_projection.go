@@ -88,12 +88,12 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 			}
 		}
 		if needChange {
-		proj := PhysicalProjection{
-			Exprs: exprs,
-		}.Init(un.ctx, ch.statsInfo(), 0)
-		proj.SetSchema(un.schema.Clone())
-		proj.SetChildren(ch)
-		un.children[i] = proj
+			proj := PhysicalProjection{
+				Exprs: exprs,
+			}.Init(un.ctx, ch.statsInfo(), 0)
+			proj.SetSchema(un.schema.Clone())
+			proj.SetChildren(ch)
+			un.children[i] = proj
 		}
 	}
 	return un
