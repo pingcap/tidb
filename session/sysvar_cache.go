@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // When a new session is created, SessionVars.systems needs to be populated
@@ -32,8 +33,9 @@ import (
 
 type sysVarCache struct {
 	sync.RWMutex
-	global  map[string]string
-	session map[string]string
+	isHealthy bool
+	global    map[string]string
+	session   map[string]string
 }
 
 var svcache sysVarCache
@@ -77,6 +79,8 @@ func (s *session) RebuildSysVarCache() error {
 	svcache.Lock()
 	defer svcache.Unlock()
 
+	logutil.BgLogger().Info("rebuilding sysvar cache")
+
 	// Create a new map to hold the new cache,
 	// and a cache if what's available in the mysql_global_variables table
 	newSessionCache := make(map[string]string)
@@ -103,12 +107,17 @@ func (s *session) RebuildSysVarCache() error {
 	// Update the cache
 	svcache.session = newSessionCache
 	svcache.global = newGlobalCache
+	svcache.isHealthy = true
 	return nil
 }
 
 // UpdateSysVarCacheForKey is an optimization where we patch the contents of the
 // global and session cache rather than run RebuildSysVarCache()
 func (s *session) UpdateSysVarCacheForKey(nameInLower string, value string) error {
+	if !svcache.isHealthy {
+		return s.RebuildSysVarCache()
+	}
+
 	svcache.Lock()
 	defer svcache.Unlock()
 

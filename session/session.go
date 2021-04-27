@@ -960,10 +960,25 @@ func (s *session) GetGlobalSysVar(name string) (value string, err error) {
 		return "", nil
 	}
 
-	// Fetch from the svcache, it should be there
-	var ok bool
-	if value, ok = svcache.global[name]; !ok {
-		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+	if svcache.isHealthy {
+		// Use the new sysvar cache
+		var ok bool
+		if value, ok = svcache.global[name]; !ok {
+			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+		}
+	} else {
+		// Fallback to the table method.
+		value, err = s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
+		if err != nil {
+			if errResultIsEmpty.Equal(err) {
+				sv := variable.GetSysVar(name)
+				if sv != nil {
+					return sv.Value, nil
+				}
+				return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+			}
+			return "", err
+		}
 	}
 
 	// Fetch mysql.tidb values if required
@@ -1402,6 +1417,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.PrepareTxnCtx(ctx)
+	err := s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return nil, err
+	}
 
 	s.sessionVars.StartTime = time.Now()
 
@@ -1608,6 +1627,10 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
+	}
+	err = s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return
 	}
 
 	ctx := context.Background()
@@ -2194,6 +2217,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	se.RebuildSysVarCache()
+
 	// get system tz from mysql.tidb
 	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
 	if err != nil {
@@ -2355,13 +2380,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 
-	// eventually we shouldn't need this
-	s.buildSysVarCacheIfNeeded()
-
-	// Deep copy sessionvar cache
-	svcache.RLock()
-	s.sessionVars.InitSessionVarsFromCache(svcache.session)
-	svcache.RUnlock()
+	s.loadCommonGlobalVariablesIfNeeded()
 
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
@@ -2443,29 +2462,26 @@ func finishBootstrap(store kv.Storage) {
 		logutil.BgLogger().Fatal("finish bootstrap failed",
 			zap.Error(err))
 	}
+
 }
 
 const quoteCommaQuote = "', '"
 
-// This should be renamed, because it should be copySessionVarsFromCache
-func (s *session) initSessionVarsFromCache() error {
+// loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
+func (s *session) loadCommonGlobalVariablesIfNeeded() error {
+	if s.sessionVars.CommonGlobalLoaded {
+		return nil
+	}
+	if s.Value(sessionctx.Initing) != nil {
+		// When running bootstrap or upgrade, we should not access global storage.
+		return nil
+	}
 
-	// 1. Call RebuildSysVarCache() (eventually don't call it every time)
-	s.RebuildSysVarCache()
-
-	// 2. Deep copy sessionVarCache and set it to s.SessionVars.systems
+	// Deep copy sessionvar cache
 	svcache.RLock()
 	s.sessionVars.InitSessionVarsFromCache(svcache.session)
 	svcache.RUnlock()
-
-	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
-	if s.sessionVars.ClientCapability&mysql.ClientInteractive > 0 {
-		if varVal, ok := s.sessionVars.GetSystemVar(variable.InteractiveTimeout); ok {
-			if err := s.sessionVars.SetSystemVar(variable.WaitTimeout, varVal); err != nil {
-				return err
-			}
-		}
-	}
+	s.sessionVars.CommonGlobalLoaded = true
 	return nil
 }
 
@@ -2537,6 +2553,10 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 	txn.SetVars(s.sessionVars.KVVars)
 	s.txn.changeInvalidToValid(txn)
+	err = s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2566,6 +2586,16 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 		}
 	case ast.TimestampBoundExactStaleness:
 		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
+		if err != nil {
+			return err
+		}
+	case ast.TimestampBoundMaxStaleness:
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetMaxPrevSec(option.PrevSec))
+		if err != nil {
+			return err
+		}
+	case ast.TimestampBoundMinReadTimestamp:
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetMinStartTS(option.StartTS))
 		if err != nil {
 			return err
 		}

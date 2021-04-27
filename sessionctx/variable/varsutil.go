@@ -158,8 +158,12 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 	if err != nil || ok {
 		return gVal, err
 	}
-	// If it's not found here, don't fail back to globals. It means it's not a sessionvar.
-	return "", err
+	gVal, err = s.GlobalVarsAccessor.GetGlobalSysVar(key)
+	if err != nil {
+		return "", err
+	}
+	s.systems[key] = gVal
+	return gVal, nil
 }
 
 // GetSessionOnlySysVars get the default value defined in code for session only variable.
