@@ -79,7 +79,7 @@ type Domain struct {
 	sysSessionPool       *sessionPool
 	exit                 chan struct{}
 	etcdClient           *clientv3.Client
-	gvc                  GlobalVariableCache
+	sysVarCache          SysVarCache // replaces gcv
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
 	wg                   sync.WaitGroup
@@ -922,6 +922,59 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
+// LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop, it
+// should be called only once in BootstrapSession.
+func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
+
+	err := do.sysVarCache.RebuildSysVarCache(ctx)
+	if err != nil {
+		return err
+	}
+
+	var watchCh clientv3.WatchChan
+	duration := 5 * time.Minute
+	if do.etcdClient != nil {
+		watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
+		duration = 10 * time.Minute
+	}
+
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("LoadSysVarCacheLoop exited.")
+			util.Recover(metrics.LabelDomain, "LoadSysVarCacheLoop", nil, false)
+		}()
+		var count int
+		for {
+			ok := true
+			select {
+			case <-do.exit:
+				return
+			case _, ok = <-watchCh:
+			case <-time.After(duration):
+			}
+			if !ok {
+				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")
+				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
+				count++
+				if count > 10 {
+					time.Sleep(time.Duration(count) * time.Second)
+				}
+				continue
+			}
+
+			count = 0
+			err := do.sysVarCache.RebuildSysVarCache(ctx)
+			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
+			if err != nil {
+				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
+			}
+		}
+	}()
+	return nil
+}
+
 // PrivilegeHandle returns the MySQLPrivilege.
 func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
@@ -1300,7 +1353,10 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
 }
 
-const privilegeKey = "/tidb/privilege"
+const (
+	privilegeKey   = "/tidb/privilege"
+	sysVarCacheKey = "/tidb/sysvars"
+)
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
@@ -1320,6 +1376,18 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 			logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
 		}
 	}
+}
+
+func (do *Domain) NotifyUpdateSysVarCache(ctx sessionctx.Context) {
+	if do.etcdClient != nil {
+		row := do.etcdClient.KV
+		_, err := row.Put(context.Background(), sysVarCacheKey, "")
+		if err != nil {
+			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
+		}
+	}
+	// update locally
+	do.sysVarCache.RebuildSysVarCache(ctx)
 }
 
 // ServerID gets serverID.

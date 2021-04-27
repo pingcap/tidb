@@ -950,7 +950,7 @@ func (s *session) varFromTiDBTable(name string) bool {
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
-func (s *session) GetGlobalSysVar(name string) (value string, err error) {
+func (s *session) GetGlobalSysVar(name string) (string, error) {
 	name = strings.ToLower(name)
 	if name == variable.TiDBSlowLogMasking {
 		name = variable.TiDBRedactLog
@@ -959,33 +959,15 @@ func (s *session) GetGlobalSysVar(name string) (value string, err error) {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
-
-	if svcache.isHealthy {
-		// Use the new sysvar cache
-		var ok bool
-		if value, ok = svcache.global[name]; !ok {
-			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
-		}
-	} else {
-		// Fallback to the table method.
-		value, err = s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
-		if err != nil {
-			if errResultIsEmpty.Equal(err) {
-				sv := variable.GetSysVar(name)
-				if sv != nil {
-					return sv.Value, nil
-				}
-				return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
-			}
-			return "", err
-		}
+	sysVar, err := domain.GetDomain(s).GetSysVarCache().GetGlobalVar(name)
+	if err != nil {
+		return "", err
 	}
-
 	// Fetch mysql.tidb values if required
 	if s.varFromTiDBTable(name) {
-		return s.getTiDBTableValue(name, value)
+		return s.getTiDBTableValue(name, sysVar)
 	}
-	return value, nil
+	return sysVar, nil
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
@@ -1020,8 +1002,8 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	}
 
 	// Update the svcache
-	// TODO: tell etcd peers that the svcache is stale!
-	return s.UpdateSysVarCacheForKey(name, sVal)
+	domain.GetDomain(s).NotifyUpdateSysVarCache(s)
+	return nil
 }
 
 // setTiDBTableValue handles tikv_* sysvars which need to update mysql.tidb
@@ -2217,8 +2199,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	se.RebuildSysVarCache()
-
 	// get system tz from mysql.tidb
 	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
 	if err != nil {
@@ -2281,13 +2261,18 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	//  Rebuild sysvar cache in a loop
+	err = dom.LoadSysVarCacheLoop(se)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(cfg.Plugin.Load) > 0 {
 		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
 		if err != nil {
 			return nil, err
 		}
 	}
-
 	se4, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -2379,9 +2364,6 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
-
-	s.loadCommonGlobalVariablesIfNeeded()
-
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
 
@@ -2462,7 +2444,6 @@ func finishBootstrap(store kv.Storage) {
 		logutil.BgLogger().Fatal("finish bootstrap failed",
 			zap.Error(err))
 	}
-
 }
 
 const quoteCommaQuote = "', '"
@@ -2478,9 +2459,8 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 
 	// Deep copy sessionvar cache
-	svcache.RLock()
-	s.sessionVars.InitSessionVarsFromCache(svcache.session)
-	svcache.RUnlock()
+	sessionCache := domain.GetDomain(s).GetSysVarCache().GetSessionCache()
+	s.sessionVars.InitSessionVarsFromCache(sessionCache)
 	s.sessionVars.CommonGlobalLoaded = true
 	return nil
 }

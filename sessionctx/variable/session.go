@@ -1383,9 +1383,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 }
 
 func (s *SessionVars) InitSessionVarsFromCache(cache map[string]string) error {
-	for varName, varVal := range cache {
-		s.systems[varName] = varVal
-	}
+	s.systems = cache
+
 	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
 	if s.ClientCapability&mysql.ClientInteractive > 0 {
 		s.systems[WaitTimeout] = s.systems[InteractiveTimeout]
