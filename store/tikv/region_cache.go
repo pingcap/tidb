@@ -1068,6 +1068,9 @@ func (c *RegionCache) getStoresByType(typ tikvrpc.EndpointType) []*Store {
 	defer c.storeMu.Unlock()
 	stores := make([]*Store, 0)
 	for _, store := range c.storeMu.stores {
+		if store.getResolveState() != resolved {
+			continue
+		}
 		if store.storeType == typ {
 			//TODO: revise it with store.clone()
 			storeLabel := make([]*metapb.StoreLabel, 0)
