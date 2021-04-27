@@ -101,6 +101,8 @@ func convertPoint(sc *stmtctx.StatementContext, point *point, tp *types.FieldTyp
 			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
+		} else if tp.Tp == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
+			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
 		} else {
 			return point, errors.Trace(err)
 		}
