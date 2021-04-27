@@ -875,7 +875,7 @@ func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
 	c.Assert(lctx.Peer.Id, Equals, peer3)
 
 	// epoch-not-match on tiflash
-	ctxTiFlash, err := s.cache.GetTiFlashRPCContext(s.bo, loc1.Region, true)
+	ctxTiFlash, _, err := s.cache.GetTiFlashRPCContext(s.bo, loc1.Region, true, false)
 	c.Assert(err, IsNil)
 	c.Assert(ctxTiFlash.Peer.Id, Equals, s.peer1)
 	ctxTiFlash.Peer.Role = metapb.PeerRole_Learner

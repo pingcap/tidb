@@ -95,8 +95,52 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 }
 
 type copTaskAndRPCContext struct {
-	task *copTask
-	ctx  *tikv.RPCContext
+	task          *copTask
+	allStoreAddrs []string
+	ctx           *tikv.RPCContext
+}
+
+func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
+	storeTaskMap := make(map[string]*batchCopTask)
+	for _, task := range originalTasks {
+		for index, copTask := range task.copTasks {
+			if index == 0 || len(copTask.allStoreAddrs) <= 1 {
+				if batchCop, ok := storeTaskMap[task.storeAddr]; ok {
+					batchCop.copTasks = append(batchCop.copTasks, copTask)
+				} else {
+					batchTask := &batchCopTask{
+						storeAddr: task.storeAddr,
+						cmdType:   task.cmdType,
+						copTasks:  []copTaskAndRPCContext{copTask},
+					}
+					storeTaskMap[task.storeAddr] = batchTask
+				}
+			}
+		}
+	}
+	for _, task := range originalTasks {
+		for index, copTask := range task.copTasks {
+			if index != 0 && len(copTask.allStoreAddrs) > 1 {
+				bestAddr := ""
+				for _, storeAddr := range copTask.allStoreAddrs {
+					if _, ok := storeTaskMap[storeAddr]; ok {
+						if bestAddr == "" {
+							bestAddr = storeAddr
+						} else if len(storeTaskMap[bestAddr].copTasks) > len(storeTaskMap[storeAddr].copTasks) {
+							bestAddr = storeAddr
+						}
+					}
+				}
+				storeTaskMap[bestAddr].copTasks = append(storeTaskMap[bestAddr].copTasks, copTask)
+			}
+		}
+	}
+
+	var ret []*batchCopTask
+	for _, task := range storeTaskMap {
+		ret = append(ret, task)
+	}
+	return ret
 }
 
 func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
@@ -124,7 +168,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
 		for _, task := range tasks {
-			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region, false)
+			rpcCtx, allStoreAddr, err := cache.GetTiFlashRPCContext(bo, task.region, false, true)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -138,12 +182,12 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 				continue
 			}
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
-				batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, ctx: rpcCtx})
+				batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, allStoreAddrs: allStoreAddr, ctx: rpcCtx})
 			} else {
 				batchTask := &batchCopTask{
 					storeAddr: rpcCtx.Addr,
 					cmdType:   cmdType,
-					copTasks:  []copTaskAndRPCContext{{task, rpcCtx}},
+					copTasks:  []copTaskAndRPCContext{{task, allStoreAddr, rpcCtx}},
 				}
 				storeTaskMap[rpcCtx.Addr] = batchTask
 			}
@@ -156,9 +200,11 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 			}
 			continue
 		}
+
 		for _, task := range storeTaskMap {
 			batchTasks = append(batchTasks, task)
 		}
+		batchTasks = balanceBatchCopTask(batchTasks)
 
 		if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
 			logutil.BgLogger().Warn("buildBatchCopTasks takes too much time",
