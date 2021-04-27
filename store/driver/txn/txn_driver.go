@@ -127,14 +127,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
 		})
 	case tikvstore.IsolationLevel:
-		switch val.(kv.IsoLevel) {
-		case kv.SI:
-			txn.KVTxn.GetSnapshot().SetIsolationLevel(tikv.SI)
-		case kv.RC:
-			txn.KVTxn.GetSnapshot().SetIsolationLevel(tikv.RC)
-		default:
-			txn.KVTxn.GetSnapshot().SetIsolationLevel(tikv.SI)
-		}
+		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
+		txn.KVTxn.GetSnapshot().SetIsolationLevel(level)
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}

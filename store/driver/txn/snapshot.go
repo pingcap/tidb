@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type tikvSnapshot struct {
@@ -62,7 +63,28 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
 }
 
+func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
+	switch opt {
+	case tikvstore.IsolationLevel:
+		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
+		s.KVSnapshot.SetIsolationLevel(level)
+	default:
+		s.KVSnapshot.SetOption(opt, val)
+	}
+}
+
 func toTiKVKeys(keys []kv.Key) [][]byte {
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
 	return bytesKeys
+}
+
+func getTiKVIsolationLevel(level kv.IsoLevel) tikv.IsoLevel {
+	switch level {
+	case kv.SI:
+		return tikv.SI
+	case kv.RC:
+		return tikv.RC
+	default:
+		return tikv.SI
+	}
 }
