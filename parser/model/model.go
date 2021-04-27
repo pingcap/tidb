@@ -335,6 +335,27 @@ type TableInfo struct {
 	// IsColumnar means the table is column-oriented.
 	// It's true when the engine of the table is TiFlash only.
 	IsColumnar bool `json:"is_columnar"`
+
+	TempTableType `json:"temp_table_type"`
+}
+
+type TempTableType byte
+
+const (
+	TempTableNone TempTableType = iota
+	TempTableGlobal
+	TempTableLocal
+)
+
+func (t TempTableType) String() string {
+	switch t {
+	case TempTableGlobal:
+		return "global"
+	case TempTableLocal:
+		return "local"
+	default:
+		return ""
+	}
 }
 
 // TableLockInfo provides meta data describing a table lock.
