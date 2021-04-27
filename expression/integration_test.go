@@ -7315,9 +7315,6 @@ func (s *testIntegrationSerialSuite) TestIssue19045(c *C) {
 	tk.MustQuery(`select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;`).Check(testkit.Rows("a011", "a011"))
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSerialSuite) TestIssue19383(c *C) {
-=======
 func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -7342,9 +7339,7 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	tk.MustQuery("select coercibility(concat(unix_timestamp(a))) from t;").Check(testkit.Rows("4"))
 }
 
-// issues 14448, 19383, 17734
-func (s *testIntegrationSerialSuite) TestNoopFunctions(c *C) {
->>>>>>> c1518ac72... expression: fix wrong collation for `concat` function (#24297)
+func (s *testIntegrationSerialSuite) TestIssue19383(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE IF EXISTS t1")
