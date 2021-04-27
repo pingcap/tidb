@@ -1062,13 +1062,13 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 	return newestRegion
 }
 
-func (c *RegionCache) getStoresByType(typ tikvrpc.EndpointType) []Store {
+func (c *RegionCache) getStoresByType(typ tikvrpc.EndpointType) []*Store {
 	c.storeMu.RLock()
 	defer c.storeMu.RUnlock()
-	stores := make([]Store, 0)
+	stores := make([]*Store, 0)
 	for _, store := range c.storeMu.stores {
 		if store.storeType == typ {
-			stores = append(stores, *store)
+			stores = append(stores, store)
 		}
 	}
 	return stores
