@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/ddl/placement"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -41,6 +40,8 @@ import (
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
+
+const DCLabelKey = "zone"
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
@@ -217,7 +218,7 @@ func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTx
 		for _, store := range allStores {
 			if store.IsLabelsMatch([]*metapb.StoreLabel{
 				{
-					Key:   placement.DCLabelKey,
+					Key:   DCLabelKey,
 					Value: txnScope,
 				},
 			}) {
