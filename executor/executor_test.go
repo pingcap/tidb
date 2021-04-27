@@ -2258,8 +2258,6 @@ func (s *testSuiteP2) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
-	// Disable global variable cache, so load global session variable take effect immediate.
-	s.domain.GetGlobalVarsCache().Disable()
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 	tk2.MustExec("drop table if exists t2")
@@ -7965,6 +7963,7 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 	writeSLI := tk.Se.GetTxnWriteThroughputSLI()
 	c.Assert(writeSLI.IsInvalid(), Equals, false)
 	c.Assert(writeSLI.IsSmallTxn(), Equals, true)
+	// This is currently returning 46 and not 58 for the writesize. why??
 	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s")
 	tk.Se.GetTxnWriteThroughputSLI().Reset()
 

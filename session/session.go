@@ -959,9 +959,24 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
-	sysVar, err := domain.GetDomain(s).GetSysVarCache().GetGlobalVar(name)
+
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		// It might be a recently unregistered sysvar. We should return unknown
+		// since GetSysVar is the canonical version, but we can update the cache
+		// so the next request doesn't attempt to load this.
+		domain.GetDomain(s).NotifyUpdateSysVarCache(s)
+		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+
+	sysVar, err := domain.GetDomain(s).GetSysVarCache().GetGlobalVar(s, name)
 	if err != nil {
-		return "", err
+		// The sysvar exists, but there is no cache entry yet.
+		// This might be because the sysvar was only recently registered.
+		// In which case it is safe to return the default, but we can also
+		// update the cache for the future.
+		domain.GetDomain(s).NotifyUpdateSysVarCache(s)
+		return sv.Value, nil
 	}
 	// Fetch mysql.tidb values if required
 	if s.varFromTiDBTable(name) {
@@ -2448,8 +2463,133 @@ func finishBootstrap(store kv.Storage) {
 
 const quoteCommaQuote = "', '"
 
+var builtinGlobalVariable = []string{
+	variable.AutoCommit,
+	variable.SQLModeVar,
+	variable.MaxAllowedPacket,
+	variable.TimeZone,
+	variable.BlockEncryptionMode,
+	variable.WaitTimeout,
+	variable.InteractiveTimeout,
+	variable.MaxPreparedStmtCount,
+	variable.InitConnect,
+	variable.TxnIsolation,
+	variable.TxReadOnly,
+	variable.TransactionIsolation,
+	variable.TransactionReadOnly,
+	variable.NetBufferLength,
+	variable.QueryCacheType,
+	variable.QueryCacheSize,
+	variable.CharacterSetServer,
+	variable.AutoIncrementIncrement,
+	variable.AutoIncrementOffset,
+	variable.CollationServer,
+	variable.NetWriteTimeout,
+	variable.MaxExecutionTime,
+	variable.InnodbLockWaitTimeout,
+	variable.WindowingUseHighPrecision,
+	variable.SQLSelectLimit,
+	variable.DefaultWeekFormat,
+
+	/* TiDB specific global variables: */
+	variable.TiDBSkipASCIICheck,
+	variable.TiDBSkipUTF8Check,
+	variable.TiDBIndexJoinBatchSize,
+	variable.TiDBIndexLookupSize,
+	variable.TiDBIndexLookupConcurrency,
+	variable.TiDBIndexLookupJoinConcurrency,
+	variable.TiDBIndexSerialScanConcurrency,
+	variable.TiDBHashJoinConcurrency,
+	variable.TiDBProjectionConcurrency,
+	variable.TiDBHashAggPartialConcurrency,
+	variable.TiDBHashAggFinalConcurrency,
+	variable.TiDBWindowConcurrency,
+	variable.TiDBMergeJoinConcurrency,
+	variable.TiDBStreamAggConcurrency,
+	variable.TiDBExecutorConcurrency,
+	variable.TiDBBackoffLockFast,
+	variable.TiDBBackOffWeight,
+	variable.TiDBConstraintCheckInPlace,
+	variable.TiDBDDLReorgWorkerCount,
+	variable.TiDBDDLReorgBatchSize,
+	variable.TiDBDDLErrorCountLimit,
+	variable.TiDBOptInSubqToJoinAndAgg,
+	variable.TiDBOptPreferRangeScan,
+	variable.TiDBOptCorrelationThreshold,
+	variable.TiDBOptCorrelationExpFactor,
+	variable.TiDBOptCPUFactor,
+	variable.TiDBOptCopCPUFactor,
+	variable.TiDBOptNetworkFactor,
+	variable.TiDBOptScanFactor,
+	variable.TiDBOptDescScanFactor,
+	variable.TiDBOptMemoryFactor,
+	variable.TiDBOptDiskFactor,
+	variable.TiDBOptConcurrencyFactor,
+	variable.TiDBDistSQLScanConcurrency,
+	variable.TiDBInitChunkSize,
+	variable.TiDBMaxChunkSize,
+	variable.TiDBEnableCascadesPlanner,
+	variable.TiDBRetryLimit,
+	variable.TiDBDisableTxnAutoRetry,
+	variable.TiDBEnableWindowFunction,
+	variable.TiDBEnableStrictDoubleTypeCheck,
+	variable.TiDBEnableTablePartition,
+	variable.TiDBEnableVectorizedExpression,
+	variable.TiDBEnableFastAnalyze,
+	variable.TiDBExpensiveQueryTimeThreshold,
+	variable.TiDBEnableNoopFuncs,
+	variable.TiDBEnableIndexMerge,
+	variable.TiDBTxnMode,
+	variable.TiDBAllowBatchCop,
+	variable.TiDBAllowMPPExecution,
+	variable.TiDBOptBCJ,
+	variable.TiDBBCJThresholdSize,
+	variable.TiDBBCJThresholdCount,
+	variable.TiDBRowFormatVersion,
+	variable.TiDBEnableStmtSummary,
+	variable.TiDBStmtSummaryInternalQuery,
+	variable.TiDBStmtSummaryRefreshInterval,
+	variable.TiDBStmtSummaryHistorySize,
+	variable.TiDBStmtSummaryMaxStmtCount,
+	variable.TiDBStmtSummaryMaxSQLLength,
+	variable.TiDBMaxDeltaSchemaCount,
+	variable.TiDBCapturePlanBaseline,
+	variable.TiDBUsePlanBaselines,
+	variable.TiDBEvolvePlanBaselines,
+	variable.TiDBEnableExtendedStats,
+	variable.TiDBIsolationReadEngines,
+	variable.TiDBStoreLimit,
+	variable.TiDBAllowAutoRandExplicitInsert,
+	variable.TiDBEnableClusteredIndex,
+	variable.TiDBPartitionPruneMode,
+	variable.TiDBRedactLog,
+	variable.TiDBEnableTelemetry,
+	variable.TiDBShardAllocateStep,
+	variable.TiDBEnableChangeColumnType,
+	variable.TiDBEnableChangeMultiSchema,
+	variable.TiDBEnablePointGetCache,
+	variable.TiDBEnableAlterPlacement,
+	variable.TiDBEnableAmendPessimisticTxn,
+	variable.TiDBMemQuotaApplyCache,
+	variable.TiDBEnableParallelApply,
+	variable.TiDBMemoryUsageAlarmRatio,
+	variable.TiDBEnableRateLimitAction,
+	variable.TiDBEnableAsyncCommit,
+	variable.TiDBEnable1PC,
+	variable.TiDBGuaranteeLinearizability,
+	variable.TiDBAnalyzeVersion,
+	variable.TiDBEnableIndexMergeJoin,
+	variable.TiDBTrackAggregateMemoryUsage,
+	variable.TiDBMultiStatementMode,
+	variable.TiDBEnableExchangePartition,
+	variable.TiDBAllowFallbackToTiKV,
+	variable.TiDBEnableDynamicPrivileges,
+	variable.CTEMaxRecursionDepth,
+}
+
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
+	vars := s.sessionVars
 	if s.sessionVars.CommonGlobalLoaded {
 		return nil
 	}
@@ -2458,10 +2598,45 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		return nil
 	}
 
+	var err error
+
+	vars.CommonGlobalLoaded = true
+
 	// Deep copy sessionvar cache
-	sessionCache := domain.GetDomain(s).GetSysVarCache().GetSessionCache()
-	s.sessionVars.InitSessionVarsFromCache(sessionCache)
-	s.sessionVars.CommonGlobalLoaded = true
+	// Eventually this whole map will be applied to systems[], which is a MySQL behavior.
+	sessionCache := domain.GetDomain(s).GetSysVarCache().GetSessionCache(s)
+	for _, varName := range builtinGlobalVariable {
+		// The item should be in the sessionCache, but due to a strange current behavior there are some Global-only
+		// vars that are in builtinGlobalVariable. For compatibility we need to fall back to the Global cache on these items.
+		// TODO: don't load these globals into the session!
+		var varVal string
+		var ok bool
+		if varVal, ok = sessionCache[varName]; !ok {
+			varVal, err = domain.GetDomain(s).GetSysVarCache().GetGlobalVar(s, varName)
+			if err != nil {
+				continue
+			}
+		}
+		// `collation_server` is related to `character_set_server`, set `character_set_server` will also set `collation_server`.
+		// We have to make sure we set the `collation_server` with right value.
+		if _, ok := vars.GetSystemVar(varName); !ok || varName == variable.CollationServer {
+			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
+			if err != nil {
+				continue
+			}
+		}
+	}
+
+	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
+	if vars.ClientCapability&mysql.ClientInteractive > 0 {
+		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
+			if err := vars.SetSystemVar(variable.WaitTimeout, varVal); err != nil {
+				return err
+			}
+		}
+	}
+
+	vars.CommonGlobalLoaded = true
 	return nil
 }
 

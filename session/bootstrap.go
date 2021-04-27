@@ -363,6 +363,7 @@ func bootstrap(s Session) {
 			doDMLWorks(s)
 			logutil.BgLogger().Info("bootstrap successful",
 				zap.Duration("take time", time.Since(startTime)))
+			dom.NotifyUpdateSysVarCache(s)
 			return
 		}
 		time.Sleep(200 * time.Millisecond)

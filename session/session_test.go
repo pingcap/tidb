@@ -4102,6 +4102,7 @@ func (s *testSessionSerialSuite) TestRemovedSysVars(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "bogus_var", Value: "acdc"})
+
 	result := tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'bogus_var'")
 	result.Check(testkit.Rows("bogus_var acdc"))
 	result = tk.MustQuery("SELECT @@GLOBAL.bogus_var")

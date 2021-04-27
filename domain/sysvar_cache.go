@@ -24,16 +24,10 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// The sysvar cache replaces the "global_vars_cache". It is an improvement because it operates similar to privilege cache,
-// Where it caches for 5 minutes instead of 2 seconds, plus it listens on etcd for updates from other servers.
-
-// When a new session is created, SessionVars.systems needs to be populated
-// with a cache of common system variables. Previously this populated the
-// "common sysvars" only, with uncommon ones being populated on-demand.
-//
-// This was both *not* MySQL compatible (it should not pick up global scoped changes after the session starts),
-// and it has a cache miss-path which can be quite slow, such as when running
-// SHOW VARIABLES for the first time in a session (which will hit all session vars).
+// The sysvar cache replaces the GlobalVariableCache.
+// It is an improvement because it operates similar to privilege cache,
+// where it caches for 5 minutes instead of 2 seconds, plus it listens on etcd
+// for updates from other servers.
 
 type SysVarCache struct {
 	sync.RWMutex
@@ -48,10 +42,13 @@ func (do *Domain) GetSysVarCache() *SysVarCache {
 	return &do.sysVarCache
 }
 
-func (svc *SysVarCache) GetSessionCache() map[string]string {
+func (svc *SysVarCache) GetSessionCache(ctx sessionctx.Context) map[string]string {
+	if len(svc.session) == 0 {
+		svc.RebuildSysVarCache(ctx)
+	}
+
 	svc.RLock()
 	defer svc.RUnlock()
-
 	// Perform a deep copy since this will be assigned directly to the session
 	newMap := make(map[string]string, len(svc.session))
 	for k, v := range svc.session {
@@ -60,7 +57,11 @@ func (svc *SysVarCache) GetSessionCache() map[string]string {
 	return newMap
 }
 
-func (svc *SysVarCache) GetGlobalVar(name string) (string, error) {
+func (svc *SysVarCache) GetGlobalVar(ctx sessionctx.Context, name string) (string, error) {
+	if len(svc.global) == 0 {
+		svc.RebuildSysVarCache(ctx)
+	}
+
 	svc.RLock()
 	defer svc.RUnlock()
 	if val, ok := svc.global[name]; ok {
@@ -95,10 +96,6 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 	svc.Lock()
 	defer svc.Unlock()
 
-	logutil.BgLogger().Info("rebuilding sysvar cache")
-
-	// Create a new map to hold the new cache,
-	// and a cache if what's available in the mysql_global_variables table
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
 	tableContents, err := svc.fetchTableValues(ctx)
@@ -122,6 +119,8 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 			}
 		}
 	}
+
+	logutil.BgLogger().Info("rebuilding sysvar cache")
 
 	svc.session = newSessionCache
 	svc.global = newGlobalCache
