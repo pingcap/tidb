@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -2261,6 +2262,75 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select tidb_parse_tso(-1)`)
 	result.Check(testkit.Rows("<nil>"))
+
+	// for read_ts_in
+	tk.MustExec("SET time_zone = '+00:00';")
+	t := time.Now().UTC()
+	ts := oracle.ComposeTS(t.UnixNano()/int64(time.Millisecond), 0)
+	readTSInTests := []struct {
+		sql             string
+		injectResolveTS uint64
+		isNull          bool
+		expect          int64
+	}{
+		{
+			sql:             `select read_ts_in(DATE_SUB(NOW(), INTERVAL 600 SECOND), DATE_ADD(NOW(), INTERVAL 600 SECOND))`,
+			injectResolveTS: ts,
+			isNull:          false,
+			expect:          int64(ts),
+		},
+		{
+			sql: `select read_ts_in("2021-04-27 12:00:00.000", "2021-04-27 13:00:00.000")`,
+			injectResolveTS: func() uint64 {
+				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 13:30:04.877")
+				c.Assert(err, IsNil)
+				return oracle.ComposeTS(phy.UnixNano()/int64(time.Millisecond), 0)
+			}(),
+			isNull: false,
+			expect: func() int64 {
+				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 13:00:00.000")
+				c.Assert(err, IsNil)
+				return int64(oracle.ComposeTS(phy.UnixNano()/int64(time.Millisecond), 0))
+			}(),
+		},
+		{
+			sql: `select read_ts_in("2021-04-27 12:00:00.000", "2021-04-27 13:00:00.000")`,
+			injectResolveTS: func() uint64 {
+				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 11:30:04.877")
+				c.Assert(err, IsNil)
+				return oracle.ComposeTS(phy.UnixNano()/int64(time.Millisecond), 0)
+			}(),
+			isNull: false,
+			expect: func() int64 {
+				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 12:00:00.000")
+				c.Assert(err, IsNil)
+				return int64(oracle.ComposeTS(phy.UnixNano()/int64(time.Millisecond), 0))
+			}(),
+		},
+		{
+			sql:             `select read_ts_in(1, 2)`,
+			injectResolveTS: 0,
+			isNull:          true,
+			expect:          0,
+		},
+		{
+			sql:             `select read_ts_in("invalid_time_1", "invalid_time_2")`,
+			injectResolveTS: 0,
+			isNull:          true,
+			expect:          0,
+		},
+	}
+	for _, test := range readTSInTests {
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectResolveTS",
+			fmt.Sprintf("return(%v)", test.injectResolveTS)), IsNil)
+		result = tk.MustQuery(test.sql)
+		if test.isNull {
+			result.Check(testkit.Rows("<nil>"))
+		} else {
+			result.Check(testkit.Rows(fmt.Sprintf("%d", test.expect)))
+		}
+		failpoint.Disable("github.com/pingcap/tidb/expression/injectResolveTS")
+	}
 
 	// fix issue 10308
 	result = tk.MustQuery("select time(\"- -\");")

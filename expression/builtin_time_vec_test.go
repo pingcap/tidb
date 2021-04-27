@@ -519,6 +519,12 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
 		},
 	},
+	ast.ReadTSIn: {
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
+		},
+	},
 	ast.LastDay: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},

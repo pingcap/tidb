@@ -106,6 +106,11 @@ func (s *mockStorage) CurrentVersion(txnScope string) (kv.Version, error) {
 	return kv.NewVersion(ver), err
 }
 
+// GetMinResolveTS return the minimal resolved TS of the storage with given txnScope.
+func (s *mockStorage) GetMinResolveTS(txnScope string) uint64 {
+	return 0
+}
+
 func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
 	if err != nil {
 		return nil, err

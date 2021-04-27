@@ -14,12 +14,14 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -27,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -2859,6 +2862,67 @@ func (s *testEvaluatorSuite) TestTidbParseTso(c *C) {
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(d.IsNull(), IsTrue)
+	}
+}
+
+func (s *testEvaluatorSuite) TestReadInTS(c *C) {
+	const timeParserLayout = "2006-01-02 15:04:05.000"
+	t1, err := time.Parse(timeParserLayout, "2015-09-21 09:53:04.877")
+	c.Assert(err, IsNil)
+	t1Str := t1.Format(timeParserLayout)
+	ts1 := int64(oracle.ComposeTS(t1.UnixNano()/int64(time.Millisecond), 0))
+	t2 := time.Now().UTC()
+	t2Str := t2.Format(timeParserLayout)
+	ts2 := int64(oracle.ComposeTS(t2.UnixNano()/int64(time.Millisecond), 0))
+	s.ctx.GetSessionVars().TimeZone = time.UTC
+	tests := []struct {
+		leftTime        interface{}
+		rightTime       interface{}
+		injectResolveTS uint64
+		expect          int64
+	}{
+		{
+			leftTime:  t1Str,
+			rightTime: t2Str,
+			injectResolveTS: func() uint64 {
+				phy := t2.Add(-1*time.Second).UnixNano() / int64(time.Millisecond)
+				return oracle.ComposeTS(phy, 0)
+			}(),
+			expect: func() int64 {
+				phy := t2.Add(-1*time.Second).UnixNano() / int64(time.Millisecond)
+				return int64(oracle.ComposeTS(phy, 0))
+			}(),
+		},
+		{
+			leftTime:  t1Str,
+			rightTime: t2Str,
+			injectResolveTS: func() uint64 {
+				phy := t1.Add(-1*time.Second).UnixNano() / int64(time.Millisecond)
+				return oracle.ComposeTS(phy, 0)
+			}(),
+			expect: ts1,
+		},
+		{
+			leftTime:  t1Str,
+			rightTime: t2Str,
+			injectResolveTS: func() uint64 {
+				phy := t2.Add(time.Second).UnixNano() / int64(time.Millisecond)
+				return oracle.ComposeTS(phy, 0)
+			}(),
+			expect: ts2,
+		},
+	}
+
+	fc := funcs[ast.ReadTSIn]
+	for _, test := range tests {
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectResolveTS",
+			fmt.Sprintf("return(%v)", test.injectResolveTS)), IsNil)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(test.leftTime), types.NewDatum(test.rightTime)}))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.GetInt64(), Equals, test.expect)
+		failpoint.Disable("github.com/pingcap/tidb/expression/injectResolveTS")
 	}
 }
 

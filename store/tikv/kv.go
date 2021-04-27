@@ -214,23 +214,7 @@ func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVT
 
 // BeginWithMinStartTS begins transaction with the least startTS
 func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTxn, error) {
-	stores := make([]*Store, 0)
-	allStores := s.regionCache.getStoresByType(tikvrpc.TiKV)
-	if txnScope != oracle.GlobalTxnScope {
-		for _, store := range allStores {
-			if store.IsLabelsMatch([]*metapb.StoreLabel{
-				{
-					Key:   DCLabelKey,
-					Value: txnScope,
-				},
-			}) {
-				stores = append(stores, store)
-			}
-		}
-	} else {
-		stores = allStores
-	}
-	resolveTS := s.getMinResolveTSByStores(stores)
+	resolveTS := s.GetMinResolveTS(txnScope)
 	startTS := minStartTS
 	// If the resolveTS is larger than the minStartTS, we will use resolveTS as StartTS, otherwise we will use
 	// minStartTS directly.
@@ -398,6 +382,27 @@ func (s *KVStore) SetTiKVClient(client Client) {
 // GetTiKVClient gets the client instance.
 func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
+}
+
+// GetMinResolveTS return the minimal resolved TS of the storage with given txnScope.
+func (s *KVStore) GetMinResolveTS(txnScope string) uint64 {
+	stores := make([]*Store, 0)
+	allStores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	if txnScope != oracle.GlobalTxnScope {
+		for _, store := range allStores {
+			if store.IsLabelsMatch([]*metapb.StoreLabel{
+				{
+					Key:   DCLabelKey,
+					Value: txnScope,
+				},
+			}) {
+				stores = append(stores, store)
+			}
+		}
+	} else {
+		stores = allStores
+	}
+	return s.getMinResolveTSByStores(stores)
 }
 
 func (s *KVStore) getMinResolveTSByStores(stores []*Store) uint64 {

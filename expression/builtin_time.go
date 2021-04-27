@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -7112,4 +7113,75 @@ func handleInvalidZeroTime(ctx sessionctx.Context, t types.Time) (bool, error) {
 		return false, nil
 	}
 	return true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+}
+
+// readTSInFunctionClass reads a time window [a, b] and compares it with the latest resolvedTS
+// to determine which TS to use in a read only transaction.
+type readTSInFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *readTSInFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime, types.ETDatetime)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinReadTSInSig{bf}
+	return sig, nil
+}
+
+type builtinReadTSInSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinReadTSInSig) Clone() builtinFunc {
+	newSig := &builtinTidbParseTsoSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinReadTSInSig) evalInt(row chunk.Row) (int64, bool, error) {
+	leftTime, isNull, err := b.args[0].EvalTime(b.ctx, row)
+	if isNull || err != nil {
+		return 0, true, handleInvalidTimeError(b.ctx, err)
+	}
+	rightTime, isNull, err := b.args[1].EvalTime(b.ctx, row)
+	if isNull || err != nil {
+		return 0, true, handleInvalidTimeError(b.ctx, err)
+	}
+	if invalidLeftTime, invalidRightTime := leftTime.InvalidZero(), rightTime.InvalidZero(); invalidLeftTime || invalidRightTime {
+		if invalidLeftTime {
+			err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, leftTime.String()))
+		}
+		if invalidRightTime {
+			err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, rightTime.String()))
+		}
+		return 0, true, err
+	}
+	minTime, err := leftTime.GoTime(b.ctx.GetSessionVars().TimeZone)
+	if err != nil {
+		return 0, true, err
+	}
+	maxTime, err := rightTime.GoTime(b.ctx.GetSessionVars().TimeZone)
+	if err != nil {
+		return 0, true, err
+	}
+	minTS, maxTS := oracle.ComposeTS(minTime.UnixNano()/int64(time.Millisecond), 0), oracle.ComposeTS(maxTime.UnixNano()/int64(time.Millisecond), 0)
+	var minResolveTS uint64
+	if store := b.ctx.GetStore(); store != nil {
+		minResolveTS = store.GetMinResolveTS(b.ctx.GetSessionVars().CheckAndGetTxnScope())
+	}
+	failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
+		injectTS := val.(int)
+		minResolveTS = uint64(injectTS)
+	})
+	if minResolveTS < minTS {
+		return int64(minTS), false, nil
+	} else if min <= minResolveTS && minResolveTS <= maxTS {
+		return int64(minResolveTS), false, nil
+	}
+	return int64(maxTS), false, nil
 }

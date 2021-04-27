@@ -411,6 +411,8 @@ type Storage interface {
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
 	// GetMemCache return memory manager of the storage.
 	GetMemCache() MemManager
+	// GetMinResolveTS return the minimal resolved TS of the storage with given txnScope.
+	GetMinResolveTS(txnScope string) uint64
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

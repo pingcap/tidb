@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -850,6 +851,77 @@ func (b *builtinTidbParseTsoSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 			return err
 		}
 		times[i] = r
+	}
+	return nil
+}
+
+func (b *builtinReadTSInSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinReadTSInSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err = b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err = b.args[1].VecEvalTime(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	args0 := buf0.Times()
+	args1 := buf1.Times()
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if invalidArg0, invalidArg1 := args0[i].InvalidZero(), args1[i].InvalidZero(); invalidArg0 || invalidArg1 {
+			if invalidArg0 {
+				err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, args0[i].String()))
+			}
+			if invalidArg1 {
+				err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, args1[i].String()))
+			}
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		minTime, err := args0[i].GoTime(b.ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return err
+		}
+		maxTime, err := args1[i].GoTime(b.ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return err
+		}
+		minTS, maxTS := oracle.ComposeTS(minTime.UnixNano()/int64(time.Millisecond), 0), oracle.ComposeTS(maxTime.UnixNano()/int64(time.Millisecond), 0)
+		var minResolveTS uint64
+		if store := b.ctx.GetStore(); store != nil {
+			minResolveTS = store.GetMinResolveTS(b.ctx.GetSessionVars().CheckAndGetTxnScope())
+		}
+		failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
+			injectTS := val.(int)
+			minResolveTS = uint64(injectTS)
+		})
+		if minResolveTS < minTS {
+			i64s[i] = int64(minTS)
+		} else if min <= minResolveTS && minResolveTS <= maxTS {
+			i64s[i] = int64(minResolveTS)
+		}
+		i64s[i] = int64(maxTS)
 	}
 	return nil
 }
