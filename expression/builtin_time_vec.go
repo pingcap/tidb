@@ -893,19 +893,25 @@ func (b *builtinReadTSInSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			if invalidArg1 {
 				err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, args1[i].String()))
 			}
+			result.SetNull(i, true)
 			if err != nil {
 				return err
 			}
-			result.SetNull(i, true)
 			continue
 		}
-		minTime, err := args0[i].GoTime(b.ctx.GetSessionVars().TimeZone)
+		minTime, err := args0[i].GoTime(getTimeZone(b.ctx))
 		if err != nil {
+			result.SetNull(i, true)
 			return err
 		}
-		maxTime, err := args1[i].GoTime(b.ctx.GetSessionVars().TimeZone)
+		maxTime, err := args1[i].GoTime(getTimeZone(b.ctx))
 		if err != nil {
+			result.SetNull(i, true)
 			return err
+		}
+		if minTime.After(maxTime) {
+			result.SetNull(i, true)
+			return handleInvalidTimeError(b.ctx, types.ErrWrongValue.FastGenByArgs("left time must be less then the right time"))
 		}
 		minTS, maxTS := oracle.ComposeTS(minTime.UnixNano()/int64(time.Millisecond), 0), oracle.ComposeTS(maxTime.UnixNano()/int64(time.Millisecond), 0)
 		var minResolveTS uint64

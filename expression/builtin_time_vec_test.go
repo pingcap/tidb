@@ -520,10 +520,13 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		},
 	},
 	ast.ReadTSIn: {
-		{
-			retEvalType:   types.ETInt,
-			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
-		},
+		// Because there is a chance that a time error will cause the test to fail,
+		// we cannot use the vectorized test framework to test builtinReadTSInSig.
+		// We test the builtinReadTSInSig in TestReadTSIn function.
+		// {
+		// 	retEvalType:   types.ETInt,
+		// 	childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
+		// },
 	},
 	ast.LastDay: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},

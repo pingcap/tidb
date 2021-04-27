@@ -7161,13 +7161,16 @@ func (b *builtinReadTSInSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 		return 0, true, err
 	}
-	minTime, err := leftTime.GoTime(b.ctx.GetSessionVars().TimeZone)
+	minTime, err := leftTime.GoTime(getTimeZone(b.ctx))
 	if err != nil {
 		return 0, true, err
 	}
-	maxTime, err := rightTime.GoTime(b.ctx.GetSessionVars().TimeZone)
+	maxTime, err := rightTime.GoTime(getTimeZone(b.ctx))
 	if err != nil {
 		return 0, true, err
+	}
+	if minTime.After(maxTime) {
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.FastGenByArgs("left time must be less then the right time"))
 	}
 	minTS, maxTS := oracle.ComposeTS(minTime.UnixNano()/int64(time.Millisecond), 0), oracle.ComposeTS(maxTime.UnixNano()/int64(time.Millisecond), 0)
 	var minResolveTS uint64

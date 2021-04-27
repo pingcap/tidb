@@ -2865,7 +2865,7 @@ func (s *testEvaluatorSuite) TestTidbParseTso(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestReadInTS(c *C) {
+func (s *testEvaluatorSuite) TestReadTSIn(c *C) {
 	const timeParserLayout = "2006-01-02 15:04:05.000"
 	t1, err := time.Parse(timeParserLayout, "2015-09-21 09:53:04.877")
 	c.Assert(err, IsNil)
@@ -2879,8 +2879,10 @@ func (s *testEvaluatorSuite) TestReadInTS(c *C) {
 		leftTime        interface{}
 		rightTime       interface{}
 		injectResolveTS uint64
+		isNull          bool
 		expect          int64
 	}{
+		// ResolveTS is in the range.
 		{
 			leftTime:  t1Str,
 			rightTime: t2Str,
@@ -2888,11 +2890,13 @@ func (s *testEvaluatorSuite) TestReadInTS(c *C) {
 				phy := t2.Add(-1*time.Second).UnixNano() / int64(time.Millisecond)
 				return oracle.ComposeTS(phy, 0)
 			}(),
+			isNull: false,
 			expect: func() int64 {
 				phy := t2.Add(-1*time.Second).UnixNano() / int64(time.Millisecond)
 				return int64(oracle.ComposeTS(phy, 0))
 			}(),
 		},
+		// ResolveTS is less than the left time.
 		{
 			leftTime:  t1Str,
 			rightTime: t2Str,
@@ -2900,8 +2904,10 @@ func (s *testEvaluatorSuite) TestReadInTS(c *C) {
 				phy := t1.Add(-1*time.Second).UnixNano() / int64(time.Millisecond)
 				return oracle.ComposeTS(phy, 0)
 			}(),
+			isNull: false,
 			expect: ts1,
 		},
+		// ResolveTS is bigger than the right time.
 		{
 			leftTime:  t1Str,
 			rightTime: t2Str,
@@ -2909,7 +2915,16 @@ func (s *testEvaluatorSuite) TestReadInTS(c *C) {
 				phy := t2.Add(time.Second).UnixNano() / int64(time.Millisecond)
 				return oracle.ComposeTS(phy, 0)
 			}(),
+			isNull: false,
 			expect: ts2,
+		},
+		// Wrong time order.
+		{
+			leftTime:        t2Str,
+			rightTime:       t1Str,
+			injectResolveTS: 0,
+			isNull:          true,
+			expect:          0,
 		},
 	}
 
@@ -2921,7 +2936,11 @@ func (s *testEvaluatorSuite) TestReadInTS(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(d.GetInt64(), Equals, test.expect)
+		if test.isNull {
+			c.Assert(d.IsNull(), IsTrue)
+		} else {
+			c.Assert(d.GetInt64(), Equals, test.expect)
+		}
 		failpoint.Disable("github.com/pingcap/tidb/expression/injectResolveTS")
 	}
 }

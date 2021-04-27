@@ -2308,6 +2308,12 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 			}(),
 		},
 		{
+			sql:             `select read_ts_in("2021-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
+			injectResolveTS: 0,
+			isNull:          true,
+			expect:          0,
+		},
+		{
 			sql:             `select read_ts_in(1, 2)`,
 			injectResolveTS: 0,
 			isNull:          true,
