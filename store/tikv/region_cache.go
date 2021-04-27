@@ -1062,13 +1062,26 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 	return newestRegion
 }
 
+// TODO: revise it by get store by closure.
 func (c *RegionCache) getStoresByType(typ tikvrpc.EndpointType) []*Store {
 	c.storeMu.RLock()
 	defer c.storeMu.RUnlock()
 	stores := make([]*Store, 0)
 	for _, store := range c.storeMu.stores {
 		if store.storeType == typ {
-			stores = append(stores, store)
+			//TODO: revise it with store.clone()
+			storeLabel := make([]*metapb.StoreLabel, 0)
+			for _, label := range store.labels {
+				storeLabel = append(storeLabel, &metapb.StoreLabel{
+					Key:   label.Key,
+					Value: label.Value,
+				})
+			}
+			stores = append(stores, &Store{
+				addr:    store.addr,
+				storeID: store.storeID,
+				labels:  store.labels,
+			})
 		}
 	}
 	return stores

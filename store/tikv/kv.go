@@ -439,10 +439,12 @@ func (s *KVStore) updateResolveTS(ctx context.Context) {
 	wg := &sync.WaitGroup{}
 	wg.Add(len(stores))
 	for _, store := range stores {
-		go func(ctx context.Context, wg *sync.WaitGroup, store *Store) {
+		storeID := store.storeID
+		storeAddr := store.addr
+		go func(ctx context.Context, wg *sync.WaitGroup, storeID uint64, storeAddr string) {
 			defer wg.Done()
 			// TODO: add metrics for updateSafeTS
-			resp, err := tikvClient.SendRequest(ctx, store.addr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, &kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
+			resp, err := tikvClient.SendRequest(ctx, storeAddr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, &kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
 				StartKey: []byte(""),
 				EndKey:   []byte(""),
 			}}), ReadTimeoutShort)
@@ -451,9 +453,9 @@ func (s *KVStore) updateResolveTS(ctx context.Context) {
 			}
 			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
 			s.resolveTSMu.Lock()
-			s.resolveTSMu.resolveTS[store.storeID] = safeTSResp.GetSafeTs()
+			s.resolveTSMu.resolveTS[storeID] = safeTSResp.GetSafeTs()
 			s.resolveTSMu.Unlock()
-		}(ctx, wg, store)
+		}(ctx, wg, storeID, storeAddr)
 	}
 	wg.Wait()
 }
