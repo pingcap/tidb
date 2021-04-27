@@ -173,7 +173,6 @@ func (s *testIntegrationSuite) TestHideAnalyzeVerOnShow(c *C) {
 }
 
 func (s *testIntegrationSuite) TestIncAnalyzeOnVer2(c *C) {
-	c.Skip("to be stable")
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

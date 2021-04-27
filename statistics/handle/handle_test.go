@@ -733,7 +733,6 @@ func (s *testStatsSuite) TestShowGlobalStats(c *C) {
 }
 
 func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
-	c.Skip("version 2 was refined")
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -821,7 +820,6 @@ func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, 
 }
 
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
-	c.Skip("version 2 was refined")
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk)
@@ -857,7 +855,6 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 }
 
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
-	c.Skip("version 2 was refined")
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk)
@@ -1952,7 +1949,6 @@ func (s *testStatsSuite) TestMergeIdxHist(c *C) {
 }
 
 func (s *testStatsSuite) TestAnalyzeWithDynamicPartitionPruneMode(c *C) {
-	c.Skip("version 2 was refined")
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

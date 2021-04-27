@@ -1777,7 +1777,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version3 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idxName := range as.IndexNames {
@@ -1842,7 +1842,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version3 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idx := range tblInfo.Indices {
