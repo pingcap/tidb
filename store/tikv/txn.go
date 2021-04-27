@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"runtime/trace"
@@ -70,7 +71,7 @@ type KVTxn struct {
 	// SchemaAmender is used amend pessimistic txn commit mutations for schema change
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
-	commitCallback func(info tidbkv.TxnInfo, err error)
+	commitCallback func(info string, err error)
 
 	binlog BinlogExecutor
 }
@@ -141,23 +142,6 @@ func (txn *KVTxn) Get(ctx context.Context, k []byte) ([]byte, error) {
 	return ret, nil
 }
 
-// NewBufferBatchGetter creates a new BufferBatchGetter.
-func NewBufferBatchGetter(buffer unionstore.BatchBufferGetter, middleCache unionstore.Getter, snapshot unionstore.BatchGetter) *unionstore.BufferBatchGetter {
-	return unionstore.NewBufferBatchGetter(buffer, middleCache, snapshot)
-}
-
-// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
-// Do not use len(value) == 0 or value == nil to represent non-exist.
-// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
-func (txn *KVTxn) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
-}
-
 // Set sets the value for key k as v into kv store.
 // v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
 func (txn *KVTxn) Set(k []byte, v []byte) error {
@@ -199,7 +183,7 @@ func (txn *KVTxn) SetOption(opt int, val interface{}) {
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
 	case kv.CommitHook:
-		txn.commitCallback = val.(func(info tidbkv.TxnInfo, err error))
+		txn.commitCallback = val.(func(info string, err error))
 	}
 }
 
@@ -370,6 +354,17 @@ func (txn *KVTxn) collectLockedKeys() [][]byte {
 	return keys
 }
 
+// TxnInfo is used to keep track the info of a committed transaction (mainly for diagnosis and testing)
+type TxnInfo struct {
+	TxnScope            string `json:"txn_scope"`
+	StartTS             uint64 `json:"start_ts"`
+	CommitTS            uint64 `json:"commit_ts"`
+	TxnCommitMode       string `json:"txn_commit_mode"`
+	AsyncCommitFallback bool   `json:"async_commit_fallback"`
+	OnePCFallback       bool   `json:"one_pc_fallback"`
+	ErrMsg              string `json:"error,omitempty"`
+}
+
 func (txn *KVTxn) onCommitted(err error) {
 	if txn.commitCallback != nil {
 		isAsyncCommit := txn.committer.isAsyncCommit()
@@ -382,7 +377,7 @@ func (txn *KVTxn) onCommitted(err error) {
 			commitMode = "async_commit"
 		}
 
-		info := tidbkv.TxnInfo{
+		info := TxnInfo{
 			TxnScope:            txn.GetUnionStore().GetOption(kv.TxnScope).(string),
 			StartTS:             txn.startTS,
 			CommitTS:            txn.commitTS,
@@ -393,7 +388,9 @@ func (txn *KVTxn) onCommitted(err error) {
 		if err != nil {
 			info.ErrMsg = err.Error()
 		}
-		txn.commitCallback(info, err)
+		infoStr, err2 := json.Marshal(info)
+		_ = err2
+		txn.commitCallback(string(infoStr), err)
 	}
 }
 

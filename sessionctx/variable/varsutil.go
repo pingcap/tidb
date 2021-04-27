@@ -178,11 +178,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
 	case TiDBLastTxnInfo:
-		info, err := json.Marshal(s.LastTxnInfo)
-		if err != nil {
-			return "", true, err
-		}
-		return string(info), true, nil
+		return s.LastTxnInfo, true, nil
 	case TiDBLastQueryInfo:
 		info, err := json.Marshal(s.LastQueryInfo)
 		if err != nil {
