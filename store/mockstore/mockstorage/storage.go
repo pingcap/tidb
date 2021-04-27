@@ -86,6 +86,10 @@ func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transacti
 		return newTiKVTxn(s.BeginWithStartTS(txnScope, *option.StartTS))
 	} else if option.PrevSec != nil {
 		return newTiKVTxn(s.BeginWithExactStaleness(txnScope, *option.PrevSec))
+	} else if option.MaxPrevSec != nil {
+		return newTiKVTxn(s.BeginWithMaxPrevSec(txnScope, *option.MaxPrevSec))
+	} else if option.MinStartTS != nil {
+		return newTiKVTxn(s.BeginWithMinStartTS(txnScope, *option.MinStartTS))
 	}
 	return newTiKVTxn(s.BeginWithTxnScope(txnScope))
 }
