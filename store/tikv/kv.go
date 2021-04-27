@@ -449,6 +449,7 @@ func (s *KVStore) updateResolveTS(ctx context.Context) {
 				EndKey:   []byte(""),
 			}}), ReadTimeoutShort)
 			if err != nil {
+				logutil.BgLogger().Debug("update resolveTS failed", zap.Error(err), zap.Uint64("store-id", storeID))
 				return
 			}
 			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
