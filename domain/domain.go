@@ -349,7 +349,7 @@ func (do *Domain) Reload() error {
 	}
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
-	// only updateif it is not from cache
+	// only update if it is not from cache
 	if !hitCache {
 		// loaded newer schema
 		if oldSchemaVersion < is.SchemaMetaVersion() {
