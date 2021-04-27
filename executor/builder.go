@@ -3466,7 +3466,6 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, err
 	}
 
-	nextPartition := nextPartitionForIndexReader{exec: e, innerPartitionInfo: &innerPartitionInfo{isFullPartition: true}}
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
 	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
@@ -3478,21 +3477,19 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 			if err != nil {
 				return nil, err
 			}
-			nextPartition.isFullPartition = false
-			nextPartition.nextRange = rangeMap
+			e.partitions = usedPartition
+			e.ranges = indexRanges
+			e.partRangeMap = rangeMap
 		} else {
-			e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
-			if err != nil {
+			e.partitions = usedPartition
+			if e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
 				return nil, err
 			}
 		}
-		partitionExec := &PartitionTableExecutor{
-			baseExecutor:  *e.base(),
-			partitions:    usedPartition,
-			nextPartition: nextPartition,
+		if err := e.Open(ctx); err != nil {
+			return nil, err
 		}
-		err = partitionExec.Open(ctx)
-		return partitionExec, err
+		return e, nil
 	}
 	ret := &TableDualExec{baseExecutor: *e.base()}
 	err = ret.Open(ctx)

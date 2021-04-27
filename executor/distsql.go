@@ -164,6 +164,7 @@ type IndexReaderExecutor struct {
 	physicalTableID int64
 	ranges          []*ranger.Range
 	partitions      []table.PhysicalTable
+	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
 
 	// kvRanges are only used for union scan.
 	kvRanges []kv.KeyRange
@@ -211,18 +212,11 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	return err
 }
 
-func (e *IndexReaderExecutor) buildKeyRanges(sc *stmtctx.StatementContext, physicalID int64) ([]kv.KeyRange, error) {
+func (e *IndexReaderExecutor) buildKeyRanges(sc *stmtctx.StatementContext, ranges []*ranger.Range, physicalID int64) ([]kv.KeyRange, error) {
 	if e.index.ID == -1 {
-		return distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, e.ranges)
+		return distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
 	}
-	return distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
-}
-
-func (e *IndexReaderExecutor) buildPartitionTableKeyRanges(sc *stmtctx.StatementContext, physicalIDs []int64) ([]kv.KeyRange, error) {
-	if e.index.ID == -1 {
-		return distsql.CommonHandleRangesToKVRanges(sc, physicalIDs, e.ranges)
-	}
-	return distsql.IndexRangesToKVRangesForTables(sc, physicalIDs, e.index.ID, e.ranges, e.feedback)
+	return distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
 }
 
 // Open implements the Executor Open interface.
@@ -238,14 +232,19 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	var kvRanges []kv.KeyRange
 	if len(e.partitions) > 0 {
-		physicalIDs := make([]int64, 0, len(e.partitions))
 		for _, p := range e.partitions {
-			pid := p.GetPhysicalID()
-			physicalIDs = append(physicalIDs, pid)
+			partRange := e.ranges
+			if pRange, ok := e.partRangeMap[p.GetPhysicalID()]; ok {
+				partRange = pRange
+			}
+			kvRange, err := e.buildKeyRanges(sc, partRange, p.GetPhysicalID())
+			if err != nil {
+				return err
+			}
+			kvRanges = append(kvRanges, kvRange...)
 		}
-		kvRanges, err = e.buildPartitionTableKeyRanges(sc, physicalIDs)
 	} else {
-		kvRanges, err = e.buildKeyRanges(sc, e.physicalTableID)
+		kvRanges, err = e.buildKeyRanges(sc, e.ranges, e.physicalTableID)
 	}
 	if err != nil {
 		return err

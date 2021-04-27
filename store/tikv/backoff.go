@@ -25,6 +25,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -193,25 +194,25 @@ func (t BackoffType) String() string {
 func (t BackoffType) TError() error {
 	switch t {
 	case BoTiKVRPC:
-		return kv.ErrTiKVServerTimeout
+		return tikverr.ErrTiKVServerTimeout
 	case BoTiFlashRPC:
-		return kv.ErrTiFlashServerTimeout
+		return tikverr.ErrTiFlashServerTimeout
 	case BoTxnLock, BoTxnLockFast, boTxnNotFound:
-		return kv.ErrResolveLockTimeout
+		return tikverr.ErrResolveLockTimeout
 	case BoPDRPC:
-		return kv.ErrPDServerTimeout
+		return tikverr.ErrPDServerTimeout
 	case BoRegionMiss:
-		return kv.ErrRegionUnavailable
+		return tikverr.ErrRegionUnavailable
 	case boTiKVServerBusy:
-		return kv.ErrTiKVServerBusy
+		return tikverr.ErrTiKVServerBusy
 	case boTiFlashServerBusy:
-		return kv.ErrTiFlashServerBusy
+		return tikverr.ErrTiFlashServerBusy
 	case boStaleCmd:
-		return kv.ErrTiKVStaleCommand
+		return tikverr.ErrTiKVStaleCommand
 	case boMaxTsNotSynced:
-		return kv.ErrTiKVMaxTimestampNotSynced
+		return tikverr.ErrTiKVMaxTimestampNotSynced
 	}
-	return kv.ErrUnknown
+	return tikverr.ErrUnknown
 }
 
 // Maximum total sleep time(in ms) for kv/cop commands.
@@ -309,7 +310,7 @@ func (b *Backoffer) Backoff(typ BackoffType, err error) error {
 // BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
 // and never sleep more than maxSleepMs for each sleep.
 func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err error) error {
-	if strings.Contains(err.Error(), kv.MismatchClusterID) {
+	if strings.Contains(err.Error(), tikverr.MismatchClusterID) {
 		logutil.BgLogger().Fatal("critical error", zap.Error(err))
 	}
 	select {
@@ -364,7 +365,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err err
 
 	if b.vars != nil && b.vars.Killed != nil {
 		if atomic.LoadUint32(b.vars.Killed) == 1 {
-			return kv.ErrQueryInterrupted
+			return tikverr.ErrQueryInterrupted
 		}
 	}
 
