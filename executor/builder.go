@@ -2725,24 +2725,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	return ret
 }
 
-func buildPartitionTable(b *executorBuilder, tblInfo *model.TableInfo, partitionInfo *plannercore.PartitionInfo, e Executor, n nextPartition) (Executor, error) {
-	tmp, _ := b.is.TableByID(tblInfo.ID)
-	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(partitions) == 0 {
-		return &TableDualExec{baseExecutor: *e.base()}, nil
-	}
-	return &PartitionTableExecutor{
-		baseExecutor:  *e.base(),
-		partitions:    partitions,
-		nextPartition: n,
-	}, nil
-}
-
 func buildIndexRangeForEachPartition(ctx sessionctx.Context, usedPartitions []table.PhysicalTable, contentPos []int64,
 	lookUpContent []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (map[int64][]*ranger.Range, error) {
 	contentBucket := make(map[int64][]*indexJoinLookUpContent)
@@ -3179,13 +3161,14 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 		return ret
 	}
 
-	nextPartition := nextPartitionForIndexMerge{ret}
-	exec, err := buildPartitionTable(b, ts.Table, &v.PartitionInfo, ret, nextPartition)
+	tmp, _ := b.is.TableByID(ts.Table.ID)
+	partitions, err := partitionPruning(b.ctx, tmp.(table.PartitionedTable), v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	return exec
+	ret.partitionTableMode, ret.prunedPartitions = true, partitions
+	return ret
 }
 
 // dataReaderBuilder build an executor.

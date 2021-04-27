@@ -8845,8 +8845,7 @@ PARTITION BY RANGE (c) (
 		c.Log(testcase.name)
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
-		_, err = tk.Exec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
-		c.Assert(err, IsNil)
+		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		res, err := tk.Exec(testcase.sql)
 		_, resErr := session.GetRows4Test(context.Background(), tk.Se, res)
 		var checkErr error
@@ -8860,6 +8859,9 @@ PARTITION BY RANGE (c) (
 			c.Assert(checkErr.Error(), Matches, ".*can not be read by.*")
 		} else {
 			c.Assert(checkErr, IsNil)
+		}
+		if res != nil {
+			res.Close()
 		}
 		failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	}
