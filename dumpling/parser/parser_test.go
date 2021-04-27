@@ -108,7 +108,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "parser", "shard_row_id_bits", "pre_split_regions",
-		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop",
+		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -2168,6 +2168,15 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TEMPORARY TABLE t (a varchar(50), b int);", true, "CREATE TEMPORARY TABLE `t` (`a` VARCHAR(50),`b` INT)"},
 		{"CREATE TEMPORARY TABLE t LIKE t1", true, "CREATE TEMPORARY TABLE `t` LIKE `t1`"},
 		{"DROP TEMPORARY TABLE t", true, "DROP TEMPORARY TABLE `t`"},
+		{"create global temporary table t (a int, b varchar(255)) on commit delete rows", true, "CREATE GLOBAL TEMPORARY TABLE `t` (`a` INT,`b` VARCHAR(255)) ON COMMIT DELETE ROWS"},
+		{"create temporary table t (a int, b varchar(255))", true, "CREATE TEMPORARY TABLE `t` (`a` INT,`b` VARCHAR(255))"},
+		{"create global temporary table t (a int, b varchar(255))", false, ""}, // missing on commit delete rows
+		{"create temporary table t (a int, b varchar(255)) on commit delete rows", false, ""},
+		{"create table t (a int, b varchar(255)) on commit delete rows", false, ""},
+		{"create global temporary table t (a int, b varchar(255)) partition by hash(a) partitions 10 on commit delete rows", true, "CREATE GLOBAL TEMPORARY TABLE `t` (`a` INT,`b` VARCHAR(255)) PARTITION BY HASH (`a`) PARTITIONS 10 ON COMMIT DELETE ROWS"},
+		{"create global temporary table t (a int, b varchar(255)) on commit preserve rows", true, "CREATE GLOBAL TEMPORARY TABLE `t` (`a` INT,`b` VARCHAR(255)) ON COMMIT PRESERVE ROWS"},
+		{"drop global temporary table t", true, "DROP GLOBAL TEMPORARY TABLE `t`"},
+		{"drop temporary table t", true, "DROP TEMPORARY TABLE `t`"},
 		// test use key word as column name
 		{"CREATE TABLE foo (pump varchar(50), b int);", true, "CREATE TABLE `foo` (`pump` VARCHAR(50),`b` INT)"},
 		{"CREATE TABLE foo (drainer varchar(50), b int);", true, "CREATE TABLE `foo` (`drainer` VARCHAR(50),`b` INT)"},
