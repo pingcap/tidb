@@ -3525,7 +3525,6 @@ func (s *testIntegrationSuite) TestIssue24095(c *C) {
 	}
 }
 
-
 func (s *testIntegrationSuite) TestConflictReadFromStorage(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

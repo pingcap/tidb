@@ -65,7 +65,7 @@ func (hs *HintsSet) ContainTableHint(hint string) bool {
 // FilterConflictReadFromeStorageHint filters the conflict read_from_storage hints.
 func FilterConflictReadFromeStorageHint(sctx sessionctx.Context, node ast.Node, hintReadFromStorage string) {
 	type hintData struct {
-		store string
+		store    string
 		conflict bool
 	}
 	hintMap := make(map[string]hintData)
@@ -89,7 +89,7 @@ func FilterConflictReadFromeStorageHint(sctx sessionctx.Context, node ast.Node, 
 			if ok && strings.Compare(v.store, hint.HintData.(model.CIStr).L) != 0 {
 				v.conflict = true
 				hintMap[table] = v
-				hint := fmt.Sprintf("%s(%s) and %s(%s)",v.store, table, hint.HintData.(model.CIStr).L, table)
+				hint := fmt.Sprintf("%s(%s) and %s(%s)", v.store, table, hint.HintData.(model.CIStr).L, table)
 				err := dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
 				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
