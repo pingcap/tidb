@@ -65,6 +65,22 @@ func (s *testInfoCacheSuite) TestInsert(c *C) {
 	c.Assert(ic.GetVersion(3), NotNil)
 	c.Assert(ic.GetVersion(2), IsNil)
 	c.Assert(ic.GetVersion(0), IsNil)
+
+	// insert 2, but failed silently
+	ic.Insert(is2)
+	c.Assert(ic.GetVersion(6), NotNil)
+	c.Assert(ic.GetVersion(5), NotNil)
+	c.Assert(ic.GetVersion(3), NotNil)
+	c.Assert(ic.GetVersion(2), IsNil)
+	c.Assert(ic.GetVersion(0), IsNil)
+
+	// insert 5, but it is already in
+	ic.Insert(is5)
+	c.Assert(ic.GetVersion(6), NotNil)
+	c.Assert(ic.GetVersion(5), NotNil)
+	c.Assert(ic.GetVersion(3), NotNil)
+	c.Assert(ic.GetVersion(2), IsNil)
+	c.Assert(ic.GetVersion(0), IsNil)
 }
 
 func (s *testInfoCacheSuite) TestGetVersion(c *C) {

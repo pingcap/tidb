@@ -20,8 +20,7 @@ import (
 
 // InfoCache handles information schema, including getting and setting.
 type InfoCache struct {
-	// mu can not be RWMutex, because we access infoschema in the cache slice
-	mu sync.Mutex
+	mu sync.RWMutex
 	// cache is sorted by SchemaVersion in descending order
 	cache []InfoSchema
 }
@@ -33,8 +32,8 @@ func NewCache(capcity int) *InfoCache {
 
 // Get gets the newest information schema.
 func (h *InfoCache) Get() InfoSchema {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	if len(h.cache) > 0 {
 		return h.cache[0]
 	}
@@ -43,8 +42,8 @@ func (h *InfoCache) Get() InfoSchema {
 
 // GetVersion gets the information schema based on schemaVersion. Returns nil if it is not loaded.
 func (h *InfoCache) GetVersion(version int64) InfoSchema {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
 	})
@@ -59,13 +58,20 @@ func (h *InfoCache) GetVersion(version int64) InfoSchema {
 func (h *InfoCache) Insert(is InfoSchema) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
 	version := is.SchemaMetaVersion()
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
 	})
+
+	// cached entry
+	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
+		return
+	}
+
 	if len(h.cache) < cap(h.cache) {
-		// has free space
-		h.cache = append(h.cache, nil)
+		// has free space, grown the slice
+		h.cache = h.cache[:len(h.cache)+1]
 		copy(h.cache[i+1:], h.cache[i:])
 		h.cache[i] = is
 	} else if i < len(h.cache) {
