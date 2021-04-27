@@ -457,3 +457,6 @@ func (s *KVStore) updateResolveTS(ctx context.Context) {
 	}
 	wg.Wait()
 }
+
+// Variables defines the variables used by TiKV storage.
+type Variables = kv.Variables

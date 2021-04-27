@@ -31,14 +31,13 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tidbkv "github.com/pingcap/tidb/kv"
 	drivertxn "github.com/pingcap/tidb/store/driver/txn"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/tablecodec"
 )
 
 var (
@@ -66,7 +65,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	cluster := mocktikv.NewCluster(mvccStore)
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("a"), []byte("b"), []byte("c"))
 	s.cluster = cluster
-	client := mocktikv.NewRPCClient(cluster, mvccStore)
+	client := mocktikv.NewRPCClient(cluster, mvccStore, nil)
 	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
 	spkv := tikv.NewMockSafePointKV()
 	store, err := tikv.NewKVStore("mocktikv-store", pdCli, spkv, client)
@@ -878,7 +877,7 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	txn2.SetOption(kv.Pessimistic, true)
 
 	// test no wait
-	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.StartTS(), LockWaitTime: tidbkv.LockNoWait, WaitStartTime: time.Now()}
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.StartTS(), LockWaitTime: tikv.LockNoWait, WaitStartTime: time.Now()}
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
 	// cannot acquire lock immediately thus error
 	c.Assert(err.Error(), Equals, kv.ErrLockAcquireFailAndNoWaitSet.Error())
@@ -982,7 +981,7 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 	// case, the returned action of TxnStatus should be LockNotExistDoNothing, and lock on k3 could be resolved.
 	txn3 := s.begin(c)
 	txn3.SetOption(kv.Pessimistic, true)
-	lockCtx = &kv.LockCtx{ForUpdateTS: txn3.StartTS(), WaitStartTime: time.Now(), LockWaitTime: tidbkv.LockNoWait}
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn3.StartTS(), WaitStartTime: time.Now(), LockWaitTime: tikv.LockNoWait}
 	err = txn3.LockKeys(ctx, lockCtx, k3)
 	c.Assert(err, IsNil)
 	status, err = resolver.GetTxnStatusFromLock(bo, lockKey3, oracle.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
@@ -1018,7 +1017,7 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	// txn3 should locks k2 successfully using no wait
 	txn3 := s.begin(c)
 	txn3.SetOption(kv.Pessimistic, true)
-	lockCtx3 := &kv.LockCtx{ForUpdateTS: txn3.StartTS(), WaitStartTime: time.Now(), LockWaitTime: tidbkv.LockNoWait}
+	lockCtx3 := &kv.LockCtx{ForUpdateTS: txn3.StartTS(), WaitStartTime: time.Now(), LockWaitTime: tikv.LockNoWait}
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return"), IsNil)
 	err = txn3.LockKeys(context.Background(), lockCtx3, k2)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
@@ -1031,12 +1030,11 @@ func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
 	untouchedIndexKey := []byte("t00000001_i000000001")
 	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
 	noValueIndexKey := []byte("t00000001_i000000002")
-	c.Assert(tablecodec.IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue), IsTrue)
 	txn := s.begin(c)
 	txn.SetOption(kv.KVFilter, drivertxn.TiDBKVFilter{})
 	err := txn.Set(untouchedIndexKey, untouchedIndexValue)
 	c.Assert(err, IsNil)
-	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now(), LockWaitTime: tidbkv.LockNoWait}
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now(), LockWaitTime: tikv.LockNoWait}
 	err = txn.LockKeys(context.Background(), lockCtx, untouchedIndexKey, noValueIndexKey)
 	c.Assert(err, IsNil)
 	commit, err := txn.NewCommitter(1)
@@ -1204,7 +1202,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	// txn2 tries to lock the pessimisticLockKey, the lock should has been resolved in clean whole region resolve
 	txn2 := s.begin(c)
 	txn2.SetOption(kv.Pessimistic, true)
-	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.StartTS(), WaitStartTime: time.Now(), LockWaitTime: tidbkv.LockNoWait}
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.StartTS(), WaitStartTime: time.Now(), LockWaitTime: tikv.LockNoWait}
 	err = txn2.LockKeys(context.Background(), lockCtx, pessimisticLockKey)
 	c.Assert(err, IsNil)
 

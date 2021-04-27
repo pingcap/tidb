@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"runtime/trace"
@@ -59,7 +60,7 @@ type KVTxn struct {
 	commitTS  uint64
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	setCnt    int64
-	vars      *tidbkv.Variables
+	vars      *kv.Variables
 	committer *twoPhaseCommitter
 	lockedCnt int
 
@@ -70,7 +71,7 @@ type KVTxn struct {
 	// SchemaAmender is used amend pessimistic txn commit mutations for schema change
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
-	commitCallback func(info tidbkv.TxnInfo, err error)
+	commitCallback func(info string, err error)
 
 	binlog BinlogExecutor
 }
@@ -94,7 +95,7 @@ func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, repl
 		startTS:   startTS,
 		startTime: time.Now(),
 		valid:     true,
-		vars:      tidbkv.DefaultVars,
+		vars:      kv.DefaultVars,
 	}
 	newTiKVTxn.SetOption(kv.TxnScope, txnScope)
 	return newTiKVTxn, nil
@@ -113,7 +114,7 @@ func newTiKVTxnWithExactStaleness(store *KVStore, txnScope string, prevSec uint6
 var SetSuccess = false
 
 // SetVars sets variables to the transaction.
-func (txn *KVTxn) SetVars(vars *tidbkv.Variables) {
+func (txn *KVTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
 	failpoint.Inject("probeSetVars", func(val failpoint.Value) {
@@ -124,7 +125,7 @@ func (txn *KVTxn) SetVars(vars *tidbkv.Variables) {
 }
 
 // GetVars gets variables from the transaction.
-func (txn *KVTxn) GetVars() *tidbkv.Variables {
+func (txn *KVTxn) GetVars() *kv.Variables {
 	return txn.vars
 }
 
@@ -199,7 +200,7 @@ func (txn *KVTxn) SetOption(opt int, val interface{}) {
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
 	case kv.CommitHook:
-		txn.commitCallback = val.(func(info tidbkv.TxnInfo, err error))
+		txn.commitCallback = val.(func(info string, err error))
 	}
 }
 
@@ -370,6 +371,17 @@ func (txn *KVTxn) collectLockedKeys() [][]byte {
 	return keys
 }
 
+// TxnInfo is used to keep track the info of a committed transaction (mainly for diagnosis and testing)
+type TxnInfo struct {
+	TxnScope            string `json:"txn_scope"`
+	StartTS             uint64 `json:"start_ts"`
+	CommitTS            uint64 `json:"commit_ts"`
+	TxnCommitMode       string `json:"txn_commit_mode"`
+	AsyncCommitFallback bool   `json:"async_commit_fallback"`
+	OnePCFallback       bool   `json:"one_pc_fallback"`
+	ErrMsg              string `json:"error,omitempty"`
+}
+
 func (txn *KVTxn) onCommitted(err error) {
 	if txn.commitCallback != nil {
 		isAsyncCommit := txn.committer.isAsyncCommit()
@@ -382,7 +394,7 @@ func (txn *KVTxn) onCommitted(err error) {
 			commitMode = "async_commit"
 		}
 
-		info := tidbkv.TxnInfo{
+		info := TxnInfo{
 			TxnScope:            txn.GetUnionStore().GetOption(kv.TxnScope).(string),
 			StartTS:             txn.startTS,
 			CommitTS:            txn.commitTS,
@@ -393,7 +405,9 @@ func (txn *KVTxn) onCommitted(err error) {
 		if err != nil {
 			info.ErrMsg = err.Error()
 		}
-		txn.commitCallback(info, err)
+		infoStr, err2 := json.Marshal(info)
+		_ = err2
+		txn.commitCallback(string(infoStr), err)
 	}
 }
 
@@ -654,6 +668,9 @@ func (txn *KVTxn) GetSnapshot() *KVSnapshot {
 // SetBinlogExecutor sets the method to perform binlong synchronization.
 func (txn *KVTxn) SetBinlogExecutor(binlog BinlogExecutor) {
 	txn.binlog = binlog
+	if txn.committer != nil {
+		txn.committer.binlog = binlog
+	}
 }
 
 // GetClusterID returns store's cluster id.

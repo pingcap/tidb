@@ -214,7 +214,8 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	tk.MustExec("create table single_statement (id int primary key, v int)")
 	tk.MustExec("insert into single_statement values (1, 1), (2, 1), (3, 1), (4, 1)")
 	tblID := tk.GetTableID("single_statement")
-	s.cluster.SplitTable(tblID, 2)
+	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 2)
 	region1Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(1)))
 	region1, _ := s.cluster.GetRegionByKey(region1Key)
 	region1ID := region1.Id
@@ -1467,14 +1468,14 @@ func (s *testPessimisticSuite) TestTxnWithExpiredPessimisticLocks(c *C) {
 	tk.MustQuery("select * from t1 where c1 in(1, 5) for update").Check(testkit.Rows("1 1 1", "5 5 5"))
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 1)
 	err := tk.ExecToErr("select * from t1 where c1 in(1, 5)")
-	c.Assert(terror.ErrorEqual(err, tikvstore.ErrLockExpire), IsTrue)
+	c.Assert(terror.ErrorEqual(err, kv.ErrLockExpire), IsTrue)
 	tk.MustExec("commit")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t1 where c1 in(1, 5) for update").Check(testkit.Rows("1 1 1", "5 5 5"))
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 1)
 	err = tk.ExecToErr("update t1 set c2 = c2 + 1")
-	c.Assert(terror.ErrorEqual(err, tikvstore.ErrLockExpire), IsTrue)
+	c.Assert(terror.ErrorEqual(err, kv.ErrLockExpire), IsTrue)
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 0)
 	tk.MustExec("update t1 set c2 = c2 + 1")
 	tk.MustExec("rollback")
@@ -2058,9 +2059,9 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
 	}()
 
 	tk := s.newAsyncCommitTestKitWithInit(c)
@@ -2108,18 +2109,20 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(1, 1)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*pause"), IsNil)
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		tk2.MustExec("alter table tk add index k2(c2)")
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+		ch <- struct{}{}
 	}()
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1200)"), IsNil)
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	<-ch
+	tk.MustQuery("select * from tk where c2 = 1").Check(testkit.Rows("1 1"))
 	tk3.MustExec("admin check table tk")
 }
 
 func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
-	c.Skip("unstable")
 	// TODO: implement commit_ts calculation in unistore
 	if !*withTiKV {
 		return
@@ -2165,13 +2168,16 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(1, 1)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*pause"), IsNil)
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		tk2.MustExec("alter table tk add index k2(c2)")
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+		ch <- struct{}{}
 	}()
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1200)"), IsNil)
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	<-ch
+	tk.MustQuery("select * from tk where c2 = 1").Check(testkit.Rows("1 1"))
 	tk3.MustExec("admin check table tk")
 }
 

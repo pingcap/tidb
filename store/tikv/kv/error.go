@@ -47,7 +47,6 @@ var (
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(mysql.ErrLockAcquireFailAndNoWaitSet)
 	ErrLockWaitTimeout             = dbterror.ClassTiKV.NewStd(mysql.ErrLockWaitTimeout)
 	ErrTokenLimit                  = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVStoreLimit)
-	ErrLockExpire                  = dbterror.ClassTiKV.NewStd(mysql.ErrLockExpire)
 	ErrUnknown                     = dbterror.ClassTiKV.NewStd(mysql.ErrUnknown)
 )
 

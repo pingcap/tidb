@@ -377,7 +377,7 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error {
 	windowColumns := p.GetWindowResultColumns()
-	len := 0
+	cnt := 0
 	for _, col := range parentUsedCols {
 		used := false
 		for _, windowColumn := range windowColumns {
@@ -387,11 +387,11 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error 
 			}
 		}
 		if !used {
-			parentUsedCols[len] = col
-			len++
+			parentUsedCols[cnt] = col
+			cnt++
 		}
 	}
-	parentUsedCols = parentUsedCols[:len]
+	parentUsedCols = parentUsedCols[:cnt]
 	parentUsedCols = p.extractUsedCols(parentUsedCols)
 	err := p.children[0].PruneColumns(parentUsedCols)
 	if err != nil {

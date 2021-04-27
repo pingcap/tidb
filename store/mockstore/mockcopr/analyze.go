@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mocktikv
+package mockcopr
 
 import (
 	"context"
@@ -75,8 +75,8 @@ func (h coprHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		colsLen:        int(analyzeReq.IdxReq.NumColumns),
 		kvRanges:       ranges,
 		startTS:        startTS,
-		isolationLevel: h.isolationLevel,
-		mvccStore:      h.mvccStore,
+		isolationLevel: h.GetIsolationLevel(),
+		mvccStore:      h.GetMVCCStore(),
 		IndexScan:      &tipb.IndexScan{Desc: false},
 		execDetail:     new(execDetail),
 		hdStatus:       tablecodec.HandleNotNeeded,
@@ -170,8 +170,8 @@ func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 			kvRanges:       ranges,
 			colIDs:         evalCtx.colIDs,
 			startTS:        startTS,
-			isolationLevel: h.isolationLevel,
-			mvccStore:      h.mvccStore,
+			isolationLevel: h.GetIsolationLevel(),
+			mvccStore:      h.GetMVCCStore(),
 			execDetail:     new(execDetail),
 			rd:             rd,
 		},
