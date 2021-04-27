@@ -67,8 +67,8 @@ func (s *testTypeHelperSuite) TestTruncate(c *C) {
 func (s *testTypeHelperSuite) TestTruncateFloatToString(c *C) {
 	c.Parallel()
 	tests := []struct {
-		f		 float64
-		dec		 int
+		f        float64
+		dec      int
 		expected string
 	}{
 		{12.13, -1, "10"},
