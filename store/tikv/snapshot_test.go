@@ -323,31 +323,20 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 			ProcessWallTimeMs: 100,
 		},
 		ScanDetailV2: &pb.ScanDetailV2{
-			ProcessedVersions:         10,
-			TotalVersions:             15,
-			RocksdbBlockReadCount:     20,
-			RocksdbBlockReadByte:      15,
-			RocksdbDeleteSkippedCount: 5,
-			RocksdbKeySkippedCount:    1,
-			RocksdbBlockCacheHitCount: 10,
+			ProcessedVersions: 10,
+			TotalVersions:     15,
 		},
 	}
 	snapshot.mergeExecDetail(detail)
 	expect = "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}, " +
 		"total_process_time: 100ms, total_wait_time: 100ms, " +
 		"scan_detail: {total_process_keys: 10, " +
-		"total_keys: 15, " +
-		"rocksdb: {delete_skipped_count: 5, " +
-		"key_skipped_count: 1, " +
-		"block: {cache_hit_count: 10, read_count: 20, read_byte: 15 Bytes}}}"
+		"total_keys: 15}"
 	c.Assert(snapshot.mu.stats.String(), Equals, expect)
 	snapshot.mergeExecDetail(detail)
 	expect = "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}, " +
 		"total_process_time: 200ms, total_wait_time: 200ms, " +
 		"scan_detail: {total_process_keys: 20, " +
-		"total_keys: 30, " +
-		"rocksdb: {delete_skipped_count: 10, " +
-		"key_skipped_count: 2, " +
-		"block: {cache_hit_count: 20, read_count: 40, read_byte: 30 Bytes}}}"
+		"total_keys: 30}"
 	c.Assert(snapshot.mu.stats.String(), Equals, expect)
 }

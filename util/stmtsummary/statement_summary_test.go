@@ -197,13 +197,8 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				TxnRetry:          10,
 			},
 			ScanDetail: &execdetails.ScanDetail{
-				TotalKeys:                 6000,
-				ProcessedKeys:             1500,
-				RocksdbDeleteSkippedCount: 100,
-				RocksdbKeySkippedCount:    10,
-				RocksdbBlockCacheHitCount: 10,
-				RocksdbBlockReadCount:     10,
-				RocksdbBlockReadByte:      1000,
+				TotalKeys:     6000,
+				ProcessedKeys: 1500,
 			},
 			TimeDetail: execdetails.TimeDetail{
 				ProcessTime: 1500,
@@ -324,13 +319,8 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				TxnRetry:          1,
 			},
 			ScanDetail: &execdetails.ScanDetail{
-				TotalKeys:                 600,
-				ProcessedKeys:             150,
-				RocksdbDeleteSkippedCount: 100,
-				RocksdbKeySkippedCount:    10,
-				RocksdbBlockCacheHitCount: 10,
-				RocksdbBlockReadCount:     10,
-				RocksdbBlockReadByte:      1000,
+				TotalKeys:     600,
+				ProcessedKeys: 150,
 			},
 			TimeDetail: execdetails.TimeDetail{
 				ProcessTime: 150,
@@ -580,13 +570,8 @@ func generateAnyExecInfo() *StmtExecInfo {
 				TxnRetry:          2,
 			},
 			ScanDetail: &execdetails.ScanDetail{
-				TotalKeys:                 1000,
-				ProcessedKeys:             500,
-				RocksdbDeleteSkippedCount: 100,
-				RocksdbKeySkippedCount:    10,
-				RocksdbBlockCacheHitCount: 10,
-				RocksdbBlockReadCount:     10,
-				RocksdbBlockReadByte:      1000,
+				TotalKeys:     1000,
+				ProcessedKeys: 500,
 			},
 			TimeDetail: execdetails.TimeDetail{
 				ProcessTime: 500,

@@ -58,13 +58,8 @@ func TestString(t *testing.T) {
 			TxnRetry:          1,
 		},
 		ScanDetail: &ScanDetail{
-			ProcessedKeys:             10,
-			TotalKeys:                 100,
-			RocksdbDeleteSkippedCount: 1,
-			RocksdbKeySkippedCount:    1,
-			RocksdbBlockCacheHitCount: 1,
-			RocksdbBlockReadCount:     1,
-			RocksdbBlockReadByte:      100,
+			ProcessedKeys: 10,
+			TotalKeys:     100,
 		},
 		TimeDetail: TimeDetail{
 			ProcessTime: 2*time.Second + 5*time.Millisecond,
@@ -102,13 +97,8 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask(aggID, "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
 	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
 	scanDetail := &ScanDetail{
-		TotalKeys:                 15,
-		ProcessedKeys:             10,
-		RocksdbDeleteSkippedCount: 5,
-		RocksdbKeySkippedCount:    1,
-		RocksdbBlockCacheHitCount: 10,
-		RocksdbBlockReadCount:     20,
-		RocksdbBlockReadByte:      100,
+		TotalKeys:     15,
+		ProcessedKeys: 10,
 	}
 	stats.RecordScanDetail(tableScanID, scanDetail)
 	if stats.ExistsCopStats(tableScanID) != true {
@@ -116,7 +106,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	cop := stats.GetCopStats(tableScanID)
 	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, "+
-		"scan_detail: {total_process_keys: 10, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block: {cache_hit_count: 10, read_count: 20, read_byte: 100 Bytes}}}" {
+		"scan_detail: {total_process_keys: 10, total_keys: 15}" {
 		t.Fatalf(cop.String())
 	}
 	copStats := cop.stats["8.8.8.8"]
@@ -141,11 +131,9 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 
 	cop.scanDetail.ProcessedKeys = 0
-	cop.scanDetail.RocksdbKeySkippedCount = 0
-	cop.scanDetail.RocksdbBlockReadCount = 0
 	// Print all fields even though the value of some fields is 0.
 	if cop.String() != "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, "+
-		"scan_detail: {total_process_keys: 0, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block: {cache_hit_count: 10, read_count: 0, read_byte: 100 Bytes}}}" {
+		"scan_detail: {total_process_keys: 0, total_keys: 15}" {
 		t.Fatalf(cop.String())
 	}
 
@@ -165,13 +153,8 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	stats.RecordOneCopTask(tableScanID, "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, "aggregation_"+strconv.Itoa(aggID)))
 	stats.RecordOneCopTask(tableScanID, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, "aggregation_"+strconv.Itoa(aggID)))
 	scanDetail := &ScanDetail{
-		TotalKeys:                 10,
-		ProcessedKeys:             10,
-		RocksdbDeleteSkippedCount: 10,
-		RocksdbKeySkippedCount:    1,
-		RocksdbBlockCacheHitCount: 10,
-		RocksdbBlockReadCount:     10,
-		RocksdbBlockReadByte:      100,
+		TotalKeys:     10,
+		ProcessedKeys: 10,
 	}
 	stats.RecordScanDetail(tableScanID, scanDetail)
 	if stats.ExistsCopStats(tableScanID) != true {
@@ -179,7 +162,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	}
 	cop := stats.GetCopStats(tableScanID)
 	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}"+
-		", scan_detail: {total_process_keys: 10, total_keys: 10, rocksdb: {delete_skipped_count: 10, key_skipped_count: 1, block: {cache_hit_count: 10, read_count: 10, read_byte: 100 Bytes}}}" {
+		", scan_detail: {total_process_keys: 10, total_keys: 10}" {
 		t.Fatal(cop.String())
 	}
 	copStats := cop.stats["8.8.8.8"]

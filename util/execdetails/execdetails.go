@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -219,28 +218,12 @@ type ScanDetail struct {
 	// It does not include deleted version or RocksDB tombstone keys.
 	// For Coprocessor requests, it includes keys that has been filtered out by Selection.
 	ProcessedKeys int64
-	// RocksdbDeleteSkippedCount is the total number of deletes and single deletes skipped over during
-	// iteration, i.e. how many RocksDB tombstones are skipped.
-	RocksdbDeleteSkippedCount uint64
-	// RocksdbKeySkippedCount it the total number of internal keys skipped over during iteration.
-	RocksdbKeySkippedCount uint64
-	// RocksdbBlockCacheHitCount is the total number of RocksDB block cache hits.
-	RocksdbBlockCacheHitCount uint64
-	// RocksdbBlockReadCount is the total number of block reads (with IO).
-	RocksdbBlockReadCount uint64
-	// RocksdbBlockReadByte is the total number of bytes from block reads.
-	RocksdbBlockReadByte uint64
 }
 
 // Merge merges scan detail execution details into self.
 func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
 	atomic.AddInt64(&sd.TotalKeys, scanDetail.TotalKeys)
 	atomic.AddInt64(&sd.ProcessedKeys, scanDetail.ProcessedKeys)
-	atomic.AddUint64(&sd.RocksdbDeleteSkippedCount, scanDetail.RocksdbDeleteSkippedCount)
-	atomic.AddUint64(&sd.RocksdbKeySkippedCount, scanDetail.RocksdbKeySkippedCount)
-	atomic.AddUint64(&sd.RocksdbBlockCacheHitCount, scanDetail.RocksdbBlockCacheHitCount)
-	atomic.AddUint64(&sd.RocksdbBlockReadCount, scanDetail.RocksdbBlockReadCount)
-	atomic.AddUint64(&sd.RocksdbBlockReadByte, scanDetail.RocksdbBlockReadByte)
 }
 
 var zeroScanDetail = ScanDetail{}
@@ -256,19 +239,7 @@ func (sd *ScanDetail) String() string {
 	buf.WriteString(strconv.FormatInt(sd.ProcessedKeys, 10))
 	buf.WriteString(", total_keys: ")
 	buf.WriteString(strconv.FormatInt(sd.TotalKeys, 10))
-	buf.WriteString(", rocksdb: {")
-	buf.WriteString("delete_skipped_count: ")
-	buf.WriteString(strconv.FormatUint(sd.RocksdbDeleteSkippedCount, 10))
-	buf.WriteString(", key_skipped_count: ")
-	buf.WriteString(strconv.FormatUint(sd.RocksdbKeySkippedCount, 10))
-	buf.WriteString(", block: {")
-	buf.WriteString("cache_hit_count: ")
-	buf.WriteString(strconv.FormatUint(sd.RocksdbBlockCacheHitCount, 10))
-	buf.WriteString(", read_count: ")
-	buf.WriteString(strconv.FormatUint(sd.RocksdbBlockReadCount, 10))
-	buf.WriteString(", read_byte: ")
-	buf.WriteString(memory.FormatBytes(int64(sd.RocksdbBlockReadByte)))
-	buf.WriteString("}}}")
+	buf.WriteString("}")
 	return buf.String()
 }
 
@@ -277,11 +248,6 @@ func (sd *ScanDetail) MergeFromScanDetailV2(scanDetail *kvrpcpb.ScanDetailV2) {
 	if scanDetail != nil {
 		sd.TotalKeys += int64(scanDetail.TotalVersions)
 		sd.ProcessedKeys += int64(scanDetail.ProcessedVersions)
-		sd.RocksdbDeleteSkippedCount += scanDetail.RocksdbDeleteSkippedCount
-		sd.RocksdbKeySkippedCount += scanDetail.RocksdbKeySkippedCount
-		sd.RocksdbBlockCacheHitCount += scanDetail.RocksdbBlockCacheHitCount
-		sd.RocksdbBlockReadCount += scanDetail.RocksdbBlockReadCount
-		sd.RocksdbBlockReadByte += scanDetail.RocksdbBlockReadByte
 	}
 }
 
