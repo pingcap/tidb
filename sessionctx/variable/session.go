@@ -783,7 +783,7 @@ type SessionVars struct {
 	EnableAmendPessimisticTxn bool
 
 	// LastTxnInfo keeps track the info of last committed transaction.
-	LastTxnInfo kv.TxnInfo
+	LastTxnInfo string
 
 	// LastQueryInfo keeps track the info of last query.
 	LastQueryInfo QueryInfo
