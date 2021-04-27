@@ -52,7 +52,6 @@ type KVSnapshot struct {
 	isolationLevel  kv.IsoLevel
 	priority        pb.CommandPri
 	notFillCache    bool
-	syncLog         bool
 	keyOnly         bool
 	vars            *kv.Variables
 	replicaReadSeed uint32
@@ -542,8 +541,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 		s.priority = PriorityToPB(val.(int))
 	case kv.NotFillCache:
 		s.notFillCache = val.(bool)
-	case kv.SyncLog:
-		s.syncLog = val.(bool)
 	case kv.KeyOnly:
 		s.keyOnly = val.(bool)
 	case kv.SnapshotTS:
