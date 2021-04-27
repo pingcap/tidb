@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -440,7 +441,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput .
 		} else if txn.IsPessimistic() {
 			if checkKeyExists && valueExist {
 				alreadyExist := kvrpcpb.AlreadyExist{Key: key}
-				e := &kv.ErrKeyExist{AlreadyExist: &alreadyExist}
+				e := &tikverr.ErrKeyExist{AlreadyExist: &alreadyExist}
 				return txn.committer.extractKeyExistsErr(e)
 			}
 		}
@@ -501,11 +502,11 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput .
 					txn.us.UnmarkPresumeKeyNotExists(key)
 				}
 			}
-			keyMayBeLocked := !(kv.IsErrWriteConflict(err) || kv.IsErrKeyExist(err))
+			keyMayBeLocked := !(tikverr.IsErrWriteConflict(err) || tikverr.IsErrKeyExist(err))
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
 				wg := txn.asyncPessimisticRollback(ctx, keys)
-				if dl, ok := errors.Cause(err).(*kv.ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
+				if dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
 					dl.IsRetryable = true
 					// Wait for the pessimistic rollback to finish before we retry the statement.
 					wg.Wait()

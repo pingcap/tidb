@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -476,7 +476,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 			return
 		case <-ticker.C:
 			if atomic.LoadUint32(it.vars.Killed) == 1 {
-				resp = &copResponse{err: tikvstore.ErrQueryInterrupted}
+				resp = &copResponse{err: tikverr.ErrQueryInterrupted}
 				ok = true
 				return
 			}
@@ -980,11 +980,11 @@ type CopRuntimeStats struct {
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
 	errCode := errno.ErrUnknown
 	errMsg := err.Error()
-	if terror.ErrorEqual(err, tikvstore.ErrTiKVServerTimeout) {
+	if terror.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
 		errCode = errno.ErrTiKVServerTimeout
 		errMsg = "TiDB server timeout, address is " + task.storeAddr
 	}
-	if terror.ErrorEqual(err, tikvstore.ErrTiFlashServerTimeout) {
+	if terror.ErrorEqual(err, tikverr.ErrTiFlashServerTimeout) {
 		errCode = errno.ErrTiFlashServerTimeout
 		errMsg = "TiDB server timeout, address is " + task.storeAddr
 	}
