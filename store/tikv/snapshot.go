@@ -26,6 +26,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -44,6 +45,21 @@ const (
 	batchGetSize  = 5120
 	maxTimestamp  = math.MaxUint64
 )
+
+// Priority is the priority for tikv to execute a command.
+type Priority kvrpcpb.CommandPri
+
+// Priority value for transaction priority.
+const (
+	PriorityNormal = Priority(kvrpcpb.CommandPri_Normal)
+	PriorityLow    = Priority(kvrpcpb.CommandPri_Low)
+	PriorityHigh   = Priority(kvrpcpb.CommandPri_High)
+)
+
+// ToPB converts priority to wire type.
+func (p Priority) ToPB() kvrpcpb.CommandPri {
+	return kvrpcpb.CommandPri(p)
+}
 
 // KVSnapshot implements the tidbkv.Snapshot interface.
 type KVSnapshot struct {
@@ -538,8 +554,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
 	case kv.IsolationLevel:
 		s.isolationLevel = val.(kv.IsoLevel)
-	case kv.Priority:
-		s.priority = PriorityToPB(val.(int))
 	case kv.NotFillCache:
 		s.notFillCache = val.(bool)
 	case kv.SyncLog:

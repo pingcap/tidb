@@ -74,7 +74,8 @@ type KVTxn struct {
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info string, err error)
 
-	binlog BinlogExecutor
+	binlog   BinlogExecutor
+	priority Priority
 }
 
 func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
@@ -201,6 +202,11 @@ func (txn *KVTxn) DelOption(opt int) {
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
 	return txn.us.GetOption(kv.Pessimistic) != nil
+}
+
+// SetPriority sets the priority to read and write.
+func (txn *KVTxn) SetPriority(pri Priority) {
+	txn.priority = pri
 }
 
 func (txn *KVTxn) getKVFilter() KVFilter {

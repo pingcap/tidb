@@ -64,6 +64,7 @@ const (
 )
 
 // Priority value for transaction priority.
+// TODO: remove after BR update.
 const (
 	PriorityNormal = iota
 	PriorityLow

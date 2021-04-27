@@ -438,3 +438,10 @@ type SplittableStore interface {
 	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
+
+// Priority value for transaction priority.
+const (
+	PriorityNormal = iota
+	PriorityLow
+	PriorityHigh
+)
