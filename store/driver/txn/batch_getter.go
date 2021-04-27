@@ -59,7 +59,7 @@ func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[st
 	bufferValues := make([][]byte, len(keys))
 	shrinkKeys := make([]kv.Key, 0, len(keys))
 	for i, key := range keys {
-		val, err := b.buffer.Get(context.Background(), key)
+		val, err := b.buffer.Get(ctx, key)
 		if err == nil {
 			bufferValues[i] = val
 			continue
@@ -68,7 +68,7 @@ func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[st
 			return nil, errors.Trace(err)
 		}
 		if b.middle != nil {
-			val, err = b.middle.Get(context.Background(), key)
+			val, err = b.middle.Get(ctx, key)
 			if err == nil {
 				bufferValues[i] = val
 				continue
