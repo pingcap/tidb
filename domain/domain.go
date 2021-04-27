@@ -107,12 +107,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, 0, nil, err
 	}
 
-	if is := do.infoCache.GetVersion(neededSchemaVersion); is != nil {
+	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		return is, true, 0, nil, nil
 	}
 
 	currentSchemaVersion := int64(0)
-	if oldInfoSchema := do.infoCache.Get(); oldInfoSchema != nil {
+	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
 		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
 	}
 
@@ -253,7 +253,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store()).InitWithOldInfoSchema(do.infoCache.Get())
+	builder := infoschema.NewBuilder(do.Store()).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -286,7 +286,7 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 
 // InfoSchema gets information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
-	return do.infoCache.Get()
+	return do.infoCache.GetLatest()
 }
 
 // GetSnapshotInfoSchema gets a snapshot information schema.

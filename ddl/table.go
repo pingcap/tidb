@@ -487,8 +487,8 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	}
 
-	if d.infoCache != nil && d.infoCache.Get() != nil {
-		is := d.infoCache.Get()
+	if d.infoCache != nil && d.infoCache.GetLatest() != nil {
+		is := d.infoCache.GetLatest()
 
 		bundles := make([]*placement.Bundle, 0, len(oldPartitionIDs)+1)
 		if oldBundle, ok := is.BundleByName(placement.GroupID(tableID)); ok {
@@ -968,7 +968,7 @@ func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
 	// d.infoHandle maybe nil in some test.
-	if d.infoCache == nil || d.infoCache.Get() == nil {
+	if d.infoCache == nil || d.infoCache.GetLatest() == nil {
 		return checkTableNotExistsFromStore(t, schemaID, tableName)
 	}
 	// Try to use memory schema info to check first.
@@ -976,7 +976,7 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 	if err != nil {
 		return err
 	}
-	is := d.infoCache.Get()
+	is := d.infoCache.GetLatest()
 	if is.SchemaMetaVersion() == currVer {
 		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 	}

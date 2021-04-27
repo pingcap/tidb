@@ -77,7 +77,7 @@ func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model
 	if err != nil {
 		return err
 	}
-	is := d.infoCache.Get()
+	is := d.infoCache.GetLatest()
 	if is.SchemaMetaVersion() == currVer {
 		return checkSchemaNotExistsFromInfoSchema(is, schemaID, dbInfo)
 	}
@@ -169,7 +169,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		oldIDs := getIDs(tables)
 		bundles := make([]*placement.Bundle, 0, len(oldIDs)+1)
 		for _, ID := range append(oldIDs, dbInfo.ID) {
-			oldBundle, ok := d.infoCache.Get().BundleByName(placement.GroupID(ID))
+			oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
 			if ok && !oldBundle.IsEmpty() {
 				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
 			}

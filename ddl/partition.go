@@ -911,10 +911,10 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 }
 
 func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
-	if d.infoCache != nil && d.infoCache.Get() != nil {
+	if d.infoCache != nil && d.infoCache.GetLatest() != nil {
 		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
 		for _, ID := range physicalTableIDs {
-			oldBundle, ok := d.infoCache.Get().BundleByName(placement.GroupID(ID))
+			oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
 			if ok && !oldBundle.IsEmpty() {
 				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
 			}
@@ -1095,11 +1095,11 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	if d.infoCache != nil && d.infoCache.Get() != nil {
+	if d.infoCache != nil && d.infoCache.GetLatest() != nil {
 		bundles := make([]*placement.Bundle, 0, len(oldIDs))
 
 		for i, oldID := range oldIDs {
-			oldBundle, ok := d.infoCache.Get().BundleByName(placement.GroupID(oldID))
+			oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(oldID))
 			if ok && !oldBundle.IsEmpty() {
 				bundles = append(bundles, placement.BuildPlacementDropBundle(oldID))
 				bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newPartitions[i].ID))
@@ -1299,11 +1299,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
-	if d.infoCache != nil && d.infoCache.Get() != nil {
+	if d.infoCache != nil && d.infoCache.GetLatest() != nil {
 		bundles := make([]*placement.Bundle, 0, 2)
-		ptBundle, ptOK := d.infoCache.Get().BundleByName(placement.GroupID(partDef.ID))
+		ptBundle, ptOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(partDef.ID))
 		ptOK = ptOK && !ptBundle.IsEmpty()
-		ntBundle, ntOK := d.infoCache.Get().BundleByName(placement.GroupID(nt.ID))
+		ntBundle, ntOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(nt.ID))
 		ntOK = ntOK && !ntBundle.IsEmpty()
 		if ptOK && ntOK {
 			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))

@@ -411,7 +411,7 @@ func (d *ddl) GetLease() time.Duration {
 // Please don't use this function, it is used by TestParallelDDLBeforeRunDDLJob to intercept the calling of d.infoHandle.Get(), use d.infoHandle.Get() instead.
 // Otherwise, the TestParallelDDLBeforeRunDDLJob will hang up forever.
 func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
-	is := d.infoCache.Get()
+	is := d.infoCache.GetLatest()
 
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -649,10 +649,10 @@ func (d *ddl) startCleanDeadTableLock() {
 			if !d.ownerManager.IsOwner() {
 				continue
 			}
-			if d.infoCache == nil || d.infoCache.Get() == nil {
+			if d.infoCache == nil || d.infoCache.GetLatest() == nil {
 				continue
 			}
-			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoCache.Get().AllSchemas())
+			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoCache.GetLatest().AllSchemas())
 			if err != nil {
 				logutil.BgLogger().Info("[ddl] get dead table lock failed.", zap.Error(err))
 				continue
