@@ -66,6 +66,8 @@ type Collator interface {
 	Key(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
+	// IsUTF8Encoded checks whether this collation is encoded by utf8.
+	IsUTF8Encoded() bool
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.

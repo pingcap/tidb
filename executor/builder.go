@@ -2055,6 +2055,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 			}
 			for _, col := range idx.Columns {
 				colGroup.ColumnOffsets = append(colGroup.ColumnOffsets, int64(col.Offset))
+				colGroup.PrefixLengths = append(colGroup.PrefixLengths, int64(col.Length))
 			}
 			colGroups = append(colGroups, colGroup)
 		}

@@ -32,6 +32,10 @@ func (bc *binCollator) Key(str string) []byte {
 	return []byte(str)
 }
 
+func (bc *binCollator) IsUTF8Encoded() bool {
+	return false
+}
+
 // Pattern implements Collator interface.
 func (bc *binCollator) Pattern() WildcardPattern {
 	return &binPattern{}
@@ -54,6 +58,10 @@ func (bpc *binPaddingCollator) Pattern() WildcardPattern {
 	return &binPattern{}
 }
 
+func (bpc *binPaddingCollator) IsUTF8Encoded() bool {
+	return true
+}
+
 type binPattern struct {
 	patChars []rune
 	patTypes []byte
@@ -64,7 +72,7 @@ func (p *binPattern) Compile(patternStr string, escape byte) {
 	p.patChars, p.patTypes = stringutil.CompilePattern(patternStr, escape)
 }
 
-// Compile implements WildcardPattern interface.
+// DoMatch implements WildcardPattern interface.
 func (p *binPattern) DoMatch(str string) bool {
 	return stringutil.DoMatch(str, p.patChars, p.patTypes)
 }

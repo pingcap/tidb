@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"math/rand"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
@@ -124,38 +125,47 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 		if chk.NumRows() == 0 {
 			return collector, nil
 		}
-		originalColDatum := make([]types.Datum, len(s.RecordSet.Fields()))
+		// encodedColDatumWithCollateKey is used for inserting values to the FM Sketch.
+		encodedColDatumWithCollateKey := make([]*types.Datum, len(s.RecordSet.Fields()))
+		// decodedStringDatum is used for the index containing the columns with prefix len.
+		decodedStringDatum := make([]*types.Datum, len(s.RecordSet.Fields()))
 		collector.Count += int64(chk.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			datums := RowToDatums(row, s.RecordSet.Fields())
-			for i, val := range datums {
+			encodedColDatum := RowToDatums(row, s.RecordSet.Fields())
+			for i, val := range encodedColDatum {
+				encodedColDatumWithCollateKey[i] = &val
+				decodedStringDatum[i] = &val
 				// For string values, we use the collation key instead of the original value.
 				if s.Collators[i] != nil && !val.IsNull() {
 					decodedVal, err := tablecodec.DecodeColumnValue(val.GetBytes(), s.ColsFieldType[i], s.Sc.TimeZone)
 					if err != nil {
 						return nil, err
 					}
+					// Store a copy for the original string value, so we can deal with the prefix column index.
+					decodedStringDatum[i] = &decodedVal
 
-					decodedVal.SetBytesAsString(s.Collators[i].Key(decodedVal.GetString()), decodedVal.Collation(), uint32(decodedVal.Length()))
+					collateKeyDatum := types.Datum{}
+					collateKeyDatum.SetBytesAsString(s.Collators[i].Key(decodedVal.GetString()), decodedVal.Collation(), uint32(decodedVal.Length()))
 					encodedKey, err := tablecodec.EncodeValue(s.Sc, nil, decodedVal)
 					if err != nil {
 						return nil, err
 					}
-					val.SetBytes(encodedKey)
+					collateKeyDatum.SetBytes(encodedKey)
+					encodedColDatumWithCollateKey[i] = &collateKeyDatum
 				}
 			}
-			err := collector.collectColumns(s.Sc, datums)
+			err := collector.collectColumns(s.Sc, encodedColDatumWithCollateKey)
 			if err != nil {
 				return nil, err
 			}
-			err = collector.collectColumnGroups(s.Sc, datums, nil, nil, s.NewColGroups)
+			err = collector.collectColumnGroups(s.Sc, encodedColDatumWithCollateKey, decodedStringDatum, s.Collators, s.NewColGroups)
 			if err != nil {
 				return nil, err
 			}
 			weight := s.Rng.Int63()
-			newCols := make([]types.Datum, len(datums))
-			for i := range datums {
-				datums[i].Copy(&newCols[i])
+			newCols := make([]types.Datum, len(encodedColDatum))
+			for i := range encodedColDatum {
+				encodedColDatum[i].Copy(&newCols[i])
 			}
 			item := &RowSampleItem{
 				Columns: newCols,
@@ -166,7 +176,7 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 	}
 }
 
-func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum) error {
+func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols []*types.Datum) error {
 	for i, col := range cols {
 		if col.IsNull() {
 			s.NullCount[i]++
@@ -174,7 +184,7 @@ func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols [
 		}
 		s.TotalSizes[i] += int64(len(col.GetBytes())) - 1
 		// Minus one is to remove the flag byte.
-		err := s.FMSketches[i].InsertValue(sc, col)
+		err := s.FMSketches[i].InsertValue(sc, *col)
 		if err != nil {
 			return err
 		}
@@ -182,14 +192,28 @@ func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols [
 	return nil
 }
 
-func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, originalColDatum []types.Datum, collator []collate.Collator, colGroups []*tipb.AnalyzeColumnGroup) error {
+func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols, originalColDatum []*types.Datum, collator []collate.Collator, colGroups []*tipb.AnalyzeColumnGroup) error {
 	colLen := len(cols)
 	datumBuffer := make([]types.Datum, 0, len(cols))
+	var tmpDatum types.Datum
 	for i, group := range colGroups {
 		datumBuffer = datumBuffer[:0]
 		hasNull := true
-		for _, c := range group.ColumnOffsets {
-			datumBuffer = append(datumBuffer, cols[c])
+		for ci, c := range group.ColumnOffsets {
+			if group.PrefixLengths[ci] != types.UnspecifiedLength && collator[c] != nil && !cols[c].IsNull() {
+				originalColDatum[c].Copy(&tmpDatum)
+				s.cutDatumByPrefixLength(&tmpDatum, int(group.PrefixLengths[i]), collator[c])
+				tmpDatum.SetBytesAsString(collator[c].Key(tmpDatum.GetString()), tmpDatum.Collation(), uint32(tmpDatum.Length()))
+				encodedKey, err := tablecodec.EncodeValue(sc, nil, tmpDatum)
+				if err != nil {
+					return err
+				}
+				tmpDatum.SetBytes(encodedKey)
+				datumBuffer = append(datumBuffer, *tmpDatum.Clone())
+				s.TotalSizes[colLen+i] += int64(len(encodedKey)) - 1
+				continue
+			}
+			datumBuffer = append(datumBuffer, *cols[c])
 			hasNull = hasNull && cols[c].IsNull()
 			s.TotalSizes[colLen+i] += int64(len(cols[c].GetBytes())) - 1
 		}
@@ -204,6 +228,25 @@ func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, c
 		}
 	}
 	return nil
+}
+
+func (s *RowSampleCollector) cutDatumByPrefixLength(v *types.Datum, length int, collator collate.Collator) {
+	isUTF8Encoded := collator.IsUTF8Encoded()
+	colValue := v.GetBytes()
+	if isUTF8Encoded {
+		if length != types.UnspecifiedLength && utf8.RuneCount(colValue) > length {
+			rs := bytes.Runes(colValue)
+			truncateStr := string(rs[:length])
+			// truncate value and limit its length
+			v.SetString(truncateStr, v.Collation())
+		}
+	} else if length != types.UnspecifiedLength && len(colValue) > length {
+		// truncate value and limit its length
+		v.SetBytes(colValue[:length])
+		if v.Kind() == types.KindString {
+			v.SetString(v.GetString(), v.Collation())
+		}
+	}
 }
 
 func (s *RowSampleCollector) sampleZippedRow(sample *RowSampleItem) {

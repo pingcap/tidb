@@ -725,9 +725,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 			if err != nil {
 				return 0, nil, nil, nil, err
 			}
-			if sample.Columns[i].Kind() == types.KindBytes {
-				sample.Columns[i].SetBytes(sample.Columns[i].GetBytes())
-			}
 		}
 	}
 	hists = make([]*statistics.Histogram, 0, len(e.colsInfo))
@@ -756,11 +753,21 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 		fmSketches = append(fmSketches, rootRowCollector.FMSketches[i])
 	}
 	colLen := len(e.colsInfo)
+	var tmpDatum types.Datum
 	for i, idx := range e.indexes {
 		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
 		for _, row := range rootRowCollector.Samples {
 			b := make([]byte, 0, 8)
 			for _, col := range idx.Columns {
+				if col.Length != types.UnspecifiedLength {
+					row.Columns[col.Offset].Copy(&tmpDatum)
+					ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
+					b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, tmpDatum)
+					if err != nil {
+						return 0, nil, nil, nil, err
+					}
+					continue
+				}
 				b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
 				if err != nil {
 					return 0, nil, nil, nil, err

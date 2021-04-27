@@ -123,6 +123,10 @@ func (uc *unicodeCICollator) Pattern() WildcardPattern {
 	return &unicodePattern{}
 }
 
+func (uc *unicodeCICollator) IsUTF8Encoded() bool {
+	return true
+}
+
 type unicodePattern struct {
 	patChars []rune
 	patTypes []byte

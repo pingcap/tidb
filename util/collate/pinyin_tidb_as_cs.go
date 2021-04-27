@@ -31,3 +31,7 @@ func (py *zhPinyinTiDBASCSCollator) Key(str string) []byte {
 func (py *zhPinyinTiDBASCSCollator) Pattern() WildcardPattern {
 	panic("implement me")
 }
+
+func (py *zhPinyinTiDBASCSCollator) IsUTF8Encoded() bool {
+	return true
+}
