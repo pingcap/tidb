@@ -163,7 +163,7 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	m, err := txn.BatchGet(context.Background(), keys)
+	m, err := toTiDBTxn(&txn).BatchGet(context.Background(), toTiDBKeys(keys))
 	c.Assert(err, IsNil)
 	c.Assert(len(m), Equals, int('z'-'a'+1))
 	for ch := byte('a'); ch <= byte('z'); ch++ {
