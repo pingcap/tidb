@@ -379,6 +379,21 @@ func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte, uint) {
 	return types.NewStringDatum(val), mysql.TypeVarString, 0
 }
 
+// HasSessionScope returns true if the scope for the sysVar includes session.
+func (sv *SysVar) HasSessionScope() bool {
+	return sv.Scope&ScopeSession != 0
+}
+
+// HasGlobalScope returns true if the scope for the sysVar includes global.
+func (sv *SysVar) HasGlobalScope() bool {
+	return sv.Scope&ScopeGlobal != 0
+}
+
+// HasNoneScope returns true if the scope for the sysVar is explicitly none
+func (sv *SysVar) HasNoneScope() bool {
+	return sv.Scope == ScopeNone
+}
+
 var sysVars map[string]*SysVar
 var sysVarsLock sync.RWMutex
 

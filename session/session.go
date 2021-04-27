@@ -950,7 +950,8 @@ func (s *session) varFromTiDBTable(name string) bool {
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
-func (s *session) GetGlobalSysVar(name string) (string, error) {
+func (s *session) GetGlobalSysVar(name string) (value string, err error) {
+	name = strings.ToLower(name)
 	if name == variable.TiDBSlowLogMasking {
 		name = variable.TiDBRedactLog
 	}
@@ -958,26 +959,23 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
-	sysVar, err := s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
-	if err != nil {
-		if errResultIsEmpty.Equal(err) {
-			sv := variable.GetSysVar(name)
-			if sv != nil {
-				return sv.Value, nil
-			}
-			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
-		}
-		return "", err
+
+	// Fetch from the svcache, it should be there
+	var ok bool
+	if value, ok = svcache.global[name]; !ok {
+		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
+
 	// Fetch mysql.tidb values if required
 	if s.varFromTiDBTable(name) {
-		return s.getTiDBTableValue(name, sysVar)
+		return s.getTiDBTableValue(name, value)
 	}
-	return sysVar, nil
+	return value, nil
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(name, value string) error {
+	name = strings.ToLower(name)
 	if name == variable.TiDBSlowLogMasking {
 		name = variable.TiDBRedactLog
 	}
@@ -991,7 +989,6 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if err != nil {
 		return err
 	}
-	name = strings.ToLower(name)
 	// update mysql.tidb if required.
 	if s.varFromTiDBTable(name) {
 		if err = s.setTiDBTableValue(name, sVal); err != nil {
@@ -1003,8 +1000,13 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if err != nil {
 		return err
 	}
-	_, _, err = s.ExecRestrictedStmt(context.TODO(), stmt)
-	return err
+	if _, _, err = s.ExecRestrictedStmt(context.TODO(), stmt); err != nil {
+		return err
+	}
+
+	// Update the svcache
+	// TODO: tell etcd peers that the svcache is stale!
+	return s.UpdateSysVarCacheForKey(name, sVal)
 }
 
 // setTiDBTableValue handles tikv_* sysvars which need to update mysql.tidb
@@ -2352,8 +2354,14 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
-	// copy the session var cache
-	s.initSessionVarsFromCache()
+
+	// eventually we shouldn't need this
+	s.buildSysVarCacheIfNeeded()
+
+	// Deep copy sessionvar cache
+	svcache.RLock()
+	s.sessionVars.InitSessionVarsFromCache(svcache.session)
+	svcache.RUnlock()
 
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
@@ -2439,143 +2447,16 @@ func finishBootstrap(store kv.Storage) {
 
 const quoteCommaQuote = "', '"
 
-var builtinGlobalVariable = []string{
-	variable.AutoCommit,
-	variable.SQLModeVar,
-	variable.MaxAllowedPacket,
-	variable.TimeZone,
-	variable.BlockEncryptionMode,
-	variable.WaitTimeout,
-	variable.InteractiveTimeout,
-	variable.MaxPreparedStmtCount,
-	variable.InitConnect,
-	variable.TxnIsolation,
-	variable.TxReadOnly,
-	variable.TransactionIsolation,
-	variable.TransactionReadOnly,
-	variable.NetBufferLength,
-	variable.QueryCacheType,
-	variable.QueryCacheSize,
-	variable.CharacterSetServer,
-	variable.AutoIncrementIncrement,
-	variable.AutoIncrementOffset,
-	variable.CollationServer,
-	variable.NetWriteTimeout,
-	variable.MaxExecutionTime,
-	variable.InnodbLockWaitTimeout,
-	variable.WindowingUseHighPrecision,
-	variable.SQLSelectLimit,
-	variable.DefaultWeekFormat,
-
-	/* TiDB specific global variables: */
-	variable.TiDBSkipASCIICheck,
-	variable.TiDBSkipUTF8Check,
-	variable.TiDBIndexJoinBatchSize,
-	variable.TiDBIndexLookupSize,
-	variable.TiDBIndexLookupConcurrency,
-	variable.TiDBIndexLookupJoinConcurrency,
-	variable.TiDBIndexSerialScanConcurrency,
-	variable.TiDBHashJoinConcurrency,
-	variable.TiDBProjectionConcurrency,
-	variable.TiDBHashAggPartialConcurrency,
-	variable.TiDBHashAggFinalConcurrency,
-	variable.TiDBWindowConcurrency,
-	variable.TiDBMergeJoinConcurrency,
-	variable.TiDBStreamAggConcurrency,
-	variable.TiDBExecutorConcurrency,
-	variable.TiDBBackoffLockFast,
-	variable.TiDBBackOffWeight,
-	variable.TiDBConstraintCheckInPlace,
-	variable.TiDBDDLReorgWorkerCount,
-	variable.TiDBDDLReorgBatchSize,
-	variable.TiDBDDLErrorCountLimit,
-	variable.TiDBOptInSubqToJoinAndAgg,
-	variable.TiDBOptPreferRangeScan,
-	variable.TiDBOptCorrelationThreshold,
-	variable.TiDBOptCorrelationExpFactor,
-	variable.TiDBOptCPUFactor,
-	variable.TiDBOptCopCPUFactor,
-	variable.TiDBOptNetworkFactor,
-	variable.TiDBOptScanFactor,
-	variable.TiDBOptDescScanFactor,
-	variable.TiDBOptMemoryFactor,
-	variable.TiDBOptDiskFactor,
-	variable.TiDBOptConcurrencyFactor,
-	variable.TiDBDistSQLScanConcurrency,
-	variable.TiDBInitChunkSize,
-	variable.TiDBMaxChunkSize,
-	variable.TiDBEnableCascadesPlanner,
-	variable.TiDBRetryLimit,
-	variable.TiDBDisableTxnAutoRetry,
-	variable.TiDBEnableWindowFunction,
-	variable.TiDBEnableStrictDoubleTypeCheck,
-	variable.TiDBEnableTablePartition,
-	variable.TiDBEnableVectorizedExpression,
-	variable.TiDBEnableFastAnalyze,
-	variable.TiDBExpensiveQueryTimeThreshold,
-	variable.TiDBEnableNoopFuncs,
-	variable.TiDBEnableIndexMerge,
-	variable.TiDBTxnMode,
-	variable.TiDBAllowBatchCop,
-	variable.TiDBAllowMPPExecution,
-	variable.TiDBOptBCJ,
-	variable.TiDBBCJThresholdSize,
-	variable.TiDBBCJThresholdCount,
-	variable.TiDBRowFormatVersion,
-	variable.TiDBEnableStmtSummary,
-	variable.TiDBStmtSummaryInternalQuery,
-	variable.TiDBStmtSummaryRefreshInterval,
-	variable.TiDBStmtSummaryHistorySize,
-	variable.TiDBStmtSummaryMaxStmtCount,
-	variable.TiDBStmtSummaryMaxSQLLength,
-	variable.TiDBMaxDeltaSchemaCount,
-	variable.TiDBCapturePlanBaseline,
-	variable.TiDBUsePlanBaselines,
-	variable.TiDBEvolvePlanBaselines,
-	variable.TiDBEnableExtendedStats,
-	variable.TiDBIsolationReadEngines,
-	variable.TiDBStoreLimit,
-	variable.TiDBAllowAutoRandExplicitInsert,
-	variable.TiDBEnableClusteredIndex,
-	variable.TiDBPartitionPruneMode,
-	variable.TiDBRedactLog,
-	variable.TiDBEnableTelemetry,
-	variable.TiDBShardAllocateStep,
-	variable.TiDBEnableChangeColumnType,
-	variable.TiDBEnableChangeMultiSchema,
-	variable.TiDBEnablePointGetCache,
-	variable.TiDBEnableAlterPlacement,
-	variable.TiDBEnableAmendPessimisticTxn,
-	variable.TiDBMemQuotaApplyCache,
-	variable.TiDBEnableParallelApply,
-	variable.TiDBMemoryUsageAlarmRatio,
-	variable.TiDBEnableRateLimitAction,
-	variable.TiDBEnableAsyncCommit,
-	variable.TiDBEnable1PC,
-	variable.TiDBGuaranteeLinearizability,
-	variable.TiDBAnalyzeVersion,
-	variable.TiDBEnableIndexMergeJoin,
-	variable.TiDBTrackAggregateMemoryUsage,
-	variable.TiDBMultiStatementMode,
-	variable.TiDBEnableExchangePartition,
-	variable.TiDBAllowFallbackToTiKV,
-	variable.TiDBEnableDynamicPrivileges,
-	variable.CTEMaxRecursionDepth,
-}
-
 // This should be renamed, because it should be copySessionVarsFromCache
 func (s *session) initSessionVarsFromCache() error {
 
-	// 1. Call RebuildSessionVarsCache() (eventually don't call it every time)
-	s.RebuildSessionVarsCache()
+	// 1. Call RebuildSysVarCache() (eventually don't call it every time)
+	s.RebuildSysVarCache()
 
 	// 2. Deep copy sessionVarCache and set it to s.SessionVars.systems
-
-	for varName, varVal := range sessionVarCache {
-		if err := s.sessionVars.InitSessionVar(varName, varVal); err != nil {
-			return err
-		}
-	}
+	svcache.RLock()
+	s.sessionVars.InitSessionVarsFromCache(svcache.session)
+	svcache.RUnlock()
 
 	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
 	if s.sessionVars.ClientCapability&mysql.ClientInteractive > 0 {
@@ -2585,68 +2466,6 @@ func (s *session) initSessionVarsFromCache() error {
 			}
 		}
 	}
-	return nil
-}
-
-// loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
-func (s *session) loadCommonGlobalVariablesIfNeeded() error {
-	vars := s.sessionVars
-	if vars.CommonGlobalLoaded {
-		return nil
-	}
-	if s.Value(sessionctx.Initing) != nil {
-		// When running bootstrap or upgrade, we should not access global storage.
-		return nil
-	}
-
-	var err error
-	// Use GlobalVariableCache if TiDB just loaded global variables within 2 second ago.
-	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
-	gvc := domain.GetDomain(s).GetGlobalVarsCache()
-	loadFunc := func() ([]chunk.Row, []*ast.ResultField, error) {
-		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
-		if len(variable.PluginVarNames) > 0 {
-			vars = append(vars, variable.PluginVarNames...)
-		}
-
-		stmt, err := s.ParseWithParams(context.TODO(), "select HIGH_PRIORITY * from mysql.global_variables where variable_name in (%?) order by VARIABLE_NAME", vars)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-
-		return s.ExecRestrictedStmt(context.TODO(), stmt)
-	}
-	rows, _, err := gvc.LoadGlobalVariables(loadFunc)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to load global variables",
-			zap.Uint64("conn", s.sessionVars.ConnectionID), zap.Error(err))
-		return err
-	}
-	vars.CommonGlobalLoaded = true
-
-	for _, row := range rows {
-		varName := row.GetString(0)
-		varVal := row.GetString(1)
-		// `collation_server` is related to `character_set_server`, set `character_set_server` will also set `collation_server`.
-		// We have to make sure we set the `collation_server` with right value.
-		if _, ok := vars.GetSystemVar(varName); !ok || varName == variable.CollationServer {
-			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
-	if vars.ClientCapability&mysql.ClientInteractive > 0 {
-		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
-			if err := vars.SetSystemVar(variable.WaitTimeout, varVal); err != nil {
-				return err
-			}
-		}
-	}
-
-	vars.CommonGlobalLoaded = true
 	return nil
 }
 

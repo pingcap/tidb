@@ -1382,9 +1382,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	return nil
 }
 
-func (s *SessionVars) InitSessionVar(name string, val string) error {
-	// fmt.Printf("$$$$ Setting initial sessionvar value for k: %s\n", name)
-	s.systems[name] = val
+func (s *SessionVars) InitSessionVarsFromCache(cache map[string]string) error {
+	for varName, varVal := range cache {
+		s.systems[varName] = varVal
+	}
+	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
+	if s.ClientCapability&mysql.ClientInteractive > 0 {
+		s.systems[WaitTimeout] = s.systems[InteractiveTimeout]
+	}
 	return nil
 }
 

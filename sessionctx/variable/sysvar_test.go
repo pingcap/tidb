@@ -168,3 +168,17 @@ func (*testSysVarSuite) TestEnumValidation(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "AUTO")
 }
+
+func (*testSysVarSuite) TestScope(c *C) {
+	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsTrue)
+	c.Assert(sv.HasGlobalScope(), IsTrue)
+
+	sv = SysVar{Scope: ScopeGlobal, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsFalse)
+	c.Assert(sv.HasGlobalScope(), IsTrue)
+
+	sv = SysVar{Scope: ScopeNone, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsFalse)
+	c.Assert(sv.HasGlobalScope(), IsFalse)
+}

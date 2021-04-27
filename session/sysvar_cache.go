@@ -15,6 +15,7 @@ package session
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -29,12 +30,16 @@ import (
 // and it has a cache miss-path which can be quite slow, such as when running
 // SHOW VARIABLES for the first time in a session (which will hit all session vars).
 
-var sessionVarCache map[string]string
+type sysVarCache struct {
+	sync.RWMutex
+	global  map[string]string
+	session map[string]string
+}
+
+var svcache sysVarCache
 
 func (s *session) fetchTableValues() (tableContents map[string]string) {
-
 	tableContents = make(map[string]string)
-
 	// Copy all variables from the table to tableContents
 	rs, err := s.ExecuteInternal(context.Background(), "SELECT variable_name, variable_value FROM mysql.global_variables")
 	if err != nil {
@@ -59,26 +64,60 @@ func (s *session) fetchTableValues() (tableContents map[string]string) {
 	}
 }
 
-func (s *session) RebuildSessionVarsCache() error {
+func (s *session) buildSysVarCacheIfNeeded() {
+	if len(svcache.global) == 0 || len(svcache.session) == 0 {
+		s.RebuildSysVarCache()
+	}
+}
+
+// RebuildSysVarCache rebuilds the sysvar cache both globally and for session vars.
+// It needs to be called when sysvars are added or removed. For global sysvar changes
+// UpdateSysVarCacheForKey can be called instead.
+func (s *session) RebuildSysVarCache() error {
+	svcache.Lock()
+	defer svcache.Unlock()
 
 	// Create a new map to hold the new cache,
 	// and a cache if what's available in the mysql_global_variables table
-	// (includes global-only vars that need to be ignored..)
-	newCache := make(map[string]string)
+	newSessionCache := make(map[string]string)
+	newGlobalCache := make(map[string]string)
 	tableContents := s.fetchTableValues()
 
 	for _, sv := range variable.GetSysVars() {
-		if sv.Scope&variable.ScopeSession != 0 {
+		if sv.HasSessionScope() {
 			if _, ok := tableContents[sv.Name]; ok {
-				newCache[sv.Name] = tableContents[sv.Name]
+				newSessionCache[sv.Name] = tableContents[sv.Name]
 			} else {
-				// fmt.Printf("%%%% could not find k: %s in cache!\n", sv.Name)
-				newCache[sv.Name] = sv.Value // use default
+				newSessionCache[sv.Name] = sv.Value // use default
+			}
+		}
+		if sv.HasGlobalScope() {
+			if _, ok := tableContents[sv.Name]; ok {
+				newGlobalCache[sv.Name] = tableContents[sv.Name]
+			} else {
+				newGlobalCache[sv.Name] = sv.Value // use default
 			}
 		}
 	}
 
-	// Set the sessionVarCache to be the new cache.
-	sessionVarCache = newCache
+	// Update the cache
+	svcache.session = newSessionCache
+	svcache.global = newGlobalCache
+	return nil
+}
+
+// UpdateSysVarCacheForKey is an optimization where we patch the contents of the
+// global and session cache rather than run RebuildSysVarCache()
+func (s *session) UpdateSysVarCacheForKey(nameInLower string, value string) error {
+	svcache.Lock()
+	defer svcache.Unlock()
+
+	sv := variable.GetSysVar(nameInLower)
+	if sv.HasSessionScope() {
+		svcache.session[nameInLower] = value
+	}
+	if sv.HasGlobalScope() {
+		svcache.global[nameInLower] = value
+	}
 	return nil
 }
