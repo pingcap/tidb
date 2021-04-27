@@ -529,6 +529,7 @@ var tokenMap = map[string]int{
 	"PRECEDING":                preceding,
 	"PRECISION":                precisionType,
 	"PREPARE":                  prepare,
+	"PRESERVE":                 preserve,
 	"PRIMARY":                  primary,
 	"PRIVILEGES":               privileges,
 	"PROCEDURE":                procedure,
