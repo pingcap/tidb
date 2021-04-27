@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -305,7 +305,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 	}
 
 	if resp.Resp == nil {
-		return false, errors.Trace(kv.ErrBodyMissing)
+		return false, errors.Trace(tikverr.ErrBodyMissing)
 	}
 	cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
 	if keyErr := cmdResp.GetError(); keyErr != nil {
@@ -403,7 +403,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				// This could avoids the deadlock scene of two large transaction.
 				if l.LockType != kvrpcpb.Op_PessimisticLock && l.TxnID > callerStartTS {
 					metrics.LockResolverCountWithWriteConflict.Inc()
-					return kv.NewErrWriteConfictWithArgs(callerStartTS, l.TxnID, status.commitTS, l.Key)
+					return tikverr.NewErrWriteConfictWithArgs(callerStartTS, l.TxnID, status.commitTS, l.Key)
 				}
 			} else {
 				if status.action != kvrpcpb.Action_MinCommitTSPushed {
@@ -610,7 +610,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			continue
 		}
 		if resp.Resp == nil {
-			return status, errors.Trace(kv.ErrBodyMissing)
+			return status, errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdResp := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
@@ -761,7 +761,7 @@ func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys []
 		return nil
 	}
 	if resp.Resp == nil {
-		return errors.Trace(kv.ErrBodyMissing)
+		return errors.Trace(tikverr.ErrBodyMissing)
 	}
 
 	checkResp := resp.Resp.(*kvrpcpb.CheckSecondaryLocksResponse)
@@ -891,7 +891,7 @@ func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region Region
 		return nil
 	}
 	if resp.Resp == nil {
-		return errors.Trace(kv.ErrBodyMissing)
+		return errors.Trace(tikverr.ErrBodyMissing)
 	}
 	cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
 	if keyErr := cmdResp.GetError(); keyErr != nil {
@@ -945,7 +945,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 			continue
 		}
 		if resp.Resp == nil {
-			return errors.Trace(kv.ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
@@ -996,7 +996,7 @@ func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegi
 			continue
 		}
 		if resp.Resp == nil {
-			return errors.Trace(kv.ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdResp := resp.Resp.(*kvrpcpb.PessimisticRollbackResponse)
 		if keyErr := cmdResp.GetErrors(); len(keyErr) > 0 {

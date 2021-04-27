@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 )
@@ -133,7 +134,7 @@ func (txn *tikvTxn) GetVars() interface{} {
 }
 
 func (txn *tikvTxn) extractKeyErr(err error) error {
-	if e, ok := errors.Cause(err).(*tikvstore.ErrKeyExist); ok {
+	if e, ok := errors.Cause(err).(*tikverr.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())
 	}
 	return extractKeyErr(err)
