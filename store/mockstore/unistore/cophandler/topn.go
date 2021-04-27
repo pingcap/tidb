@@ -17,6 +17,8 @@ import (
 	"container/heap"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	tipb "github.com/pingcap/tipb/go-tipb"
@@ -97,10 +99,16 @@ func (t *topNHeap) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.CompareDatum(t.sc, &v2)
-		if err != nil {
-			t.err = errors.Trace(err)
-			return true
+		var ret int
+		var err error
+		if expression.FieldTypeFromPB(by.GetExpr().GetFieldType()).Tp == mysql.TypeEnum {
+			ret = types.CompareUint64(v1.GetUint64(), v2.GetUint64())
+		} else {
+			ret, err = v1.CompareDatum(t.sc, &v2)
+			if err != nil {
+				t.err = errors.Trace(err)
+				return true
+			}
 		}
 
 		if by.Desc {
