@@ -22,7 +22,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -44,7 +43,6 @@ type nextPartition interface {
 // nolint:structcheck
 type innerPartitionInfo struct {
 	isFullPartition bool
-	nextRange       map[int64][]*ranger.Range
 }
 
 type nextPartitionForTableReader struct {
