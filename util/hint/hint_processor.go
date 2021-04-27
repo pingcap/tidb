@@ -62,7 +62,70 @@ func (hs *HintsSet) ContainTableHint(hint string) bool {
 	return false
 }
 
-// setTableHints4StmtNode sets table hints for select/update/delete.
+// FilterConflictReadFromeStorageHint filters the conflict read_from_storage hints.
+func FilterConflictReadFromeStorageHint(sctx sessionctx.Context, node ast.Node, hintReadFromStorage string) {
+	type hintData struct {
+		store string
+		conflict bool
+	}
+	hintMap := make(map[string]hintData)
+	defaultDB := strings.ToLower(sctx.GetSessionVars().CurrentDB)
+	hints := ExtractTableHintsFromStmtNode(node, sctx)
+	if hints == nil {
+		return
+	}
+	// Find the conflict read_from_storage hints
+	for _, hint := range hints {
+		if hint.HintName.L != hintReadFromStorage {
+			continue
+		}
+		for _, t := range hint.Tables {
+			table := t.DBName.L
+			if table == "" {
+				table = defaultDB
+			}
+			table = fmt.Sprintf("`%s`.`%s`", table, t.TableName.L)
+			v, ok := hintMap[table]
+			if ok && strings.Compare(v.store, hint.HintData.(model.CIStr).L) != 0 {
+				v.conflict = true
+				hintMap[table] = v
+				hint := fmt.Sprintf("%s(%s) and %s(%s)",v.store, table, hint.HintData.(model.CIStr).L, table)
+				err := dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				continue
+			}
+			hintMap[table] = hintData{store: hint.HintData.(model.CIStr).L, conflict: false}
+		}
+	}
+	// Generate new hints
+	newHints := make([]*ast.TableOptimizerHint, 0, len(hints))
+	for _, hint := range hints {
+		if hint.HintName.L != hintReadFromStorage {
+			newHints = append(newHints, hint)
+			continue
+		}
+		newTables := make([]ast.HintTable, 0, len(hint.Tables))
+		for _, t := range hint.Tables {
+			table := t.DBName.L
+			if table == "" {
+				table = defaultDB
+			}
+			table = fmt.Sprintf("`%s`.`%s`", table, t.TableName.L)
+			v, ok := hintMap[table]
+			if ok && !v.conflict {
+				newTables = append(newTables, t)
+			}
+		}
+		if len(newTables) == 0 {
+			continue
+		}
+		hint.Tables = newTables
+		newHints = append(newHints, hint)
+	}
+	setTableHints4StmtNode(node, newHints)
+}
+
+// setTableHints4StmtNode sets table hints for select/update/delete/insert/explain.
 func setTableHints4StmtNode(node ast.Node, hints []*ast.TableOptimizerHint) {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
@@ -71,6 +134,10 @@ func setTableHints4StmtNode(node ast.Node, hints []*ast.TableOptimizerHint) {
 		x.TableHints = hints
 	case *ast.DeleteStmt:
 		x.TableHints = hints
+	case *ast.InsertStmt:
+		x.TableHints = hints
+	case *ast.ExplainStmt:
+		setTableHints4StmtNode(x.Stmt, hints)
 	}
 }
 

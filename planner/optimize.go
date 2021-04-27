@@ -90,6 +90,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}()
 	}
 
+	hint.FilterConflictReadFromeStorageHint(sctx, node, plannercore.HintReadFromStorage)
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	stmtHints, warns := handleStmtHints(tableHints)
 	sessVars.StmtCtx.StmtHints = stmtHints
