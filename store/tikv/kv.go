@@ -211,7 +211,7 @@ func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVT
 
 // BeginWithMinStartTS begins transaction with the least startTS
 func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTxn, error) {
-	stores := make([]*Store, 0)
+	stores := make([]Store, 0)
 	allStores := s.regionCache.getStoresByType(tikvrpc.TiKV)
 	if txnScope != oracle.GlobalTxnScope {
 		for _, store := range allStores {
@@ -397,7 +397,7 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
 }
 
-func (s *KVStore) getMinResolveTSByStores(stores []*Store) uint64 {
+func (s *KVStore) getMinResolveTSByStores(stores []Store) uint64 {
 	failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
 		injectTS := val.(int)
 		failpoint.Return(uint64(injectTS))
@@ -439,10 +439,12 @@ func (s *KVStore) updateResolveTS(ctx context.Context) {
 	wg := &sync.WaitGroup{}
 	wg.Add(len(stores))
 	for _, store := range stores {
-		go func(ctx context.Context, wg *sync.WaitGroup, store *Store) {
+		addr := store.addr
+		storeID := store.storeID
+		go func(ctx context.Context, wg *sync.WaitGroup, storeAddr string, storeID uint64) {
 			defer wg.Done()
 			// TODO: add metrics for updateSafeTS
-			resp, err := tikvClient.SendRequest(ctx, store.addr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, &kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
+			resp, err := tikvClient.SendRequest(ctx, storeAddr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, &kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
 				StartKey: []byte(""),
 				EndKey:   []byte(""),
 			}}), ReadTimeoutShort)
@@ -451,9 +453,9 @@ func (s *KVStore) updateResolveTS(ctx context.Context) {
 			}
 			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
 			s.resolveTSMu.Lock()
-			s.resolveTSMu.resolveTS[store.storeID] = safeTSResp.GetSafeTs()
+			s.resolveTSMu.resolveTS[storeID] = safeTSResp.GetSafeTs()
 			s.resolveTSMu.Unlock()
-		}(ctx, wg, store)
+		}(ctx, wg, addr, storeID)
 	}
 	wg.Wait()
 }
