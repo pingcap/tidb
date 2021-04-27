@@ -530,15 +530,16 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 // GetTiFlashRPCContext returns RPCContext for a region must access flash store. If it returns nil, the region
 // must be out of date and already dropped from cache or not flash store found.
 // `loadBalance` is an option. For MPP and batch cop, it is pointless and might cause try the failed store repeatly.
-func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBalance bool) (*RPCContext, error) {
+func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBalance bool, collectAllStoreAddrs bool) (*RPCContext, []string, error) {
 	ts := time.Now().Unix()
 
+	allStoreAddrs := make([]string, 0, 1)
 	cachedRegion := c.getCachedRegionWithRLock(id)
 	if cachedRegion == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if !cachedRegion.checkRegionCacheTTL(ts) {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	regionStore := cachedRegion.getStore()
@@ -555,11 +556,11 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 		storeIdx, store := regionStore.accessStore(TiFlashOnly, accessIdx)
 		addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if len(addr) == 0 {
 			cachedRegion.invalidate(StoreNotFound)
-			return nil, nil
+			return nil, nil, nil
 		}
 		if store.getResolveState() == needCheck {
 			_, err := store.reResolve(c)
@@ -576,7 +577,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 			// TiFlash will always try to find out a valid peer, avoiding to retry too many times.
 			continue
 		}
-		return &RPCContext{
+		rpcContex := &RPCContext{
 			Region:     id,
 			Meta:       cachedRegion.meta,
 			Peer:       peer,
@@ -585,11 +586,31 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 			Addr:       addr,
 			AccessMode: TiFlashOnly,
 			TiKVNum:    regionStore.accessStoreNum(TiKVOnly),
-		}, nil
+		}
+		if collectAllStoreAddrs {
+			allStoreAddrs = append(allStoreAddrs, addr)
+			for startOffset := 1; startOffset < regionStore.accessStoreNum(TiFlashOnly); startOffset++ {
+				accessIdx = AccessIndex((sIdx + i + startOffset) % regionStore.accessStoreNum(TiFlashOnly))
+				storeIdx, store = regionStore.accessStore(TiFlashOnly, accessIdx)
+				addr, err = c.getStoreAddr(bo, cachedRegion, store, storeIdx)
+				if err != nil {
+					continue
+				}
+				if len(addr) == 0 {
+					continue
+				}
+				if store.getResolveState() == needCheck {
+					continue
+				}
+				allStoreAddrs = append(allStoreAddrs, addr)
+			}
+			return rpcContex, allStoreAddrs, nil
+		}
+		return rpcContex, nil, nil
 	}
 
 	cachedRegion.invalidate(Other)
-	return nil, nil
+	return nil, nil, nil
 }
 
 // KeyLocation is the region and range that a key is located.

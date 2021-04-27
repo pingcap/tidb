@@ -74,9 +74,10 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *tikv.Backoffer, ctxs []copTas
 		return tikv.ErrTiDBShuttingDown
 	}
 
+	addr := ctxs[0].ctx.Addr
 	for _, failedCtx := range ctxs {
 		ctx := failedCtx.ctx
-		if ctx.Meta != nil {
+		if ctx.Meta != nil && ctx.Addr == addr {
 			ss.GetRegionCache().OnSendFail(bo, ctx, ss.NeedReloadRegion(ctx), err)
 		}
 	}
