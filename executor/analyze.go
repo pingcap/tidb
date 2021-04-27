@@ -522,8 +522,9 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 	} else {
 		ranges = ranger.FullIntRange(false)
 	}
+	collExtStats := colExec.ctx.GetSessionVars().EnableExtendedStats
 	if colExec.analyzeVer == statistics.Version3 {
-		count, hists, topns, fmSketches, err := colExec.buildSamplingStats(ranges)
+		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats)
 		if err != nil {
 			return []analyzeResult{{Err: err, job: colExec.job}}
 		}
@@ -547,6 +548,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 			Hist:     hists[:cLen],
 			TopNs:    topns[:cLen],
 			Fms:      fmSketches[:cLen],
+			ExtStats: extStats,
 			job:      colExec.job,
 			StatsVer: colExec.analyzeVer,
 			Count:    count,
@@ -554,7 +556,6 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 
 		return []analyzeResult{colResult, idxResult}
 	}
-	collExtStats := colExec.ctx.GetSessionVars().EnableExtendedStats
 	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, collExtStats)
 	if err != nil {
 		return []analyzeResult{{Err: err, job: colExec.job}}
@@ -677,15 +678,16 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	return result, nil
 }
 
-func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
+func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtStats bool) (
 	count int64,
 	hists []*statistics.Histogram,
 	topns []*statistics.TopN,
 	fmSketches []*statistics.FMSketch,
+	extStats *statistics.ExtendedStatsColl,
 	err error,
 ) {
 	if err = e.open(ranges); err != nil {
-		return 0, nil, nil, nil, err
+		return 0, nil, nil, nil, nil, err
 	}
 	defer func() {
 		if err1 := e.resultHandler.Close(); err1 != nil {
@@ -707,7 +709,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 	for {
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
-			return 0, nil, nil, nil, err1
+			return 0, nil, nil, nil, nil, err1
 		}
 		if data == nil {
 			break
@@ -715,7 +717,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 		colResp := &tipb.AnalyzeColumnsResp{}
 		err = colResp.Unmarshal(data)
 		if err != nil {
-			return 0, nil, nil, nil, err
+			return 0, nil, nil, nil, nil, err
 		}
 		subCollector := &statistics.RowSampleCollector{
 			MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
@@ -733,7 +735,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 					zap.String("bytes value", fmt.Sprintf("%v", sample.Columns[i].GetBytes())),
 					zap.Int("kind", int(e.colsInfo[i].FieldType.Tp)),
 				)
-				return 0, nil, nil, nil, err
+				return 0, nil, nil, nil, nil, err
 			}
 			if sample.Columns[i].Kind() == types.KindBytes {
 				sample.Columns[i].SetBytes(sample.Columns[i].GetBytes())
@@ -741,7 +743,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 		}
 		sample.Handle, err = e.handleCols.BuildHandleByDatums(sample.Columns)
 		if err != nil {
-			return 0, nil, nil, nil, err
+			return 0, nil, nil, nil, nil, err
 		}
 	}
 
@@ -752,6 +754,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 	hists = make([]*statistics.Histogram, 0, len(e.colsInfo))
 	topns = make([]*statistics.TopN, 0, len(e.colsInfo))
 	fmSketches = make([]*statistics.FMSketch, 0, len(e.colsInfo))
+	sampleCollectors := make([]*statistics.SampleCollector, 0, len(e.colsInfo))
 	for i, col := range e.colsInfo {
 		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
 		for j, row := range rootRowCollector.Samples {
@@ -767,9 +770,10 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 			FMSketch:  rootRowCollector.FMSketches[i],
 			TotalSize: rootRowCollector.TotalSizes[i],
 		}
+		sampleCollectors = append(sampleCollectors, collector)
 		hg, topn, err := statistics.BuildHistAndTopNOnRowSample(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collector, &col.FieldType, true)
 		if err != nil {
-			return 0, nil, nil, nil, err
+			return 0, nil, nil, nil, nil, err
 		}
 		hists = append(hists, hg)
 		topns = append(topns, topn)
@@ -783,7 +787,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 			for _, col := range idx.Columns {
 				b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
 				if err != nil {
-					return 0, nil, nil, nil, err
+					return 0, nil, nil, nil, nil, err
 				}
 			}
 			sampleItems = append(sampleItems, &statistics.SampleItem{
@@ -799,13 +803,20 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 		}
 		hg, topn, err := statistics.BuildHistAndTopNOnRowSample(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), idx.ID, collector, types.NewFieldType(mysql.TypeBlob), false)
 		if err != nil {
-			return 0, nil, nil, nil, err
+			return 0, nil, nil, nil, nil, err
 		}
 		hists = append(hists, hg)
 		topns = append(topns, topn)
 		fmSketches = append(fmSketches, rootRowCollector.FMSketches[colLen+i])
 	}
 	count = rootRowCollector.Count
+	if needExtStats {
+		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+		extStats, err = statsHandle.BuildExtendedStats(e.tableID.GetStatisticsID(), e.colsInfo, sampleCollectors)
+		if err != nil {
+			return 0, nil, nil, nil, nil, err
+		}
+	}
 	return
 }
 
