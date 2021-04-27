@@ -1191,5 +1191,6 @@ type LogicalCTE struct {
 type LogicalCTETable struct {
 	logicalSchemaProducer
 
+	name         string
 	idForStorage int
 }

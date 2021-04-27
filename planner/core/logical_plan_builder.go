@@ -680,8 +680,8 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	}
 
 	// The recursive part in CTE must not be on the right side of a LEFT JOIN.
-	if _, ok := rightPlan.(*LogicalCTETable); ok && joinNode.Tp == ast.LeftJoin {
-		return nil, errors.New("In recursive query block of Recursive Common Table Expression 'cte', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints")
+	if lc, ok := rightPlan.(*LogicalCTETable); ok && joinNode.Tp == ast.LeftJoin {
+		return nil, ErrCTERecursiveForbiddenJoinOrder.GenWithStackByArgs(lc.name)
 	}
 
 	handleMap1 := b.handleHelper.popMap()
@@ -3644,7 +3644,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					}
 
 					cte.recursiveRef = true
-					p := LogicalCTETable{idForStorage: cte.storageID}.Init(b.ctx, b.getSelectOffset())
+					p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID}.Init(b.ctx, b.getSelectOffset())
 					p.SetSchema(cte.seedLP.Schema())
 					p.SetOutputNames(cte.seedLP.OutputNames())
 					return p, nil
