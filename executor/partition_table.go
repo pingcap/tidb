@@ -22,7 +22,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -44,7 +43,6 @@ type nextPartition interface {
 // nolint:structcheck
 type innerPartitionInfo struct {
 	isFullPartition bool
-	nextRange       map[int64][]*ranger.Range
 }
 
 type nextPartitionForTableReader struct {
@@ -65,23 +63,6 @@ func (n nextPartitionForTableReader) nextPartition(ctx context.Context, tbl tabl
 	}
 	if err := updateDAGRequestTableID(ctx, n.exec.dagPB, tbl.GetPhysicalID()); err != nil {
 		return nil, err
-	}
-	return n.exec, nil
-}
-
-type nextPartitionForIndexLookUp struct {
-	*innerPartitionInfo
-	exec *IndexLookUpExecutor
-}
-
-func (n nextPartitionForIndexLookUp) GetInnerPartitionInfo() *innerPartitionInfo {
-	return n.innerPartitionInfo
-}
-
-func (n nextPartitionForIndexLookUp) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
-	n.exec.table = tbl
-	if n.innerPartitionInfo != nil && !n.isFullPartition {
-		n.exec.ranges = n.nextRange[tbl.GetPhysicalID()]
 	}
 	return n.exec, nil
 }
