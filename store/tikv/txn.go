@@ -74,7 +74,8 @@ type KVTxn struct {
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info string, err error)
 
-	binlog BinlogExecutor
+	binlog        BinlogExecutor
+	isPessimistic bool
 }
 
 func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
@@ -198,9 +199,14 @@ func (txn *KVTxn) DelOption(opt int) {
 	txn.us.DelOption(opt)
 }
 
+// SetPessimistic indicates if the transaction should use pessimictic lock.
+func (txn *KVTxn) SetPessimistic(b bool) {
+	txn.isPessimistic = b
+}
+
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
-	return txn.us.GetOption(kv.Pessimistic) != nil
+	return txn.isPessimistic
 }
 
 func (txn *KVTxn) getKVFilter() KVFilter {

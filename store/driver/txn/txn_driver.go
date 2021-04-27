@@ -126,6 +126,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 			txn:     txn.KVTxn,
 			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
 		})
+	case tikvstore.Pessimistic:
+		txn.SetPessimistic(val.(bool))
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}

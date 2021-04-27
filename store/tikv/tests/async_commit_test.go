@@ -350,7 +350,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 		sessionID++
 		ctx := context.WithValue(context.Background(), util.SessionID, sessionID)
 		txn1 := s.beginAsyncCommit(c)
-		txn1.SetOption(kv.Pessimistic, isPessimistic)
+		txn1.SetPessimistic(isPessimistic)
 		s.mustGetFromTxn(c, txn1, []byte("k1"), []byte("v1"))
 		txn1.Set([]byte("k1"), []byte("v2"))
 
