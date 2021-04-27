@@ -24,9 +24,6 @@ const (
 	ErrDataOutOfRange              = 1690
 	ErrLockAcquireFailAndNoWaitSet = 3572
 
-	// Error codes used by TiDB ddl package
-	ErrLockExpire = 8229
-
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout    = 9001
 	ErrTiKVServerTimeout  = 9002
