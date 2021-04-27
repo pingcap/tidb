@@ -194,7 +194,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	_, err = txn1.Get(ctx, x)
 	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)
 
-	res, err := txn1.BatchGet(ctx, [][]byte{x, y, []byte("z")})
+	res, err := toTiDBTxn(&txn1).BatchGet(ctx, toTiDBKeys([][]byte{x, y, []byte("z")}))
 	c.Assert(err, IsNil)
 	c.Assert(res, HasLen, 0)
 
