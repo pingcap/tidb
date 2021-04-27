@@ -15,12 +15,15 @@ package txn
 
 import (
 	"context"
+	"sync/atomic"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 )
@@ -33,6 +36,11 @@ type tikvTxn struct {
 // NewTiKVTxn returns a new Transaction.
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	txn.SetOption(tikvstore.KVFilter, TiDBKVFilter{})
+
+	entryLimit := atomic.LoadUint64(&kv.TxnEntrySizeLimit)
+	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
+
 	return &tikvTxn{txn, make(map[int64]*model.TableInfo)}
 }
 
@@ -79,8 +87,16 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 	return newKVIterator(it), errors.Trace(err)
 }
 
+// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+// Do not use len(value) == 0 or value == nil to represent non-exist.
+// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	return txn.KVTxn.BatchGet(ctx, toTiKVKeys(keys))
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.GetSnapshot()).BatchGet(ctx, keys)
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
@@ -127,7 +143,7 @@ func (txn *tikvTxn) GetVars() interface{} {
 }
 
 func (txn *tikvTxn) extractKeyErr(err error) error {
-	if e, ok := errors.Cause(err).(*tikvstore.ErrKeyExist); ok {
+	if e, ok := errors.Cause(err).(*tikverr.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())
 	}
 	return extractKeyErr(err)

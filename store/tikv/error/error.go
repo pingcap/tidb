@@ -11,13 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package error
 
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	mysql "github.com/pingcap/tidb/store/tikv/errno"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -31,31 +30,30 @@ var (
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
 const MismatchClusterID = "mismatch cluster id"
 
-// MySQL error instances.
+// error instances.
 var (
-	ErrTiKVServerTimeout           = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVServerTimeout)
-	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(mysql.ErrTiFlashServerTimeout)
-	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(mysql.ErrResolveLockTimeout)
-	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(mysql.ErrPDServerTimeout)
-	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(mysql.ErrRegionUnavailable)
-	ErrTiKVServerBusy              = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVServerBusy)
-	ErrTiFlashServerBusy           = dbterror.ClassTiKV.NewStd(mysql.ErrTiFlashServerBusy)
-	ErrTiKVStaleCommand            = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVStaleCommand)
-	ErrTiKVMaxTimestampNotSynced   = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVMaxTimestampNotSynced)
-	ErrGCTooEarly                  = dbterror.ClassTiKV.NewStd(mysql.ErrGCTooEarly)
-	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(mysql.ErrQueryInterrupted)
-	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(mysql.ErrLockAcquireFailAndNoWaitSet)
-	ErrLockWaitTimeout             = dbterror.ClassTiKV.NewStd(mysql.ErrLockWaitTimeout)
-	ErrTokenLimit                  = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVStoreLimit)
-	ErrLockExpire                  = dbterror.ClassTiKV.NewStd(mysql.ErrLockExpire)
-	ErrUnknown                     = dbterror.ClassTiKV.NewStd(mysql.ErrUnknown)
+	ErrTiKVServerTimeout           = dbterror.ClassTiKV.NewStd(CodeTiKVServerTimeout)
+	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
+	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(CodeResolveLockTimeout)
+	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(CodePDServerTimeout)
+	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(CodeRegionUnavailable)
+	ErrTiKVServerBusy              = dbterror.ClassTiKV.NewStd(CodeTiKVServerBusy)
+	ErrTiFlashServerBusy           = dbterror.ClassTiKV.NewStd(CodeTiFlashServerBusy)
+	ErrTiKVStaleCommand            = dbterror.ClassTiKV.NewStd(CodeTiKVStaleCommand)
+	ErrTiKVMaxTimestampNotSynced   = dbterror.ClassTiKV.NewStd(CodeTiKVMaxTimestampNotSynced)
+	ErrGCTooEarly                  = dbterror.ClassTiKV.NewStd(CodeGCTooEarly)
+	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
+	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(CodeLockAcquireFailAndNoWaitSet)
+	ErrLockWaitTimeout             = dbterror.ClassTiKV.NewStd(CodeLockWaitTimeout)
+	ErrTokenLimit                  = dbterror.ClassTiKV.NewStd(CodeTiKVStoreLimit)
+	ErrUnknown                     = dbterror.ClassTiKV.NewStd(CodeUnknown)
 )
 
 // Registers error returned from TiKV.
 var (
-	_ = dbterror.ClassTiKV.NewStd(mysql.ErrDataOutOfRange)
-	_ = dbterror.ClassTiKV.NewStd(mysql.ErrTruncatedWrongValue)
-	_ = dbterror.ClassTiKV.NewStd(mysql.ErrDivisionByZero)
+	_ = dbterror.ClassTiKV.NewStd(CodeDataOutOfRange)
+	_ = dbterror.ClassTiKV.NewStd(CodeTruncatedWrongValue)
+	_ = dbterror.ClassTiKV.NewStd(CodeDivisionByZero)
 )
 
 // ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.

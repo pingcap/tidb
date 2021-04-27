@@ -342,9 +342,23 @@ type Driver interface {
 
 // TransactionOption indicates the option when beginning a transaction
 type TransactionOption struct {
-	TxnScope string
-	StartTS  *uint64
-	PrevSec  *uint64
+	TxnScope   string
+	StartTS    *uint64
+	PrevSec    *uint64
+	MinStartTS *uint64
+	MaxPrevSec *uint64
+}
+
+// SetMaxPrevSec set maxPrevSec
+func (to TransactionOption) SetMaxPrevSec(maxPrevSec uint64) TransactionOption {
+	to.MaxPrevSec = &maxPrevSec
+	return to
+}
+
+// SetMinStartTS set minStartTS
+func (to TransactionOption) SetMinStartTS(minStartTS uint64) TransactionOption {
+	to.MinStartTS = &minStartTS
+	return to
 }
 
 // SetStartTs set startTS
@@ -424,11 +438,3 @@ type SplittableStore interface {
 	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
-
-// Used for pessimistic lock wait time
-// these two constants are special for lock protocol with tikv
-// 0 means always wait, -1 means nowait, others meaning lock wait in milliseconds
-var (
-	LockAlwaysWait = int64(0)
-	LockNoWait     = int64(-1)
-)

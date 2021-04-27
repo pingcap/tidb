@@ -65,9 +65,8 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 			IsPKHandle: false,
 		},
 	}, nil)
-	m, err := bDecoder.DecodeToDatumMap(b, nil)
+	_, err = bDecoder.DecodeToDatumMap(b, nil)
 	c.Assert(err, IsNil)
-	v := m[largeColID]
 
 	colFt = types.NewFieldType(mysql.TypeLonglong)
 	smallColID := int64(1)
@@ -81,9 +80,9 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 			IsPKHandle: false,
 		},
 	}, nil)
-	m, err = bDecoder.DecodeToDatumMap(b, nil)
+	m, err := bDecoder.DecodeToDatumMap(b, nil)
 	c.Assert(err, IsNil)
-	v = m[smallColID]
+	v := m[smallColID]
 	c.Assert(v.GetInt64(), Equals, int64(2))
 }
 

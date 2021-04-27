@@ -29,6 +29,13 @@ type Iterator interface {
 	Close()
 }
 
+// Getter is the interface for the Get method.
+type Getter interface {
+	// Get gets the value for key k from kv store.
+	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
+	Get(k []byte) ([]byte, error)
+}
+
 // uSnapshot defines the interface for the snapshot fetched from KV store.
 type uSnapshot interface {
 	// Get gets the value for key k from kv store.
@@ -137,6 +144,12 @@ func (us *KVUnionStore) DelOption(opt int) {
 // GetOption implements the unionStore GetOption interface.
 func (us *KVUnionStore) GetOption(opt int) interface{} {
 	return us.opts[opt]
+}
+
+// SetEntrySizeLimit sets the size limit for each entry and total buffer.
+func (us *KVUnionStore) SetEntrySizeLimit(entryLimit, bufferLimit uint64) {
+	us.memBuffer.entrySizeLimit = entryLimit
+	us.memBuffer.bufferSizeLimit = bufferLimit
 }
 
 type options map[int]interface{}
