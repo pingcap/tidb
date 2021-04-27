@@ -53,7 +53,7 @@ partition p2 values less than (10))`)
 
 	// Index Merge
 	tk.MustExec("set @@tidb_enable_index_merge = 1")
-	tk.MustQuery("select /*+ use_index(i_c, i_id) */ * from pt where id = 4 or c < 7").Check(testkit.Rows("0 0", "2 2", "4 4", "6 6"))
+	tk.MustQuery("select /*+ use_index(i_c, i_id) */ * from pt where id = 4 or c < 7").Sort().Check(testkit.Rows("0 0", "2 2", "4 4", "6 6"))
 }
 
 func (s *partitionTableSuite) TestPartitionIndexJoin(c *C) {

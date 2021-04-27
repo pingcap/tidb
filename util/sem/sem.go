@@ -67,14 +67,14 @@ var (
 // Dynamic configuration by users may be a security risk.
 func Enable() {
 	atomic.StoreInt32(&semEnabled, 1)
-	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.BoolOn)
+	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.On)
 }
 
 // Disable disables SEM. This is intended to be used by the test-suite.
 // Dynamic configuration by users may be a security risk.
 func Disable() {
 	atomic.StoreInt32(&semEnabled, 0)
-	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.BoolOff)
+	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.Off)
 }
 
 // IsEnabled checks if Security Enhanced Mode (SEM) is enabled

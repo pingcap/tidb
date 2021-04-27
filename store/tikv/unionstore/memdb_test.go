@@ -16,16 +16,14 @@
 package unionstore
 
 import (
-	"context"
 	"encoding/binary"
 	"fmt"
-	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
 	leveldb "github.com/pingcap/goleveldb/leveldb/memdb"
 	"github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/store/tikv/util/testleak"
 )
 
 type KeyFlags = kv.KeyFlags
@@ -71,8 +69,6 @@ func (s *testMemDBSuite) TestGetSet(c *C) {
 
 func (s *testMemDBSuite) TestBigKV(c *C) {
 	db := newMemDB()
-	db.entrySizeLimit = math.MaxUint64
-	db.bufferSizeLimit = math.MaxUint64
 	db.Set([]byte{1}, make([]byte, 80<<20))
 	c.Assert(db.vlog.blockSize, Equals, maxBlockSize)
 	c.Assert(len(db.vlog.blocks), Equals, 1)
@@ -827,33 +823,4 @@ func (s *testKVSuite) TestBufferLimit(c *C) {
 
 	err = buffer.Delete(make([]byte, 500))
 	c.Assert(err, NotNil)
-}
-
-func (s *testKVSuite) TestBufferBatchGetter(c *C) {
-	snap := &mockSnapshot{store: newMemDB()}
-	ka := []byte("a")
-	kb := []byte("b")
-	kc := []byte("c")
-	kd := []byte("d")
-	snap.store.Set(ka, ka)
-	snap.store.Set(kb, kb)
-	snap.store.Set(kc, kc)
-	snap.store.Set(kd, kd)
-
-	// middle value is the same as snap
-	middle := newMemDB()
-	middle.Set(ka, []byte("a1"))
-	middle.Set(kc, []byte("c1"))
-
-	buffer := newMemDB()
-	buffer.Set(ka, []byte("a2"))
-	buffer.Delete(kb)
-
-	batchGetter := NewBufferBatchGetter(buffer, middle, snap)
-	result, err := batchGetter.BatchGet(context.Background(), [][]byte{ka, kb, kc, kd})
-	c.Assert(err, IsNil)
-	c.Assert(len(result), Equals, 3)
-	c.Assert(string(result[string(ka)]), Equals, "a2")
-	c.Assert(string(result[string(kc)]), Equals, "c1")
-	c.Assert(string(result[string(kd)]), Equals, "d")
 }
