@@ -1400,10 +1400,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.PrepareTxnCtx(ctx)
-	err := s.loadCommonGlobalVariablesIfNeeded()
-	if err != nil {
-		return nil, err
-	}
 
 	s.sessionVars.StartTime = time.Now()
 
@@ -1610,10 +1606,6 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
-	}
-	err = s.loadCommonGlobalVariablesIfNeeded()
-	if err != nil {
-		return
 	}
 
 	ctx := context.Background()
@@ -2360,6 +2352,9 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
+	// copy the session var cache
+	s.initSessionVarsFromCache()
+
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
 
@@ -2568,6 +2563,31 @@ var builtinGlobalVariable = []string{
 	variable.CTEMaxRecursionDepth,
 }
 
+// This should be renamed, because it should be copySessionVarsFromCache
+func (s *session) initSessionVarsFromCache() error {
+
+	// 1. Call RebuildSessionVarsCache() (eventually don't call it every time)
+	s.RebuildSessionVarsCache()
+
+	// 2. Deep copy sessionVarCache and set it to s.SessionVars.systems
+
+	for varName, varVal := range sessionVarCache {
+		if err := s.sessionVars.InitSessionVar(varName, varVal); err != nil {
+			return err
+		}
+	}
+
+	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
+	if s.sessionVars.ClientCapability&mysql.ClientInteractive > 0 {
+		if varVal, ok := s.sessionVars.GetSystemVar(variable.InteractiveTimeout); ok {
+			if err := s.sessionVars.SetSystemVar(variable.WaitTimeout, varVal); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars := s.sessionVars
@@ -2698,10 +2718,6 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 	txn.SetVars(s.sessionVars.KVVars)
 	s.txn.changeInvalidToValid(txn)
-	err = s.loadCommonGlobalVariablesIfNeeded()
-	if err != nil {
-		return err
-	}
 	return nil
 }
 

@@ -1382,6 +1382,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	return nil
 }
 
+func (s *SessionVars) InitSessionVar(name string, val string) error {
+	// fmt.Printf("$$$$ Setting initial sessionvar value for k: %s\n", name)
+	s.systems[name] = val
+	return nil
+}
+
 // GetReadableTxnMode returns the session variable TxnMode but rewrites it to "OPTIMISTIC" when it's empty.
 func (s *SessionVars) GetReadableTxnMode() string {
 	txnMode := s.TxnMode
