@@ -3551,7 +3551,7 @@ func (s *testIntegrationSuite) TestConflictReadFromStorage(c *C) {
 		}
 	}
 	tk.MustQuery(`explain select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t`)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 3126 Hint tikv(`test`.`t`) and tiflash(`test`.`t`) is ignored as conflicting/duplicated."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Storage hints are conflict, you can only specify one storage type of table test.t"))
 	tk.MustQuery(`explain select /*+ read_from_storage(tikv[t], tiflash[t]) */ * from t`)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 3126 Hint tikv(`test`.`t`) and tiflash(`test`.`t`) is ignored as conflicting/duplicated."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Storage hints are conflict, you can only specify one storage type of table test.t"))
 }
