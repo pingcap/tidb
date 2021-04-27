@@ -74,7 +74,8 @@ type KVTxn struct {
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info string, err error)
 
-	binlog BinlogExecutor
+	binlog             BinlogExecutor
+	schemaLeaseChecker SchemaLeaseChecker
 }
 
 func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
@@ -196,6 +197,11 @@ func (txn *KVTxn) GetOption(opt int) interface{} {
 // DelOption deletes an option.
 func (txn *KVTxn) DelOption(opt int) {
 	txn.us.DelOption(opt)
+}
+
+// SetSchemaLeaseChecker sets a hook to check schema version.
+func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
+	txn.schemaLeaseChecker = checker
 }
 
 // IsPessimistic returns true if it is pessimistic.
