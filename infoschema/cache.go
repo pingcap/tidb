@@ -26,7 +26,7 @@ type InfoCache struct {
 	cache []InfoSchema
 }
 
-// NewCache creates a new Handle.
+// NewCache creates a new InfoCache.
 func NewCache(capcity int) *InfoCache {
 	return &InfoCache{cache: make([]InfoSchema, 0, capcity)}
 }
