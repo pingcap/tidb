@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/latch"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -96,13 +97,13 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 	diff := time.Since(cachedTime)
 
 	if diff > (GcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
-		return kv.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point")
+		return tikverr.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point")
 	}
 
 	if startTime < cachedSafePoint {
 		t1 := oracle.GetTimeFromTS(startTime)
 		t2 := oracle.GetTimeFromTS(cachedSafePoint)
-		return kv.ErrGCTooEarly.GenWithStackByArgs(t1, t2)
+		return tikverr.ErrGCTooEarly.GenWithStackByArgs(t1, t2)
 	}
 
 	return nil
@@ -256,7 +257,7 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 		// This may cause duplicate data to be written.
 		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
 			if val.(bool) && !IsMockCommitErrorEnable() {
-				err = kv.ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
+				err = tikverr.ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
 			}
 		})
 

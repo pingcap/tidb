@@ -33,6 +33,7 @@ import (
 	drivertxn "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
@@ -880,13 +881,13 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.StartTS(), LockWaitTime: tikv.LockNoWait, WaitStartTime: time.Now()}
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
 	// cannot acquire lock immediately thus error
-	c.Assert(err.Error(), Equals, kv.ErrLockAcquireFailAndNoWaitSet.Error())
+	c.Assert(err.Error(), Equals, tikverr.ErrLockAcquireFailAndNoWaitSet.Error())
 
 	// test for wait limited time (200ms)
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.StartTS(), LockWaitTime: 200, WaitStartTime: time.Now()}
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
 	// cannot acquire lock in time thus error
-	c.Assert(err.Error(), Equals, kv.ErrLockWaitTimeout.Error())
+	c.Assert(err.Error(), Equals, tikverr.ErrLockWaitTimeout.Error())
 }
 
 func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
@@ -1023,7 +1024,7 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
 	c.Assert(err, IsNil)
 	waitErr := <-doneCh
-	c.Assert(kv.ErrLockWaitTimeout.Equal(waitErr), IsTrue)
+	c.Assert(tikverr.ErrLockWaitTimeout.Equal(waitErr), IsTrue)
 }
 
 func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
