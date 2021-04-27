@@ -142,23 +142,6 @@ func (txn *KVTxn) Get(ctx context.Context, k []byte) ([]byte, error) {
 	return ret, nil
 }
 
-// NewBufferBatchGetter creates a new BufferBatchGetter.
-func NewBufferBatchGetter(buffer unionstore.BatchBufferGetter, middleCache unionstore.Getter, snapshot unionstore.BatchGetter) *unionstore.BufferBatchGetter {
-	return unionstore.NewBufferBatchGetter(buffer, middleCache, snapshot)
-}
-
-// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
-// Do not use len(value) == 0 or value == nil to represent non-exist.
-// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
-func (txn *KVTxn) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
-}
-
 // Set sets the value for key k as v into kv store.
 // v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
 func (txn *KVTxn) Set(k []byte, v []byte) error {
