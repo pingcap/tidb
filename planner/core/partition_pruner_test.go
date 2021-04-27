@@ -458,6 +458,7 @@ partition by range (a) (
 func (s *testPartitionPruneSuit) TestRangePartitionPredicatePruner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
+	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
 	tk.MustExec("drop table if exists t")
