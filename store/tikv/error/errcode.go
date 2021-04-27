@@ -26,9 +26,6 @@ const (
 
 	CodeNotExist = 8021
 
-	// Codeor codes used by TiDB ddl package
-	CodeLockExpire = 8229
-
 	// TiKV/PD/TiFlash errors.
 	CodePDServerTimeout    = 9001
 	CodeTiKVServerTimeout  = 9002
