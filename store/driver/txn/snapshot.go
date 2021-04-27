@@ -66,8 +66,3 @@ func toTiKVKeys(keys []kv.Key) [][]byte {
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
 	return bytesKeys
 }
-
-func toKVKeys(keys [][]byte) []kv.Key {
-	kvKeys := *(*[]kv.Key)(unsafe.Pointer(&keys))
-	return kvKeys
-}
