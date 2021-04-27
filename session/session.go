@@ -68,6 +68,7 @@ import (
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -507,6 +508,27 @@ func (s *session) doCommit(ctx context.Context) error {
 		// of any previously committed transactions.
 		s.txn.SetOption(tikvstore.GuaranteeLinearizability,
 			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
+	}
+
+	// Filter out the temporary table key-values.
+	if tables := s.sessionVars.TxnCtx.GlobalTemporaryTables; tables != nil {
+		memBuffer := s.txn.GetMemBuffer()
+		for tid := range tables {
+			seekKey := tablecodec.EncodeTablePrefix(tid)
+			endKey := tablecodec.EncodeTablePrefix(tid + 1)
+			iter, err := memBuffer.Iter(seekKey, endKey)
+			if err != nil {
+				return err
+			}
+			for iter.Valid() && iter.Key().HasPrefix(seekKey) {
+				if err = memBuffer.Delete(iter.Key()); err != nil {
+					return errors.Trace(err)
+				}
+				if err = iter.Next(); err != nil {
+					return err
+				}
+			}
+		}
 	}
 
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
