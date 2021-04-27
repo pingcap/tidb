@@ -71,18 +71,6 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) er
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
-	// Here we add a constant 1 to avoid Projection operator is eliminated. (#23887)
-	if len(p.Exprs) == 0 {
-		constOne := expression.NewOne()
-		p.schema.Append(&expression.Column{
-			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  constOne.GetType(),
-		})
-		p.Exprs = append(p.Exprs, &expression.Constant{
-			Value:   constOne.Value,
-			RetType: constOne.GetType(),
-		})
-	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
 	return child.PruneColumns(selfUsedCols)
