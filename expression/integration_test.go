@@ -9139,4 +9139,26 @@ func (s *testIntegrationSuite) TestCTEInvalidUsage(c *C) {
 	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select sum(n) from cte group by n) select * from cte;", errno.ErrCTERecursiveForbidsAggregation)
 	// Window function is not allowed in the recursive part.
 	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select row_number() over(partition by n) from cte ) select * from cte;", errno.ErrCTERecursiveForbidsAggregation)
+	// Group by is not allowed in the recursive part.
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;", errno.ErrNotSupportedYet)
+	// Distinct is not allowed in the recursive part.
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select distinct  * from cte) select * from cte;", errno.ErrNotSupportedYet)
+	// The recursive SELECT part must reference the CTE only once and only in its FROM clause, not in any subquery.
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from cte, cte c1) select * from cte;", errno.ErrInvalidRequiresSingleReference)
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from (select * from cte) c1) select * from cte;", errno.ErrInvalidRequiresSingleReference)
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from cte where 1 in (select * from cte)) select * from cte;", errno.ErrInvalidRequiresSingleReference)
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from cte where exists (select * from cte)) select * from cte;", errno.ErrInvalidRequiresSingleReference)
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from cte where 1 >  (select * from cte)) select * from cte;", errno.ErrInvalidRequiresSingleReference)
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select (select * from cte) c1) select * from cte;", errno.ErrInvalidRequiresSingleReference)
+	// The recursive part can reference tables other than the CTE and join them with the CTE. If used in a join like this, the CTE must not be on the right side of a LEFT JOIN.
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from t left join cte on t.a=cte.n) select * from cte;", errno.ErrCTERecursiveForbiddenJoinOrder)
+	// Recursive part containing non-recursive query is not allowed.
+	tk.MustGetErrCode("with recursive cte(n) as (select  1 intersect select 2 union select * from cte union select 1) select * from cte;", errno.ErrCTERecursiveRequiresNonRecursiveFirst)
+	tk.MustGetErrCode("with recursive cte(n) as (select  * from cte union select * from cte) select * from cte;", errno.ErrCTERecursiveRequiresNonRecursiveFirst)
+	// Invalid use of intersect/except.
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 intersect select * from cte) select * from cte;", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select 1 intersect select * from cte) select * from cte;", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 except select * from cte) select * from cte;", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select 1 except select * from cte) select * from cte;", errno.ErrNotSupportedYet)
 }

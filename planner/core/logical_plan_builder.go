@@ -3317,9 +3317,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}()
 	if b.buildingRecursivePartForCTE {
 		if sel.Distinct || sel.OrderBy != nil {
-			return nil, ErrNotSupportedYet.GenWithStack("This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'")
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression")
 		}
-		if sel.GroupBy != nil || len(sel.WindowSpecs) > 0 {
+		if sel.GroupBy != nil {
 			return nil, ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
 	}
@@ -3395,6 +3395,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	// For example: select id from t group by id WINDOW w AS (ORDER BY uids DESC) ORDER BY id;
 	// We don't use the WINDOW w, but if the 'uids' column is not in the table t, we still need to report an error.
 	if hasWindowFuncField || sel.WindowSpecs != nil {
+		if b.buildingRecursivePartForCTE {
+			return nil, ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
+		}
+
 		windowAggMap, err = b.resolveWindowFunction(sel, p)
 		if err != nil {
 			return nil, err
@@ -3632,7 +3636,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					// Building the recursive part.
 					cte.useRecursive = true
 					if cte.seedLP == nil {
-						return nil, errors.New("First meet recursive")
+						return nil, ErrCTERecursiveRequiresNonRecursiveFirst.FastGenByArgs(tn.Name.String())
 					}
 
 					if cte.enterSubquery || cte.recursiveRef {
@@ -5707,31 +5711,14 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 	switch x := (cte).(type) {
 	case *ast.SetOprStmt:
 		if x.With != nil {
-			// Check CTE name must be unique.
-			nameMap := make(map[string]struct{})
-			for _, cte := range x.With.CTEs {
-				if _, ok := nameMap[cte.Name.L]; ok {
-					return errors.New("Not unique table/alias")
-				}
-				nameMap[cte.Name.L] = struct{}{}
-			}
-			l := len(x.With.CTEs)
-			for _, cte := range x.With.CTEs {
-				b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !x.With.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0, false, false})
-				b.allocIDForCTEStorage++
-				saveFlag := b.optFlag
-				b.optFlag = 0
-				_, err := b.buildCte(ctx, cte, x.With.IsRecursive)
-				if err != nil {
-					return err
-				}
-				b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
-				b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
-				b.optFlag = saveFlag
-			}
+			l := len(b.outerCTEs)
 			defer func() {
-				b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+				b.outerCTEs = b.outerCTEs[:l]
 			}()
+			err := b.buildWith(ctx, x.With)
+			if err != nil {
+				return err
+			}
 		}
 
 		seed := make([]LogicalPlan, 0)
@@ -5776,10 +5763,21 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			if expectSeed {
 				if cInfo.useRecursive == true {
 					if i == 0 {
-						return errors.New("No seed part")
+						return ErrCTERecursiveRequiresNonRecursiveFirst.GenWithStackByArgs(cInfo.def.Name.String())
 					}
 
 					// It's the recursive part. Build the seed part, and build this recursive part again.
+					// Before we build the seed part, do some checks.
+					if x.OrderBy != nil {
+						return ErrNotSupportedYet.GenWithStackByArgs("ORDER BY over UNION in recursive Common Table Expression")
+					}
+					if afterOpr != nil {
+						if *afterOpr != ast.Union && *afterOpr != ast.UnionAll {
+							return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("%s between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL", afterOpr.String()))
+						}
+						cInfo.isDistinct = *afterOpr == ast.Union
+					}
+
 					expectSeed = false
 					cInfo.useRecursive = false
 
@@ -5790,10 +5788,6 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 
 					if err != nil {
 						return err
-					}
-
-					if afterOpr != nil {
-						cInfo.isDistinct = *afterOpr == ast.Union
 					}
 
 					err = b.adjustCTEPlanSchema(p, cInfo.def)
@@ -5815,8 +5809,13 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 				if err != nil {
 					return err
 				}
+				if afterOpr != nil {
+					if *afterOpr != ast.Union && *afterOpr != ast.UnionAll {
+						return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("%s between recursive part's selects, hint: The operator between recursive part's selects must bu UNION[DISTINCT] or UNION ALL", afterOpr.String()))
+					}
+				}
 				if cInfo.useRecursive == false {
-					return errors.New("Recursive Common Table Expression should have one or more non-recursive query blocks followed by one or more recursive ones")
+					return ErrCTERecursiveRequiresNonRecursiveFirst.GenWithStackByArgs(cInfo.def.Name.String())
 				}
 				cInfo.useRecursive = false
 				recursive = append(recursive, p)
@@ -5837,6 +5836,9 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 	default:
 		p, err := b.buildResultSetNode(ctx, x)
 		if err != nil {
+			if errors.ErrorEqual(err, ErrCTERecursiveRequiresNonRecursiveFirst) {
+				err = ErrCTERecursiveRequiresUnion.GenWithStackByArgs(cInfo.def.Name.String())
+			}
 			return err
 		}
 		cInfo.seedLP = p
@@ -5881,7 +5883,7 @@ func resetCTECheckForSubQuery(ci []*cteInfo) {
 
 func (b *PlanBuilder) genCTETableNameForError() string {
 	name := ""
-	for i := len(b.outerCTEs)-1; i >= 0; i-- {
+	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
 		if b.outerCTEs[i].isBuilding {
 			name = b.outerCTEs[i].def.Name.String()
 			break
