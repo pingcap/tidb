@@ -278,7 +278,7 @@ func (txn *LazyTxn) Rollback() error {
 	return txn.Transaction.Rollback()
 }
 
-// Wrap the inner transaction's `LockKeys` to record the status
+// LockKeys Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	originState := txn.State
 	txn.State = txnInfo.TxnLockWaiting
@@ -342,7 +342,7 @@ func keyNeedToLock(k, v []byte, flags tikvstore.KeyFlags) bool {
 	return !isNonUniqueIndex
 }
 
-// Datum dump the TxnState to Datum for displaying in `TIDB_TRX`
+// Info dump the TxnState to Datum for displaying in `TIDB_TRX`
 func (txn *LazyTxn) Info() *txnInfo.TxnInfo {
 	if !txn.Valid() {
 		return nil

@@ -35,7 +35,7 @@ const (
 	TxnRollingBack TxnRunningState = iota
 )
 
-// Infomation about a running transaction
+// TxnInfo is information about a running transaction
 // This is supposed to be the datasource of `TIDB_TRX` in infoschema
 type TxnInfo struct {
 	StartTS uint64
@@ -60,7 +60,7 @@ type TxnInfo struct {
 	CurrentDB string
 }
 
-// Convert the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table
+// ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table
 func (info TxnInfo) ToDatum() []types.Datum {
 	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
 	var blockStartTime interface{}
