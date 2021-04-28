@@ -281,7 +281,10 @@ func (db *MemDB) set(key []byte, value []byte, ops ...kv.FlagsOp) error {
 
 	if value != nil {
 		if size := uint64(len(key) + len(value)); size > db.entrySizeLimit {
-			return tidbkv.ErrEntryTooLarge.GenWithStackByArgs(db.entrySizeLimit, size)
+			return &tikverr.ErrEntryTooLarge{
+				Limit: db.entrySizeLimit,
+				Size:  size,
+			}
 		}
 	}
 
