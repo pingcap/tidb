@@ -402,3 +402,31 @@ func baseTestSlidingWindowFunctions(tk *testkit.TestKit) {
 	result = tk.MustQuery("SELECT sex, MAX(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
 	result.Check(testkit.Rows("<nil> 11", "<nil> 11", "M 5", "F 5", "F 4", "F 3", "M 2"))
 }
+
+func (s *testSuite7) TestIssue24264(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl_2")
+	tk.MustExec("create table tbl_2 ( col_10 char(65) collate utf8mb4_unicode_ci not null , col_11 bigint not null , col_12 datetime not null , col_13 bigint unsigned default 327695751717730004 , col_14 timestamp default '2010-11-18' not null , primary key idx_5 ( col_11,col_13 ) /*T![clustered_index] clustered */ , unique key idx_6 ( col_10,col_11,col_13 ) , unique key idx_7 ( col_14,col_12,col_13 ) )")
+	tk.MustExec("insert into tbl_2 values ( 'RmF',-5353757041350034197,'1996-01-22',1866803697729291364,'1996-09-11' )")
+	tk.MustExec("insert into tbl_2 values ( 'xEOGaB',-6602924241498980347,'2019-02-22',8297270320597030697,'1972-04-04' )")
+	tk.MustExec("insert into tbl_2 values ( 'dvUztqgTPAhLdzgEsV',3316448219481769821,'2034-09-12',937089564901142512,'2030-12-04' )")
+	tk.MustExec("insert into tbl_2 values ( 'mNoyfbT',-6027094365061219400,'2035-10-10',1752804734961508175,'1992-08-09' )")
+	tk.MustExec("insert into tbl_2 values ( 'BDPJMhLYXuKB',6823702503458376955,'2015-04-09',737914379167848827,'2026-04-29' )")
+	tk.MustExec("insert into tbl_2 values ( 'WPiaVfPstGohvHd',1308183537252932688,'2020-05-03',5364104746649397703,'1979-01-28' )")
+	tk.MustExec("insert into tbl_2 values ( 'lrm',4642935044097656317,'1973-04-29',149081313305673035,'2013-02-03' )")
+	tk.MustExec("insert into tbl_2 values ( '',-7361040853169906422,'2024-10-22',6308270832310351889,'1981-02-01' )")
+	tk.MustExec("insert into tbl_2 values ( 'uDANahGcLwpSssabD',2235074865448210231,'1992-10-10',7140606140672586593,'1992-11-25' )")
+	tk.MustExec("insert into tbl_2 values ( 'TDH',-1911014243756021618,'2013-01-26',2022218243939205750,'1982-04-04' )")
+	tk.MustQuery("select   lead(col_13,1,NULL) over w from tbl_2 window w as (order by col_13)").Check(testkit.Rows(
+		"737914379167848827",
+		"937089564901142512",
+		"1752804734961508175",
+		"1866803697729291364",
+		"2022218243939205750",
+		"5364104746649397703",
+		"6308270832310351889",
+		"7140606140672586593",
+		"8297270320597030697",
+		"<nil>"))
+}
