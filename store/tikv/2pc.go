@@ -1399,8 +1399,7 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 		err := errors.Errorf("mock check schema valid failure")
 		failpoint.Return(nil, false, err)
 	})
-	checker := c.txn.schemaLeaseChecker
-	if checker == nil {
+	if c.txn.schemaLeaseChecker == nil {
 		if c.sessionID > 0 {
 			logutil.Logger(ctx).Warn("schemaLeaseChecker is not set for this transaction",
 				zap.Uint64("sessionID", c.sessionID),
@@ -1409,7 +1408,7 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 		}
 		return nil, false, nil
 	}
-	relatedChanges, err := checker.CheckBySchemaVer(checkTS, startInfoSchema)
+	relatedChanges, err := c.txn.schemaLeaseChecker.CheckBySchemaVer(checkTS, startInfoSchema)
 	if err != nil {
 		if tryAmend && relatedChanges != nil && relatedChanges.Amendable && c.txn.schemaAmender != nil {
 			memAmended, amendErr := c.tryAmendTxn(ctx, startInfoSchema, relatedChanges)
