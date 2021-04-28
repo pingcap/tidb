@@ -9297,6 +9297,7 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,tidx")
 	tk.MustExec("create table t(e enum(" + strings.Join(elems, ",") + "))")
 	tk.MustExec("create table tidx(e enum(" + strings.Join(elems, ",") + "), index idx(e))")
 
