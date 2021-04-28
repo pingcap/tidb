@@ -2053,11 +2053,11 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
-	p.cost = t.cost()
-	return &rootTask{
+	rt := &rootTask{
 		p:   p,
-		cst: cst,
+		cst: t.cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor,
 	}
+	p.cost = rt.cost()
 	return rt
 }
 
