@@ -2686,31 +2686,18 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 	if v.StoreType == kv.TiFlash {
 		sctx.IsTiFlash.Store(true)
-		partsExecutor := make([]Executor, 0, len(partitions))
-		for _, part := range partitions {
-			exec, err := buildNoRangeTableReader(b, v)
-			if err != nil {
-				b.err = err
-				return nil
-			}
-			exec.ranges = ts.Ranges
-			nexec, err := nextPartitionForTableReader{exec: exec}.nextPartition(context.Background(), part)
-			if err != nil {
-				b.err = err
-				return nil
-			}
-			partsExecutor = append(partsExecutor, nexec)
+		exec, err := buildNoRangeTableReader(b, v)
+		if err != nil {
+			b.err = err
+			return nil
 		}
-		if len(partsExecutor) == 0 {
-			return &TableDualExec{baseExecutor: *ret.base()}
+		exec.ranges = ts.Ranges
+		exec.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
+			sctx:       b.ctx,
+			partitions: partitions,
+			ranges:     ts.Ranges,
 		}
-		if len(partsExecutor) == 1 {
-			return partsExecutor[0]
-		}
-		return &UnionExec{
-			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), partsExecutor...),
-			concurrency:  b.ctx.GetSessionVars().UnionConcurrency(),
-		}
+		return exec
 	}
 
 	if len(partitions) == 0 {

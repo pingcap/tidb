@@ -40,33 +40,6 @@ type nextPartition interface {
 	nextPartition(context.Context, table.PhysicalTable) (Executor, error)
 }
 
-// nolint:structcheck
-type innerPartitionInfo struct {
-	isFullPartition bool
-}
-
-type nextPartitionForTableReader struct {
-	*innerPartitionInfo
-	rangeBuilders map[int64]kvRangeBuilder
-	exec          *TableReaderExecutor
-}
-
-func (n nextPartitionForTableReader) GetInnerPartitionInfo() *innerPartitionInfo {
-	return n.innerPartitionInfo
-}
-
-func (n nextPartitionForTableReader) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
-	n.exec.table = tbl
-	n.exec.kvRanges = n.exec.kvRanges[:0]
-	if n.innerPartitionInfo != nil && !n.isFullPartition {
-		n.exec.kvRangeBuilder = n.rangeBuilders[tbl.GetPhysicalID()]
-	}
-	if err := updateDAGRequestTableID(ctx, n.exec.dagPB, tbl.GetPhysicalID()); err != nil {
-		return nil, err
-	}
-	return n.exec, nil
-}
-
 type nextPartitionForUnionScan struct {
 	b     *executorBuilder
 	us    *plannercore.PhysicalUnionScan
