@@ -166,9 +166,10 @@ type HashAggExec struct {
 	isChildReturnEmpty bool
 	// After we support parallel execution for aggregation functions with distinct,
 	// we can remove this attribute.
-	isUnparallelExec bool
-	prepared         bool
-	executed         bool
+	isUnparallelExec        bool
+	parallelExecInitialized bool
+	prepared                bool
+	executed                bool
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -204,33 +205,46 @@ func (d *HashAggIntermData) getPartialResultBatch(sc *stmtctx.StatementContext, 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
 	if e.isUnparallelExec {
-		e.memTracker.Consume(-e.childResult.MemoryUsage())
 		e.childResult = nil
 		e.groupSet = nil
 		e.partialResultMap = nil
+<<<<<<< HEAD
+=======
+		if e.memTracker != nil {
+			e.memTracker.ReplaceBytesUsed(0)
+		}
+>>>>>>> 0cb32a128... executor: fix projection executor panic and add failpoint test (#24231)
 		return e.baseExecutor.Close()
 	}
-	// `Close` may be called after `Open` without calling `Next` in test.
-	if !e.prepared {
-		close(e.inputCh)
+	if e.parallelExecInitialized {
+		// `Close` may be called after `Open` without calling `Next` in test.
+		if !e.prepared {
+			close(e.inputCh)
+			for _, ch := range e.partialOutputChs {
+				close(ch)
+			}
+			for _, ch := range e.partialInputChs {
+				close(ch)
+			}
+			close(e.finalOutputCh)
+		}
+		close(e.finishCh)
 		for _, ch := range e.partialOutputChs {
-			close(ch)
+			for range ch {
+			}
 		}
 		for _, ch := range e.partialInputChs {
-			close(ch)
+			for range ch {
+			}
 		}
-		close(e.finalOutputCh)
-	}
-	close(e.finishCh)
-	for _, ch := range e.partialOutputChs {
-		for range ch {
+		for range e.finalOutputCh {
 		}
-	}
-	for _, ch := range e.partialInputChs {
-		for chk := range ch {
-			e.memTracker.Consume(-chk.MemoryUsage())
+		e.executed = false
+		if e.memTracker != nil {
+			e.memTracker.ReplaceBytesUsed(0)
 		}
 	}
+<<<<<<< HEAD
 	for range e.finalOutputCh {
 	}
 	e.executed = false
@@ -250,6 +264,8 @@ func (e *HashAggExec) Close() error {
 		runtimeStats.SetConcurrencyInfo(partialConcurrencyInfo, finalConcurrencyInfo)
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
+=======
+>>>>>>> 0cb32a128... executor: fix projection executor panic and add failpoint test (#24231)
 	return e.baseExecutor.Close()
 }
 
@@ -258,6 +274,11 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	failpoint.Inject("mockHashAggExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock HashAggExec.baseExecutor.Open returned error"))
+		}
+	})
 	e.prepared = false
 
 	e.memTracker = memory.NewTracker(e.id, -1)
@@ -340,6 +361,8 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		}
 		e.finalWorkers[i].finalResultHolderCh <- newFirstChunk(e)
 	}
+
+	e.parallelExecInitialized = true
 }
 
 func (w *HashAggPartialWorker) getChildInput() bool {
@@ -838,6 +861,11 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	failpoint.Inject("mockStreamAggExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock StreamAggExec.baseExecutor.Open returned error"))
+		}
+	})
 	e.childResult = newFirstChunk(e.children[0])
 	e.executed = false
 	e.isChildReturnEmpty = true
@@ -858,8 +886,15 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *StreamAggExec) Close() error {
+<<<<<<< HEAD
 	e.memTracker.Consume(-e.childResult.MemoryUsage())
 	e.childResult = nil
+=======
+	if e.childResult != nil {
+		e.memTracker.Consume(-e.childResult.MemoryUsage() - e.memUsageOfInitialPartialResult)
+		e.childResult = nil
+	}
+>>>>>>> 0cb32a128... executor: fix projection executor panic and add failpoint test (#24231)
 	e.groupChecker.reset()
 	return e.baseExecutor.Close()
 }
