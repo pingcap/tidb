@@ -76,6 +76,7 @@ type KVTxn struct {
 
 	binlog        BinlogExecutor
 	isPessimistic bool
+	kvFilter      KVFilter
 }
 
 func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
@@ -134,7 +135,7 @@ func (txn *KVTxn) GetVars() *kv.Variables {
 // Get implements transaction interface.
 func (txn *KVTxn) Get(ctx context.Context, k []byte) ([]byte, error) {
 	ret, err := txn.us.Get(ctx, k)
-	if tidbkv.IsErrNotFound(err) {
+	if tikverr.IsErrNotFound(err) {
 		return nil, err
 	}
 	if err != nil {
@@ -204,16 +205,14 @@ func (txn *KVTxn) SetPessimistic(b bool) {
 	txn.isPessimistic = b
 }
 
+// SetKVFilter sets the filter to ignore key-values in memory buffer.
+func (txn *KVTxn) SetKVFilter(filter KVFilter) {
+	txn.kvFilter = filter
+}
+
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
 	return txn.isPessimistic
-}
-
-func (txn *KVTxn) getKVFilter() KVFilter {
-	if filter := txn.us.GetOption(kv.KVFilter); filter != nil {
-		return filter.(KVFilter)
-	}
-	return nil
 }
 
 // Commit commits the transaction operations to KV store.

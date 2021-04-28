@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -347,11 +346,6 @@ func (s *KVStore) GetOracle() oracle.Oracle {
 // GetPDClient returns the PD client.
 func (s *KVStore) GetPDClient() pd.Client {
 	return s.pdClient
-}
-
-// ShowStatus returns the specified status of the storage
-func (s *KVStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
-	return nil, tidbkv.ErrNotImplemented
 }
 
 // SupportDeleteRange gets the storage support delete range or not.
