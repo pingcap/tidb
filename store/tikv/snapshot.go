@@ -80,7 +80,7 @@ type KVSnapshot struct {
 	store           *KVStore
 	version         uint64
 	isolationLevel  IsoLevel
-	priority        pb.CommandPri
+	priority        Priority
 	notFillCache    bool
 	syncLog         bool
 	keyOnly         bool
@@ -121,7 +121,6 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 	return &KVSnapshot{
 		store:           store,
 		version:         ts,
-		priority:        pb.CommandPri_Normal,
 		vars:            kv.DefaultVars,
 		replicaReadSeed: replicaReadSeed,
 		resolvedLocks:   util.NewTSSet(5),
@@ -308,7 +307,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			Keys:    pending,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority,
+			Priority:     s.priority.ToPB(),
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
@@ -458,7 +457,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			Key:     k,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority,
+			Priority:     s.priority.ToPB(),
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
@@ -618,6 +617,11 @@ func (s *KVSnapshot) DelOption(opt int) {
 // SetIsolationLevel sets the isolation level used to scan data from tikv.
 func (s *KVSnapshot) SetIsolationLevel(level IsoLevel) {
 	s.isolationLevel = level
+}
+
+// SetPriority sets the priority for tikv to execute commands.
+func (s *KVSnapshot) SetPriority(pri Priority) {
+	s.priority = pri
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.
