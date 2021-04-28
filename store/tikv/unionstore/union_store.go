@@ -29,6 +29,13 @@ type Iterator interface {
 	Close()
 }
 
+// Getter is the interface for the Get method.
+type Getter interface {
+	// Get gets the value for key k from kv store.
+	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
+	Get(k []byte) ([]byte, error)
+}
+
 // uSnapshot defines the interface for the snapshot fetched from KV store.
 type uSnapshot interface {
 	// Get gets the value for key k from kv store.

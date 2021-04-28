@@ -512,7 +512,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(tikvstore.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 	s.txn.SetOption(tikvstore.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
-	s.txn.SetOption(tikvstore.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
+	s.txn.SetOption(tikvstore.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
 		s.txn.SetOption(tikvstore.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
@@ -714,7 +714,7 @@ func (s *session) isTxnRetryableError(err error) bool {
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	var err error
 	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
-		err = tikvstore.ErrLockExpire
+		err = kv.ErrLockExpire
 	} else {
 		return nil
 	}
@@ -2755,6 +2755,16 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 		}
 	case ast.TimestampBoundExactStaleness:
 		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
+		if err != nil {
+			return err
+		}
+	case ast.TimestampBoundMaxStaleness:
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetMaxPrevSec(option.PrevSec))
+		if err != nil {
+			return err
+		}
+	case ast.TimestampBoundMinReadTimestamp:
+		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetMinStartTS(option.StartTS))
 		if err != nil {
 			return err
 		}
