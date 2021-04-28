@@ -22,7 +22,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -44,7 +43,6 @@ type nextPartition interface {
 // nolint:structcheck
 type innerPartitionInfo struct {
 	isFullPartition bool
-	nextRange       map[int64][]*ranger.Range
 }
 
 type nextPartitionForTableReader struct {
@@ -67,52 +65,6 @@ func (n nextPartitionForTableReader) nextPartition(ctx context.Context, tbl tabl
 		return nil, err
 	}
 	return n.exec, nil
-}
-
-type nextPartitionForIndexLookUp struct {
-	*innerPartitionInfo
-	exec *IndexLookUpExecutor
-}
-
-func (n nextPartitionForIndexLookUp) GetInnerPartitionInfo() *innerPartitionInfo {
-	return n.innerPartitionInfo
-}
-
-func (n nextPartitionForIndexLookUp) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
-	n.exec.table = tbl
-	if n.innerPartitionInfo != nil && !n.isFullPartition {
-		n.exec.ranges = n.nextRange[tbl.GetPhysicalID()]
-	}
-	return n.exec, nil
-}
-
-type nextPartitionForIndexReader struct {
-	*innerPartitionInfo
-	exec *IndexReaderExecutor
-}
-
-func (n nextPartitionForIndexReader) GetInnerPartitionInfo() *innerPartitionInfo {
-	return n.innerPartitionInfo
-}
-
-func (n nextPartitionForIndexReader) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
-	exec := n.exec
-	exec.table = tbl
-	exec.physicalTableID = tbl.GetPhysicalID()
-	if n.innerPartitionInfo != nil && !n.isFullPartition {
-		exec.ranges = n.nextRange[tbl.GetPhysicalID()]
-	}
-	return exec, nil
-}
-
-type nextPartitionForIndexMerge struct {
-	exec *IndexMergeReaderExecutor
-}
-
-func (n nextPartitionForIndexMerge) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
-	exec := n.exec
-	exec.table = tbl
-	return exec, nil
 }
 
 type nextPartitionForUnionScan struct {
