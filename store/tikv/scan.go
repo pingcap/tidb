@@ -191,7 +191,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			Context: &pb.Context{
 				Priority:       s.snapshot.priority,
 				NotFillCache:   s.snapshot.notFillCache,
-				IsolationLevel: IsolationLevelToPB(s.snapshot.isolationLevel),
+				IsolationLevel: s.snapshot.isolationLevel.ToPB(),
 			},
 			StartKey:   s.nextStartKey,
 			EndKey:     reqEndKey,
