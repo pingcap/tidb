@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Error instances.
@@ -447,7 +449,7 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 	for i := range ft.Elems {
 		enum, err := types.ParseEnumValue(ft.Elems, uint64(i+1))
 		if err != nil {
-			continue
+			logutil.BgLogger().Error("Internal error: build internal enum error.", zap.Error(err))
 		}
 		d := types.NewMysqlEnumDatum(enum)
 		if v, err := d.CompareDatum(sc, &val); err == nil {
