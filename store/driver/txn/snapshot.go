@@ -67,6 +67,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	case tikvstore.IsolationLevel:
 		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
 		s.KVSnapshot.SetIsolationLevel(level)
+	case tikvstore.SnapshotTS:
+		s.KVSnapshot.SetSnapshotTS(val.(uint64))
 	default:
 		s.KVSnapshot.SetOption(opt, val)
 	}

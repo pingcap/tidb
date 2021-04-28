@@ -113,7 +113,8 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 	}
 }
 
-func (s *KVSnapshot) setSnapshotTS(ts uint64) {
+// SetSnapshotTS resets the timestamp for reads.
+func (s *KVSnapshot) SetSnapshotTS(ts uint64) {
 	// Sanity check for snapshot version.
 	if ts >= math.MaxInt64 && ts != math.MaxUint64 {
 		err := errors.Errorf("try to get snapshot with a large ts %d", ts)
@@ -559,8 +560,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 		s.syncLog = val.(bool)
 	case kv.KeyOnly:
 		s.keyOnly = val.(bool)
-	case kv.SnapshotTS:
-		s.setSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
 		s.mu.Lock()
 		s.mu.replicaRead = val.(kv.ReplicaReadType)
