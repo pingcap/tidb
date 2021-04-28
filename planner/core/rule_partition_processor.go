@@ -762,29 +762,32 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 		monotonous: mono,
 	}
 	result = partitionRangeForCNFExpr(ctx, conds, &pruner, result)
+
+	if condsToBePruned == nil {
+		return result, nil
+	}
 	// remove useless predicates after partition pruning
-	if condsToBePruned != nil {
-		newConds := make([]expression.Expression, 0, len(*condsToBePruned))
-		for _, cond := range *condsToBePruned {
-			if dataForPrune, ok := pruner.extractDataForPrune(ctx, cond); ok {
-				switch dataForPrune.op {
-				case ast.EQ:
-					unsigned := mysql.HasUnsignedFlag(pruner.col.RetType.Flag)
-					start, _ := pruneUseBinarySearch(pruner.lessThan, dataForPrune, unsigned)
-					// if the type of partition key is Int
-					if pk, ok := partExpr.Expr.(*expression.Column); ok && pk.RetType.EvalType() == types.ETInt {
-						// see if can be removed
-						// see issue #22079: https://github.com/pingcap/tidb/issues/22079 for details
-						if start > 0 && pruner.lessThan.data[start-1] == dataForPrune.c && (pruner.lessThan.data[start]-1) == dataForPrune.c {
-							continue
-						}
+	newConds := make([]expression.Expression, 0, len(*condsToBePruned))
+	for _, cond := range *condsToBePruned {
+		if dataForPrune, ok := pruner.extractDataForPrune(ctx, cond); ok {
+			switch dataForPrune.op {
+			case ast.EQ:
+				unsigned := mysql.HasUnsignedFlag(pruner.col.RetType.Flag)
+				start, _ := pruneUseBinarySearch(pruner.lessThan, dataForPrune, unsigned)
+				// if the type of partition key is Int
+				if pk, ok := partExpr.Expr.(*expression.Column); ok && pk.RetType.EvalType() == types.ETInt {
+					// see if can be removed
+					// see issue #22079: https://github.com/pingcap/tidb/issues/22079 for details
+					if start > 0 && pruner.lessThan.data[start-1] == dataForPrune.c && (pruner.lessThan.data[start]-1) == dataForPrune.c {
+						continue
 					}
 				}
 			}
-			newConds = append(newConds, cond)
 		}
-		*condsToBePruned = newConds
+		newConds = append(newConds, cond)
 	}
+	*condsToBePruned = newConds
+
 	return result, nil
 }
 
