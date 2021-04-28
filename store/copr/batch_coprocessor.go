@@ -99,37 +99,110 @@ type copTaskAndRPCContext struct {
 
 func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 	storeTaskMap := make(map[string]*batchCopTask)
+	storeCandidateTaskMap := make(map[string]map[string]copTaskAndRPCContext)
+	totalCandidateStoreNum := 0
+	totalCandidateCopTaskNum := 0
+	for _, task := range originalTasks {
+		batchTask := &batchCopTask{
+			storeAddr: task.storeAddr,
+			cmdType:   task.cmdType,
+			copTasks:  []copTaskAndRPCContext{task.copTasks[0]},
+		}
+		storeTaskMap[task.storeAddr] = batchTask
+	}
 	for _, task := range originalTasks {
 		for index, copTask := range task.copTasks {
-			if index == 0 || len(copTask.allStoreAddrs) <= 1 {
-				if batchCop, ok := storeTaskMap[task.storeAddr]; ok {
-					batchCop.copTasks = append(batchCop.copTasks, copTask)
-				} else {
-					batchTask := &batchCopTask{
-						storeAddr: task.storeAddr,
-						cmdType:   task.cmdType,
-						copTasks:  []copTaskAndRPCContext{copTask},
+			// for each cop task, figure out the valid store num
+			validStoreNum := 0
+			if index == 0 {
+				continue
+			}
+			if len(copTask.allStoreAddrs) <= 1 {
+				validStoreNum = 1
+			} else {
+				for _, storeAddr := range copTask.allStoreAddrs {
+					if _, ok := storeTaskMap[storeAddr]; ok {
+						validStoreNum++
 					}
-					storeTaskMap[task.storeAddr] = batchTask
+				}
+			}
+			if validStoreNum == 1 {
+				// if only one store is valid, just put it to storeTaskMap
+				storeTaskMap[task.storeAddr].copTasks = append(storeTaskMap[task.storeAddr].copTasks, copTask)
+			} else {
+				// if more than one store is valid, put the cop task
+				// to store candidate map
+				totalCandidateStoreNum += validStoreNum
+				totalCandidateCopTaskNum += 1
+				/// put this cop task to candidate task map
+				taskKey := copTask.task.region.String()
+				for _, storeAddr := range copTask.allStoreAddrs {
+					if candidateMap, ok := storeCandidateTaskMap[storeAddr]; ok {
+						if _, ok := candidateMap[taskKey]; ok {
+							// duplicated region, should not happen, just give up balance
+							return originalTasks
+						}
+						candidateMap[taskKey] = copTask
+					} else {
+						candidateMap := make(map[string]copTaskAndRPCContext)
+						candidateMap[taskKey] = copTask
+						storeCandidateTaskMap[storeAddr] = candidateMap
+					}
 				}
 			}
 		}
 	}
-	for _, task := range originalTasks {
-		for index, copTask := range task.copTasks {
-			if index != 0 && len(copTask.allStoreAddrs) > 1 {
-				bestAddr := ""
-				for _, storeAddr := range copTask.allStoreAddrs {
-					if _, ok := storeTaskMap[storeAddr]; ok {
-						if bestAddr == "" {
-							bestAddr = storeAddr
-						} else if len(storeTaskMap[bestAddr].copTasks) > len(storeTaskMap[storeAddr].copTasks) {
-							bestAddr = storeAddr
-						}
+
+	avgStorePerTask := float64(totalCandidateStoreNum) / float64(totalCandidateCopTaskNum)
+	findNextStore := func() (string, float64) {
+		store := ""
+		possibleTaskNum := float64(0)
+		for storeAddr := range storeTaskMap {
+			if store == "" && len(storeCandidateTaskMap[storeAddr]) > 0 {
+				store = storeAddr
+				possibleTaskNum = float64(len(storeCandidateTaskMap[storeAddr]))/avgStorePerTask + float64(len(storeTaskMap[storeAddr].copTasks))
+			} else {
+				num := float64(len(storeCandidateTaskMap[storeAddr])) / avgStorePerTask
+				if num == 0 {
+					continue
+				}
+				num += float64(len(storeTaskMap[storeAddr].copTasks))
+				if num < possibleTaskNum {
+					store = storeAddr
+					possibleTaskNum = num
+				}
+			}
+		}
+		return store, possibleTaskNum
+	}
+	if totalCandidateStoreNum == 0 {
+		return originalTasks
+	}
+	store, possibleTaskNum := findNextStore()
+	for totalCandidateStoreNum > 0 {
+		if len(storeCandidateTaskMap[store]) == 0 {
+			store, possibleTaskNum = findNextStore()
+		}
+		for key, copTask := range storeCandidateTaskMap[store] {
+			storeTaskMap[store].copTasks = append(storeTaskMap[store].copTasks, copTask)
+			totalCandidateCopTaskNum--
+			for _, addr := range copTask.allStoreAddrs {
+				if _, ok := storeCandidateTaskMap[addr]; ok {
+					delete(storeCandidateTaskMap[addr], key)
+					totalCandidateStoreNum--
+				}
+			}
+			if totalCandidateCopTaskNum > 0 {
+				possibleTaskNum = float64(len(storeCandidateTaskMap[store]))/avgStorePerTask + float64(len(storeTaskMap[store].copTasks))
+				avgStorePerTask = float64(totalCandidateStoreNum) / float64(totalCandidateCopTaskNum)
+				for _, addr := range copTask.allStoreAddrs {
+					if addr != store && len(storeCandidateTaskMap[addr]) > 0 && float64(len(storeCandidateTaskMap[addr]))/avgStorePerTask+float64(len(storeTaskMap[addr].copTasks)) <= possibleTaskNum {
+						store = addr
+						possibleTaskNum = float64(len(storeCandidateTaskMap[addr]))/avgStorePerTask + float64(len(storeTaskMap[addr].copTasks))
 					}
 				}
-				storeTaskMap[bestAddr].copTasks = append(storeTaskMap[bestAddr].copTasks, copTask)
 			}
+			break
 		}
 	}
 
