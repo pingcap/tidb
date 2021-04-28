@@ -155,6 +155,10 @@ func toTiDBErr(err error) error {
 	if tikverr.IsErrNotFound(err) {
 		return kv.ErrNotExist
 	}
+
+	if errors.ErrorEqual(err, tikverr.ErrInvalidTxn) {
+		return kv.ErrInvalidTxn
+	}
 	return errors.Trace(err)
 }
 
