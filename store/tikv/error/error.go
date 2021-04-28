@@ -14,8 +14,6 @@
 package error
 
 import (
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -27,6 +25,7 @@ var (
 	ErrBodyMissing = errors.New("response body is missing")
 	// ErrTiDBShuttingDown is returned when TiDB is closing and send request to tikv fail, do not retry.
 	ErrTiDBShuttingDown = errors.New("tidb server shutting down")
+	ErrNotExist         = errors.New("not exist")
 )
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
@@ -49,7 +48,6 @@ var (
 	ErrLockWaitTimeout             = dbterror.ClassTiKV.NewStd(CodeLockWaitTimeout)
 	ErrTokenLimit                  = dbterror.ClassTiKV.NewStd(CodeTiKVStoreLimit)
 	ErrUnknown                     = dbterror.ClassTiKV.NewStd(CodeUnknown)
-	ErrNotExist                    = NewError(CodeNotExist)
 )
 
 // Registers error returned from TiKV.
@@ -59,36 +57,9 @@ var (
 	_ = dbterror.ClassTiKV.NewStd(CodeDivisionByZero)
 )
 
-// TiKVError is a normal error in tikv.
-type TiKVError struct {
-	code int
-	msg  string
-}
-
-// NewError creates a TiKVError
-func NewError(code int) *TiKVError {
-	return &TiKVError{
-		code: code,
-		msg:  "",
-	}
-}
-
-// Error implements the error interface.
-func (e *TiKVError) Error() string {
-	return fmt.Sprintf("code:%d,msg:%s", e.code, e.msg)
-}
-
-// Code returns error code.
-func (e *TiKVError) Code() int {
-	return e.code
-}
-
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
-	if o, ok := errors.Cause(err).(*TiKVError); ok {
-		return o.Code() == CodeNotExist
-	}
-	return false
+	return errors.ErrorEqual(err, ErrNotExist)
 }
 
 // ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.

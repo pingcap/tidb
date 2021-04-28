@@ -24,8 +24,6 @@ const (
 	CodeDataOutOfRange              = 1690
 	CodeLockAcquireFailAndNoWaitSet = 3572
 
-	CodeNotExist = 8021
-
 	// TiKV/PD/TiFlash errors.
 	CodePDServerTimeout    = 9001
 	CodeTiKVServerTimeout  = 9002

@@ -152,15 +152,9 @@ func toTiDBErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	e, ok := errors.Cause(err).(*tikverr.TiKVError)
-	if !ok {
-		return errors.Trace(err)
-	}
-	switch e.Code() {
-	case tikverr.CodeNotExist:
+	if tikverr.IsErrNotFound(err) {
 		return kv.ErrNotExist
 	}
-	// other errors
 	return errors.Trace(err)
 }
 
