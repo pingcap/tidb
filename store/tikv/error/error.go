@@ -27,6 +27,8 @@ var (
 	ErrTiDBShuttingDown = errors.New("tidb server shutting down")
 	// ErrNotExist means the related data not exist.
 	ErrNotExist = errors.New("not exist")
+	// ErrCannotSetNilValue is the error when sets an empty value.
+	ErrCannotSetNilValue = errors.New("can not set nil value")
 )
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
