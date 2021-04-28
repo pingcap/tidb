@@ -195,5 +195,5 @@ func (s *testCoprocessorSuite) TestGetSet(c *C) {
 
 func (s *testCoprocessorSuite) TestIssue24118(c *C) {
 	_, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: -1})
-	c.Assert(err.Error(), Equals, "Capacity should >= 0")
+	c.Assert(err.Error(), Equals, "Capacity must be > 0 to enable the cache")
 }
