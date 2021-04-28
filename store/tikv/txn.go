@@ -74,7 +74,9 @@ type KVTxn struct {
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info string, err error)
 
-	binlog BinlogExecutor
+	binlog        BinlogExecutor
+	isPessimistic bool
+	kvFilter      KVFilter
 }
 
 func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
@@ -133,7 +135,7 @@ func (txn *KVTxn) GetVars() *kv.Variables {
 // Get implements transaction interface.
 func (txn *KVTxn) Get(ctx context.Context, k []byte) ([]byte, error) {
 	ret, err := txn.us.Get(ctx, k)
-	if tidbkv.IsErrNotFound(err) {
+	if tikverr.IsErrNotFound(err) {
 		return nil, err
 	}
 	if err != nil {
@@ -198,16 +200,19 @@ func (txn *KVTxn) DelOption(opt int) {
 	txn.us.DelOption(opt)
 }
 
-// IsPessimistic returns true if it is pessimistic.
-func (txn *KVTxn) IsPessimistic() bool {
-	return txn.us.GetOption(kv.Pessimistic) != nil
+// SetPessimistic indicates if the transaction should use pessimictic lock.
+func (txn *KVTxn) SetPessimistic(b bool) {
+	txn.isPessimistic = b
 }
 
-func (txn *KVTxn) getKVFilter() KVFilter {
-	if filter := txn.us.GetOption(kv.KVFilter); filter != nil {
-		return filter.(KVFilter)
-	}
-	return nil
+// SetKVFilter sets the filter to ignore key-values in memory buffer.
+func (txn *KVTxn) SetKVFilter(filter KVFilter) {
+	txn.kvFilter = filter
+}
+
+// IsPessimistic returns true if it is pessimistic.
+func (txn *KVTxn) IsPessimistic() bool {
+	return txn.isPessimistic
 }
 
 // Commit commits the transaction operations to KV store.
@@ -220,7 +225,7 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	defer trace.StartRegion(ctx, "CommitTxn").End()
 
 	if !txn.valid {
-		return tidbkv.ErrInvalidTxn
+		return tikverr.ErrInvalidTxn
 	}
 	defer txn.close()
 
@@ -316,7 +321,7 @@ func (txn *KVTxn) close() {
 // Rollback undoes the transaction operations to KV store.
 func (txn *KVTxn) Rollback() error {
 	if !txn.valid {
-		return tidbkv.ErrInvalidTxn
+		return tikverr.ErrInvalidTxn
 	}
 	start := time.Now()
 	// Clean up pessimistic lock.
