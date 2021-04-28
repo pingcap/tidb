@@ -26,21 +26,11 @@ var noopSysVars = []*SysVar{
 	// It is unsafe to pretend that any variation of "read only" is enabled when the server
 	// does not support it. It is possible that these features will be supported in future,
 	// but until then...
-	{Scope: ScopeGlobal | ScopeSession, Name: TxReadOnly, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TxReadOnly, Value: Off, Type: TypeBool, Aliases: []string{TransactionReadOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.systems[TransactionReadOnly] = val
-		return nil
-	}, SetGlobal: func(s *SessionVars, val string) error {
-		return s.GlobalVarsAccessor.SetGlobalSysVarOnly(TransactionReadOnly, val)
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TransactionReadOnly, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TransactionReadOnly, Value: Off, Type: TypeBool, Aliases: []string{TxReadOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.systems[TxReadOnly] = val
-		return nil
-	}, SetGlobal: func(s *SessionVars, val string) error {
-		return s.GlobalVarsAccessor.SetGlobalSysVarOnly(TxReadOnly, val)
 	}},
 	{Scope: ScopeGlobal, Name: OfflineMode, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, true)

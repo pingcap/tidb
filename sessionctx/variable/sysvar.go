@@ -116,6 +116,9 @@ type SysVar struct {
 	IsHintUpdatable bool
 	// Hidden means that it still responds to SET but doesn't show up in SHOW VARIABLES
 	Hidden bool
+	// Aliases is a list of sysvars that should also be updated when this sysvar is updated.
+	// Updating aliases calls the SET function of the aliases, but does not update their aliases (preventing SET recursion)
+	Aliases []string
 }
 
 // SetSessionFromHook calls the SetSession func if it exists.
@@ -126,13 +129,43 @@ func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 		}
 	}
 	s.systems[sv.Name] = val
+
+	// Call the Set function on all the aliases for this sysVar
+	// Skipping the validation function, and not calling aliases of
+	// aliases. By skipping the validation function it means that things
+	// like duplicate warnings should not appear.
+
+	if sv.Aliases != nil {
+		for _, aliasName := range sv.Aliases {
+			aliasSv := GetSysVar(aliasName)
+			if aliasSv.SetSession != nil {
+				if err := aliasSv.SetSession(s, val); err != nil {
+					return err
+				}
+			}
+			s.systems[aliasSv.Name] = val
+		}
+	}
 	return nil
 }
 
 // SetGlobalFromHook calls the SetGlobal func if it exists.
-func (sv *SysVar) SetGlobalFromHook(s *SessionVars, val string) error {
+func (sv *SysVar) SetGlobalFromHook(s *SessionVars, val string, skipAliases bool) error {
 	if sv.SetGlobal != nil {
 		return sv.SetGlobal(s, val)
+	}
+
+	// Call the SetGlobalSysVarOnly function on all the aliases for this sysVar
+	// which skips the validation function and when SetGlobalFromHook is called again
+	// it will be with skipAliases=true. This helps break recursion because
+	// most aliases are reciprocal.
+
+	if !skipAliases && sv.Aliases != nil {
+		for _, aliasName := range sv.Aliases {
+			if err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(aliasName, val); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -555,24 +588,14 @@ var defaultSysVars = []*SysVar{
 		return checkCharacterSet(normalizedValue, "")
 	}},
 	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 5.7 compatible"},
-	{Scope: ScopeGlobal | ScopeSession, Name: TxnIsolation, Value: "REPEATABLE-READ", Type: TypeEnum, PossibleValues: []string{"READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TxnIsolation, Value: "REPEATABLE-READ", Type: TypeEnum, Aliases: []string{TransactionIsolation}, PossibleValues: []string{"READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		// MySQL appends a warning here for tx_isolation is deprecated
 		// TiDB doesn't currently, but may in future. It is still commonly used by applications
 		// So it might be noisy to do so.
 		return checkIsolationLevel(vars, normalizedValue, originalValue, scope)
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.systems[TransactionIsolation] = val
-		return nil
-	}, SetGlobal: func(s *SessionVars, val string) error {
-		return s.GlobalVarsAccessor.SetGlobalSysVarOnly(TransactionIsolation, val)
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TransactionIsolation, Value: "REPEATABLE-READ", Type: TypeEnum, PossibleValues: []string{"READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TransactionIsolation, Value: "REPEATABLE-READ", Type: TypeEnum, Aliases: []string{TxnIsolation}, PossibleValues: []string{"READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkIsolationLevel(vars, normalizedValue, originalValue, scope)
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.systems[TxnIsolation] = val
-		return nil
-	}, SetGlobal: func(s *SessionVars, val string) error {
-		return s.GlobalVarsAccessor.SetGlobalSysVarOnly(TxnIsolation, val)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationConnection, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
@@ -916,14 +939,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TxnIsolationOneShot, Value: "", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
-			if skipIsolationLevelCheck, err := GetSessionSystemVar(vars, TiDBSkipIsolationLevelCheck); err != nil {
-				return normalizedValue, err
-			} else if !TiDBOptOn(skipIsolationLevelCheck) {
-				return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
-			}
-		}
-		return normalizedValue, nil
+		return checkIsolationLevel(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
 		s.txnIsolationLevelOneShot.state = oneShotSet
 		s.txnIsolationLevelOneShot.value = val
@@ -1342,20 +1358,14 @@ var defaultSysVars = []*SysVar{
 		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSlowLogMasking, Value: BoolToOnOff(DefTiDBRedactLog), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
-		return s.SetSystemVar(TiDBRedactLog, val)
-	}, SetGlobal: func(s *SessionVars, val string) error {
-		// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
-		return s.GlobalVarsAccessor.SetGlobalSysVarOnly(TiDBRedactLog, val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSlowLogMasking, Value: BoolToOnOff(DefTiDBRedactLog), Aliases: []string{TiDBRedactLog}, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		appendDeprecationWarning(vars, TiDBSlowLogMasking, TiDBRedactLog)
+		return normalizedValue, nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: BoolToOnOff(DefTiDBRedactLog), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: BoolToOnOff(DefTiDBRedactLog), Aliases: []string{TiDBSlowLogMasking}, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableRedactLog = TiDBOptOn(val)
 		errors.RedactLogEnabled.Store(s.EnableRedactLog)
-		s.systems[TiDBSlowLogMasking] = val
 		return nil
-	}, SetGlobal: func(s *SessionVars, val string) error {
-		return s.GlobalVarsAccessor.SetGlobalSysVarOnly(TiDBSlowLogMasking, val)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
@@ -1708,6 +1718,6 @@ type GlobalVarAccessor interface {
 	GetGlobalSysVar(name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(name string, value string) error
-	// SetGlobalSysVarOnly sets the global system variable without calling the 'SetGlobal' function.
+	// SetGlobalSysVarOnly sets the global system variable without calling the validation function or updating aliases.
 	SetGlobalSysVarOnly(name string, value string) error
 }
