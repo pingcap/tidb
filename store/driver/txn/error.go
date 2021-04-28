@@ -160,6 +160,9 @@ func toTiDBErr(err error) error {
 		return kv.ErrEntryTooLarge.GenWithStackByArgs(e.Limit, e.Size)
 	}
 
+	if errors.ErrorEqual(err, tikverr.ErrInvalidTxn) {
+		return kv.ErrInvalidTxn
+	}
 	return errors.Trace(err)
 }
 
