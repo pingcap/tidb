@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -143,7 +143,7 @@ func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = snapshot.Get(ctx, []byte("y"))
-	c.Assert(tidbkv.IsErrNotFound(err), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail"), IsNil)
 }
@@ -192,7 +192,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	txn1 := s.beginTxn(c)
 	// txn1 is not blocked by txn in the large txn protocol.
 	_, err = txn1.Get(ctx, x)
-	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(errors.Trace(err)), IsTrue)
 
 	res, err := toTiDBTxn(&txn1).BatchGet(ctx, toTiDBKeys([][]byte{x, y, []byte("z")}))
 	c.Assert(err, IsNil)
@@ -224,7 +224,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	c.Assert(committer.GetPrimaryKey(), BytesEquals, x)
 	// Point get secondary key. Shouldn't be blocked by the lock and read old data.
 	_, err = snapshot.Get(ctx, y)
-	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(errors.Trace(err)), IsTrue)
 	c.Assert(time.Since(start), Less, 500*time.Millisecond)
 
 	// Commit the primary key
