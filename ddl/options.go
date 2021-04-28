@@ -47,8 +47,8 @@ func WithStore(store kv.Storage) Option {
 	}
 }
 
-// WithInfoHandle specifies the `infoschema.Handle`
-func WithInfoHandle(ic *infoschema.InfoCache) Option {
+// WithInfoCache specifies the `infoschema.InfoCache`
+func WithInfoCache(ic *infoschema.InfoCache) Option {
 	return func(options *Options) {
 		options.InfoCache = ic
 	}

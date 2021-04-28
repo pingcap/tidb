@@ -40,7 +40,7 @@ func (s *ddlOptionsSuite) TestOptions(c *C) {
 		ddl.WithHook(callback),
 		ddl.WithLease(lease),
 		ddl.WithStore(store),
-		ddl.WithInfoHandle(infoHandle),
+		ddl.WithInfoCache(infoHandle),
 	}
 
 	opt := &ddl.Options{}

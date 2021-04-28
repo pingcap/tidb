@@ -128,7 +128,7 @@ func TestInfo(t *testing.T) {
 		goCtx,
 		ddl.WithEtcdClient(dom.GetEtcdClient()),
 		ddl.WithStore(s),
-		ddl.WithInfoHandle(dom.infoCache),
+		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
 	)
 	err = dom.ddl.Start(nil)
