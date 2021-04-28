@@ -136,7 +136,7 @@ type ErrWriteConflictInLatch struct {
 }
 
 func (e *ErrWriteConflictInLatch) Error() string {
-	return fmt.Sprintf("write conflict in latch,startTS:%v", e.StartTS)
+	return fmt.Sprintf("write conflict in latch,startTS: %v", e.StartTS)
 }
 
 // ErrRetryable wraps *kvrpcpb.Retryable to implement the error interface.
