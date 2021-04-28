@@ -23,7 +23,12 @@
       "explain format = 'brief' select * from t7 where (a, b) in ((3, 4), (5, 6))",
       "explain format = 'brief' select * from t7 where (a = 1 and b = 2) or (a = 3 and b = 4)",
       "explain format = 'brief' select * from t7 where (a = 1 and b = 2) or (a = 1 and b = 2)",
-      "explain format = 'brief' select * from t7 partition(p0) where (a = 1 and b = 2) or (a = 3 and b = 4)"
+      "explain format = 'brief' select * from t7 partition(p0) where (a = 1 and b = 2) or (a = 3 and b = 4)",
+      "explain format = 'brief' select * from t8 where a between 10 and 11",
+      "explain format = 'brief' select * from t8 where (a is null) or (a between 5 and 8)",
+      "explain format = 'brief' select * from t8 where a between 5 and 12",
+      "explain format = 'brief' select * from t8 where (a <= 10 and a >= 8) or (a <= 13 and a >= 11) or (a <= 16 and a >= 14)",
+      "explain format = 'brief' select * from t8 where a < 12 and a > 9"
     ]
   },
   {
