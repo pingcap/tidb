@@ -29,6 +29,8 @@ var (
 	ErrTiDBShuttingDown = errors.New("tidb server shutting down")
 	// ErrNotExist means the related data not exist.
 	ErrNotExist = errors.New("not exist")
+	// ErrCannotSetNilValue is the error when sets an empty value.
+	ErrCannotSetNilValue = errors.New("can not set nil value")
 	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
 	ErrInvalidTxn = errors.New("invalid transaction")
 )
@@ -144,4 +146,14 @@ type ErrRetryable struct {
 
 func (k *ErrRetryable) Error() string {
 	return k.Retryable
+}
+
+// ErrEntryTooLarge is the error when a key value entry is too large.
+type ErrEntryTooLarge struct {
+	Limit uint64
+	Size  uint64
+}
+
+func (e *ErrEntryTooLarge) Error() string {
+	return fmt.Sprintf("entry size too large, size: %v,limit: %v.", e.Size, e.Limit)
 }
