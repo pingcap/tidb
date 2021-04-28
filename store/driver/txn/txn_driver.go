@@ -17,11 +17,13 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 )
@@ -73,7 +75,7 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 // The Iterator must be Closed after use.
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	it, err := txn.KVTxn.Iter(k, upperBound)
-	return newKVIterator(it), errors.Trace(err)
+	return newKVIterator(it), toTiDBErr(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
@@ -82,23 +84,34 @@ func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 // TODO: Add lower bound limit
 func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 	it, err := txn.KVTxn.IterReverse(k)
-	return newKVIterator(it), errors.Trace(err)
+	return newKVIterator(it), toTiDBErr(err)
 }
 
+// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+// Do not use len(value) == 0 or value == nil to represent non-exist.
+// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	return txn.KVTxn.BatchGet(ctx, toTiKVKeys(keys))
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.GetSnapshot()).BatchGet(ctx, keys)
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
-	return txn.KVTxn.Delete(k)
+	err := txn.KVTxn.Delete(k)
+	return toTiDBErr(err)
 }
 
 func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	return txn.KVTxn.Get(ctx, k)
+	data, err := txn.KVTxn.Get(ctx, k)
+	return data, toTiDBErr(err)
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
-	return txn.KVTxn.Set(k, v)
+	err := txn.KVTxn.Set(k, v)
+	return toTiDBErr(err)
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
@@ -133,7 +146,7 @@ func (txn *tikvTxn) GetVars() interface{} {
 }
 
 func (txn *tikvTxn) extractKeyErr(err error) error {
-	if e, ok := errors.Cause(err).(*tikvstore.ErrKeyExist); ok {
+	if e, ok := errors.Cause(err).(*tikverr.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())
 	}
 	return extractKeyErr(err)
