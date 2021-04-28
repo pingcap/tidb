@@ -66,11 +66,11 @@ Bit 63 is always __ZERO__, making `connId` in range of non-negative int64, to be
 - On single TiDB instance without PD, a `serverId` of `1` is assigned.
 
 #### 5. local connId
-`local connId` is allocated by each TiDB instance on establishing connections auto-incrementally.
+`local connId` is allocated by each TiDB instance on establishing connections:
 
-On system being busy and/or with long running SQL, `local connId` is possible to be integer-overflow and/or used up, especially on 32 bits `connId`. So we will check `local connId` existed or not before allocation (by maintaining a map of connection ids).
-a) In 32 bits `connId`, upgrade to 64 bits if `local connId` exhausted, or after retried more than 10 times (to avoid spending too much time in allocation).
-b) In 64 bits `connId`, return _"Too many connections"_ error if exhausted.
+- For 32 bits `connId`, `local connId` is possible to be integer-overflow and/or used up, especially on system being busy and/or with long running SQL. So we use a lock-free queue to maintain available `local connId`, dequeue on client connecting, and enqueue on disconnecting. When `local connId` exhausted, upgrade to 64 bits.
+
+- For 64 bits `connId`, allocate `local connId` by auto-increment, flip to zero if integer-overflow, and check `local connId` existed or not before allocation by maintaining a map of connection ids. At last, return _"Too many connections"_ error if exhausted.
 
 #### 6. global kill
 On processing `KILL x` command, first extract `serverId` from `x`. Then if `serverId` aims to a remote TiDB instance, get the address from [`CLUSTER_INFO`](https://docs.pingcap.com/tidb/stable/information-schema-cluster-info#cluster_info), and redirect the command to it by "Coprocessor API" provided by the remote TiDB, along with the original user authentication.
@@ -81,7 +81,7 @@ On processing `KILL x` command, first extract `serverId` from `x`. Then if `serv
 | ServerId pool size | 2^11 | 2^22 - 2^11 |
 | ServerId allocation | Random of __Unused__ serverIds acquired from PD within pool. Retry if unavailable. Upgrade to 64 bits while failed more than 3 times | Random of __All__ serverIds within pool. Retry if unavailable |
 | Local connId pool size | 2^20 | 2^40 |
-| Local connId allocation | Auto-increment within pool. Flip to zero when overflow. Upgrade to 64 bits while exhausted or retried more than 10 times | Auto-increment within pool. Flip to zero when overflow. Return "Too many connections" if exhausted |
+| Local connId allocation | Using a queue to maintain and allocate available local connId. Upgrade to 64 bits while exhausted | Auto-increment within pool. Flip to zero when overflow. Return "Too many connections" if exhausted |
 
 
 
