@@ -293,7 +293,7 @@ func (txn *TxnState) Rollback() error {
 	return txn.Transaction.Rollback()
 }
 
-// LockKeys tries to lock the keys. Will block until all keys are locked successfully or an error occurs.
+// Wrap the inner transaction's `LockKeys` to record the status
 func (txn *TxnState) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	originState := txn.State
 	txn.State = TxnLockWaiting
