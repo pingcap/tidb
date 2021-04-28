@@ -340,3 +340,8 @@ func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
 	return kv.NewVersion(ver), err
 }
+
+// ShowStatus returns the specified status of the storage
+func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, kv.ErrNotImplemented
+}
