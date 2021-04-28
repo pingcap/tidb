@@ -54,14 +54,16 @@ func (sp *StmtProfiler) startAnalyzeProfileWorker() {
 		if len(tagMap) == 0 {
 			continue
 		}
-		fmt.Printf("-------- [ BEGIN ] ----------\n")
+		logutil.BgLogger().Info("-------- [ BEGIN ] ----------")
 		for k, tags := range tagMap {
-			fmt.Println(k)
+			if k != "sql" {
+				continue
+			}
 			for t, v := range tags {
-				fmt.Printf("%s : %s, %s\n", time.Duration(v), k, t)
+				fmt.Printf("%s : %s\n", time.Duration(v), t)
 			}
 		}
-		fmt.Printf("-------- [ END ] ----------\n\n")
+		fmt.Printf("\n\n")
 		sp.putBuffer(buf)
 	}
 }
