@@ -14,6 +14,8 @@
 package error
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -135,4 +137,14 @@ type ErrRetryable struct {
 
 func (k *ErrRetryable) Error() string {
 	return k.Retryable
+}
+
+// ErrEntryTooLarge is the error when a key value entry is too large.
+type ErrEntryTooLarge struct {
+	Limit uint64
+	Size  uint64
+}
+
+func (e *ErrEntryTooLarge) Error() string {
+	return fmt.Sprintf("entry size too large, size: %v,limit: %v.", e.Size, e.Limit)
 }
