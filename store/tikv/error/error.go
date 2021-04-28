@@ -27,6 +27,8 @@ var (
 	ErrTiDBShuttingDown = errors.New("tidb server shutting down")
 	// ErrNotExist means the related data not exist.
 	ErrNotExist = errors.New("not exist")
+	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
+	ErrInvalidTxn = errors.New("invalid transaction")
 )
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
