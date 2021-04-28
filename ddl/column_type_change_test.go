@@ -233,7 +233,7 @@ func (s *testColumnTypeChangeSuite) TestRollbackColumnTypeChangeBetweenInteger(c
 	SQL := "alter table t modify column c2 int not null"
 	_, err := tk.Exec(SQL)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1]MockRollingBackInCallBack-none")
+	c.Assert(err.Error(), Equals, "[ddl:1]MockRollingBackInCallBack-queueing")
 	assertRollBackedColUnchanged(c, tk)
 
 	// Mock roll back at model.StateDeleteOnly.

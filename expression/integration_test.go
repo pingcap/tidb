@@ -2266,7 +2266,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	// for read_ts_in
 	tk.MustExec("SET time_zone = '+00:00';")
 	t := time.Now().UTC()
-	ts := oracle.ComposeTS(t.UnixNano()/int64(time.Millisecond), 0)
+	ts := oracle.ComposeTS(t.Unix()*1000, 0)
 	readTSInTests := []struct {
 		sql             string
 		injectResolveTS uint64
@@ -2284,13 +2284,13 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 			injectResolveTS: func() uint64 {
 				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 13:30:04.877")
 				c.Assert(err, IsNil)
-				return oracle.ComposeTS(phy.UnixNano()/int64(time.Millisecond), 0)
+				return oracle.ComposeTS(phy.Unix()*1000, 0)
 			}(),
 			isNull: false,
 			expect: func() int64 {
 				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 13:00:00.000")
 				c.Assert(err, IsNil)
-				return int64(oracle.ComposeTS(phy.UnixNano()/int64(time.Millisecond), 0))
+				return int64(oracle.ComposeTS(phy.Unix()*1000, 0))
 			}(),
 		},
 		{
@@ -2298,13 +2298,13 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 			injectResolveTS: func() uint64 {
 				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 11:30:04.877")
 				c.Assert(err, IsNil)
-				return oracle.ComposeTS(phy.UnixNano()/int64(time.Millisecond), 0)
+				return oracle.ComposeTS(phy.Unix()*1000, 0)
 			}(),
 			isNull: false,
 			expect: func() int64 {
 				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 12:00:00.000")
 				c.Assert(err, IsNil)
-				return int64(oracle.ComposeTS(phy.UnixNano()/int64(time.Millisecond), 0))
+				return int64(oracle.ComposeTS(phy.Unix()*1000, 0))
 			}(),
 		},
 		{
@@ -2313,6 +2313,14 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 			isNull:          true,
 			expect:          0,
 		},
+		// Time is too small.
+		{
+			sql:             `select read_ts_in("0020-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
+			injectResolveTS: 0,
+			isNull:          true,
+			expect:          0,
+		},
+		// Wrong value.
 		{
 			sql:             `select read_ts_in(1, 2)`,
 			injectResolveTS: 0,

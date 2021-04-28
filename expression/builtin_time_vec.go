@@ -893,27 +893,29 @@ func (b *builtinReadTSInSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			if invalidArg1 {
 				err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, args1[i].String()))
 			}
-			result.SetNull(i, true)
 			if err != nil {
 				return err
 			}
+			result.SetNull(i, true)
 			continue
 		}
 		minTime, err := args0[i].GoTime(getTimeZone(b.ctx))
 		if err != nil {
-			result.SetNull(i, true)
 			return err
 		}
 		maxTime, err := args1[i].GoTime(getTimeZone(b.ctx))
 		if err != nil {
-			result.SetNull(i, true)
 			return err
+		}
+		if !(checkTimeRange(minTime) && checkTimeRange(maxTime)) {
+			result.SetNull(i, true)
+			continue
 		}
 		if minTime.After(maxTime) {
 			result.SetNull(i, true)
-			return handleInvalidTimeError(b.ctx, types.ErrWrongValue.FastGenByArgs("left time must be less then the right time"))
+			continue
 		}
-		minTS, maxTS := oracle.ComposeTS(minTime.UnixNano()/int64(time.Millisecond), 0), oracle.ComposeTS(maxTime.UnixNano()/int64(time.Millisecond), 0)
+		minTS, maxTS := oracle.ComposeTS(minTime.Unix()*1000, 0), oracle.ComposeTS(maxTime.Unix()*1000, 0)
 		var minResolveTS uint64
 		if store := b.ctx.GetStore(); store != nil {
 			minResolveTS = store.GetMinResolveTS(b.ctx.GetSessionVars().CheckAndGetTxnScope())
@@ -924,10 +926,11 @@ func (b *builtinReadTSInSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		})
 		if minResolveTS < minTS {
 			i64s[i] = int64(minTS)
-		} else if min <= minResolveTS && minResolveTS <= maxTS {
+		} else if minTS <= minResolveTS && minResolveTS <= maxTS {
 			i64s[i] = int64(minResolveTS)
+		} else {
+			i64s[i] = int64(maxTS)
 		}
-		i64s[i] = int64(maxTS)
 	}
 	return nil
 }

@@ -7169,10 +7169,14 @@ func (b *builtinReadTSInSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, true, err
 	}
-	if minTime.After(maxTime) {
-		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.FastGenByArgs("left time must be less then the right time"))
+	// Make sure the time is not too big or small to prevent it from overflow later.
+	if !(checkTimeRange(minTime) && checkTimeRange(maxTime)) {
+		return 0, true, nil
 	}
-	minTS, maxTS := oracle.ComposeTS(minTime.UnixNano()/int64(time.Millisecond), 0), oracle.ComposeTS(maxTime.UnixNano()/int64(time.Millisecond), 0)
+	if minTime.After(maxTime) {
+		return 0, true, nil
+	}
+	minTS, maxTS := oracle.ComposeTS(minTime.Unix()*1000, 0), oracle.ComposeTS(maxTime.Unix()*1000, 0)
 	var minResolveTS uint64
 	if store := b.ctx.GetStore(); store != nil {
 		minResolveTS = store.GetMinResolveTS(b.ctx.GetSessionVars().CheckAndGetTxnScope())
@@ -7181,10 +7185,31 @@ func (b *builtinReadTSInSig) evalInt(row chunk.Row) (int64, bool, error) {
 		injectTS := val.(int)
 		minResolveTS = uint64(injectTS)
 	})
+	// For a resolved TS t and a time range [t1, t2]:
+	//   1. If t < t1, we will use t1 as the result,
+	//      and with it, a read request may fail because it's an unreached resolved TS.
+	//   2. If t1 <= t <= t2, we will use t as the result, and with it,
+	//      a read request won't fail.
+	//   2. If t2 < t, we will use t2 as the result,
+	//      and with it, a read request won't fail because it's bigger than the latest resolved TS.
 	if minResolveTS < minTS {
 		return int64(minTS), false, nil
-	} else if min <= minResolveTS && minResolveTS <= maxTS {
+	} else if minTS <= minResolveTS && minResolveTS <= maxTS {
 		return int64(minResolveTS), false, nil
 	}
 	return int64(maxTS), false, nil
+}
+
+func checkTimeRange(t time.Time) bool {
+	unixT := t.Unix()
+	unixTMillisecond := unixT * 1000
+	// Less than the unix timestamp zero or overflow after * 1000.
+	if unixT < 0 || unixTMillisecond < 0 {
+		return false
+	}
+	// Overflow after being composed to TS
+	if oracle.ComposeTS(unixTMillisecond, 0) < uint64(unixTMillisecond) {
+		return false
+	}
+	return true
 }

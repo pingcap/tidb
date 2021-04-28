@@ -2870,10 +2870,10 @@ func (s *testEvaluatorSuite) TestReadTSIn(c *C) {
 	t1, err := time.Parse(timeParserLayout, "2015-09-21 09:53:04.877")
 	c.Assert(err, IsNil)
 	t1Str := t1.Format(timeParserLayout)
-	ts1 := int64(oracle.ComposeTS(t1.UnixNano()/int64(time.Millisecond), 0))
+	ts1 := int64(oracle.ComposeTS(t1.Unix()*1000, 0))
 	t2 := time.Now().UTC()
 	t2Str := t2.Format(timeParserLayout)
-	ts2 := int64(oracle.ComposeTS(t2.UnixNano()/int64(time.Millisecond), 0))
+	ts2 := int64(oracle.ComposeTS(t2.Unix()*1000, 0))
 	s.ctx.GetSessionVars().TimeZone = time.UTC
 	tests := []struct {
 		leftTime        interface{}
@@ -2887,12 +2887,12 @@ func (s *testEvaluatorSuite) TestReadTSIn(c *C) {
 			leftTime:  t1Str,
 			rightTime: t2Str,
 			injectResolveTS: func() uint64 {
-				phy := t2.Add(-1*time.Second).UnixNano() / int64(time.Millisecond)
+				phy := t2.Add(-1*time.Second).Unix() * 1000
 				return oracle.ComposeTS(phy, 0)
 			}(),
 			isNull: false,
 			expect: func() int64 {
-				phy := t2.Add(-1*time.Second).UnixNano() / int64(time.Millisecond)
+				phy := t2.Add(-1*time.Second).Unix() * 1000
 				return int64(oracle.ComposeTS(phy, 0))
 			}(),
 		},
@@ -2901,7 +2901,7 @@ func (s *testEvaluatorSuite) TestReadTSIn(c *C) {
 			leftTime:  t1Str,
 			rightTime: t2Str,
 			injectResolveTS: func() uint64 {
-				phy := t1.Add(-1*time.Second).UnixNano() / int64(time.Millisecond)
+				phy := t1.Add(-1*time.Second).Unix() * 1000
 				return oracle.ComposeTS(phy, 0)
 			}(),
 			isNull: false,
@@ -2912,7 +2912,7 @@ func (s *testEvaluatorSuite) TestReadTSIn(c *C) {
 			leftTime:  t1Str,
 			rightTime: t2Str,
 			injectResolveTS: func() uint64 {
-				phy := t2.Add(time.Second).UnixNano() / int64(time.Millisecond)
+				phy := t2.Add(time.Second).Unix() * 1000
 				return oracle.ComposeTS(phy, 0)
 			}(),
 			isNull: false,
