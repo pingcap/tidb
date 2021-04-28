@@ -553,8 +553,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
 	case kv.Priority:
 		s.priority = PriorityToPB(val.(int))
-	case kv.NotFillCache:
-		s.notFillCache = val.(bool)
 	case kv.SyncLog:
 		s.syncLog = val.(bool)
 	case kv.KeyOnly:
@@ -600,6 +598,12 @@ func (s *KVSnapshot) DelOption(opt int) {
 		s.mu.stats = nil
 		s.mu.Unlock()
 	}
+}
+
+// SetNotFillCache indicates whether tikv should skip filling cache when
+// loading data.
+func (s *KVSnapshot) SetNotFillCache(b bool) {
+	s.notFillCache = b
 }
 
 // SetIsolationLevel sets the isolation level used to scan data from tikv.
