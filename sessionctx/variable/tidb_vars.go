@@ -604,7 +604,7 @@ const (
 	DefTiDBMemQuotaIndexLookupJoin     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                  = false
-	DefTiDBPProfSQLCPU                 = 0
+	DefTiDBPProfSQLCPU                 = 1
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
@@ -680,7 +680,7 @@ const (
 // Process global variables.
 var (
 	ProcessGeneralLog            = atomic.NewBool(false)
-	EnablePProfSQLCPU            = atomic.NewBool(false)
+	EnablePProfSQLCPU            = atomic.NewBool(true)
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize

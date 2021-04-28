@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
+	"github.com/pingcap/tidb/util/traceresource"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	pd "github.com/tikv/pd/client"
@@ -178,6 +179,7 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
+	setProfiler()
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
@@ -684,4 +686,9 @@ func stringToList(repairString string) []string {
 	return strings.FieldsFunc(repairString, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '"'
 	})
+}
+
+func setProfiler() {
+	sp := traceresource.NewStmtProfiler()
+	sp.Run()
 }
