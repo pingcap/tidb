@@ -2865,7 +2865,7 @@ func (s *testEvaluatorSuite) TestTidbParseTso(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestReadTSIn(c *C) {
+func (s *testEvaluatorSuite) TestTiDBBoundStaleness(c *C) {
 	const timeParserLayout = "2006-01-02 15:04:05.000"
 	t1, err := time.Parse(timeParserLayout, "2015-09-21 09:53:04.877")
 	c.Assert(err, IsNil)
@@ -2928,7 +2928,7 @@ func (s *testEvaluatorSuite) TestReadTSIn(c *C) {
 		},
 	}
 
-	fc := funcs[ast.ReadTSIn]
+	fc := funcs[ast.TiDBBoundStaleness]
 	for _, test := range tests {
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectResolveTS",
 			fmt.Sprintf("return(%v)", test.injectResolveTS)), IsNil)

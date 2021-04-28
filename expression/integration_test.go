@@ -2263,24 +2263,24 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`select tidb_parse_tso(-1)`)
 	result.Check(testkit.Rows("<nil>"))
 
-	// for read_ts_in
+	// for tidb_bound_staleness
 	tk.MustExec("SET time_zone = '+00:00';")
 	t := time.Now().UTC()
 	ts := oracle.ComposeTS(t.Unix()*1000, 0)
-	readTSInTests := []struct {
+	tidbBoundStalenessTests := []struct {
 		sql             string
 		injectResolveTS uint64
 		isNull          bool
 		expect          int64
 	}{
 		{
-			sql:             `select read_ts_in(DATE_SUB(NOW(), INTERVAL 600 SECOND), DATE_ADD(NOW(), INTERVAL 600 SECOND))`,
+			sql:             `select tidb_bound_staleness(DATE_SUB(NOW(), INTERVAL 600 SECOND), DATE_ADD(NOW(), INTERVAL 600 SECOND))`,
 			injectResolveTS: ts,
 			isNull:          false,
 			expect:          int64(ts),
 		},
 		{
-			sql: `select read_ts_in("2021-04-27 12:00:00.000", "2021-04-27 13:00:00.000")`,
+			sql: `select tidb_bound_staleness("2021-04-27 12:00:00.000", "2021-04-27 13:00:00.000")`,
 			injectResolveTS: func() uint64 {
 				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 13:30:04.877")
 				c.Assert(err, IsNil)
@@ -2294,7 +2294,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 			}(),
 		},
 		{
-			sql: `select read_ts_in("2021-04-27 12:00:00.000", "2021-04-27 13:00:00.000")`,
+			sql: `select tidb_bound_staleness("2021-04-27 12:00:00.000", "2021-04-27 13:00:00.000")`,
 			injectResolveTS: func() uint64 {
 				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 11:30:04.877")
 				c.Assert(err, IsNil)
@@ -2308,33 +2308,33 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 			}(),
 		},
 		{
-			sql:             `select read_ts_in("2021-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
+			sql:             `select tidb_bound_staleness("2021-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
 			injectResolveTS: 0,
 			isNull:          true,
 			expect:          0,
 		},
 		// Time is too small.
 		{
-			sql:             `select read_ts_in("0020-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
+			sql:             `select tidb_bound_staleness("0020-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
 			injectResolveTS: 0,
 			isNull:          true,
 			expect:          0,
 		},
 		// Wrong value.
 		{
-			sql:             `select read_ts_in(1, 2)`,
+			sql:             `select tidb_bound_staleness(1, 2)`,
 			injectResolveTS: 0,
 			isNull:          true,
 			expect:          0,
 		},
 		{
-			sql:             `select read_ts_in("invalid_time_1", "invalid_time_2")`,
+			sql:             `select tidb_bound_staleness("invalid_time_1", "invalid_time_2")`,
 			injectResolveTS: 0,
 			isNull:          true,
 			expect:          0,
 		},
 	}
-	for _, test := range readTSInTests {
+	for _, test := range tidbBoundStalenessTests {
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectResolveTS",
 			fmt.Sprintf("return(%v)", test.injectResolveTS)), IsNil)
 		result = tk.MustQuery(test.sql)

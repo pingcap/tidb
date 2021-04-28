@@ -519,7 +519,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
 		},
 	},
-	ast.ReadTSIn: {
+	ast.TiDBBoundStaleness: {
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
