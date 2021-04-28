@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -344,9 +344,9 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	start := time.Now()
 	defer func() {
-		stmtExec := ctx.Value(execdetails.StmtExecDetailKey)
+		stmtExec := ctx.Value(util.ExecDetailsKey)
 		if stmtExec != nil {
-			detail := stmtExec.(*execdetails.StmtExecDetails)
+			detail := stmtExec.(*util.ExecDetails)
 			atomic.AddInt64(&detail.WaitKVRespDuration, int64(time.Since(start)))
 		}
 		c.updateTiKVSendReqHistogram(req, start)

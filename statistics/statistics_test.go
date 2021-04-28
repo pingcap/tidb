@@ -465,7 +465,10 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 func buildCMSketch(values []types.Datum) *CMSketch {
 	cms := NewCMSketch(8, 2048)
 	for _, val := range values {
-		cms.insert(&val)
+		err := cms.insert(&val)
+		if err != nil {
+			panic(err)
+		}
 	}
 	return cms
 }

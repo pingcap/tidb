@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -592,14 +591,19 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 // KeyLocation is the region and range that a key is located.
 type KeyLocation struct {
 	Region   RegionVerID
-	StartKey tidbkv.Key
-	EndKey   tidbkv.Key
+	StartKey []byte
+	EndKey   []byte
 }
 
 // Contains checks if key is in [StartKey, EndKey).
 func (l *KeyLocation) Contains(key []byte) bool {
 	return bytes.Compare(l.StartKey, key) <= 0 &&
 		(bytes.Compare(key, l.EndKey) < 0 || len(l.EndKey) == 0)
+}
+
+// String implements fmt.Stringer interface.
+func (l *KeyLocation) String() string {
+	return fmt.Sprintf("region %s,startKey:%s,endKey:%s", l.Region.String(), kv.StrKey(l.StartKey), kv.StrKey(l.EndKey))
 }
 
 // LocateKey searches for the region and range that the key is located.
@@ -1056,6 +1060,34 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 		atomic.CompareAndSwapInt64(&newestRegion.lastAccess, atomic.LoadInt64(&newestRegion.lastAccess), ts)
 	}
 	return newestRegion
+}
+
+// TODO: revise it by get store by closure.
+func (c *RegionCache) getStoresByType(typ tikvrpc.EndpointType) []*Store {
+	c.storeMu.Lock()
+	defer c.storeMu.Unlock()
+	stores := make([]*Store, 0)
+	for _, store := range c.storeMu.stores {
+		if store.getResolveState() != resolved {
+			continue
+		}
+		if store.storeType == typ {
+			//TODO: revise it with store.clone()
+			storeLabel := make([]*metapb.StoreLabel, 0)
+			for _, label := range store.labels {
+				storeLabel = append(storeLabel, &metapb.StoreLabel{
+					Key:   label.Key,
+					Value: label.Value,
+				})
+			}
+			stores = append(stores, &Store{
+				addr:    store.addr,
+				storeID: store.storeID,
+				labels:  store.labels,
+			})
+		}
+	}
+	return stores
 }
 
 func filterUnavailablePeers(region *pd.Region) {
