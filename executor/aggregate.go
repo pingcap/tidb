@@ -208,12 +208,9 @@ func (e *HashAggExec) Close() error {
 		e.childResult = nil
 		e.groupSet = nil
 		e.partialResultMap = nil
-<<<<<<< HEAD
-=======
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
->>>>>>> 0cb32a128... executor: fix projection executor panic and add failpoint test (#24231)
 		return e.baseExecutor.Close()
 	}
 	if e.parallelExecInitialized {
@@ -244,7 +241,6 @@ func (e *HashAggExec) Close() error {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 	}
-<<<<<<< HEAD
 	for range e.finalOutputCh {
 	}
 	e.executed = false
@@ -264,8 +260,6 @@ func (e *HashAggExec) Close() error {
 		runtimeStats.SetConcurrencyInfo(partialConcurrencyInfo, finalConcurrencyInfo)
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
-=======
->>>>>>> 0cb32a128... executor: fix projection executor panic and add failpoint test (#24231)
 	return e.baseExecutor.Close()
 }
 
@@ -886,15 +880,10 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *StreamAggExec) Close() error {
-<<<<<<< HEAD
-	e.memTracker.Consume(-e.childResult.MemoryUsage())
-	e.childResult = nil
-=======
 	if e.childResult != nil {
-		e.memTracker.Consume(-e.childResult.MemoryUsage() - e.memUsageOfInitialPartialResult)
+		e.memTracker.Consume(-e.childResult.MemoryUsage())
 		e.childResult = nil
 	}
->>>>>>> 0cb32a128... executor: fix projection executor panic and add failpoint test (#24231)
 	e.groupChecker.reset()
 	return e.baseExecutor.Close()
 }
