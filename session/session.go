@@ -525,7 +525,7 @@ func (s *session) doCommit(ctx context.Context) error {
 					return errors.Trace(err)
 				}
 				if err = iter.Next(); err != nil {
-					return err
+					return errors.Trace(err)
 				}
 			}
 		}
