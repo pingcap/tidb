@@ -157,12 +157,14 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 // Close implements the Executor interface.
 func (e *ParallelNestedLoopApplyExec) Close() error {
 	e.memTracker = nil
-	err := e.outerExec.Close()
 	if atomic.LoadUint32(&e.started) == 1 {
 		close(e.exit)
 		e.notifyWg.Wait()
 		e.started = 0
 	}
+	// Wait all workers to finish before Close() is called.
+	// Otherwise we may got data race.
+	err := e.outerExec.Close()
 
 	if e.runtimeStats != nil {
 		runtimeStats := newJoinRuntimeStats()
