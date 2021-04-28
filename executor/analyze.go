@@ -715,8 +715,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 		subCollector := &statistics.RowSampleCollector{
 			MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
 		}
-		e.job.Update(subCollector.Count)
 		subCollector.FromProto(colResp.RowCollector)
+		e.job.Update(subCollector.Count)
 		rootRowCollector.MergeCollector(subCollector)
 	}
 	for _, sample := range rootRowCollector.Samples {
