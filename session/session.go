@@ -976,7 +976,10 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// In which case it is safe to return the default, but we can also
 		// update the cache for the future.
 		logutil.BgLogger().Info("sysvar not in cache yet. sysvar cache may be stale", zap.String("name", name))
-		return sv.Value, nil
+		sysVar, err = s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
+		if err != nil {
+			return sv.Value, nil
+		}
 	}
 	// Fetch mysql.tidb values if required
 	if s.varFromTiDBTable(name) {
