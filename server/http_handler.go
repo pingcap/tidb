@@ -368,7 +368,10 @@ func (t *tikvHandlerTool) getPartition(tableVal table.Table, partitionName strin
 }
 
 func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
-	session, err := session.CreateSession(t.Store)
+	// Disable stats collector.
+	// Stats collector of all the sessions are linked together in the statistics handler which is a global object.
+	// If we create stats collector here, they may not be recycled by the Go GC and cause memory leak.
+	session, err := session.CreateSessionWithOpt(t.Store, &session.Opt{DisableStatsCollector: true})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -726,7 +729,7 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 		if asyncCommit := req.Form.Get("tidb_enable_async_commit"); asyncCommit != "" {
-			s, err := session.CreateSession(h.Store.(kv.Storage))
+			s, err := session.CreateSessionWithOpt(h.Store.(kv.Storage), &session.Opt{DisableStatsCollector: true})
 			if err != nil {
 				writeError(w, err)
 				return
@@ -749,7 +752,7 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 		if onePC := req.Form.Get("tidb_enable_1pc"); onePC != "" {
-			s, err := session.CreateSession(h.Store.(kv.Storage))
+			s, err := session.CreateSessionWithOpt(h.Store.(kv.Storage), &session.Opt{DisableStatsCollector: true})
 			if err != nil {
 				writeError(w, err)
 				return
@@ -892,7 +895,7 @@ func (h flashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, rep
 }
 
 func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infoschema.InfoSchema) ([]*tableFlashReplicaInfo, error) {
-	s, err := session.CreateSession(h.Store.(kv.Storage))
+	s, err := session.CreateSessionWithOpt(h.Store.(kv.Storage), &session.Opt{DisableStatsCollector: false})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -967,7 +970,7 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 		return
 	}
-	s, err := session.CreateSession(h.Store.(kv.Storage))
+	s, err := session.CreateSessionWithOpt(h.Store.(kv.Storage), &session.Opt{DisableStatsCollector: true})
 	if err != nil {
 		writeError(w, err)
 		return
@@ -1137,7 +1140,7 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 }
 
 func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
-	s, err := session.CreateSession(h.Store.(kv.Storage))
+	s, err := session.CreateSessionWithOpt(h.Store.(kv.Storage), &session.Opt{DisableStatsCollector: true})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1867,7 +1870,7 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTP handles request of TiDB metric profile.
 func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	sctx, err := session.CreateSession(h.Store)
+	sctx, err := session.CreateSessionWithOpt(h.Store, &session.Opt{DisableStatsCollector: true})
 	if err != nil {
 		writeError(w, err)
 		return
