@@ -484,8 +484,6 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	tk.MustExec("drop sequence alter_seq")
 }
 
-// TODO: Requires multi schema change. I need to figure out why it is turned off.
-
 func (s *testSuite6) TestAlterTableAddColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

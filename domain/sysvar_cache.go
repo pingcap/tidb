@@ -15,13 +15,15 @@ package domain
 
 import (
 	"context"
+	"fmt"
 	"sync"
-	"time"
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
+	"go.uber.org/zap"
 )
 
 // The sysvar cache replaces the GlobalVariableCache.
@@ -29,24 +31,35 @@ import (
 // where it caches for 5 minutes instead of 2 seconds, plus it listens on etcd
 // for updates from other servers.
 
+// SysVarCache represents the cache of system variables broken up into session and global scope.
 type SysVarCache struct {
 	sync.RWMutex
-	isHealthy  bool
-	lastModify time.Time
-	global     map[string]string
-	session    map[string]string
+	global  map[string]string
+	session map[string]string
 }
 
-// GetGlobalVarsCache gets the global variable cache.
+// GetSysVarCache gets the global variable cache.
 func (do *Domain) GetSysVarCache() *SysVarCache {
 	return &do.sysVarCache
 }
 
-func (svc *SysVarCache) GetSessionCache(ctx sessionctx.Context) map[string]string {
-	if len(svc.session) == 0 {
-		svc.RebuildSysVarCache(ctx)
+func (svc *SysVarCache) rebuildCacheIfNeeded(ctx sessionctx.Context) {
+	svc.RLock()
+	cacheNeedsRebuild := len(svc.session) == 0 || len(svc.global) == 0
+	svc.RUnlock()
+	if cacheNeedsRebuild {
+		logutil.BgLogger().Warn("sysvar cache is empty, triggering rebuild")
+		if err := svc.RebuildSysVarCache(ctx); err != nil {
+			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
+		}
 	}
+}
 
+// GetSessionCache gets a copy of the session sysvar cache.
+// The intention is to copy it directly to the systems[] map
+// on creating a new session.
+func (svc *SysVarCache) GetSessionCache(ctx sessionctx.Context) map[string]string {
+	svc.rebuildCacheIfNeeded(ctx)
 	svc.RLock()
 	defer svc.RUnlock()
 	// Perform a deep copy since this will be assigned directly to the session
@@ -57,16 +70,16 @@ func (svc *SysVarCache) GetSessionCache(ctx sessionctx.Context) map[string]strin
 	return newMap
 }
 
+// GetGlobalVar gets an individual global var from the sysvar cache.
 func (svc *SysVarCache) GetGlobalVar(ctx sessionctx.Context, name string) (string, error) {
-	if len(svc.global) == 0 {
-		svc.RebuildSysVarCache(ctx)
-	}
-
+	svc.rebuildCacheIfNeeded(ctx)
 	svc.RLock()
 	defer svc.RUnlock()
+
 	if val, ok := svc.global[name]; ok {
 		return val, nil
 	}
+	logutil.BgLogger().Warn("could not find key in global cache", zap.String("name", name))
 	return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 }
 
@@ -93,9 +106,6 @@ func (svc *SysVarCache) fetchTableValues(ctx sessionctx.Context) (map[string]str
 // RebuildSysVarCache rebuilds the sysvar cache both globally and for session vars.
 // It needs to be called when sysvars are added or removed.
 func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
-	svc.Lock()
-	defer svc.Unlock()
-
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
 	tableContents, err := svc.fetchTableValues(ctx)
@@ -104,25 +114,49 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 	}
 
 	for _, sv := range variable.GetSysVars() {
+		sVal := sv.Value
+		if _, ok := tableContents[sv.Name]; ok {
+			sVal = tableContents[sv.Name]
+		}
 		if sv.HasSessionScope() {
-			if _, ok := tableContents[sv.Name]; ok {
-				newSessionCache[sv.Name] = tableContents[sv.Name]
-			} else {
-				newSessionCache[sv.Name] = sv.Value // use default
-			}
+			newSessionCache[sv.Name] = sVal
 		}
 		if sv.HasGlobalScope() {
-			if _, ok := tableContents[sv.Name]; ok {
-				newGlobalCache[sv.Name] = tableContents[sv.Name]
-			} else {
-				newGlobalCache[sv.Name] = sv.Value // use default
-			}
+			newGlobalCache[sv.Name] = sVal
 		}
+		// Propagate any changes to the server scoped variables
+		checkEnableServerGlobalVar(sv.Name, sVal)
 	}
 
 	logutil.BgLogger().Info("rebuilding sysvar cache")
 
+	svc.Lock()
+	defer svc.Unlock()
 	svc.session = newSessionCache
 	svc.global = newGlobalCache
 	return nil
+}
+
+// checkEnableServerGlobalVar processes variables that acts in server and global level.
+func checkEnableServerGlobalVar(name, sVal string) {
+	var err error
+	switch name {
+	case variable.TiDBEnableStmtSummary:
+		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
+	case variable.TiDBStmtSummaryInternalQuery:
+		err = stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(sVal, false)
+	case variable.TiDBStmtSummaryRefreshInterval:
+		err = stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(sVal, false)
+	case variable.TiDBStmtSummaryHistorySize:
+		err = stmtsummary.StmtSummaryByDigestMap.SetHistorySize(sVal, false)
+	case variable.TiDBStmtSummaryMaxStmtCount:
+		err = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(sVal, false)
+	case variable.TiDBStmtSummaryMaxSQLLength:
+		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
+	case variable.TiDBCapturePlanBaseline:
+		variable.CapturePlanBaseline.Set(sVal, false)
+	}
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))
+	}
 }

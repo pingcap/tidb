@@ -7963,7 +7963,6 @@ func (s *testSerialSuite) TestTxnWriteThroughputSLI(c *C) {
 	writeSLI := tk.Se.GetTxnWriteThroughputSLI()
 	c.Assert(writeSLI.IsInvalid(), Equals, false)
 	c.Assert(writeSLI.IsSmallTxn(), Equals, true)
-	// This is currently returning 46 and not 58 for the writesize. why??
 	c.Assert(tk.Se.GetTxnWriteThroughputSLI().String(), Equals, "invalid: false, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s")
 	tk.Se.GetTxnWriteThroughputSLI().Reset()
 

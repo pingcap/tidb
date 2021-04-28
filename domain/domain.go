@@ -965,6 +965,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			}
 
 			count = 0
+			logutil.BgLogger().Info("Rebuilding sysvar cache from etcd watch event.")
 			err := do.sysVarCache.RebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
@@ -1378,6 +1379,9 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 	}
 }
 
+// NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
+// clients are subscribed to for updates. For the caller, the cache is also built
+// synchronously so that the effect is immediate.
 func (do *Domain) NotifyUpdateSysVarCache(ctx sessionctx.Context) {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
@@ -1387,7 +1391,9 @@ func (do *Domain) NotifyUpdateSysVarCache(ctx sessionctx.Context) {
 		}
 	}
 	// update locally
-	do.sysVarCache.RebuildSysVarCache(ctx)
+	if err := do.sysVarCache.RebuildSysVarCache(ctx); err != nil {
+		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
+	}
 }
 
 // ServerID gets serverID.

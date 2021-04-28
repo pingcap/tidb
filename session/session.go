@@ -965,7 +965,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// It might be a recently unregistered sysvar. We should return unknown
 		// since GetSysVar is the canonical version, but we can update the cache
 		// so the next request doesn't attempt to load this.
-		domain.GetDomain(s).NotifyUpdateSysVarCache(s)
+		logutil.BgLogger().Info("sysvar does not exist. sysvar cache may be stale", zap.String("name", name))
 		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 
@@ -975,7 +975,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// This might be because the sysvar was only recently registered.
 		// In which case it is safe to return the default, but we can also
 		// update the cache for the future.
-		domain.GetDomain(s).NotifyUpdateSysVarCache(s)
+		logutil.BgLogger().Info("sysvar not in cache yet. sysvar cache may be stale", zap.String("name", name))
 		return sv.Value, nil
 	}
 	// Fetch mysql.tidb values if required
@@ -2590,7 +2590,7 @@ var builtinGlobalVariable = []string{
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars := s.sessionVars
-	if s.sessionVars.CommonGlobalLoaded {
+	if vars.CommonGlobalLoaded {
 		return nil
 	}
 	if s.Value(sessionctx.Initing) != nil {
@@ -2614,13 +2614,16 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		if varVal, ok = sessionCache[varName]; !ok {
 			varVal, err = domain.GetDomain(s).GetSysVarCache().GetGlobalVar(s, varName)
 			if err != nil {
-				continue
+				continue // skip variables that are not loaded.
 			}
 		}
 		// `collation_server` is related to `character_set_server`, set `character_set_server` will also set `collation_server`.
 		// We have to make sure we set the `collation_server` with right value.
 		if _, ok := vars.GetSystemVar(varName); !ok || varName == variable.CollationServer {
 			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
+			// If there an error it probably means that the sysvar has failed validation.
+			// The var might have been set by an earlier TiDB server, and fails on a new TiDB server
+			// which is stricter.
 			if err != nil {
 				continue
 			}
