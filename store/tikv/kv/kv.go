@@ -27,4 +27,5 @@ type LockCtx struct {
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
 	Stats                 *util.LockKeysDetails
+	ResourceGroupTag      []byte
 }
