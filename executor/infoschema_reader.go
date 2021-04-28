@@ -1991,7 +1991,10 @@ func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) error {
 	if sm == nil {
 		return nil
 	}
-	e.rows = sm.ShowTxnList()
+	infoList := sm.ShowTxnList()
+	for _, info := range infoList {
+		e.rows = append(e.rows, info.ToDatum())
+	}
 	return nil
 }
 

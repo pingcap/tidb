@@ -42,6 +42,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txnInfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -4256,24 +4257,14 @@ func (s *testTxnStateSuite) TestBasic(c *C) {
 	tk.MustExec("begin pessimistic;")
 	tk.MustExec("select * from t for update;")
 	info := tk.Se.TxnInfo()
-	// startTs
-	c.Assert(info[0].Kind(), Equals, types.KindUint64)
-	// human readable start time
-	c.Assert(info[1].Kind(), Equals, types.KindMysqlTime)
-	digest := info[2].GetString()
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
-	c.Assert(digest, Equals, expectedDigest)
-	// running state
-	c.Assert(info[3].GetInt64(), Equals, int64(session.TxnRunningNormal))
-	// blockStartTime
-	c.Assert(info[4].IsNull(), Equals, true)
-	// [5] and [6] are len and size, which will covered in TestLenAndSize
-	// sessionId
-	c.Assert(info[7].GetUint64(), Equals, tk.Se.GetSessionVars().ConnectionID)
-	// username
-	c.Assert(info[8].IsNull(), Equals, true)
-	// schema name
-	c.Assert(info[9].GetString(), Equals, "test")
+	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest)
+	c.Assert(info.State, Equals, txnInfo.TxnRunningNormal)
+	c.Assert(info.BlockStartTime, IsNil)
+	// len and size will be covered in TestLenAndSize
+	c.Assert(info.ConnectionID, Equals, tk.Se.GetSessionVars().ConnectionID)
+	c.Assert(info.Username, Equals, "")
+	c.Assert(info.CurrentDB, Equals, "test")
 	tk.MustExec("commit;")
 }
 
@@ -4290,10 +4281,8 @@ func (s *testTxnStateSuite) TestBlocked(c *C) {
 		tk2.MustExec("commit;")
 	}()
 	time.Sleep(200 * time.Millisecond)
-	// state
-	c.Assert(tk2.Se.TxnInfo()[3].GetInt64(), Equals, int64(session.TxnLockWaiting))
-	// blockStartTime
-	c.Assert(tk2.Se.TxnInfo()[4].IsNull(), Equals, false)
+	c.Assert(tk2.Se.TxnInfo().State, Equals, txnInfo.TxnLockWaiting)
+	c.Assert(tk2.Se.TxnInfo().BlockStartTime, NotNil)
 	tk.MustExec("commit;")
 }
 
@@ -4303,11 +4292,11 @@ func (s *testTxnStateSuite) TestLenAndSize(c *C) {
 	tk.MustExec("begin pessimistic;")
 	tk.MustExec("insert into t(a) values (1);")
 	info := tk.Se.TxnInfo()
-	c.Assert(info[5].GetInt64(), Equals, int64(1))
-	c.Assert(info[6].GetInt64(), Equals, int64(29))
+	c.Assert(info.Len, Equals, 1)
+	c.Assert(info.Size, Equals, 29)
 	tk.MustExec("insert into t(a) values (2);")
 	info = tk.Se.TxnInfo()
-	c.Assert(info[5].GetInt64(), Equals, int64(2))
-	c.Assert(info[6].GetInt64(), Equals, int64(58))
+	c.Assert(info.Len, Equals, 2)
+	c.Assert(info.Size, Equals, 58)
 	tk.MustExec("commit;")
 }

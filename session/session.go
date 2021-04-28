@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/session/txnInfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -145,7 +146,8 @@ type Session interface {
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	ShowProcess() *util.ProcessInfo
-	TxnInfo() []types.Datum
+	// Return the information of the txn current running
+	TxnInfo() *txnInfo.TxnInfo
 	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
@@ -184,7 +186,7 @@ func (h *StmtHistory) Count() int {
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
-	txn         TxnState
+	txn         LazyTxn
 
 	mu struct {
 		sync.RWMutex
@@ -443,22 +445,19 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
-func (s *session) TxnInfo() []types.Datum {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	txnDatum := s.txn.Datum()
-	if txnDatum == nil {
+func (s *session) TxnInfo() *txnInfo.TxnInfo {
+	txnInfo := s.txn.Info()
+	if txnInfo == nil {
 		return nil
 	}
-	var username interface{} = nil
+	var username string = ""
 	if s.sessionVars.User != nil {
 		username = s.sessionVars.User.Username
 	}
-	return append(txnDatum,
-		types.NewDatum(s.sessionVars.ConnectionID),
-		types.NewDatum(username),
-		types.NewDatum(s.sessionVars.CurrentDB),
-	)
+	txnInfo.ConnectionID = s.sessionVars.ConnectionID
+	txnInfo.Username = username
+	txnInfo.CurrentDB = s.sessionVars.CurrentDB
+	return txnInfo
 }
 
 func (s *session) doCommit(ctx context.Context) error {

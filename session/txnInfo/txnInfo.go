@@ -1,0 +1,81 @@
+// Copyright 2021 PingCAP, Inc.
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package txnInfo
+
+import (
+	"time"
+
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/types"
+)
+
+// TxnRunningState is the current state of a transaction
+type TxnRunningState = int
+
+const (
+	// TxnRunningNormal means the transaction is running normally
+	TxnRunningNormal TxnRunningState = iota
+	// TxnLockWaiting means the transaction is blocked on a lock
+	TxnLockWaiting TxnRunningState = iota
+	// TxnCommitting means the transaction is (at least trying to) committing
+	TxnCommitting TxnRunningState = iota
+	// TxnRollingBack means the transaction is rolling back
+	TxnRollingBack TxnRunningState = iota
+)
+
+// Infomation about a running transaction
+// This is supposed to be the datasource of `TIDB_TRX` in infoschema
+type TxnInfo struct {
+	StartTS uint64
+	// digest of SQL current running
+	CurrentSQLDigest string
+	// current executing State
+	State TxnRunningState
+	// last trying to block start time
+	BlockStartTime *time.Time
+	// How many entries are in MemDB
+	Len int
+	// MemDB used memory
+	Size int
+
+	// the following fields will be filled in `session` instead of `LazyTxn`
+
+	// Which session this transaction belongs to
+	ConnectionID uint64
+	// The user who open this session
+	Username string
+	// The schema this transaction works on
+	CurrentDB string
+}
+
+// Convert the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table
+func (info TxnInfo) ToDatum() []types.Datum {
+	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+	var blockStartTime interface{}
+	if info.BlockStartTime == nil {
+		blockStartTime = nil
+	} else {
+		blockStartTime = types.NewTime(types.FromGoTime(*info.BlockStartTime), mysql.TypeTimestamp, 0)
+	}
+	return types.MakeDatums(
+		info.StartTS,
+		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, 0),
+		info.CurrentSQLDigest,
+		info.State,
+		blockStartTime,
+		info.Len,
+		info.Size,
+	)
+}

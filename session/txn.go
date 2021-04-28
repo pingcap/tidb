@@ -26,42 +26,27 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session/txnInfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
 
-// TxnRunningState is the current state of a transaction
-type TxnRunningState = int
-
-const (
-	// TxnRunningNormal means the transaction is running normally
-	TxnRunningNormal TxnRunningState = iota
-	// TxnLockWaiting means the transaction is blocked on a lock
-	TxnLockWaiting TxnRunningState = iota
-	// TxnCommitting means the transaction is (at least trying to) committing
-	TxnCommitting TxnRunningState = iota
-	// TxnRollingBack means the transaction is rolling back
-	TxnRollingBack TxnRunningState = iota
-)
-
-// TxnState wraps kv.Transaction to provide a new kv.Transaction.
+// LazyTxn wraps kv.Transaction to provide a new kv.Transaction.
 // 1. It holds all statement related modification in the buffer before flush to the txn,
 // so if execute statement meets error, the txn won't be made dirty.
 // 2. It's a lazy transaction, that means it's a txnFuture before StartTS() is really need.
-type TxnState struct {
-	// States of a TxnState should be one of the followings:
+type LazyTxn struct {
+	// States of a LazyTxn should be one of the followings:
 	// Invalid: kv.Transaction == nil && txnFuture == nil
 	// Pending: kv.Transaction == nil && txnFuture != nil
 	// Valid:	kv.Transaction != nil && txnFuture == nil
@@ -75,27 +60,27 @@ type TxnState struct {
 	// digest of SQL current running
 	CurrentSQLDigest string
 	// current executing state
-	State TxnRunningState
+	State txnInfo.TxnRunningState
 	// last trying to block start time
 	blockStartTime *time.Time
 }
 
 // GetTableInfo returns the cached index name.
-func (txn *TxnState) GetTableInfo(id int64) *model.TableInfo {
+func (txn *LazyTxn) GetTableInfo(id int64) *model.TableInfo {
 	return txn.Transaction.GetTableInfo(id)
 }
 
 // CacheTableInfo caches the index name.
-func (txn *TxnState) CacheTableInfo(id int64, info *model.TableInfo) {
+func (txn *LazyTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 	txn.Transaction.CacheTableInfo(id, info)
 }
 
-func (txn *TxnState) init() {
+func (txn *LazyTxn) init() {
 	txn.mutations = make(map[int64]*binlog.TableMutation)
-	txn.State = TxnRunningNormal
+	txn.State = txnInfo.TxnRunningNormal
 }
 
-func (txn *TxnState) initStmtBuf() {
+func (txn *LazyTxn) initStmtBuf() {
 	if txn.Transaction == nil {
 		return
 	}
@@ -105,14 +90,14 @@ func (txn *TxnState) initStmtBuf() {
 }
 
 // countHint is estimated count of mutations.
-func (txn *TxnState) countHint() int {
+func (txn *LazyTxn) countHint() int {
 	if txn.stagingHandle == kv.InvalidStagingHandle {
 		return 0
 	}
 	return txn.Transaction.GetMemBuffer().Len() - txn.initCnt
 }
 
-func (txn *TxnState) flushStmtBuf() {
+func (txn *LazyTxn) flushStmtBuf() {
 	if txn.stagingHandle == kv.InvalidStagingHandle {
 		return
 	}
@@ -121,7 +106,7 @@ func (txn *TxnState) flushStmtBuf() {
 	txn.initCnt = buf.Len()
 }
 
-func (txn *TxnState) cleanupStmtBuf() {
+func (txn *LazyTxn) cleanupStmtBuf() {
 	if txn.stagingHandle == kv.InvalidStagingHandle {
 		return
 	}
@@ -131,7 +116,7 @@ func (txn *TxnState) cleanupStmtBuf() {
 }
 
 // Size implements the MemBuffer interface.
-func (txn *TxnState) Size() int {
+func (txn *LazyTxn) Size() int {
 	if txn.Transaction == nil {
 		return 0
 	}
@@ -139,19 +124,19 @@ func (txn *TxnState) Size() int {
 }
 
 // Valid implements the kv.Transaction interface.
-func (txn *TxnState) Valid() bool {
+func (txn *LazyTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
 }
 
-func (txn *TxnState) pending() bool {
+func (txn *LazyTxn) pending() bool {
 	return txn.Transaction == nil && txn.txnFuture != nil
 }
 
-func (txn *TxnState) validOrPending() bool {
+func (txn *LazyTxn) validOrPending() bool {
 	return txn.txnFuture != nil || txn.Valid()
 }
 
-func (txn *TxnState) String() string {
+func (txn *LazyTxn) String() string {
 	if txn.Transaction != nil {
 		return txn.Transaction.String()
 	}
@@ -162,7 +147,7 @@ func (txn *TxnState) String() string {
 }
 
 // GoString implements the "%#v" format for fmt.Printf.
-func (txn *TxnState) GoString() string {
+func (txn *LazyTxn) GoString() string {
 	var s strings.Builder
 	s.WriteString("Txn{")
 	if txn.pending() {
@@ -181,19 +166,19 @@ func (txn *TxnState) GoString() string {
 	return s.String()
 }
 
-func (txn *TxnState) changeInvalidToValid(kvTxn kv.Transaction) {
+func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
 	txn.Transaction = kvTxn
-	txn.State = TxnRunningNormal
+	txn.State = txnInfo.TxnRunningNormal
 	txn.initStmtBuf()
 	txn.txnFuture = nil
 }
 
-func (txn *TxnState) changeInvalidToPending(future *txnFuture) {
+func (txn *LazyTxn) changeInvalidToPending(future *txnFuture) {
 	txn.Transaction = nil
 	txn.txnFuture = future
 }
 
-func (txn *TxnState) changePendingToValid(ctx context.Context) error {
+func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 	if txn.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -208,12 +193,12 @@ func (txn *TxnState) changePendingToValid(ctx context.Context) error {
 		return err
 	}
 	txn.Transaction = t
-	txn.State = TxnRunningNormal
+	txn.State = txnInfo.TxnRunningNormal
 	txn.initStmtBuf()
 	return nil
 }
 
-func (txn *TxnState) changeToInvalid() {
+func (txn *LazyTxn) changeToInvalid() {
 	if txn.stagingHandle != kv.InvalidStagingHandle {
 		txn.Transaction.GetMemBuffer().Cleanup(txn.stagingHandle)
 	}
@@ -249,7 +234,7 @@ func ResetMockAutoRandIDRetryCount(failTimes int64) {
 }
 
 // Commit overrides the Transaction interface.
-func (txn *TxnState) Commit(ctx context.Context) error {
+func (txn *LazyTxn) Commit(ctx context.Context) error {
 	defer txn.reset()
 	if len(txn.mutations) != 0 || txn.countHint() != 0 {
 		logutil.BgLogger().Error("the code should never run here",
@@ -259,7 +244,7 @@ func (txn *TxnState) Commit(ctx context.Context) error {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
 
-	txn.State = TxnCommitting
+	txn.State = txnInfo.TxnCommitting
 
 	// mockCommitError8942 is used for PR #8942.
 	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
@@ -287,16 +272,16 @@ func (txn *TxnState) Commit(ctx context.Context) error {
 }
 
 // Rollback overrides the Transaction interface.
-func (txn *TxnState) Rollback() error {
+func (txn *LazyTxn) Rollback() error {
 	defer txn.reset()
-	txn.State = TxnRollingBack
+	txn.State = txnInfo.TxnRollingBack
 	return txn.Transaction.Rollback()
 }
 
 // Wrap the inner transaction's `LockKeys` to record the status
-func (txn *TxnState) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
+func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	originState := txn.State
-	txn.State = TxnLockWaiting
+	txn.State = txnInfo.TxnLockWaiting
 	t := time.Now()
 	txn.blockStartTime = &t
 	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
@@ -305,12 +290,12 @@ func (txn *TxnState) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...
 	return err
 }
 
-func (txn *TxnState) reset() {
+func (txn *LazyTxn) reset() {
 	txn.cleanup()
 	txn.changeToInvalid()
 }
 
-func (txn *TxnState) cleanup() {
+func (txn *LazyTxn) cleanup() {
 	txn.cleanupStmtBuf()
 	txn.initStmtBuf()
 	for key := range txn.mutations {
@@ -319,7 +304,7 @@ func (txn *TxnState) cleanup() {
 }
 
 // KeysNeedToLock returns the keys need to be locked.
-func (txn *TxnState) KeysNeedToLock() ([]kv.Key, error) {
+func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 	if txn.stagingHandle == kv.InvalidStagingHandle {
 		return nil, nil
 	}
@@ -358,26 +343,18 @@ func keyNeedToLock(k, v []byte, flags tikvstore.KeyFlags) bool {
 }
 
 // Datum dump the TxnState to Datum for displaying in `TIDB_TRX`
-func (txn *TxnState) Datum() []types.Datum {
-	if txn.pending() {
+func (txn *LazyTxn) Info() *txnInfo.TxnInfo {
+	if !txn.Valid() {
 		return nil
 	}
-	var blockStartTime interface{}
-	if txn.blockStartTime == nil {
-		blockStartTime = nil
-	} else {
-		blockStartTime = types.NewTime(types.FromGoTime(*txn.blockStartTime), mysql.TypeTimestamp, 0)
+	return &txnInfo.TxnInfo{
+		StartTS:          txn.StartTS(),
+		CurrentSQLDigest: txn.CurrentSQLDigest,
+		State:            txn.State,
+		BlockStartTime:   txn.blockStartTime,
+		Len:              txn.Transaction.Len(),
+		Size:             txn.Transaction.Size(),
 	}
-	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(txn.StartTS())*1e6)
-	return types.MakeDatums(
-		txn.StartTS(),
-		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, 0),
-		txn.CurrentSQLDigest,
-		txn.State,
-		blockStartTime,
-		txn.Transaction.Len(),
-		txn.Transaction.Size(),
-	)
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {

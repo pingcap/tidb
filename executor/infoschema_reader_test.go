@@ -36,12 +36,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txnInfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -729,8 +729,8 @@ type mockSessionManager struct {
 	serverID       uint64
 }
 
-func (sm *mockSessionManager) ShowTxnList() [][]types.Datum {
-	return nil
+func (sm *mockSessionManager) ShowTxnList() []txnInfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {

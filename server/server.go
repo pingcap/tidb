@@ -56,9 +56,9 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/session/txnInfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
@@ -559,15 +559,15 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 }
 
 // ShowTxnList shows all txn info for displaying in `TIDB_TRX`
-func (s *Server) ShowTxnList() [][]types.Datum {
+func (s *Server) ShowTxnList() []txnInfo.TxnInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := [][]types.Datum{}
+	rs := []txnInfo.TxnInfo{}
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
 			info := client.ctx.Session.TxnInfo()
 			if info != nil {
-				rs = append(rs, info)
+				rs = append(rs, *info)
 			}
 		}
 	}

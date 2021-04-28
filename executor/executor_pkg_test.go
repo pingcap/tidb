@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	plannerutil "github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/session/txnInfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -60,8 +61,8 @@ type mockSessionManager struct {
 	serverID uint64
 }
 
-func (msm *mockSessionManager) ShowTxnList() [][]types.Datum {
-	return nil
+func (msm *mockSessionManager) ShowTxnList() []txnInfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.

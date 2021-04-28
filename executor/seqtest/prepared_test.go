@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txnInfo"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -796,8 +797,8 @@ type mockSessionManager1 struct {
 	Se session.Session
 }
 
-func (msm *mockSessionManager1) ShowTxnList() [][]types.Datum {
-	return nil
+func (msm *mockSessionManager1) ShowTxnList() []txnInfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
