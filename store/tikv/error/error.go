@@ -14,6 +14,8 @@
 package error
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -131,4 +133,13 @@ type ErrRetryable struct {
 
 func (k *ErrRetryable) Error() string {
 	return k.Retryable
+}
+
+// ErrTxnTooLarge is the error when transaction is too large, lock time reached the maximum value.
+type ErrTxnTooLarge struct {
+	Size int
+}
+
+func (e *ErrTxnTooLarge) Error() string {
+	return fmt.Sprintf("txn too large, size:%v.", e.Size)
 }

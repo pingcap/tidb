@@ -155,6 +155,10 @@ func toTiDBErr(err error) error {
 	if tikverr.IsErrNotFound(err) {
 		return kv.ErrNotExist
 	}
+
+	if e, ok := err.(*tikverr.ErrTxnTooLarge); ok {
+		return kv.ErrTxnTooLarge.GenWithStackByArgs(e.Size)
+	}
 	return errors.Trace(err)
 }
 

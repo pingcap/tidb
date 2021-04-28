@@ -307,7 +307,7 @@ func (db *MemDB) set(key []byte, value []byte, ops ...kv.FlagsOp) error {
 
 	db.setValue(x, value)
 	if uint64(db.Size()) > db.bufferSizeLimit {
-		return tidbkv.ErrTxnTooLarge.GenWithStackByArgs(db.Size())
+		return &tikverr.ErrTxnTooLarge{Size: db.Size()}
 	}
 	return nil
 }
