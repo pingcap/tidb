@@ -67,8 +67,8 @@ type KVTxn struct {
 
 	valid bool
 
-	// txnInfoSchema is the infoSchema fetched at startTS.
-	txnInfoSchema SchemaVer
+	// schemaVer is the infoSchema fetched at startTS.
+	schemaVer SchemaVer
 	// SchemaAmender is used amend pessimistic txn commit mutations for schema change
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
@@ -209,9 +209,9 @@ func (txn *KVTxn) SetPessimistic(b bool) {
 	txn.isPessimistic = b
 }
 
-// SetTxnInfoSchema updates schema version to validate transaction.
-func (txn *KVTxn) SetTxnInfoSchema(schemaVer SchemaVer) {
-	txn.txnInfoSchema = schemaVer
+// SetSchemaVer updates schema version to validate transaction.
+func (txn *KVTxn) SetSchemaVer(schemaVer SchemaVer) {
+	txn.schemaVer = schemaVer
 }
 
 // SetKVFilter sets the filter to ignore key-values in memory buffer.

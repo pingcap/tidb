@@ -137,7 +137,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case tikvstore.Pessimistic:
 		txn.SetPessimistic(val.(bool))
 	case tikvstore.InfoSchema:
-		txn.SetTxnInfoSchema(val.(tikv.SchemaVer))
+		txn.SetSchemaVer(val.(tikv.SchemaVer))
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}
