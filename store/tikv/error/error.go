@@ -29,6 +29,8 @@ var (
 	ErrNotExist = errors.New("not exist")
 	// ErrCannotSetNilValue is the error when sets an empty value.
 	ErrCannotSetNilValue = errors.New("can not set nil value")
+	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
+	ErrInvalidTxn = errors.New("invalid transaction")
 )
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.

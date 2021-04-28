@@ -160,6 +160,9 @@ func toTiDBErr(err error) error {
 		return kv.ErrCannotSetNilValue
 	}
 
+	if errors.ErrorEqual(err, tikverr.ErrInvalidTxn) {
+		return kv.ErrInvalidTxn
+	}
 	return errors.Trace(err)
 }
 
