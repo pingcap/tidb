@@ -5841,6 +5841,10 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			}
 			return err
 		}
+		err = b.adjustCTEPlanSchema(p, cInfo.def)
+		if err != nil {
+			return err
+		}
 		cInfo.seedLP = p
 		return nil
 	}
