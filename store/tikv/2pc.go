@@ -327,7 +327,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	sizeHint := txn.us.GetMemBuffer().Len()
 	c.mutations = newMemBufferMutations(sizeHint, memBuf)
 	c.isPessimistic = txn.IsPessimistic()
-	filter := txn.getKVFilter()
+	filter := txn.kvFilter
 
 	var err error
 	for it := memBuf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
@@ -426,7 +426,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	c.hasNoNeedCommitKeys = checkCnt > 0
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = getTxnPriority(txn)
-	c.syncLog = txn.synclog
+	c.syncLog = txn.syncLog
 	c.setDetail(commitDetail)
 	return nil
 }

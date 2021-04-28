@@ -26,9 +26,9 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -45,11 +45,26 @@ const (
 	maxTimestamp  = math.MaxUint64
 )
 
+// IsoLevel is the transaction's isolation level.
+type IsoLevel kvrpcpb.IsolationLevel
+
+const (
+	// SI stands for 'snapshot isolation'.
+	SI IsoLevel = IsoLevel(kvrpcpb.IsolationLevel_SI)
+	// RC stands for 'read committed'.
+	RC IsoLevel = IsoLevel(kvrpcpb.IsolationLevel_RC)
+)
+
+// ToPB converts isolation level to wire type.
+func (l IsoLevel) ToPB() kvrpcpb.IsolationLevel {
+	return kvrpcpb.IsolationLevel(l)
+}
+
 // KVSnapshot implements the tidbkv.Snapshot interface.
 type KVSnapshot struct {
 	store           *KVStore
 	version         uint64
-	isolationLevel  kv.IsoLevel
+	isolationLevel  IsoLevel
 	priority        pb.CommandPri
 	notFillCache    bool
 	keyOnly         bool
@@ -384,7 +399,7 @@ func (s *KVSnapshot) Get(ctx context.Context, k []byte) ([]byte, error) {
 	}
 
 	if len(val) == 0 {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	return val, nil
 }
@@ -535,8 +550,6 @@ func (s *KVSnapshot) IterReverse(k []byte) (unionstore.Iterator, error) {
 // value of this option. Only ReplicaRead is supported for snapshot
 func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case kv.IsolationLevel:
-		s.isolationLevel = val.(kv.IsoLevel)
 	case kv.Priority:
 		s.priority = PriorityToPB(val.(int))
 	case kv.NotFillCache:
@@ -584,6 +597,11 @@ func (s *KVSnapshot) DelOption(opt int) {
 		s.mu.stats = nil
 		s.mu.Unlock()
 	}
+}
+
+// SetIsolationLevel sets the isolation level used to scan data from tikv.
+func (s *KVSnapshot) SetIsolationLevel(level IsoLevel) {
+	s.isolationLevel = level
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.

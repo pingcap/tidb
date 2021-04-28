@@ -35,7 +35,7 @@ type tikvTxn struct {
 
 // NewTiKVTxn returns a new Transaction.
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
-	txn.SetOption(tikvstore.KVFilter, TiDBKVFilter{})
+	txn.SetKVFilter(TiDBKVFilter{})
 
 	entryLimit := atomic.LoadUint64(&kv.TxnEntrySizeLimit)
 	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
@@ -75,7 +75,7 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 // The Iterator must be Closed after use.
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	it, err := txn.KVTxn.Iter(k, upperBound)
-	return newKVIterator(it), errors.Trace(err)
+	return newKVIterator(it), toTiDBErr(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
@@ -84,7 +84,7 @@ func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 // TODO: Add lower bound limit
 func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 	it, err := txn.KVTxn.IterReverse(k)
-	return newKVIterator(it), errors.Trace(err)
+	return newKVIterator(it), toTiDBErr(err)
 }
 
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
@@ -100,15 +100,18 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
-	return txn.KVTxn.Delete(k)
+	err := txn.KVTxn.Delete(k)
+	return toTiDBErr(err)
 }
 
 func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	return txn.KVTxn.Get(ctx, k)
+	data, err := txn.KVTxn.Get(ctx, k)
+	return data, toTiDBErr(err)
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
-	return txn.KVTxn.Set(k, v)
+	err := txn.KVTxn.Set(k, v)
+	return toTiDBErr(err)
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
@@ -127,7 +130,10 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
 		})
 	case tikvstore.SyncLog:
-		txn.SetSyncLog()
+		txn.EnableForceSyncLog()
+	case tikvstore.IsolationLevel:
+		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
+		txn.KVTxn.GetSnapshot().SetIsolationLevel(level)
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}
