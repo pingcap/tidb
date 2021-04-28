@@ -19,6 +19,8 @@ import (
 )
 
 // InfoCache handles information schema, including getting and setting.
+// The cache behavior, however, is transprent and under automatic management.
+// It only promised to cache the infoschema, if it is newer than all the cached.
 type InfoCache struct {
 	mu sync.RWMutex
 	// cache is sorted by SchemaVersion in descending order
@@ -54,7 +56,7 @@ func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 }
 
 // Insert will **TRY** to insert the infoschema into the cache.
-// It only promised to cache the infoschema, if it is newer than all the cached.
+// It only promised to cache the newest infoschema.
 func (h *InfoCache) Insert(is InfoSchema) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
