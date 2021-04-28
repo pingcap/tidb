@@ -25,7 +25,8 @@ var (
 	ErrBodyMissing = errors.New("response body is missing")
 	// ErrTiDBShuttingDown is returned when TiDB is closing and send request to tikv fail, do not retry.
 	ErrTiDBShuttingDown = errors.New("tidb server shutting down")
-	ErrNotExist         = errors.New("not exist")
+	// ErrNotExist means the related data not exist.
+	ErrNotExist = errors.New("not exist")
 )
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
