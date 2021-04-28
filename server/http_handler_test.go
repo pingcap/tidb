@@ -1156,10 +1156,10 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(variable.ProcessGeneralLog.Load(), IsTrue)
 	val, err := variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOn)
+	c.Assert(val, Equals, variable.On)
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOn)
+	c.Assert(val, Equals, variable.On)
 
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
@@ -1175,10 +1175,10 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOff)
+	c.Assert(val, Equals, variable.Off)
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOff)
+	c.Assert(val, Equals, variable.Off)
 	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold
@@ -1468,5 +1468,30 @@ func (ts *HTTPHandlerTestSuite) TestTestHandler(c *C) {
 	c.Assert(err, IsNil)
 	err = resp.Body.Close()
 	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+}
+
+func (ts *HTTPHandlerTestSuite) TestDDLHookHandler(c *C) {
+	defer ts.stopServer(c)
+
+	ts.startServer(c)
+	resp, err := ts.fetchStatus("/test/ddl/hook")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=ctc_hook`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "\"success!\"")
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=default_hook`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err = ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "\"success!\"")
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 }

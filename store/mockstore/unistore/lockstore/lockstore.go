@@ -36,8 +36,8 @@ type MemStore struct {
 }
 
 const (
-	maxHeight     = 16
-	nodeHeadrSize = int(unsafe.Sizeof(nodeHeader{addr: 0, height: 0, keyLen: 0, valLen: 0}))
+	maxHeight      = 16
+	nodeHeaderSize = int(unsafe.Sizeof(nodeHeader{addr: 0, height: 0, keyLen: 0, valLen: 0}))
 )
 
 type nodeHeader struct {
@@ -69,10 +69,6 @@ func (e *entry) getValue(arena *arena) []byte {
 	return nil
 }
 
-func (n *node) nexts(level int) uint64 {
-	return *n.nextsAddr(level)
-}
-
 func (n *node) setNexts(level int, val uint64) {
 	*n.nextsAddr(level) = val
 }
@@ -90,12 +86,8 @@ func (n *node) setNextAddr(level int, addr arenaAddr) {
 	atomic.StoreUint64(n.nextsAddr(level), uint64(addr))
 }
 
-func (n *node) entryLen() int {
-	return n.nodeLen() + int(n.keyLen) + int(n.valLen)
-}
-
 func (n *node) nodeLen() int {
-	return int(n.height)*8 + nodeHeadrSize
+	return int(n.height)*8 + nodeHeaderSize
 }
 
 func (n *node) getKey(a *arena) []byte {
@@ -152,7 +144,7 @@ func (n *node) getNextNode(arena *arena, level int) *node {
 	if addr == nullArenaAddr {
 		return nil
 	}
-	data := arena.get(addr, nodeHeadrSize)
+	data := arena.get(addr, nodeHeaderSize)
 	return (*node)(unsafe.Pointer(&data[0]))
 }
 
@@ -162,7 +154,7 @@ func (ls *MemStore) getNext(n *node, level int) (e entry) {
 		return
 	}
 	arena := ls.getArena()
-	data := arena.get(addr, nodeHeadrSize)
+	data := arena.get(addr, nodeHeaderSize)
 	e.node = (*node)(unsafe.Pointer(&data[0]))
 	e.key = e.node.getKey(arena)
 	return e
@@ -177,7 +169,7 @@ func (ls *MemStore) findGreater(key []byte, allowEqual bool) (entry, bool) {
 		addr := prev.getNextAddr(level)
 		if addr != nullArenaAddr {
 			arena := ls.getArena()
-			data := arena.get(addr, nodeHeadrSize)
+			data := arena.get(addr, nodeHeaderSize)
 			next.node = (*node)(unsafe.Pointer(&data[0]))
 			next.key = next.node.getKey(arena)
 			cmp := bytes.Compare(next.key, key)
@@ -247,7 +239,7 @@ func (ls *MemStore) findSpliceForLevel(arena *arena, key []byte, before *node, l
 		if nextAddr == nullArenaAddr {
 			return before, nil, false
 		}
-		data := arena.get(nextAddr, nodeHeadrSize)
+		data := arena.get(nextAddr, nodeHeaderSize)
 		next := (*node)(unsafe.Pointer(&data[0]))
 		nextKey := next.getKey(arena)
 		cmp := bytes.Compare(nextKey, key)
@@ -282,7 +274,7 @@ func (ls *MemStore) findLast() entry {
 }
 
 func (ls *MemStore) getNode(arena *arena, addr arenaAddr) *node {
-	data := arena.get(addr, nodeHeadrSize)
+	data := arena.get(addr, nodeHeaderSize)
 	return (*node)(unsafe.Pointer(&data[0]))
 }
 
@@ -362,7 +354,7 @@ func (ls *MemStore) replace(key, v []byte, hint *Hint, old *node) {
 
 func (ls *MemStore) newNode(arena *arena, key []byte, v []byte, height int) *node {
 	// The base level is already allocated in the node struct.
-	nodeSize := nodeHeadrSize + height*8 + len(key) + len(v)
+	nodeSize := nodeHeaderSize + height*8 + len(key) + len(v)
 	addr := arena.alloc(nodeSize)
 	if addr == nullArenaAddr {
 		arena = arena.grow()

@@ -2624,13 +2624,13 @@ func (s *testSessionSuite3) TestSetTransactionIsolationOneShot(c *C) {
 
 	// Check isolation level is set to read committed.
 	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
-		c.Assert(req.IsolationLevel, Equals, tikvstore.SI)
+		c.Assert(req.IsolationLevel, Equals, kv.SI)
 	})
 	tk.Se.Execute(ctx, "select * from t where k = 1")
 
 	// Check it just take effect for one time.
 	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
-		c.Assert(req.IsolationLevel, Equals, tikvstore.SI)
+		c.Assert(req.IsolationLevel, Equals, kv.SI)
 	})
 	tk.Se.Execute(ctx, "select * from t where k = 1")
 
@@ -2658,7 +2658,7 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	tk.MustExec("begin")
 	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
-	vars := txn.GetVars()
+	vars := txn.GetVars().(*tikv.Variables)
 	c.Assert(vars.BackoffLockFast, Equals, 1)
 	c.Assert(vars.BackOffWeight, Equals, 100)
 	tk.MustExec("rollback")
@@ -2668,7 +2668,7 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(tk.Se.GetSessionVars().InTxn(), IsTrue)
 	txn, err = tk.Se.Txn(false)
 	c.Assert(err, IsNil)
-	vars = txn.GetVars()
+	vars = txn.GetVars().(*tikv.Variables)
 	c.Assert(vars.BackOffWeight, Equals, 50)
 
 	tk.MustExec("set @@autocommit = 1")
@@ -3257,7 +3257,7 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("")`)
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("")`)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
@@ -3268,9 +3268,9 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
-	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
@@ -3378,8 +3378,8 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("dc-1")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("dc-1")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	// set txn_scope to local
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")

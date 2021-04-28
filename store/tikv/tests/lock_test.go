@@ -24,8 +24,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -163,7 +163,7 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	m, err := txn.BatchGet(context.Background(), keys)
+	m, err := toTiDBTxn(&txn).BatchGet(context.Background(), toTiDBKeys(keys))
 	c.Assert(err, IsNil)
 	c.Assert(len(m), Equals, int('z'-'a'+1))
 	for ch := byte('a'); ch <= byte('z'); ch++ {
@@ -506,9 +506,9 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	c.Assert(err, IsNil)
 	// transaction 1 is rolled back
 	_, err = txn.Get(context.Background(), []byte("k1"))
-	c.Assert(err, Equals, tidbkv.ErrNotExist)
+	c.Assert(err, Equals, tikverr.ErrNotExist)
 	_, err = txn.Get(context.Background(), []byte("k2"))
-	c.Assert(err, Equals, tidbkv.ErrNotExist)
+	c.Assert(err, Equals, tikverr.ErrNotExist)
 	// transaction 2 is committed
 	v, err := txn.Get(context.Background(), []byte("k3"))
 	c.Assert(err, IsNil)
@@ -617,9 +617,9 @@ func (s *testLockSuite) TestResolveTxnFallenBackFromAsyncCommit(c *C) {
 	t3, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = t3.Get(context.Background(), []byte("fb1"))
-	errMsgMustContain(c, err, "key not exist")
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 	_, err = t3.Get(context.Background(), []byte("fb2"))
-	errMsgMustContain(c, err, "key not exist")
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 }
 
 func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
@@ -637,7 +637,7 @@ func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
 	t3, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = t3.Get(context.Background(), []byte("fb1"))
-	errMsgMustContain(c, err, "key not exist")
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 	_, err = t3.Get(context.Background(), []byte("fb2"))
-	errMsgMustContain(c, err, "key not exist")
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 }

@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/util/memory"
 )
 
 type commitDetailCtxKeyType struct{}
@@ -243,7 +242,7 @@ func (sd *ScanDetail) String() string {
 	buf.WriteString(", read_count: ")
 	buf.WriteString(strconv.FormatUint(sd.RocksdbBlockReadCount, 10))
 	buf.WriteString(", read_byte: ")
-	buf.WriteString(memory.FormatBytes(int64(sd.RocksdbBlockReadByte)))
+	buf.WriteString(FormatBytes(int64(sd.RocksdbBlockReadByte)))
 	buf.WriteString("}}}")
 	return buf.String()
 }

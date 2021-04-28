@@ -1509,5 +1509,29 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIssue24095",
+    "Cases": [
+      {
+        "SQL": "select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#10",
+          "└─HashJoin 1.00 root  inner join, equal:[eq(test.t.id, test.t.id) eq(test.t.value, test.t.value)]",
+          "  ├─Selection(Build) 0.80 root  not(isnull(test.t.id)), not(isnull(test.t.value))",
+          "  │ └─TopN 1.00 root  test.t.value, offset:0, count:1",
+          "  │   └─HashJoin 12487.50 root  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "  │     ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.id))",
+          "  │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │     └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │       └─Selection 9990.00 cop[tikv]  not(isnull(test.t.id))",
+          "  │         └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t.id)), not(isnull(test.t.value))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

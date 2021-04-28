@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -134,6 +135,9 @@ func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
 }
 
 func (s *tiflashTestSuite) TestMppExecution(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test because of long running")
+	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
