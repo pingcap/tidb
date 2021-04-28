@@ -77,6 +77,7 @@ type KVTxn struct {
 	binlog             BinlogExecutor
 	schemaLeaseChecker SchemaLeaseChecker
 	isPessimistic      bool
+	enable1PC          bool
 	kvFilter           KVFilter
 }
 
@@ -209,6 +210,11 @@ func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
 // SetPessimistic indicates if the transaction should use pessimictic lock.
 func (txn *KVTxn) SetPessimistic(b bool) {
 	txn.isPessimistic = b
+}
+
+// SetEnable1PC indicates if the transaction will try to use 1 phase commit.
+func (txn *KVTxn) SetEnable1PC(b bool) {
+	txn.enable1PC = b
 }
 
 // SetKVFilter sets the filter to ignore key-values in memory buffer.
