@@ -53,8 +53,8 @@ func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	return nil
 }
 
-// Insert will **TRY** to insert the infoschema into the cache. It works by always keeping newers.
-// But YOU SHOULD NOT RELY THIS BEHAVIOR.
+// Insert will **TRY** to insert the infoschema into the cache.
+// It only promised to cache the infoschema, if it is newer than all the cached.
 func (h *InfoCache) Insert(is InfoSchema) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
