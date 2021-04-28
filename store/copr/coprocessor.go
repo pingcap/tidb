@@ -697,7 +697,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *tikv.Backoffer, task *copTas
 	}
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead, &worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel: tikv.IsolationLevelToPB(worker.req.IsolationLevel),
+		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
 		Priority:       priorityToPB(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
 		RecordTimeStat: true,
@@ -1201,5 +1201,16 @@ func priorityToPB(pri int) kvrpcpb.CommandPri {
 		return kvrpcpb.CommandPri_High
 	default:
 		return kvrpcpb.CommandPri_Normal
+	}
+}
+
+func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
+	switch level {
+	case kv.RC:
+		return kvrpcpb.IsolationLevel_RC
+	case kv.SI:
+		return kvrpcpb.IsolationLevel_SI
+	default:
+		return kvrpcpb.IsolationLevel_SI
 	}
 }

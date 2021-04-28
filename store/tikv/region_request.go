@@ -737,15 +737,3 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	}
 	return false, nil
 }
-
-// IsolationLevelToPB converts isolation level to wire type.
-func IsolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
-	switch level {
-	case kv.RC:
-		return kvrpcpb.IsolationLevel_RC
-	case kv.SI:
-		return kvrpcpb.IsolationLevel_SI
-	default:
-		return kvrpcpb.IsolationLevel_SI
-	}
-}
