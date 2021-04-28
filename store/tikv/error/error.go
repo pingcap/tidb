@@ -14,6 +14,8 @@
 package error
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -122,6 +124,15 @@ func NewErrWriteConfictWithArgs(startTs, conflictTs, conflictCommitTs uint64, ke
 		ConflictCommitTs: conflictCommitTs,
 	}
 	return &ErrWriteConflict{WriteConflict: &conflict}
+}
+
+// ErrWriteConflictInTiDB is the error when the commit meets an write conflict error when local latch is enabled.
+type ErrWriteConflictInLatch struct {
+	StartTS uint64
+}
+
+func (e *ErrWriteConflictInLatch) Error() string {
+	return fmt.Sprintf("write conflict in latch,startTS:%v", e.StartTS)
 }
 
 // ErrRetryable wraps *kvrpcpb.Retryable to implement the error interface.

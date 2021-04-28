@@ -155,6 +155,10 @@ func toTiDBErr(err error) error {
 	if tikverr.IsErrNotFound(err) {
 		return kv.ErrNotExist
 	}
+
+	if e, ok := err.(*tikverr.ErrWriteConflictInLatch); ok {
+		return kv.ErrWriteConflictInTiDB.GenWithStackByArgs(e.StartTS)
+	}
 	return errors.Trace(err)
 }
 
