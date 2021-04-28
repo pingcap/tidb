@@ -47,41 +47,11 @@ Note this file, which is one of the main culprits of circular dependencies. The 
 
 The init method of `logrus` may initialize two `logrus` handlers.
 
-First, it is necessary to initialize the standard log handler (package level handler). `initLogger` first initializes the standard logger according to the configuration.
-
-```go
-func InitLogger(cfg *LogConfig) error {
-   log.SetLevel(stringToLogLevel(cfg.Level))
-   log.AddHook(&contextHook{})
-
-   if cfg.Format == "" {
-      cfg.Format = DefaultLogFormat
-   }
-   formatter := stringToLogFormatter(cfg.Format, cfg.DisableTimestamp)
-   log.SetFormatter(formatter)
-
-   if len(cfg.File.Filename) != 0 {
-      if err := initFileLog(&cfg.File, nil); err != nil {
-         return errors.Trace(err)
-      }
-   }
-
-// The rest is omitted.
-```
+First, it is necessary to initialize the standard log handler (package level handler). `InitLogger` first initializes the standard logger according to the configuration. 
 
 Then, determine whether the configuration has enabled slow query log, and if so, create a log handler specific to slow query.
 
-```go
-if len(cfg.SlowQueryFile) != 0 {
-   SlowQueryLogger = log.New()
-   tmp := cfg.File
-   tmp.Filename = cfg.SlowQueryFile
-   if err := initFileLog(&tmp, SlowQueryLogger); err != nil {
-      return errors.Trace(err)
-   }
-   SlowQueryLogger.Formatter = &slowLogFormatter{}
-}
-```
+[Here is the code](https://github.com/pingcap/tidb/blob/e79fa8c6b654e5b94e9ed0a1c0f997d6564e95be/util/logutil/log.go#L261).
 
 Regarding where these two handlers are used.
 
@@ -97,19 +67,13 @@ Similar to `logrus`, the init method of zap `func InitZapLogger(cfg *LogConfig) 
 - The global zap handler, the default log handler for the entire repo, through which the vast majority of logs are emitted.
 - Slow query zap handler, which is only initialized and not used.
   
-`InitZapLogger`'s logic is very similar to `logrus`' above, so I won't repeat it here.
+`InitZapLogger`'s logic is very similar to `logrus`' above.
 
 #### gRPC Logger
 
 I almost forgot that there is a fish in the net, which is not in `util/logutil/log.go`. In `main.go` there is a bunch of grpc logger initialization code.
 
-```go
-if len(os.Getenv("GRPC_DEBUG")) > 0 {
-   grpclog.SetLoggerV2(grpclog.NewLoggerV2WithVerbosity(os.Stderr, os.Stderr, os.Stderr, 999))
-} else {
-   grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
-}
-```
+[Here is the code](https://github.com/pingcap/tidb/blob/e79fa8c6b654e5b94e9ed0a1c0f997d6564e95be/tidb-server/main.go#L591).
 
 The `NewLoggerV2` method creates a go native logger handler and is only used in grpc.
 
@@ -123,51 +87,19 @@ Log library dependencies:
 
 #### Logrus
 
-The initialization of `logrus` locates at `pkg/logutil/log.go`：
-
-```go
-// cfg is the config initialized when PD started
-// initial logrus logger by cfg
-log.SetLevel(StringToLogLevel(cfg.Level))
-log.AddHook(&contextHook{})
-if cfg.Format == "" {
-   cfg.Format = defaultLogFormat
-}
-log.SetFormatter(StringToLogFormatter(cfg.Format, cfg.DisableTimestamp))
-// etcd log
-capnslog.SetFormatter(&redirectFormatter{})
-// grpc log
-lg := &wrapLogrus{log.StandardLogger()}
-grpclog.SetLoggerV2(lg)
-// raft log
-raft.SetLogger(lg)
-if len(cfg.File.Filename) == 0 {
-   return
-}
-err = InitFileLog(&cfg.File)
-```
-
 The standard logger is then passed down to the etcd (via the `capnslog` proxy), grpc and draft components as the log handler for these packages.
 
 There is only one `logrus` handler inside the entire PD codebase.
 
 Only the etcd, grpc, and draft components use the `logrus` handler.
 
+The initialization of `logrus` locates at `pkg/logutil/log.go`. [Here is the code](https://github.com/tikv/pd/blob/b07be86fb91aef07e8a68258ff6149256ab511f8/pkg/logutil/log.go#L260).
+
 #### [pingcap/log](https://github.com/pingcap/log)
 
 There is only one zap log handler inside the entire PD codebase, and its initialization is inline `cmd/pd-server/main.go`.
 
-```go
-// New zap logger
-err = cfg.SetupLogger()
-if err == nil {
-   log.ReplaceGlobals(cfg.GetZapLogger(), cfg.GetZapLogProperties())
-} else {
-   log.Fatal("initialize logger error", errs.ZapError(err))
-}
-// Flushing any buffered log entries
-defer log.Sync()
-```
+[Here is the code](https://github.com/tikv/pd/blob/b07be86fb91aef07e8a68258ff6149256ab511f8/cmd/pd-server/main.go#L66).
 
 The logic is simple, create a new handler based on the configuration and replace the global handler at the `pingcap/log` package level.
 
@@ -181,28 +113,7 @@ Not only is it a circular dependency, it also happens to depend on the log compo
 
 The following code is from `pkg/lightning/log/log.go`, which calls TiDB's `InitLogger` and then `pingcap/log`'s InitLogger.
 
-```go
-// InitLogger initializes Lightning's and also the TiDB library's loggers.
-func InitLogger(cfg *Config, tidbLoglevel string) error {
-   // import logutil "github.com/tidb/util/logutil/log.go"
-   logutil.InitLogger(&logutil.LogConfig{Config: pclog.Config{Level: tidbLoglevel}})
-
-   logCfg := &pclog.Config{
-      Level: cfg.Level,
-   }
-   if len(cfg.File) > 0 {
-      logCfg.File = pclog.FileLogConfig{
-         Filename:   cfg.File,
-         MaxSize:    cfg.FileMaxSize,
-         MaxDays:    cfg.FileMaxDays,
-         MaxBackups: cfg.FileMaxBackups,
-      }
-   }
-   // pclog is based on pingcap/log
-   logger, props, err := pclog.InitLogger(logCfg)
-
-// The rest is omitted.
-```
+[Here is the code](https://github.com/pingcap/br/blob/b09611d526a754cee82e6d3b12edf67e4cc885ae/pkg/lightning/log/log.go#L77).
 
 BR also relies on TiDB's slow log, which he initializes in the main function as `SlowQueryLogger`.
 
