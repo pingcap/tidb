@@ -320,7 +320,7 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 	}
 
 	if ft.Tp == mysql.TypeEnum && ft.EvalType() == types.ETString {
-		return handleEnumFromBinOp(ft, value, op)
+		return handleEnumFromBinOp(r.sc, ft, value, op)
 	}
 
 	switch op {
@@ -437,7 +437,7 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 	return val, op, true
 }
 
-func handleEnumFromBinOp(ft *types.FieldType, val types.Datum, op string) []*point {
+func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum, op string) []*point {
 	res := make([]*point, 0, len(ft.Elems)*2)
 	appendPointFunc := func(d types.Datum) {
 		res = append(res, &point{value: d, excl: false, start: true})
@@ -450,7 +450,7 @@ func handleEnumFromBinOp(ft *types.FieldType, val types.Datum, op string) []*poi
 			continue
 		}
 		d := types.NewMysqlEnumDatum(enum)
-		if v, err := d.CompareDatum(nil, &val); err == nil {
+		if v, err := d.CompareDatum(sc, &val); err == nil {
 			switch op {
 			case ast.LT:
 				if v < 0 {
