@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -169,11 +170,11 @@ func (db *MemDB) Get(key []byte) ([]byte, error) {
 
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	return db.vlog.getValue(x.vptr), nil
 }
@@ -182,11 +183,11 @@ func (db *MemDB) Get(key []byte) ([]byte, error) {
 func (db *MemDB) SelectValueHistory(key []byte, predicate func(value []byte) bool) ([]byte, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	result := db.vlog.selectValueHistory(x.vptr, func(addr memdbArenaAddr) bool {
 		return predicate(db.vlog.getValue(addr))
@@ -201,7 +202,7 @@ func (db *MemDB) SelectValueHistory(key []byte, predicate func(value []byte) boo
 func (db *MemDB) GetFlags(key []byte) (kv.KeyFlags, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return 0, tidbkv.ErrNotExist
+		return 0, tikverr.ErrNotExist
 	}
 	return x.getKeyFlags(), nil
 }
