@@ -14,6 +14,7 @@
 package mockstorage
 
 import (
+	"context"
 	"crypto/tls"
 
 	"github.com/pingcap/tidb/kv"
@@ -76,6 +77,11 @@ func (s *mockStorage) Begin() (kv.Transaction, error) {
 	return newTiKVTxn(txn, err)
 }
 
+// ShowStatus returns the specified status of the storage
+func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, kv.ErrNotImplemented
+}
+
 // BeginWithOption begins a transaction with given option
 func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
 	txnScope := option.TxnScope
@@ -86,6 +92,10 @@ func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transacti
 		return newTiKVTxn(s.BeginWithStartTS(txnScope, *option.StartTS))
 	} else if option.PrevSec != nil {
 		return newTiKVTxn(s.BeginWithExactStaleness(txnScope, *option.PrevSec))
+	} else if option.MaxPrevSec != nil {
+		return newTiKVTxn(s.BeginWithMaxPrevSec(txnScope, *option.MaxPrevSec))
+	} else if option.MinStartTS != nil {
+		return newTiKVTxn(s.BeginWithMinStartTS(txnScope, *option.MinStartTS))
 	}
 	return newTiKVTxn(s.BeginWithTxnScope(txnScope))
 }
