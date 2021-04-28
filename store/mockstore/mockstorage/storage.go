@@ -14,6 +14,7 @@
 package mockstorage
 
 import (
+	"context"
 	"crypto/tls"
 
 	"github.com/pingcap/tidb/kv"
@@ -74,6 +75,11 @@ func (s *mockStorage) Describe() string {
 func (s *mockStorage) Begin() (kv.Transaction, error) {
 	txn, err := s.KVStore.Begin()
 	return newTiKVTxn(txn, err)
+}
+
+// ShowStatus returns the specified status of the storage
+func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, kv.ErrNotImplemented
 }
 
 // BeginWithOption begins a transaction with given option
