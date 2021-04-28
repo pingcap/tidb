@@ -1345,9 +1345,8 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER uroot1, uroot2, uroot3")
 	tk.MustExec("GRANT SUPER ON *.* to uroot1 WITH GRANT OPTION") // super not process
-	tk.MustExec("GRANT SUPER, PROCESS ON *.* to uroot2 WITH GRANT OPTION")
 	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
-	tk.MustExec("GRANT SUPER, PROCESS, RESTRICTED_TABLES_ADMIN ON *.* to uroot3 WITH GRANT OPTION")
+	tk.MustExec("GRANT SUPER, PROCESS, RESTRICTED_TABLES_ADMIN ON *.* to uroot2 WITH GRANT OPTION")
 	tk.Se.Auth(&auth.UserIdentity{
 		Username:     "uroot1",
 		Hostname:     "localhost",
@@ -1355,29 +1354,10 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 		AuthHostname: "%",
 	}, nil, nil)
 
-	// seed the statements_summary with a real statement, and then again to prevent observer effect.
-	tk.MustQuery("SELECT 1 FROM dual")
-	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.statements_summary WHERE query_sample_text LIKE '%dual%'`)
-
-	// Before SEM this works fine:
-	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.statements_summary WHERE query_sample_text LIKE '%dual%'`).Check(testkit.Rows("2"))
-
 	sem.Enable()
 	defer sem.Disable()
 
-	// With SEM enabled, the sample_text is empty
-	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.statements_summary WHERE query_sample_text LIKE '%dual%'`).Check(testkit.Rows("0"))
-
-	// Unless we change to a user who has the process privilege, then it is restored.
-	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "uroot2",
-		Hostname:     "localhost",
-		AuthUsername: "uroot",
-		AuthHostname: "%",
-	}, nil, nil)
-	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.statements_summary WHERE query_sample_text LIKE '%dual%'`).Check(testkit.Rows("2"))
-
-	// Even though we have super and process, we still can't read protected information from tidb_servers_info, cluster_* tables
+	// Even though we have super, we still can't read protected information from tidb_servers_info, cluster_* tables
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL`).Check(testkit.Rows("0"))
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`).Check(testkit.Rows("0"))
 	// 36 = a UUID. Normally it is an IP address.
@@ -1385,7 +1365,7 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 
 	// That is unlesss we have the RESTRICTED_TABLES_ADMIN privilege
 	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "uroot3",
+		Username:     "uroot2",
 		Hostname:     "localhost",
 		AuthUsername: "uroot",
 		AuthHostname: "%",

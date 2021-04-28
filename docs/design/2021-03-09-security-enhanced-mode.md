@@ -107,8 +107,6 @@ The following tables will be modified to hide columns unless the user has the `R
     * The “IP” column will return NULL.
 * cluster_* tables
     * The “instance” column will show the server ID instead of the server IP address.
-* statements_summary*
-    * The query_sample_text will return empty unless the user has the `PROCESS` privilege.
 
 ### Performance Schema Tables
 
