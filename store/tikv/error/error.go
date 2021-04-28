@@ -142,5 +142,5 @@ type ErrEntryTooLarge struct {
 }
 
 func (e *ErrEntryTooLarge) Error() string {
-	return fmt.Sprintf("entry size too large, size:%v,limit:%v.", e.Size, e.Limit)
+	return fmt.Sprintf("entry size too large, size: %v,limit: %v.", e.Size, e.Limit)
 }
