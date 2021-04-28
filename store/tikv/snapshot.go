@@ -121,6 +121,7 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 	return &KVSnapshot{
 		store:           store,
 		version:         ts,
+		priority:        PriorityNormal,
 		vars:            kv.DefaultVars,
 		replicaReadSeed: replicaReadSeed,
 		resolvedLocks:   util.NewTSSet(5),
