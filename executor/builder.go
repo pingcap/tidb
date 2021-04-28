@@ -2686,18 +2686,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 	if v.StoreType == kv.TiFlash {
 		sctx.IsTiFlash.Store(true)
-		exec, err := buildNoRangeTableReader(b, v)
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		exec.ranges = ts.Ranges
-		exec.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
-			sctx:       b.ctx,
-			partitions: partitions,
-			ranges:     ts.Ranges,
-		}
-		return exec
 	}
 
 	if len(partitions) == 0 {

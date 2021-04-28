@@ -69,23 +69,6 @@ func nextPartitionWithTrace(ctx context.Context, n nextPartition, tbl table.Phys
 	return n.nextPartition(ctx, tbl)
 }
 
-// updateDAGRequestTableID update the table ID in the DAG request to partition ID.
-// TiKV only use that table ID for log, but TiFlash use it.
-func updateDAGRequestTableID(ctx context.Context, dag *tipb.DAGRequest, partitionID int64) error {
-	// TiFlash set RootExecutor field and ignore Executors field.
-	if dag.RootExecutor != nil {
-		return updateExecutorTableID(ctx, dag.RootExecutor, partitionID, true)
-	}
-	for i := 0; i < len(dag.Executors); i++ {
-		exec := dag.Executors[i]
-		err := updateExecutorTableID(ctx, exec, partitionID, false)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID int64, recursive bool) error {
 	var child *tipb.Executor
 	switch exec.Tp {
