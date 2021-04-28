@@ -9,7 +9,7 @@
 
 Except for slow query logs, all other logs must satisfy the [unified-log-format RFC standard](https://github.com/tikv/rfcs/blob/master/text/2018-12-19-unified-log-format.md).
 
-However, in practice, it was found that the format of logs is confusing, as shown in the following four points:
+However, in practice, it was found that the format of logs is confusing:
 
 - There are few logging configuration instructions in the document. We need to enrich document especially the type and the format of logs each component would emit.
 - The configured logging parameters do not match the runtime logging, e.g. `tidb_stderr` is configured with text format, but the log is in json format.
@@ -20,17 +20,13 @@ However, in practice, it was found that the format of logs is confusing, as show
 
 ### [pingcap/log](https://github.com/pingcap/log)
 
-As a common logging library for PingCAP golang projects, it does the following things:
+As a common logging library in PingCAP, it does the following things:
 
 - Provides the standard config schema.
 - Provides a factory method for creating log handlers.
 - Hard code the log format according to [unified-log-format RFC standard](https://github.com/tikv/rfcs/blob/23d4f9aed68a295b678e8bd909ee8479e3ba0bd1/text/2018-12-19-unified-log-format.md).
 - Encapsulates the logic of the rolling file.
 - Provides global log handler and related methods for package dimension.
-
-`pingcap/log` once had a strong limitation, that it couldn't customize the encoder for the text format. This problem had been [fixed by @9547](https://github.com/pingcap/log/pull/14).
-
-When PD and TiDB-operator were using `pingcap/log`, there was no custom encoder function yet, so they implemented one by themselves respectively. But they accidentally wrote out a circular dependency. Currently, customize encoder is implemented by [@9547](http://github.com/9547) in [pd/pull/3480](https://github.com/tikv/pd/pull/3480), thus we can clear this tech debt.
 
 ### TiDB
 
