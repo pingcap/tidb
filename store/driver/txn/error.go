@@ -145,6 +145,16 @@ func extractKeyErr(err error) error {
 		notFoundDetail := prettyLockNotFoundKey(e.Retryable)
 		return kv.ErrTxnRetryable.GenWithStackByArgs(e.Retryable + " " + notFoundDetail)
 	}
+	return toTiDBErr(err)
+}
+
+func toTiDBErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if tikverr.IsErrNotFound(err) {
+		return kv.ErrNotExist
+	}
 	return errors.Trace(err)
 }
 
