@@ -13,7 +13,7 @@ However, in practice, it was found that the format of logs is confusing, as show
 
 - There are few logging configuration instructions in the document. We need to enrich document especially the type and the format of logs each component would emit.
 - The configured logging parameters do not match the runtime logging, e.g. `tidb_stderr` is configured with text format, but the log is in json format.
-- The logs of some components do not meet the [unified-log-format RFC standard](https://github.com/tikv/rfcs/blob/master/text/2018-12-19-unified-log-format.md), e.g. `tiflash_cluster_manager`.
+- The logs of some components do not meet the [unified-log-format RFC standard](https://github.com/tikv/rfcs/blob/23d4f9aed68a295b678e8bd909ee8479e3ba0bd1/text/2018-12-19-unified-log-format.md), e.g. `tiflash_cluster_manager`.
 - Duplicate logs, e.g. `pd_stderr` will emit both text and json logs with duplicate content (but with a few subtle differences in timestamps).
 
 ## Logging code for each component
@@ -24,13 +24,13 @@ As a common logging library for PingCAP golang projects, it does the following t
 
 - Provides the standard config schema.
 - Provides a factory method for creating log handlers.
-- Hard code the log format according to [unified-log-format RFC standard](https://github.com/tikv/rfcs/blob/master/text/2018-12-19-unified-log-format.md).
+- Hard code the log format according to [unified-log-format RFC standard](https://github.com/tikv/rfcs/blob/23d4f9aed68a295b678e8bd909ee8479e3ba0bd1/text/2018-12-19-unified-log-format.md).
 - Encapsulates the logic of the rolling file.
 - Provides global log handler and related methods for package dimension.
 
 `pingcap/log` once had a strong limitation, that it couldn't customize the encoder for the text format. This problem had been [fixed by @9547](https://github.com/pingcap/log/pull/14).
 
-When PD and TiDB-operator were using `pingcap/log`, there was no custom encoder function yet, so they implemented one by themselves respectively, but accidentally wrote out a circular dependency. Currently, customize encoder [implemented by @9547](https://github.com/tikv/pd/pull/3480) and thus we can clear this tech debt.
+When PD and TiDB-operator were using `pingcap/log`, there was no custom encoder function yet, so they implemented one by themselves respectively. But they accidentally wrote out a circular dependency. Currently, customize encoder is implemented by [@9547](http://github.com/9547) in [pd/pull/3480](https://github.com/tikv/pd/pull/3480), thus we can clear this tech debt.
 
 ### TiDB
 
@@ -225,10 +225,10 @@ There must be something wrong with the engineering of these codes above, and the
 
 Rationale - for long-term consideration, we should maintain code quality. The speed of output can be sacrificed in time if necessary.
 
-To do these things:
+Implementation plan:
 
-1. Change the TiDB first, being dependent on the place to write dummy code.
-2. Modify the BR log to remove the dependency on TiDB `loguitl`.
-3. Modify PD and TiDB again to unify the log library to `pingcap/log`.
-4. BR, PD, TiDB all depend directly on `pingcap/log` and do not depend on any other log libraries (including `std/log`).
-5. BR, PD, and TiDB all encapsulate separate log layers on top of `pingcap/log` and do not rely on each other's log layers, preferring to add some boilerplate code.
+1. Unify log library for `pingcap/tidb` first. For dependent parts we write dummy code to satisfy.
+2. Unify log library for `pingcap/br`, remove the dependency on `pingcap/tidb/util/logutil`, and clear dummy code of `pingcap/tidb`.
+3. Unify log library for `tikv/pd`.
+
+After the implementation, we have `pingcap/tidb`, `pingcap/br`, `tikv/pd` all depend directly on `pingcap/log` and do not depend on any other log libraries (including `std/log`) or each other.
