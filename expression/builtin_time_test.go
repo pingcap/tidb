@@ -815,7 +815,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 }
 
 func resetStmtContext(ctx sessionctx.Context) {
-	ctx.GetSessionVars().StmtCtx.ResetNowTs()
+	ctx.GetSessionVars().StmtCtx.ResetStmtCache()
 }
 
 func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
@@ -2941,8 +2941,30 @@ func (s *testEvaluatorSuite) TestTiDBBoundStaleness(c *C) {
 		} else {
 			c.Assert(d.GetInt64(), Equals, test.expect)
 		}
-		failpoint.Disable("github.com/pingcap/tidb/expression/injectResolveTS")
+		resetStmtContext(s.ctx)
 	}
+
+	// Test whether it's deterministic.
+	resolveTS1 := oracle.ComposeTS(t2.Add(-1*time.Second).Unix()*1000, 0)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectResolveTS",
+		fmt.Sprintf("return(%v)", resolveTS1)), IsNil)
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(t1Str), types.NewDatum(t2Str)}))
+	c.Assert(err, IsNil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64(), Equals, int64(resolveTS1))
+	// ResolveTS updated.
+	resolveTS2 := oracle.ComposeTS(t2.Add(1*time.Second).Unix()*1000, 0)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectResolveTS",
+		fmt.Sprintf("return(%v)", resolveTS2)), IsNil)
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(t1Str), types.NewDatum(t2Str)}))
+	c.Assert(err, IsNil)
+	d, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	// Still resolveTS1
+	c.Assert(d.GetInt64(), Equals, int64(resolveTS1))
+	resetStmtContext(s.ctx)
+	failpoint.Disable("github.com/pingcap/tidb/expression/injectResolveTS")
 }
 
 func (s *testEvaluatorSuite) TestGetIntervalFromDecimal(c *C) {

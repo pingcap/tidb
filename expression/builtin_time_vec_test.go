@@ -519,6 +519,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
 		},
 	},
+	// Todo: how to inject the resolveTS for better testing.
 	ast.TiDBBoundStaleness: {
 		{
 			retEvalType:   types.ETInt,

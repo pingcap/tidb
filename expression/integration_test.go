@@ -2343,8 +2343,8 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 		} else {
 			result.Check(testkit.Rows(fmt.Sprintf("%d", test.expect)))
 		}
-		failpoint.Disable("github.com/pingcap/tidb/expression/injectResolveTS")
 	}
+	failpoint.Disable("github.com/pingcap/tidb/expression/injectResolveTS")
 
 	// fix issue 10308
 	result = tk.MustQuery("select time(\"- -\");")

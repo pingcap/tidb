@@ -7185,6 +7185,9 @@ func (b *builtinTiDBBoundStalenessSig) evalInt(row chunk.Row) (int64, bool, erro
 		injectTS := val.(int)
 		minResolveTS = uint64(injectTS)
 	})
+	// Try to get from the stmt cache to make sure this function is deterministic.
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	minResolveTS = stmtCtx.GetOrStoreStmtCache(stmtctx.StmtResolveTsCacheKey, minResolveTS).(uint64)
 	// For a resolved TS t and a time range [t1, t2]:
 	//   1. If t < t1, we will use t1 as the result,
 	//      and with it, a read request may fail because it's an unreached resolved TS.
