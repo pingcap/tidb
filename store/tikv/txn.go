@@ -212,10 +212,10 @@ func (txn *KVTxn) SetPessimistic(b bool) {
 	txn.isPessimistic = b
 }
 
-// SetPriority sets the priority to write.
-// Note: To set priority for read commands, use snapshot.SetPriority().
+// SetPriority sets the priority for both write and read.
 func (txn *KVTxn) SetPriority(pri Priority) {
 	txn.priority = pri
+	txn.GetSnapshot().SetPriority(pri)
 }
 
 // SetKVFilter sets the filter to ignore key-values in memory buffer.
