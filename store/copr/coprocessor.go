@@ -697,7 +697,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *tikv.Backoffer, task *copTas
 	}
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead, &worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel: tikv.IsolationLevelToPB(worker.req.IsolationLevel),
+		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
 		Priority:       tikv.PriorityToPB(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
 		RecordTimeStat: true,
@@ -1190,4 +1190,15 @@ func (e *rateLimitAction) setEnabled(enabled bool) {
 
 func (e *rateLimitAction) isEnabled() bool {
 	return atomic.LoadUint32(&e.enabled) > 0
+}
+
+func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
+	switch level {
+	case kv.RC:
+		return kvrpcpb.IsolationLevel_RC
+	case kv.SI:
+		return kvrpcpb.IsolationLevel_SI
+	default:
+		return kvrpcpb.IsolationLevel_SI
+	}
 }

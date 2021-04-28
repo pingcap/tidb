@@ -25,6 +25,10 @@ var (
 	ErrBodyMissing = errors.New("response body is missing")
 	// ErrTiDBShuttingDown is returned when TiDB is closing and send request to tikv fail, do not retry.
 	ErrTiDBShuttingDown = errors.New("tidb server shutting down")
+	// ErrNotExist means the related data not exist.
+	ErrNotExist = errors.New("not exist")
+	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
+	ErrInvalidTxn = errors.New("invalid transaction")
 )
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
@@ -55,6 +59,11 @@ var (
 	_ = dbterror.ClassTiKV.NewStd(CodeTruncatedWrongValue)
 	_ = dbterror.ClassTiKV.NewStd(CodeDivisionByZero)
 )
+
+// IsErrNotFound checks if err is a kind of NotFound error.
+func IsErrNotFound(err error) bool {
+	return errors.ErrorEqual(err, ErrNotExist)
+}
 
 // ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.
 // It also marks if the deadlock is retryable.
