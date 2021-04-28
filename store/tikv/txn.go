@@ -186,8 +186,6 @@ func (txn *KVTxn) SetOption(opt int, val interface{}) {
 		txn.txnInfoSchema = val.(SchemaVer)
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
-	case kv.CommitHook:
-		txn.commitCallback = val.(func(info string, err error))
 	}
 }
 
@@ -209,6 +207,12 @@ func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
 // SetPessimistic indicates if the transaction should use pessimictic lock.
 func (txn *KVTxn) SetPessimistic(b bool) {
 	txn.isPessimistic = b
+}
+
+// SetCommitCallback sets up a function that will be called when the transaction
+// is finished.
+func (txn *KVTxn) SetCommitCallback(f func(string, error)) {
+	txn.commitCallback = f
 }
 
 // SetKVFilter sets the filter to ignore key-values in memory buffer.
