@@ -194,6 +194,8 @@ type session struct {
 
 	store kv.Storage
 
+	parserPool *sync.Pool
+
 	preparedPlanCache *kvcache.SimpleLRUCache
 
 	sessionVars    *variable.SessionVars
@@ -1087,14 +1089,12 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 		defer span1.Finish()
 	}
 	defer trace.StartRegion(ctx, "ParseSQL").End()
-	return s.newParser().Parse(sql, charset, collation)
-}
 
-func (s *session) newParser() *parser.Parser {
-	p := parser.New()
+	p := s.parserPool.Get().(*parser.Parser)
+	defer s.parserPool.Put(p)
 	p.SetSQLMode(s.sessionVars.SQLMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
-	return p
+	return p.Parse(sql, charset, collation)
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
@@ -2105,7 +2105,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
-	sessionBindHandle := bindinfo.NewSessionBindHandle(s.newParser())
+	sessionBindHandle := bindinfo.NewSessionBindHandle(parser.New())
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
@@ -2344,6 +2344,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	}
 	s := &session{
 		store:           store,
+		parserPool:      &sync.Pool{New: func() interface{} { return parser.New() }},
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
 		client:          store.GetClient(),
@@ -2365,7 +2366,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
 
-	sessionBindHandle := bindinfo.NewSessionBindHandle(s.newParser())
+	sessionBindHandle := bindinfo.NewSessionBindHandle(parser.New())
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	return s, nil
 }
@@ -2377,6 +2378,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:       store,
+		parserPool:  &sync.Pool{New: func() interface{} { return parser.New() }},
 		sessionVars: variable.NewSessionVars(),
 		client:      store.GetClient(),
 		mppClient:   store.GetMPPClient(),
