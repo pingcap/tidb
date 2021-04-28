@@ -17,7 +17,6 @@ import (
 	"context"
 	"unsafe"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 )
@@ -48,7 +47,7 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	scanner, err := s.KVSnapshot.Iter(k, upperBound)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, toTiDBErr(err)
 	}
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
 }
@@ -57,7 +56,7 @@ func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	scanner, err := s.KVSnapshot.IterReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, toTiDBErr(err)
 	}
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
 }
