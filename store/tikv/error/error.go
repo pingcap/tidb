@@ -145,7 +145,7 @@ type ErrTxnTooLarge struct {
 }
 
 func (e *ErrTxnTooLarge) Error() string {
-	return fmt.Sprintf("txn too large, size:%v.", e.Size)
+	return fmt.Sprintf("txn too large, size: %v.", e.Size)
 }
 
 // ErrEntryTooLarge is the error when a key value entry is too large.
