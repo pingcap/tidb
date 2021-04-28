@@ -28,6 +28,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -1215,6 +1216,11 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	failpoint.Inject("mockSelectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock SelectionExec.baseExecutor.Open returned error"))
+		}
+	})
 	return e.open(ctx)
 }
 
@@ -1234,8 +1240,10 @@ func (e *SelectionExec) open(ctx context.Context) error {
 
 // Close implements plannercore.Plan Close interface.
 func (e *SelectionExec) Close() error {
-	e.memTracker.Consume(-e.childResult.MemoryUsage())
-	e.childResult = nil
+	if e.childResult != nil {
+		e.memTracker.Consume(-e.childResult.MemoryUsage())
+		e.childResult = nil
+	}
 	e.selected = nil
 	return e.baseExecutor.Close()
 }
