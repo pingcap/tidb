@@ -136,6 +136,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetIsolationLevel(level)
 	case tikvstore.Pessimistic:
 		txn.SetPessimistic(val.(bool))
+	case tikvstore.InfoSchema:
+		txn.SetTxnInfoSchema(val.(tikv.SchemaVer))
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}

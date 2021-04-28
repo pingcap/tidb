@@ -182,8 +182,6 @@ func (txn *KVTxn) SetOption(opt int, val interface{}) {
 	txn.us.SetOption(opt, val)
 	txn.snapshot.SetOption(opt, val)
 	switch opt {
-	case kv.InfoSchema:
-		txn.txnInfoSchema = val.(SchemaVer)
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
 	case kv.CommitHook:
@@ -209,6 +207,11 @@ func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
 // SetPessimistic indicates if the transaction should use pessimictic lock.
 func (txn *KVTxn) SetPessimistic(b bool) {
 	txn.isPessimistic = b
+}
+
+// SetTxnInfoSchema updates schema version to validate transaction.
+func (txn *KVTxn) SetTxnInfoSchema(schemaVer SchemaVer) {
+	txn.txnInfoSchema = schemaVer
 }
 
 // SetKVFilter sets the filter to ignore key-values in memory buffer.
