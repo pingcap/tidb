@@ -731,7 +731,7 @@ func getDefaultCollate(charsetName string) string {
 		}
 	}
 	// The charset is invalid, return server default.
-	return charset.CollationUTF8MB4
+	return mysql.DefaultCollationName
 }
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.
