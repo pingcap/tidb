@@ -472,7 +472,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a1"))
 	_, err = txn.Get(context.TODO(), []byte("b"))
-	errMsgMustContain(c, err, "key not exist")
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
 	// clean again, shouldn't be failed when a rollback already exist.
 	ctx := context.Background()
@@ -605,7 +605,7 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	txn1, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, committer.GetStartTS()+2)
 	c.Assert(err, IsNil)
 	_, err = txn1.Get(bo.GetCtx(), []byte("x"))
-	c.Assert(tidbkv.IsErrNotFound(err), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
 	txn2, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, math.MaxUint64)
 	c.Assert(err, IsNil)
@@ -1136,7 +1136,7 @@ func (s *testCommitterSuite) TestPushPessimisticLock(c *C) {
 	elapsed := time.Since(start)
 	// The optimistic lock shouldn't block reads.
 	c.Assert(elapsed, Less, 500*time.Millisecond)
-	c.Assert(tidbkv.IsErrNotFound(err), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
 	txn1.Rollback()
 	txn2.Rollback()
