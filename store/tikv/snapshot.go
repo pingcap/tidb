@@ -28,11 +28,10 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -54,7 +53,7 @@ type KVSnapshot struct {
 	notFillCache    bool
 	syncLog         bool
 	keyOnly         bool
-	vars            *tidbkv.Variables
+	vars            *kv.Variables
 	replicaReadSeed uint32
 	resolvedLocks   *util.TSSet
 
@@ -92,7 +91,7 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 		store:           store,
 		version:         ts,
 		priority:        pb.CommandPri_Normal,
-		vars:            tidbkv.DefaultVars,
+		vars:            kv.DefaultVars,
 		replicaReadSeed: replicaReadSeed,
 		resolvedLocks:   util.NewTSSet(5),
 	}
@@ -310,7 +309,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
-			return errors.Trace(kv.ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		batchGetResp := resp.Resp.(*pb.BatchGetResponse)
 		var (
@@ -385,7 +384,7 @@ func (s *KVSnapshot) Get(ctx context.Context, k []byte) ([]byte, error) {
 	}
 
 	if len(val) == 0 {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	return val, nil
 }
@@ -413,14 +412,6 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 	})
 
 	cli := NewClientHelper(s.store, s.resolvedLocks)
-
-	// Secondary locks or async commit locks cannot be ignored when getting using the max version.
-	// So we concurrently get a TS from PD and use it in retries to avoid unnecessary blocking.
-	var tsFuture oracle.Future
-	if s.version == maxTimestamp {
-		tsFuture = s.store.oracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.txnScope})
-	}
-	failpoint.Inject("snapshotGetTSAsync", nil)
 
 	isStaleness := false
 	var matchStoreLabels []*metapb.StoreLabel
@@ -450,7 +441,10 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 	if len(matchStoreLabels) > 0 {
 		ops = append(ops, WithMatchLabels(matchStoreLabels))
 	}
+
+	var firstLock *Lock
 	for {
+		failpoint.Inject("beforeSendPointGet", nil)
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -471,7 +465,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			continue
 		}
 		if resp.Resp == nil {
-			return nil, errors.Trace(kv.ErrBodyMissing)
+			return nil, errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		if cmdGetResp.ExecDetailsV2 != nil {
@@ -483,25 +477,17 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-
-			snapVer := s.version
-			if s.version == maxTimestamp {
-				newTS, err := tsFuture.Wait()
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				s.version = newTS
-				req.Req.(*pb.GetRequest).Version = newTS
-				// skip lock resolving and backoff if the lock does not block the read
-				if newTS < lock.TxnID || newTS < lock.MinCommitTS {
-					continue
-				}
+			if firstLock == nil {
+				firstLock = lock
+			} else if s.version == maxTimestamp && firstLock.TxnID != lock.TxnID {
+				// If it is an autocommit point get, it needs to be blocked only
+				// by the first lock it meets. During retries, if the encountered
+				// lock is different from the first one, we can omit it.
+				cli.resolvedLocks.Put(lock.TxnID)
+				continue
 			}
 
-			// Use the original snapshot version to resolve locks so we can use MaxUint64
-			// as the callerStartTS if it's an auto-commit point get. This could save us
-			// one write at TiKV by not pushing forward the minCommitTS.
-			msBeforeExpired, err := cli.ResolveLocks(bo, snapVer, []*Lock{lock})
+			msBeforeExpired, err := cli.ResolveLocks(bo, s.version, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -630,11 +616,11 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	}
 
 	if keyErr.Conflict != nil {
-		return &kv.ErrWriteConflict{WriteConflict: keyErr.GetConflict()}
+		return &tikverr.ErrWriteConflict{WriteConflict: keyErr.GetConflict()}
 	}
 
 	if keyErr.Retryable != "" {
-		return &kv.ErrRetryable{Retryable: keyErr.Retryable}
+		return &tikverr.ErrRetryable{Retryable: keyErr.Retryable}
 	}
 
 	if keyErr.Abort != "" {
