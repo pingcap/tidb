@@ -126,7 +126,7 @@ func NewErrWriteConfictWithArgs(startTs, conflictTs, conflictCommitTs uint64, ke
 	return &ErrWriteConflict{WriteConflict: &conflict}
 }
 
-// ErrWriteConflictInTiDB is the error when the commit meets an write conflict error when local latch is enabled.
+// ErrWriteConflictInLatch is the error when the commit meets an write conflict error when local latch is enabled.
 type ErrWriteConflictInLatch struct {
 	StartTS uint64
 }
