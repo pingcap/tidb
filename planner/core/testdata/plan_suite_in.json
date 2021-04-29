@@ -495,21 +495,21 @@
       [
         "insert into t values(1, 1)",
         // Test Index Join + UnionScan + TableScan.
-        "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
+        "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
       ],
       [
         "insert into t values(1, 1)",
         // Test Index Join + UnionScan + DoubleRead.
-        "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.b"
+        "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.b"
       ],
       [
         "insert into t values(1, 1)",
         // Test Index Join + UnionScan + IndexScan.
-        "explain select /*+ TIDB_INLJ(t2) */ t1.a , t2.b from t t1, t t2 where t1.a = t2.b"
+        "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ t1.a , t2.b from t t1, t t2 where t1.a = t2.b"
       ],
       [
         "insert into tt values(1)",
-        "explain select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t1.a = t2.a"
+        "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t1.a = t2.a"
       ]
     ]
   },
@@ -520,7 +520,7 @@
         "insert into t2 values (11, 'amazing merkle')",
         "insert into t2 values (12, 'amazing merkle')",
         // Test Merge Join + UnionScan + TableScan.
-        "explain select /*+ MERGE_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int and t1.c_int = t2.c_int order by t1.c_int, t2.c_str;"
+        "explain format = 'brief' select /*+ MERGE_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int and t1.c_int = t2.c_int order by t1.c_int, t2.c_str;"
       ]
     ]
   },
@@ -675,6 +675,29 @@
       "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);",
       "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
       "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);"
+    ]
+  },
+  {
+    "name": "TestEnumIndex",
+    "cases": [
+      "select e from t where e = 'b'",
+      "select e from t where e != 'b'",
+      "select e from t where e > 'b'",
+      "select e from t where e >= 'b'",
+      "select e from t where e < 'b'",
+      "select e from t where e <= 'b'",
+      "select e from t where e = 2",
+      "select e from t where e != 2",
+      "select e from t where e > 2",
+      "select e from t where e >= 2",
+      "select e from t where e < 2",
+      "select e from t where e <= 2",
+
+      // Out of range
+      "select e from t where e > ''",
+      "select e from t where e > 'd'",
+      "select e from t where e > -1",
+      "select e from t where e > 5"
     ]
   }
 ]

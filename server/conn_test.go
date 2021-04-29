@@ -23,13 +23,19 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -45,7 +51,17 @@ var _ = SerialSuites(&ConnTestSuite{})
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	var err error
-	ts.store, err = mockstore.NewMockStore()
+	ts.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			store := c.AllocID()
+			peer := c.AllocID()
+			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+			mockCluster.AddPeer(region1, store, peer)
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
 	c.Assert(err, IsNil)
 	ts.dom, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
@@ -203,15 +219,19 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Assert(err, IsNil)
 
 	expected := new(bytes.Buffer)
-	expected.WriteByte(0x0a)                                                                             // Protocol
-	expected.WriteString(mysql.ServerVersion)                                                            // Version
-	expected.WriteByte(0x00)                                                                             // NULL
-	binary.Write(expected, binary.LittleEndian, uint32(1))                                               // Connection ID
-	expected.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00})                         // Salt
-	binary.Write(expected, binary.LittleEndian, uint16(defaultCapability&0xFFFF))                        // Server Capability
-	expected.WriteByte(uint8(mysql.DefaultCollationID))                                                  // Server Language
-	binary.Write(expected, binary.LittleEndian, mysql.ServerStatusAutocommit)                            // Server Status
-	binary.Write(expected, binary.LittleEndian, uint16((defaultCapability>>16)&0xFFFF))                  // Extended Server Capability
+	expected.WriteByte(0x0a)                                     // Protocol
+	expected.WriteString(mysql.ServerVersion)                    // Version
+	expected.WriteByte(0x00)                                     // NULL
+	err = binary.Write(expected, binary.LittleEndian, uint32(1)) // Connection ID
+	c.Assert(err, IsNil)
+	expected.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00})        // Salt
+	err = binary.Write(expected, binary.LittleEndian, uint16(defaultCapability&0xFFFF)) // Server Capability
+	c.Assert(err, IsNil)
+	expected.WriteByte(uint8(mysql.DefaultCollationID))                             // Server Language
+	err = binary.Write(expected, binary.LittleEndian, mysql.ServerStatusAutocommit) // Server Status
+	c.Assert(err, IsNil)
+	err = binary.Write(expected, binary.LittleEndian, uint16((defaultCapability>>16)&0xFFFF)) // Extended Server Capability
+	c.Assert(err, IsNil)
 	expected.WriteByte(0x15)                                                                             // Authentication Plugin Length
 	expected.Write([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})                   // Unused
 	expected.Write([]byte{0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x00}) // Salt
@@ -470,7 +490,10 @@ func (ts *ConnTestSuite) TestDispatchClientProtocol41(c *C) {
 func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability uint32) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer dom.Close()
@@ -665,6 +688,10 @@ func (ts *ConnTestSuite) TestShutdownOrNotify(c *C) {
 	c.Assert(cc.status, Equals, connStatusWaitShutdown)
 }
 
+type snapshotCache interface {
+	SnapCacheHitCount() int
+}
+
 func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	cc := &clientConn{
 		alloc: arena.NewAllocator(1024),
@@ -675,7 +702,7 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se}
 	ctx := context.Background()
-	tk.MustExec("set @@tidb_enable_clustered_index=0")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustExec("begin optimistic")
@@ -694,7 +721,7 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	snap := txn.GetSnapshot()
-	c.Assert(tikv.SnapCacheHitCount(snap), Equals, 4)
+	c.Assert(snap.(snapshotCache).SnapCacheHitCount(), Equals, 4)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
 
@@ -709,4 +736,105 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	c.Assert(tk.Se.GetSessionVars().TxnCtx.PessimisticCacheHit, Equals, 5)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
+}
+
+func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, IsNil)
+	return tbl
+}
+
+func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
+	cc := &clientConn{
+		alloc: arena.NewAllocator(1024),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	for i := 0; i < 50; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v, 0)", i))
+	}
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
+	// test COM_STMT_EXECUTE
+	ctx := context.Background()
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
+	tk.MustExec("set @@tidb_allow_mpp=OFF")
+	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+	// test COM_STMT_FETCH (cursor mode)
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}), IsNil)
+	c.Assert(cc.handleStmtFetch(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), NotNil)
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/fetchNextErr", "return(\"firstNext\")"), IsNil)
+	// test COM_STMT_EXECUTE (cursor mode)
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/fetchNextErr"), IsNil)
+
+	// test that TiDB would not retry if the first execution already sends data to client
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/fetchNextErr", "return(\"secondNext\")"), IsNil)
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
+	c.Assert(cc.handleQuery(ctx, "select * from t t1 join t t2 on t1.a = t2.a"), NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/fetchNextErr"), IsNil)
+
+	// simple TiFlash query (unary + non-streaming)
+	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=0;")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", "return(\"requestTiFlashError\")"), IsNil)
+	testFallbackWork(c, tk, cc, "select sum(a) from t")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+
+	// TiFlash query based on batch cop (batch + streaming)
+	tk.MustExec("set @@tidb_allow_batch_cop=1; set @@tidb_allow_mpp=0;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
+	testFallbackWork(c, tk, cc, "select count(*) from t")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout", "return(true)"), IsNil)
+	testFallbackWork(c, tk, cc, "select count(*) from t")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout"), IsNil)
+
+	// TiFlash MPP query (MPP + streaming)
+	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "return(true)"), IsNil)
+	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout", "return(-1)"), IsNil)
+	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppRecvTimeout"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr", "return(true)"), IsNil)
+	testFallbackWork(c, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr"), IsNil)
+}
+
+func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
+	ctx := context.Background()
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
+	c.Assert(tk.QueryToErr(sql), NotNil)
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
+
+	c.Assert(cc.handleQuery(ctx, sql), IsNil)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 }

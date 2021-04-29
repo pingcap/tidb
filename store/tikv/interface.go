@@ -16,16 +16,12 @@ package tikv
 import (
 	"time"
 
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/tikv/pd/client"
 )
 
 // Storage represent the kv.Storage runs on TiKV.
 type Storage interface {
-	kv.Storage
-
 	// GetRegionCache gets the RegionCache.
 	GetRegionCache() *RegionCache
 
@@ -41,9 +37,6 @@ type Storage interface {
 	// UpdateSPCache updates the cache of safe point.
 	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
 
-	// GetGCHandler gets the GCHandler.
-	GetGCHandler() GCHandler
-
 	// SetOracle sets the Oracle.
 	SetOracle(oracle oracle.Oracle)
 
@@ -55,17 +48,15 @@ type Storage interface {
 
 	// Closed returns the closed channel.
 	Closed() <-chan struct{}
+
+	// Close store
+	Close() error
+	// UUID return a unique ID which represents a Storage.
+	UUID() string
+	// CurrentTimestamp returns current timestamp with the given txnScope (local or global).
+	CurrentTimestamp(txnScope string) (uint64, error)
+	// GetOracle gets a timestamp oracle client.
+	GetOracle() oracle.Oracle
+	// SupportDeleteRange gets the storage support delete range or not.
+	SupportDeleteRange() (supported bool)
 }
-
-// GCHandler runs garbage collection job.
-type GCHandler interface {
-	// Start starts the GCHandler.
-	Start()
-
-	// Close closes the GCHandler.
-	Close()
-}
-
-// NewGCHandlerFunc creates a new GCHandler.
-// To enable real GC, we should assign the function to `gcworker.NewGCWorker`.
-var NewGCHandlerFunc func(storage Storage, pdClient pd.Client) (GCHandler, error)

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -304,43 +305,18 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	return uint64(res)
 }
 
-// MergeTopN merges the src TopN into the dst, and spilled values will be inserted into the CMSketch.
-func MergeTopN(dst, src *TopN, c *CMSketch, numTop uint32, usingMax bool) []TopNMeta {
-	if dst.TotalCount()+src.TotalCount() == 0 {
-		return nil
+// MergeTopNAndUpdateCMSketch merges the src TopN into the dst, and spilled values will be inserted into the CMSketch.
+func MergeTopNAndUpdateCMSketch(dst, src *TopN, c *CMSketch, numTop uint32) []TopNMeta {
+	topNs := []*TopN{src, dst}
+	mergedTopN, popedTopNPair := MergeTopN(topNs, numTop)
+	if mergedTopN == nil {
+		// mergedTopN == nil means the total count of the input TopN are equal to zero
+		return popedTopNPair
 	}
-	popedTopNPair := make([]TopNMeta, 0, 4)
-	counter := make(map[hack.MutableString]uint64)
-	for _, meta := range dst.TopN {
-		counter[hack.String(meta.Encoded)] += meta.Count
+	dst.TopN = mergedTopN.TopN
+	for _, topNMeta := range popedTopNPair {
+		c.InsertBytesByCount(topNMeta.Encoded, topNMeta.Count)
 	}
-	for _, meta := range src.TopN {
-		if usingMax {
-			counter[hack.String(meta.Encoded)] = mathutil.MaxUint64(counter[hack.String(meta.Encoded)], meta.Count)
-		} else {
-			counter[hack.String(meta.Encoded)] += meta.Count
-		}
-	}
-	sorted := make([]uint64, len(counter))
-	for _, cnt := range counter {
-		sorted = append(sorted, cnt)
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i] > sorted[j]
-	})
-	numTop = mathutil.MinUint32(uint32(len(counter)), numTop)
-	lastTopCnt := sorted[numTop-1]
-	dst.TopN = make([]TopNMeta, 0, numTop)
-	for value, cnt := range counter {
-		data := hack.Slice(string(value))
-		if cnt >= lastTopCnt {
-			dst.AppendTopN(data, cnt)
-		} else {
-			popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: data, Count: cnt})
-			c.InsertBytesByCount(data, cnt)
-		}
-	}
-	dst.Sort()
 	return popedTopNPair
 }
 
@@ -636,7 +612,181 @@ func (c *TopN) Equal(cc *TopN) bool {
 	return true
 }
 
+// RemoveVal remove the val from TopN if it exists.
+func (c *TopN) RemoveVal(val []byte) {
+	if c == nil {
+		return
+	}
+	pos := c.findTopN(val)
+	if pos == -1 {
+		return
+	}
+	c.TopN = append(c.TopN[:pos], c.TopN[pos+1:]...)
+}
+
 // NewTopN creates the new TopN struct by the given size.
 func NewTopN(n int) *TopN {
 	return &TopN{TopN: make([]TopNMeta, 0, n)}
+}
+
+// MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
+// The input parameters:
+//     1. `topNs` are the partition-level topNs to be merged.
+//     2. `n` is the size of the global-level topN. Notice: This value can be 0 and has no default value, we must explicitly specify this value.
+//     3. `hists` are the partition-level histograms. Some values not in topN may be placed in the histogram. We need it here to make the value in the global-level TopN more accurate.
+// The output parameters:
+//     1. `*TopN` is the final global-level topN.
+//     2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
+//     3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
+func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs []*TopN, n uint32, hists []*Histogram, isIndex bool) (*TopN, []TopNMeta, []*Histogram, error) {
+	if checkEmptyTopNs(topNs) {
+		return nil, nil, hists, nil
+	}
+
+	partNum := len(topNs)
+	topNsNum := make([]int, partNum)
+	removeVals := make([][]TopNMeta, partNum)
+	for i, topN := range topNs {
+		if topN == nil {
+			topNsNum[i] = 0
+			continue
+		}
+		topNsNum[i] = len(topN.TopN)
+	}
+	// Different TopN structures may hold the same value, we have to merge them.
+	counter := make(map[hack.MutableString]float64)
+	// datumMap is used to store the mapping from the string type to datum type.
+	// The datum is used to find the value in the histogram.
+	datumMap := make(map[hack.MutableString]types.Datum)
+	for i, topN := range topNs {
+		if topN.TotalCount() == 0 {
+			continue
+		}
+		for _, val := range topN.TopN {
+			encodedVal := hack.String(val.Encoded)
+			_, exists := counter[encodedVal]
+			counter[encodedVal] += float64(val.Count)
+			if exists {
+				// We have already calculated the encodedVal from the histogram, so just continue to next topN value.
+				continue
+			}
+			// We need to check whether the value corresponding to encodedVal is contained in other partition-level stats.
+			// 1. Check the topN first.
+			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
+			for j := 0; j < partNum; j++ {
+				if (j == i && version >= 2) || topNs[j].findTopN(val.Encoded) != -1 {
+					continue
+				}
+				// Get the encodedVal from the hists[j]
+				datum, exists := datumMap[encodedVal]
+				if !exists {
+					// If the datumMap does not have the encodedVal datum,
+					// we should generate the datum based on the encoded value.
+					// This part is copied from the function MergePartitionHist2GlobalHist.
+					var d types.Datum
+					if isIndex {
+						d.SetBytes(val.Encoded)
+					} else {
+						var err error
+						if types.IsTypeTime(hists[0].Tp.Tp) {
+							// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
+							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.Tp, sc.TimeZone)
+						} else {
+							_, d, err = codec.DecodeOne(val.Encoded)
+						}
+						if err != nil {
+							return nil, nil, nil, err
+						}
+					}
+					datumMap[encodedVal] = d
+					datum = d
+				}
+				// Get the row count which the value is equal to the encodedVal from histogram.
+				count := hists[j].equalRowCount(datum, isIndex)
+				if count != 0 {
+					counter[encodedVal] += count
+					// Remove the value corresponding to encodedVal from the histogram.
+					removeVals[j] = append(removeVals[j], TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+				}
+			}
+		}
+	}
+	// Remove the value from the Hists.
+	for i := 0; i < partNum; i++ {
+		if len(removeVals[i]) > 0 {
+			tmp := removeVals[i]
+			sort.Slice(tmp, func(i, j int) bool {
+				cmpResult := bytes.Compare(tmp[i].Encoded, tmp[j].Encoded)
+				return cmpResult < 0
+			})
+			hists[i].RemoveVals(tmp)
+		}
+	}
+	numTop := len(counter)
+	if numTop == 0 {
+		return nil, nil, hists, nil
+	}
+	sorted := make([]TopNMeta, 0, numTop)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		sorted = append(sorted, TopNMeta{Encoded: data, Count: uint64(cnt)})
+	}
+	globalTopN, leftTopN := getMergedTopNFromSortedSlice(sorted, n)
+	return globalTopN, leftTopN, hists, nil
+}
+
+// MergeTopN is used to merge more TopN structures to generate a new TopN struct by the given size.
+// The input parameters are multiple TopN structures to be merged and the size of the new TopN that will be generated.
+// The output parameters are the newly generated TopN structure and the remaining numbers.
+// Notice: The n can be 0. So n has no default value, we must explicitly specify this value.
+func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
+	if checkEmptyTopNs(topNs) {
+		return nil, nil
+	}
+	// Different TopN structures may hold the same value, we have to merge them.
+	counter := make(map[hack.MutableString]uint64)
+	for _, topN := range topNs {
+		if topN.TotalCount() == 0 {
+			continue
+		}
+		for _, val := range topN.TopN {
+			counter[hack.String(val.Encoded)] += val.Count
+		}
+	}
+	numTop := len(counter)
+	if numTop == 0 {
+		return nil, nil
+	}
+	sorted := make([]TopNMeta, 0, numTop)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		sorted = append(sorted, TopNMeta{Encoded: data, Count: cnt})
+	}
+	return getMergedTopNFromSortedSlice(sorted, n)
+}
+
+func checkEmptyTopNs(topNs []*TopN) bool {
+	totCnt := uint64(0)
+	for _, topN := range topNs {
+		totCnt += topN.TotalCount()
+	}
+	if totCnt == 0 {
+		return true
+	}
+	return false
+}
+
+func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Count != sorted[j].Count {
+			return sorted[i].Count > sorted[j].Count
+		}
+		return bytes.Compare(sorted[i].Encoded, sorted[j].Encoded) < 0
+	})
+	n = mathutil.MinUint32(uint32(len(sorted)), n)
+
+	var finalTopN TopN
+	finalTopN.TopN = sorted[:n]
+	finalTopN.Sort()
+	return &finalTopN, sorted[n:]
 }

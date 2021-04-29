@@ -533,7 +533,10 @@ func BenchmarkCompareDatum(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j, v := range vals {
-			v.CompareDatum(sc, &vals1[j])
+			_, err := v.CompareDatum(sc, &vals1[j])
+			if err != nil {
+				b.Fatal(err)
+			}
 		}
 	}
 }

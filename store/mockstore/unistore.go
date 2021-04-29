@@ -14,13 +14,12 @@
 package mockstore
 
 import (
-	"crypto/tls"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/store/tikv/util"
 )
 
 func newUnistore(opts *mockOptions) (kv.Storage, error) {
@@ -29,7 +28,7 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 	opts.clusterInspector(cluster)
-	pdClient = execdetails.InterceptedPDClient{
+	pdClient = util.InterceptedPDClient{
 		Client: pdClient,
 	}
 
@@ -37,18 +36,5 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &mockStorage{KVStore: kvstore}, nil
-}
-
-// Wraps tikv.KVStore and make it compatible with kv.Storage.
-type mockStorage struct {
-	*tikv.KVStore
-}
-
-func (s *mockStorage) EtcdAddrs() ([]string, error) {
-	return nil, nil
-}
-
-func (s *mockStorage) TLSConfig() *tls.Config {
-	return nil
+	return mockstorage.NewMockStorage(kvstore), nil
 }

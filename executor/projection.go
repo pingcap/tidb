@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
@@ -85,6 +86,11 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	failpoint.Inject("mockProjectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock ProjectionExec.baseExecutor.Open returned error"))
+		}
+	})
 	return e.open(ctx)
 }
 
@@ -290,7 +296,9 @@ func (e *ProjectionExec) drainOutputCh(ch chan *projectionOutput) {
 
 // Close implements the Executor Close interface.
 func (e *ProjectionExec) Close() error {
-	if e.isUnparallelExec() {
+	// if e.baseExecutor.Open returns error, e.childResult will be nil, see https://github.com/pingcap/tidb/issues/24210
+	// for more information
+	if e.isUnparallelExec() && e.childResult != nil {
 		e.memTracker.Consume(-e.childResult.MemoryUsage())
 		e.childResult = nil
 	}
@@ -325,7 +333,6 @@ type projectionInputFetcher struct {
 	child          Executor
 	globalFinishCh <-chan struct{}
 	globalOutputCh chan<- *projectionOutput
-	wg             sync.WaitGroup
 
 	inputCh  chan *projectionInput
 	outputCh chan *projectionOutput

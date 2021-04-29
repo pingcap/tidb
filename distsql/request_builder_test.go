@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -43,7 +44,10 @@ var _ = Suite(&testSuite{})
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	TestingT(t)
 }
 
@@ -320,7 +324,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    kv.ReplicaReadLeader,
+		ReplicaRead:    tikvstore.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -396,7 +400,7 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    kv.ReplicaReadLeader,
+		ReplicaRead:    tikvstore.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -443,7 +447,7 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    kv.ReplicaReadLeader,
+		ReplicaRead:    tikvstore.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -490,7 +494,7 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		Streaming:      true,
 		NotFillCache:   false,
 		SyncLog:        false,
-		ReplicaRead:    kv.ReplicaReadLeader,
+		ReplicaRead:    tikvstore.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -573,10 +577,10 @@ func (s *testSuite) TestRequestBuilder6(c *C) {
 }
 
 func (s *testSuite) TestRequestBuilder7(c *C) {
-	for _, replicaRead := range []kv.ReplicaReadType{
-		kv.ReplicaReadLeader,
-		kv.ReplicaReadFollower,
-		kv.ReplicaReadMixed,
+	for _, replicaRead := range []tikvstore.ReplicaReadType{
+		tikvstore.ReplicaReadLeader,
+		tikvstore.ReplicaReadFollower,
+		tikvstore.ReplicaReadMixed,
 	} {
 		vars := variable.NewSessionVars()
 		vars.SetReplicaRead(replicaRead)

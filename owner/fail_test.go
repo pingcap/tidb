@@ -38,7 +38,10 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	TestingT(t)
 }
 
@@ -59,7 +62,9 @@ var (
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {
+	os.Remove("new_session:0")
 	ln, err := net.Listen("unix", "new_session:0")
+	c.Assert(err, IsNil)
 	addr := ln.Addr()
 	endpoints := []string{fmt.Sprintf("%s://%s", addr.Network(), addr.String())}
 	c.Assert(err, IsNil)

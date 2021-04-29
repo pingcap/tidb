@@ -64,9 +64,6 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 		if pbExpr == nil {
 			return nil
 		}
-		if !x.Value.IsNull() {
-			pbExpr.FieldType.Flag |= uint32(mysql.NotNullFlag)
-		}
 		return pbExpr
 	case *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr)
@@ -144,6 +141,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 			return tp, val, true
 		}
 		return tp, nil, false
+	case types.KindMysqlEnum:
+		tp = tipb.ExprType_MysqlEnum
+		val = codec.EncodeUint(nil, d.GetUint64())
 	default:
 		return tp, nil, false
 	}
@@ -159,6 +159,7 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 		Decimal: int32(ft.Decimal),
 		Charset: ft.Charset,
 		Collate: collationToProto(ft.Collate),
+		Elems:   ft.Elems,
 	}
 }
 
@@ -171,6 +172,7 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 		Decimal: int(ft.Decimal),
 		Charset: ft.Charset,
 		Collate: protoToCollation(ft.Collate),
+		Elems:   ft.Elems,
 	}
 }
 
@@ -207,7 +209,7 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 		return nil
 	}
 	switch column.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry, mysql.TypeUnspecified:
+	case mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 		return nil
 	}
 

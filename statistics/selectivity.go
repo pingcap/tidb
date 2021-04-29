@@ -203,8 +203,8 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		}
 
 		colHist := coll.Columns[c.UniqueID]
-		if colHist.NDV > 0 {
-			ret *= 1 / float64(colHist.NDV)
+		if colHist.Histogram.NDV > 0 {
+			ret *= 1 / float64(colHist.Histogram.NDV)
 		} else {
 			ret *= 1.0 / pseudoEqualRate
 		}
@@ -239,7 +239,8 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
 	for _, path := range filledPaths {
-		if path.IsTablePath() {
+		// Index merge path and table path don't have index.
+		if path.Index == nil {
 			continue
 		}
 		id2Paths[path.Index.ID] = path

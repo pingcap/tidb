@@ -49,15 +49,15 @@ func (s *testSuite1) TestExplainPrivileges(c *C) {
 
 	tk1.MustExec("use explaindatabase")
 	tk1.MustQuery("select * from v")
-	err = tk1.ExecToErr("explain select * from v")
+	err = tk1.ExecToErr("explain format = 'brief' select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrViewNoExplain.Error())
 
 	tk.MustExec(`grant show view on explaindatabase.v to 'explain'@'%'`)
-	tk1.MustQuery("explain select * from v")
+	tk1.MustQuery("explain format = 'brief' select * from v")
 
 	tk.MustExec(`revoke select on explaindatabase.v from 'explain'@'%'`)
 
-	err = tk1.ExecToErr("explain select * from v")
+	err = tk1.ExecToErr("explain format = 'brief' select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error())
 }
 
@@ -70,10 +70,10 @@ func (s *testSuite1) TestExplainCartesianJoin(c *C) {
 		sql             string
 		isCartesianJoin bool
 	}{
-		{"explain select * from t t1, t t2", true},
-		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v)", true},
-		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2))", true},
-		{"explain select * from t t1, t t2 where t1.v = t2.v", false},
+		{"explain format = 'brief' select * from t t1, t t2", true},
+		{"explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v)", true},
+		{"explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2))", true},
+		{"explain format = 'brief' select * from t t1, t t2 where t1.v = t2.v", false},
 	}
 	for _, ca := range cases {
 		rows := tk.MustQuery(ca.sql).Rows()
@@ -97,7 +97,7 @@ func (s *testSuite1) TestExplainWrite(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 	tk.MustQuery("explain analyze update t set a=2 where a=1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
-	tk.MustQuery("explain insert into t select 1")
+	tk.MustQuery("explain format = 'brief' insert into t select 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 	tk.MustQuery("explain analyze insert into t select 1")
 	tk.MustQuery("explain analyze replace into t values (3)")

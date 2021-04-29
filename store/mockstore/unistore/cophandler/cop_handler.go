@@ -15,12 +15,11 @@ package cophandler
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/ngaut/unistore/lockstore"
-	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -33,7 +32,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -47,6 +47,7 @@ type MPPCtx struct {
 	RPCClient   client.Client
 	StoreAddr   string
 	TaskHandler *MPPTaskHandler
+	Ctx         context.Context
 }
 
 // HandleCopRequest handles coprocessor request.
@@ -61,7 +62,7 @@ func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstor
 	switch req.Tp {
 	case kv.ReqTypeDAG:
 		if mppCtx != nil && mppCtx.TaskHandler != nil {
-			return handleMPPDAGReq(dbReader, req, mppCtx)
+			return HandleMPPDAGReq(dbReader, req, mppCtx)
 		}
 		return handleCopDAGRequest(dbReader, lockStore, req)
 	case kv.ReqTypeAnalyze:
@@ -202,30 +203,6 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	}
 }
 
-func (e *evalContext) fillColumnInfo(fieldTypes []*tipb.FieldType) {
-	e.columnInfos = make([]*tipb.ColumnInfo, 0, len(fieldTypes))
-	e.fieldTps = make([]*types.FieldType, 0, len(fieldTypes))
-	for i, pbType := range fieldTypes {
-		e.columnInfos = append(e.columnInfos, &tipb.ColumnInfo{ColumnId: int64(i),
-			Tp: pbType.Tp, Collation: pbType.Collate, ColumnLen: pbType.Flen,
-			Decimal: pbType.Decimal, Flag: int32(pbType.Flag)})
-		// todo fill collate and charset field
-		e.fieldTps = append(e.fieldTps, &types.FieldType{Tp: byte(pbType.Tp),
-			Flag: uint(pbType.Flag), Flen: int(pbType.Flen), Decimal: int(pbType.Decimal)})
-	}
-}
-
-func (e *evalContext) fillColumnInfoFromTPs(fieldTypes []*types.FieldType) {
-	e.columnInfos = make([]*tipb.ColumnInfo, 0, len(fieldTypes))
-	e.fieldTps = append(e.fieldTps, fieldTypes...)
-	for i, fieldType := range fieldTypes {
-		pbType := expression.ToPBFieldType(fieldType)
-		e.columnInfos = append(e.columnInfos, &tipb.ColumnInfo{ColumnId: int64(i),
-			Tp: pbType.Tp, Collation: pbType.Collate, ColumnLen: pbType.Flen,
-			Decimal: pbType.Decimal, Flag: int32(pbType.Flag)})
-	}
-}
-
 func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, primaryCols []int64, timeZone *time.Location) (*rowcodec.ChunkDecoder, error) {
 	var (
 		pkCols []int64
@@ -265,18 +242,6 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 		return nil
 	}
 	return rowcodec.NewChunkDecoder(cols, pkCols, def, timeZone), nil
-}
-
-// decodeRelatedColumnVals decodes data to Datum slice according to the row information.
-func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][]byte, row []types.Datum) error {
-	var err error
-	for _, offset := range relatedColOffsets {
-		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.sc.TimeZone)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
 }
 
 // flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.

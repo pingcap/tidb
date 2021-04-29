@@ -34,6 +34,7 @@ type HandleCols interface {
 	// BuildHandleByDatums builds a Handle from a datum slice.
 	BuildHandleByDatums(row []types.Datum) (kv.Handle, error)
 	// BuildHandleFromIndexRow builds a Handle from index row data.
+	// The last column(s) of `row` must be the handle column(s).
 	BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error)
 	// ResolveIndices resolves handle column indices.
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
@@ -47,7 +48,7 @@ type HandleCols interface {
 	NumCols() int
 	// Compare compares two datum rows by handle order.
 	Compare(a, b []types.Datum) (int, error)
-	// GetFieldTypes return field types of columns
+	// GetFieldTypes return field types of columns.
 	GetFieldsTypes() []*types.FieldType
 }
 
@@ -255,4 +256,19 @@ func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldType {
 // NewIntHandleCols creates a new IntHandleCols.
 func NewIntHandleCols(col *expression.Column) HandleCols {
 	return &IntHandleCols{col: col}
+}
+
+// GetCommonHandleDatum gets the original data for the common handle.
+func GetCommonHandleDatum(cols HandleCols, row chunk.Row) []types.Datum {
+	if cols.IsInt() {
+		return nil
+	}
+	cb := cols.(*CommonHandleCols)
+
+	datumBuf := make([]types.Datum, 0, 4)
+	for _, col := range cb.columns {
+		datumBuf = append(datumBuf, row.GetDatum(col.Index, col.RetType))
+	}
+
+	return datumBuf
 }

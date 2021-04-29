@@ -16,6 +16,7 @@ package tikv
 import (
 	"context"
 	"crypto/tls"
+	"math"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -24,8 +25,11 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/config"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/latch"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -36,6 +40,9 @@ import (
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
+
+// DCLabelKey indicates the key of label which represents the dc for Store.
+const DCLabelKey = "zone"
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
@@ -64,13 +71,10 @@ type KVStore struct {
 	client       Client
 	pdClient     pd.Client
 	regionCache  *RegionCache
-	coprCache    *coprCache
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
-	gcWorker     GCHandler
 
-	mock     bool
-	enableGC bool
+	mock bool
 
 	kv        SafePointKV
 	safePoint uint64
@@ -78,8 +82,12 @@ type KVStore struct {
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
 	closed    chan struct{} // this is used to nofity when the store is closed
 
-	replicaReadSeed uint32        // this is used to load balance followers / learners when replica read is enabled
-	memCache        kv.MemManager // this is used to query from memory
+	resolveTSMu struct {
+		sync.RWMutex
+		resolveTS map[uint64]uint64 // storeID -> resolveTS
+	}
+
+	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
 }
 
 // UpdateSPCache updates cached safepoint.
@@ -99,20 +107,20 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 	diff := time.Since(cachedTime)
 
 	if diff > (GcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
-		return ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point")
+		return tikverr.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point")
 	}
 
 	if startTime < cachedSafePoint {
 		t1 := oracle.GetTimeFromTS(startTime)
 		t2 := oracle.GetTimeFromTS(cachedSafePoint)
-		return ErrGCTooEarly.GenWithStackByArgs(t1, t2)
+		return tikverr.ErrGCTooEarly.GenWithStackByArgs(t1, t2)
 	}
 
 	return nil
 }
 
 // NewKVStore creates a new TiKV store instance.
-func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, coprCacheConfig *config.CoprocessorCache) (*KVStore, error) {
+func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client) (*KVStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -124,24 +132,17 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		client:          reqCollapse{client},
 		pdClient:        pdClient,
 		regionCache:     NewRegionCache(pdClient),
-		coprCache:       nil,
 		kv:              spkv,
 		safePoint:       0,
 		spTime:          time.Now(),
 		closed:          make(chan struct{}),
 		replicaReadSeed: rand.Uint32(),
-		memCache:        kv.NewCacheDB(),
 	}
 	store.lockResolver = newLockResolver(store)
-	store.enableGC = enableGC
-
-	coprCache, err := newCoprCache(coprCacheConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	store.coprCache = coprCache
+	store.resolveTSMu.resolveTS = make(map[uint64]uint64)
 
 	go store.runSafePointChecker()
+	go store.safeTSUpdater()
 
 	return store, nil
 }
@@ -155,21 +156,6 @@ func (s *KVStore) EnableTxnLocalLatches(size uint) {
 // IsLatchEnabled is used by mockstore.TestConfig.
 func (s *KVStore) IsLatchEnabled() bool {
 	return s.txnLatches != nil
-}
-
-// StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
-func (s *KVStore) StartGCWorker() error {
-	if !s.enableGC || NewGCHandlerFunc == nil {
-		return nil
-	}
-
-	gcWorker, err := NewGCHandlerFunc(s, s.pdClient)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	gcWorker.Start()
-	s.gcWorker = gcWorker
-	return nil
 }
 
 func (s *KVStore) runSafePointChecker() {
@@ -194,13 +180,12 @@ func (s *KVStore) runSafePointChecker() {
 }
 
 // Begin a global transaction.
-func (s *KVStore) Begin() (kv.Transaction, error) {
+func (s *KVStore) Begin() (*KVTxn, error) {
 	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
 }
 
-// BeginWithTxnScope begins a transaction with the given txnScope (local or
-// global)
-func (s *KVStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
+// BeginWithTxnScope begins a transaction with the given txnScope (local or global)
+func (s *KVStore) BeginWithTxnScope(txnScope string) (*KVTxn, error) {
 	txn, err := newTiKVTxn(s, txnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -209,7 +194,7 @@ func (s *KVStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
 }
 
 // BeginWithStartTS begins a transaction with startTS.
-func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
+func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -218,7 +203,7 @@ func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transact
 }
 
 // BeginWithExactStaleness begins transaction with given staleness
-func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVTxn, error) {
 	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -226,10 +211,48 @@ func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.T
 	return txn, nil
 }
 
+// BeginWithMinStartTS begins transaction with the least startTS
+func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTxn, error) {
+	stores := make([]*Store, 0)
+	allStores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	if txnScope != oracle.GlobalTxnScope {
+		for _, store := range allStores {
+			if store.IsLabelsMatch([]*metapb.StoreLabel{
+				{
+					Key:   DCLabelKey,
+					Value: txnScope,
+				},
+			}) {
+				stores = append(stores, store)
+			}
+		}
+	} else {
+		stores = allStores
+	}
+	resolveTS := s.getMinResolveTSByStores(stores)
+	startTS := minStartTS
+	// If the resolveTS is larger than the minStartTS, we will use resolveTS as StartTS, otherwise we will use
+	// minStartTS directly.
+	if oracle.CompareTS(startTS, resolveTS) < 0 {
+		startTS = resolveTS
+	}
+	return s.BeginWithStartTS(txnScope, startTS)
+}
+
+// BeginWithMaxPrevSec begins transaction with given max previous seconds for startTS
+func (s *KVStore) BeginWithMaxPrevSec(txnScope string, maxPrevSec uint64) (*KVTxn, error) {
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
+	minStartTS, err := s.getStalenessTimestamp(bo, txnScope, maxPrevSec)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return s.BeginWithMinStartTS(txnScope, minStartTS)
+}
+
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
-// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-func (s *KVStore) GetSnapshot(ver kv.Version) kv.Snapshot {
-	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
+// if ts is MaxVersion or > current max committed version, we will use current version for this snapshot.
+func (s *KVStore) GetSnapshot(ts uint64) *KVSnapshot {
+	snapshot := newTiKVSnapshot(s, ts, s.nextReplicaReadSeed())
 	return snapshot
 }
 
@@ -237,9 +260,6 @@ func (s *KVStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 func (s *KVStore) Close() error {
 	s.oracle.Close()
 	s.pdClient.Close()
-	if s.gcWorker != nil {
-		s.gcWorker.Close()
-	}
 
 	close(s.closed)
 	if err := s.client.Close(); err != nil {
@@ -250,9 +270,6 @@ func (s *KVStore) Close() error {
 		s.txnLatches.Close()
 	}
 	s.regionCache.Close()
-	if s.coprCache != nil {
-		s.coprCache.cache.Close()
-	}
 
 	if err := s.kv.Close(); err != nil {
 		return errors.Trace(err)
@@ -265,14 +282,14 @@ func (s *KVStore) UUID() string {
 	return s.uuid
 }
 
-// CurrentVersion returns current max committed version with the given txnScope (local or global).
-func (s *KVStore) CurrentVersion(txnScope string) (kv.Version, error) {
+// CurrentTimestamp returns current timestamp with the given txnScope (local or global).
+func (s *KVStore) CurrentTimestamp(txnScope string) (uint64, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := s.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
-		return kv.NewVersion(0), errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	return kv.NewVersion(startTS), nil
+	return startTS, nil
 }
 
 func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64, error) {
@@ -289,8 +306,8 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
 		// This may cause duplicate data to be written.
 		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
-			if val.(bool) && !kv.IsMockCommitErrorEnable() {
-				err = ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
+			if val.(bool) && !IsMockCommitErrorEnable() {
+				err = tikverr.ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
 			}
 		})
 
@@ -321,21 +338,6 @@ func (s *KVStore) nextReplicaReadSeed() uint32 {
 	return atomic.AddUint32(&s.replicaReadSeed, 1)
 }
 
-// GetClient gets a client instance.
-func (s *KVStore) GetClient() kv.Client {
-	return &CopClient{
-		store:           s,
-		replicaReadSeed: s.nextReplicaReadSeed(),
-	}
-}
-
-// GetMPPClient gets a mpp client instance.
-func (s *KVStore) GetMPPClient() kv.MPPClient {
-	return &MPPClient{
-		store: s,
-	}
-}
-
 // GetOracle gets a timestamp oracle client.
 func (s *KVStore) GetOracle() oracle.Oracle {
 	return s.oracle
@@ -344,21 +346,6 @@ func (s *KVStore) GetOracle() oracle.Oracle {
 // GetPDClient returns the PD client.
 func (s *KVStore) GetPDClient() pd.Client {
 	return s.pdClient
-}
-
-// Name gets the name of the storage engine
-func (s *KVStore) Name() string {
-	return "TiKV"
-}
-
-// Describe returns of brief introduction of the storage
-func (s *KVStore) Describe() string {
-	return "TiKV is a distributed transactional key-value database"
-}
-
-// ShowStatus returns the specified status of the storage
-func (s *KVStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
-	return nil, kv.ErrNotImplemented
 }
 
 // SupportDeleteRange gets the storage support delete range or not.
@@ -380,11 +367,6 @@ func (s *KVStore) GetRegionCache() *RegionCache {
 // GetLockResolver returns the lock resolver instance.
 func (s *KVStore) GetLockResolver() *LockResolver {
 	return s.lockResolver
-}
-
-// GetGCHandler returns the GC worker instance.
-func (s *KVStore) GetGCHandler() GCHandler {
-	return s.gcWorker
 }
 
 // Closed returns a channel that indicates if the store is closed.
@@ -412,7 +394,69 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
 }
 
-// GetMemCache return memory mamager of the storage
-func (s *KVStore) GetMemCache() kv.MemManager {
-	return s.memCache
+func (s *KVStore) getMinResolveTSByStores(stores []*Store) uint64 {
+	failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
+		injectTS := val.(int)
+		failpoint.Return(uint64(injectTS))
+	})
+	minSafeTS := uint64(math.MaxUint64)
+	s.resolveTSMu.RLock()
+	defer s.resolveTSMu.RUnlock()
+	// when there is no store, return 0 in order to let minStartTS become startTS directly
+	if len(stores) < 1 {
+		return 0
+	}
+	for _, store := range stores {
+		safeTS := s.resolveTSMu.resolveTS[store.storeID]
+		if safeTS < minSafeTS {
+			minSafeTS = safeTS
+		}
+	}
+	return minSafeTS
 }
+
+func (s *KVStore) safeTSUpdater() {
+	t := time.NewTicker(time.Second * 2)
+	defer t.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for {
+		select {
+		case <-s.Closed():
+			return
+		case <-t.C:
+			s.updateResolveTS(ctx)
+		}
+	}
+}
+
+func (s *KVStore) updateResolveTS(ctx context.Context) {
+	stores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	tikvClient := s.GetTiKVClient()
+	wg := &sync.WaitGroup{}
+	wg.Add(len(stores))
+	for _, store := range stores {
+		storeID := store.storeID
+		storeAddr := store.addr
+		go func(ctx context.Context, wg *sync.WaitGroup, storeID uint64, storeAddr string) {
+			defer wg.Done()
+			// TODO: add metrics for updateSafeTS
+			resp, err := tikvClient.SendRequest(ctx, storeAddr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, &kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
+				StartKey: []byte(""),
+				EndKey:   []byte(""),
+			}}), ReadTimeoutShort)
+			if err != nil {
+				logutil.BgLogger().Debug("update resolveTS failed", zap.Error(err), zap.Uint64("store-id", storeID))
+				return
+			}
+			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
+			s.resolveTSMu.Lock()
+			s.resolveTSMu.resolveTS[storeID] = safeTSResp.GetSafeTs()
+			s.resolveTSMu.Unlock()
+		}(ctx, wg, storeID, storeAddr)
+	}
+	wg.Wait()
+}
+
+// Variables defines the variables used by TiKV storage.
+type Variables = kv.Variables
