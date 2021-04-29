@@ -47,10 +47,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	coprCacheHistogramEvict               = tidbmetrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
-	TxnRegionsNumHistogramWithCoprocessor = metrics.TxnRegionsNumHistogramWithCoprocessor
-)
+var coprCacheHistogramEvict = tidbmetrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
@@ -193,7 +190,7 @@ func buildCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tikv.Key
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
 	}
-	TxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
+	metrics.TxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
 	return tasks, nil
 }
 
@@ -317,7 +314,6 @@ func (rs *copResponse) GetStartKey() kv.Key {
 }
 
 func (rs *copResponse) GetCopRuntimeStats() *CopRuntimeStats {
-	rs.pbResp.GetExecDetailsV2()
 	return rs.detail
 }
 
@@ -736,6 +732,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *tikv.Backoffer, task *copTas
 		worker.logTimeCopTask(costTime, task, bo, resp)
 	}
 	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
+
 	if task.cmdType == tikvrpc.CmdCopStream {
 		return worker.handleCopStreamResult(bo, rpcCtx, resp.Resp.(*tikvrpc.CopStreamResponse), task, ch, costTime)
 	}

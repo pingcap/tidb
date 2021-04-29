@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/debugpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
@@ -39,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/sli"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -377,21 +375,6 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			resp, err := sendBatchRequest(ctx, addr, req.ForwardedHost, connArray.batchConn, batchReq, timeout)
 			if err != nil {
 				return nil, err
-			}
-			execDetail := &kvrpcpb.ExecDetailsV2{}
-			var affectRow int
-			switch r := resp.Resp.(type) {
-			case kvrpcpb.GetResponse:
-				execDetail = r.ExecDetailsV2
-				affectRow = len(r.Value)
-			case kvrpcpb.BatchGetResponse:
-				execDetail = r.ExecDetailsV2
-				affectRow = len(r.Pairs)
-			}
-			if execDetail != nil {
-				readByte := execDetail.GetScanDetailV2().GetReadBytes()
-				readTime := float64(execDetail.GetTimeDetail().GetKvReadWallTimeMs())
-				sli.ObserveReadSLI(uint64(affectRow), readByte, readTime)
 			}
 			return resp, nil
 		}

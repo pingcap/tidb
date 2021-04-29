@@ -299,11 +299,10 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		return
 	}
 	if r.selectResp != nil && len(r.selectResp.GetExecutionSummaries()) > 0 {
-		readExecution := r.selectResp.GetExecutionSummaries()[0]
-		affectRow := readExecution.GetNumProducedRows()
-		readTime := float64(readExecution.GetTimeProcessedNs()) / 1000000
+		affectRow := r.selectResp.GetExecutionSummaries()[0].GetNumProducedRows()
+		readTime := copStats.TimeDetail.KvReadWallTimeMs
 		readByte := copStats.ScanDetail.ReadBytes
-		sli.ObserveReadSLI(affectRow, readByte, readTime)
+		sli.ObserveReadSLI(affectRow, readByte, float64(readTime))
 	}
 	if r.stats == nil {
 		id := r.rootPlanID

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/util/sli"
 	"go.uber.org/zap"
 )
 
@@ -452,6 +453,21 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, ReadTimeoutShort, tikvrpc.TiKV, "", ops...)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		execDetail := &pb.ExecDetailsV2{}
+		var affectRow int
+		switch r := resp.Resp.(type) {
+		case pb.GetResponse:
+			execDetail = r.ExecDetailsV2
+			affectRow = len(r.Value)
+		case pb.BatchGetResponse:
+			execDetail = r.ExecDetailsV2
+			affectRow = len(r.Pairs)
+		}
+		if execDetail != nil {
+			readByte := execDetail.GetScanDetailV2().GetReadBytes()
+			readTime := float64(execDetail.GetTimeDetail().GetKvReadWallTimeMs())
+			sli.ObserveReadSLI(uint64(affectRow), readByte, readTime)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {

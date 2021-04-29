@@ -95,12 +95,12 @@ func (t *TxnWriteThroughputSLI) IsInvalid() bool {
 
 const (
 	smallTxnAffectRow = 20
-	smallTxnByte      = 1 * 1024 * 1024 // 1MB
+	smallTxnSize      = 1 * 1024 * 1024 // 1MB
 )
 
 // IsSmallTxn exports for testing.
 func (t *TxnWriteThroughputSLI) IsSmallTxn() bool {
-	return t.affectRow <= smallTxnAffectRow && t.writeSize <= smallTxnByte
+	return t.affectRow <= smallTxnAffectRow && t.writeSize <= smallTxnSize
 }
 
 // Reset exports for testing.
@@ -119,10 +119,10 @@ func (t *TxnWriteThroughputSLI) String() string {
 		t.invalid, t.affectRow, t.writeSize, t.readKeys, t.writeKeys, t.writeTime.String())
 }
 
-func ObserveReadSLI(affectRow uint64, readByte uint64, readTime float64) {
-	if affectRow <= smallTxnAffectRow && readByte <= smallTxnByte {
+func ObserveReadSLI(readRow uint64, readByte uint64, readTime float64) {
+	if readRow <= smallTxnAffectRow && readByte <= smallTxnSize {
 		tikvmetrics.TiKVSmallReadDuration.Observe(readTime)
 	} else {
-		tikvmetrics.TiKVLargeReadThroughput.Observe(float64(readByte) / smallTxnByte / (readTime / 1000))
+		tikvmetrics.TiKVLargeReadThroughput.Observe(float64(readByte) / smallTxnSize / (readTime / 1000))
 	}
 }
