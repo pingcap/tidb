@@ -123,6 +123,6 @@ func ObserveReadSLI(readRow uint64, readByte uint64, readTime float64) {
 	if readRow <= smallTxnAffectRow && readByte <= smallTxnSize {
 		tikvmetrics.TiKVSmallReadDuration.Observe(readTime)
 	} else {
-		tikvmetrics.TiKVLargeReadThroughput.Observe(float64(readByte) / smallTxnSize / (readTime / 1000))
+		tikvmetrics.TiKVLargeReadThroughput.Observe(float64(readByte) / (readTime / 1000))
 	}
 }
