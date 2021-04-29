@@ -1368,21 +1368,16 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
-	//if setOpr.With != nil {
-	//	// Check CTE name must be unique.
-	//	nameMap := make(map[string]struct{})
-	//	for _, CTE := range setOpr.With.CTEs {
-	//		if _, ok := nameMap[CTE.Name.L]; ok {
-	//			return nil, errors.New("Not unique table/alias")
-	//		}
-	//		nameMap[CTE.Name.L] = struct{}{}
-	//	}
-	//	l := len(setOpr.With.CTEs)
-	//	defer func() {
-	//		b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
-	//	}()
-	//	b.outerCTEs = append(b.outerCTEs, setOpr.With.CTEs...)
-	//}
+	if setOpr.With != nil {
+		l := len(b.outerCTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:l]
+		}()
+		err := b.buildWith(ctx, setOpr.With)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	// Because INTERSECT has higher precedence than UNION and EXCEPT. We build it first.
 	selectPlans := make([]LogicalPlan, 0, len(setOpr.SelectList.Selects))
@@ -5707,7 +5702,6 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 }
 
 func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultSetNode, cteName model.CIStr) error {
-	cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 	switch x := (cte).(type) {
 	case *ast.SetOprStmt:
 		if x.With != nil {
@@ -5721,6 +5715,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			}
 		}
 
+		cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 		seed := make([]LogicalPlan, 0)
 		recursive := make([]LogicalPlan, 0)
 		var tmpAfterSetOptsForSeed []*ast.SetOprType
@@ -5738,17 +5733,6 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			}
 			var p LogicalPlan
 			var err error
-			//if afterSetOperator == nil || ( *afterSetOperator != ast.Union && *afterSetOperator != ast.UnionAll) {
-			//	temOpr := x
-			//	temOpr.SelectList.Selects = temOpr.SelectList.Selects[:i+1]
-			//	p, err = b.buildSetOpr(ctx, temOpr)
-			//	if err != nil {
-			//		return err
-			//	}
-			//	tmpAfterSetOptsForSeed = append(afterSetOperator, t)
-			//	seed = append(seed, p)
-			//	break
-			//}
 
 			var afterOpr *ast.SetOprType
 			switch y := x.SelectList.Selects[i].(type) {
@@ -5756,7 +5740,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 				p, err = b.buildSelect(ctx, y)
 				afterOpr = y.AfterSetOperator
 			case *ast.SetOprSelectList:
-				p, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: y})
+				p, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: y, With: y.With})
 				afterOpr = y.AfterSetOperator
 			}
 
@@ -5835,6 +5819,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 		cInfo.recurLP = recurPart
 		return nil
 	default:
+		cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 		p, err := b.buildResultSetNode(ctx, x)
 		if err != nil {
 			if errors.ErrorEqual(err, ErrCTERecursiveRequiresNonRecursiveFirst) {
