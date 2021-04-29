@@ -46,6 +46,9 @@ type ListInDisk struct {
 	diskTracker   *disk.Tracker // track disk usage.
 	numRowsInDisk int
 
+	checksumWriter *checksum.Writer
+	cipherWriter   *encrypt.Writer
+
 	// ctrCipher stores the key and nonce using by aes encrypt io layer
 	ctrCipher *encrypt.CtrCipher
 }
@@ -78,9 +81,11 @@ func (l *ListInDisk) initDiskFile() (err error) {
 		if err != nil {
 			return
 		}
-		underlying = encrypt.NewWriter(l.disk, l.ctrCipher)
+		l.cipherWriter = encrypt.NewWriter(l.disk, l.ctrCipher)
+		underlying = l.cipherWriter
 	}
-	l.w = checksum.NewWriter(underlying)
+	l.checksumWriter = checksum.NewWriter(underlying)
+	l.w = l.checksumWriter
 	l.bufFlushMutex = sync.RWMutex{}
 	return
 }
@@ -164,16 +169,16 @@ func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
 
 // GetRow gets a Row from the ListInDisk by RowPtr.
 func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
-	err = l.flush()
 	if err != nil {
 		return
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
 	var underlying io.ReaderAt = l.disk
 	if l.ctrCipher != nil {
-		underlying = encrypt.NewReader(l.disk, l.ctrCipher)
+		underlying = NewReaderWithCache(encrypt.NewReader(l.disk, l.ctrCipher), l.cipherWriter.GetCache(), l.cipherWriter.GetCacheDataOffset())
 	}
-	r := io.NewSectionReader(checksum.NewReader(underlying), off, l.offWrite-off)
+	checksumReader := NewReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
+	r := io.NewSectionReader(checksumReader, off, l.offWrite-off)
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(r)
 	if err != nil {
@@ -366,4 +371,58 @@ func (format *diskFormatRow) toMutRow(fields []*types.FieldType) MutRow {
 		chk.columns = append(chk.columns, col)
 	}
 	return MutRow{c: chk}
+}
+
+type ReaderWithCache struct {
+	r        io.ReaderAt
+	cacheOff int64
+	cache    []byte
+}
+
+func NewReaderWithCache(r io.ReaderAt, cache []byte, cacheOff int64) *ReaderWithCache {
+	return &ReaderWithCache{
+		r:        r,
+		cacheOff: cacheOff,
+		cache:    cache,
+	}
+}
+
+func (r *ReaderWithCache) ReadAt(p []byte, off int64) (readCnt int, err error) {
+	readCnt, err = r.r.ReadAt(p, off)
+	if err != io.EOF {
+		return readCnt, err
+	}
+
+	if len(p) == readCnt {
+		return readCnt, err
+	} else if len(p) < readCnt {
+		return readCnt, errors2.Trace(errors2.Errorf("cannot read more data than user requested"+
+			"(readCnt: %v, len(p): %v", readCnt, len(p)))
+	}
+
+	// When got here, user input is not filled fully, so we need read data from cache.
+	err = nil
+	if readCnt == 0 {
+		// readCnt == 0 means all user requested data resides in r.cache
+		beg := off - r.cacheOff
+		if beg < 0 {
+			panic("off must be greater than r.cacheOff when readCnt is 0")
+		}
+		end := int(beg) + len(p)
+		if end > len(r.cache) {
+			err = io.EOF
+			end = len(r.cache)
+		}
+		readCnt = copy(p, r.cache[beg:end])
+	} else {
+		// readCnt != 0 means only partial data of user requested resides in r.cache
+		p = p[readCnt:]
+		end := len(p)
+		if end > len(r.cache) {
+			err = io.EOF
+			end = len(r.cache)
+		}
+		readCnt += copy(p, r.cache[:end])
+	}
+	return readCnt, err
 }

@@ -15,10 +15,11 @@ package checksum
 
 import (
 	"encoding/binary"
-	"errors"
 	"hash/crc32"
 	"io"
 	"sync"
+
+	"github.com/pingcap/errors"
 )
 
 const (
@@ -42,11 +43,12 @@ var checksumReaderBufPool = sync.Pool{
 // | --    4B    -- | --  1020B  -- || --    4B    -- | --  1020B  -- || --    4B    -- | --   60B   -- |
 // | -- checksum -- | -- payload -- || -- checksum -- | -- payload -- || -- checksum -- | -- payload -- |
 type Writer struct {
-	err         error
-	w           io.WriteCloser
-	buf         []byte
-	payload     []byte
-	payloadUsed int
+	err                error
+	w                  io.WriteCloser
+	buf                []byte
+	payload            []byte
+	payloadUsed        int
+	flushedUserDataCnt int64
 }
 
 // NewWriter returns a new Writer which calculates and stores a CRC-32 checksum for the payload before
@@ -104,8 +106,17 @@ func (w *Writer) Flush() error {
 		w.err = err
 		return err
 	}
+	w.flushedUserDataCnt += int64(w.payloadUsed)
 	w.payloadUsed = 0
 	return nil
+}
+
+func (w *Writer) GetCacheDataOffset() int64 {
+	return w.flushedUserDataCnt
+}
+
+func (w *Writer) GetCache() []byte {
+	return w.payload[:w.payloadUsed]
 }
 
 // Close implements the io.Closer interface.
