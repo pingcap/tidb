@@ -1751,6 +1751,14 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	switch s.TemporaryKeyword {
+	case ast.TemporaryGlobal:
+		tbInfo.TempTableType = model.TempTableGlobal
+	case ast.TemporaryLocal:
+		tbInfo.TempTableType = model.TempTableLocal
+	case ast.TemporaryNone:
+		tbInfo.TempTableType = model.TempTableNone
+	}
 
 	if err = setTableAutoRandomBits(ctx, tbInfo, colDefs); err != nil {
 		return nil, errors.Trace(err)
