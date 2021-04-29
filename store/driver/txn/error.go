@@ -25,12 +25,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"go.uber.org/zap"
 )
 
@@ -167,6 +169,11 @@ func toTiDBErr(err error) error {
 	if errors.ErrorEqual(err, tikverr.ErrInvalidTxn) {
 		return kv.ErrInvalidTxn
 	}
+
+	if errors.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
+		return dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	}
+
 	return errors.Trace(err)
 }
 
