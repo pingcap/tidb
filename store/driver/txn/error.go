@@ -156,6 +156,10 @@ func toTiDBErr(err error) error {
 		return kv.ErrNotExist
 	}
 
+	if e, ok := err.(*tikverr.ErrWriteConflictInLatch); ok {
+		return kv.ErrWriteConflictInTiDB.FastGenByArgs(e.StartTS)
+	}
+
 	if e, ok := err.(*tikverr.ErrTxnTooLarge); ok {
 		return kv.ErrTxnTooLarge.GenWithStackByArgs(e.Size)
 	}
@@ -171,6 +175,7 @@ func toTiDBErr(err error) error {
 	if errors.ErrorEqual(err, tikverr.ErrInvalidTxn) {
 		return kv.ErrInvalidTxn
 	}
+
 	return errors.Trace(err)
 }
 
