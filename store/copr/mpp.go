@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
+	txndriver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -225,7 +226,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		if sender.GetRPCError() != nil {
 			logutil.BgLogger().Error("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()))
 			// we return timeout to trigger tikv's fallback
-			m.sendError(tikverr.ErrTiFlashServerTimeout)
+			m.sendError(txndriver.ErrTiFlashServerTimeout)
 			return
 		}
 	} else {
@@ -235,7 +236,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	if err != nil {
 		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()))
 		// we return timeout to trigger tikv's fallback
-		m.sendError(tikverr.ErrTiFlashServerTimeout)
+		m.sendError(txndriver.ErrTiFlashServerTimeout)
 		return
 	}
 
@@ -248,7 +249,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
-			m.sendError(tikverr.ErrTiFlashServerTimeout)
+			m.sendError(txndriver.ErrTiFlashServerTimeout)
 			return
 		}
 	})
@@ -311,7 +312,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	if err != nil {
 		logutil.BgLogger().Error("establish mpp connection meet error", zap.String("error", err.Error()))
 		// we return timeout to trigger tikv's fallback
-		m.sendError(tikverr.ErrTiFlashServerTimeout)
+		m.sendError(txndriver.ErrTiFlashServerTimeout)
 		return
 	}
 
@@ -343,7 +344,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 				}
 			}
-			m.sendError(tikverr.ErrTiFlashServerTimeout)
+			m.sendError(txndriver.ErrTiFlashServerTimeout)
 			return
 		}
 	}
