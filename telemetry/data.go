@@ -48,6 +48,7 @@ func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryD
 	return r
 }
 
-func postReportTelemetryData() {
+func postReportTelemetryData() error {
 	postReportTxnUsage()
+	return ResetCTEUsage()
 }
