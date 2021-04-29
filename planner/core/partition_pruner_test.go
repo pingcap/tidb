@@ -66,6 +66,7 @@ func (s *testPartitionPruneSuit) TestHashPartitionPruner(c *C) {
 	tk.MustExec("create table t5(d date, a int, b int, primary key(d, a)) partition by hash(month(d)) partitions 10;")
 	tk.MustExec("create table t6(a int, b int) partition by hash(a) partitions 3;")
 	tk.MustExec("create table t7(a int, b int) partition by hash(a + b) partitions 10;")
+	tk.MustExec("create table t8(a int, b int) partition by hash(a) partitions 6;")
 
 	var input []string
 	var output []struct {

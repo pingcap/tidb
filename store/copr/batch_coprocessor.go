@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -268,7 +269,7 @@ func (b *batchCopIterator) recvFromRespCh(ctx context.Context) (resp *batchCopRe
 			return
 		case <-ticker.C:
 			if atomic.LoadUint32(b.vars.Killed) == 1 {
-				resp = &batchCopResponse{err: tikvstore.ErrQueryInterrupted}
+				resp = &batchCopResponse{err: tikverr.ErrQueryInterrupted}
 				ok = true
 				return
 			}
@@ -344,8 +345,8 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffe
 	}
 
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
-		IsolationLevel: tikv.IsolationLevelToPB(b.req.IsolationLevel),
-		Priority:       tikv.PriorityToPB(b.req.Priority),
+		IsolationLevel: isolationLevelToPB(b.req.IsolationLevel),
+		Priority:       priorityToPB(b.req.Priority),
 		NotFillCache:   b.req.NotFillCache,
 		RecordTimeStat: true,
 		RecordScanStat: true,
@@ -394,7 +395,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return tikvstore.ErrTiFlashServerTimeout
+			return tikverr.ErrTiFlashServerTimeout
 		}
 	}
 }
