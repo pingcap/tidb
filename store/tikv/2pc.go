@@ -30,6 +30,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/store/tikv/config"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/prometheus/client_golang/prometheus"
 	zap "go.uber.org/zap"
 )
@@ -306,7 +306,7 @@ func newTwoPhaseCommitter(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, err
 	}, nil
 }
 
-func (c *twoPhaseCommitter) extractKeyExistsErr(err *kv.ErrKeyExist) error {
+func (c *twoPhaseCommitter) extractKeyExistsErr(err *tikverr.ErrKeyExist) error {
 	if !c.txn.us.HasPresumeKeyNotExists(err.GetKey()) {
 		return errors.Errorf("session %d, existErr for key:%s should not be nil", c.sessionID, err.GetKey())
 	}
@@ -327,7 +327,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	sizeHint := txn.us.GetMemBuffer().Len()
 	c.mutations = newMemBufferMutations(sizeHint, memBuf)
 	c.isPessimistic = txn.IsPessimistic()
-	filter := txn.getKVFilter()
+	filter := txn.kvFilter
 
 	var err error
 	for it := memBuf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
@@ -399,10 +399,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	const logEntryCount = 10000
 	const logSize = 4 * 1024 * 1024 // 4MB
 	if c.mutations.Len() > logEntryCount || size > logSize {
-		tableID := tablecodec.DecodeTableID(c.mutations.GetKey(0))
 		logutil.BgLogger().Info("[BIG_TXN]",
 			zap.Uint64("session", c.sessionID),
-			zap.Int64("table ID", tableID),
+			zap.String("key sample", kv.StrKey(c.mutations.GetKey(0))),
 			zap.Int("size", size),
 			zap.Int("keys", c.mutations.Len()),
 			zap.Int("puts", putCnt),
@@ -809,7 +808,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 			continue
 		}
 		if resp.Resp == nil {
-			return 0, errors.Trace(kv.ErrBodyMissing)
+			return 0, errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdResp := resp.Resp.(*pb.TxnHeartBeatResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
@@ -1253,7 +1252,8 @@ type SchemaVer interface {
 	SchemaMetaVersion() int64
 }
 
-type schemaLeaseChecker interface {
+// SchemaLeaseChecker is used to validate schema version is not changed during transaction execution.
+type SchemaLeaseChecker interface {
 	// CheckBySchemaVer checks if the schema has changed for the transaction related tables between the startSchemaVer
 	// and the schema version at txnTS, all the related schema changes will be returned.
 	CheckBySchemaVer(txnTS uint64, startSchemaVer SchemaVer) (*RelatedSchemaChange, error)
@@ -1293,7 +1293,7 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 			err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, &keysNeedToLock)
 			if err != nil {
 				// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
-				if _, ok := errors.Cause(err).(*kv.ErrWriteConflict); ok {
+				if _, ok := errors.Cause(err).(*tikverr.ErrWriteConflict); ok {
 					newForUpdateTSVer, err := c.store.CurrentTimestamp(oracle.GlobalTxnScope)
 					if err != nil {
 						return errors.Trace(err)
@@ -1399,8 +1399,7 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 		err := errors.Errorf("mock check schema valid failure")
 		failpoint.Return(nil, false, err)
 	})
-	checker, ok := c.txn.us.GetOption(kv.SchemaChecker).(schemaLeaseChecker)
-	if !ok {
+	if c.txn.schemaLeaseChecker == nil {
 		if c.sessionID > 0 {
 			logutil.Logger(ctx).Warn("schemaLeaseChecker is not set for this transaction",
 				zap.Uint64("sessionID", c.sessionID),
@@ -1409,7 +1408,7 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 		}
 		return nil, false, nil
 	}
-	relatedChanges, err := checker.CheckBySchemaVer(checkTS, startInfoSchema)
+	relatedChanges, err := c.txn.schemaLeaseChecker.CheckBySchemaVer(checkTS, startInfoSchema)
 	if err != nil {
 		if tryAmend && relatedChanges != nil && relatedChanges.Amendable && c.txn.schemaAmender != nil {
 			memAmended, amendErr := c.tryAmendTxn(ctx, startInfoSchema, relatedChanges)

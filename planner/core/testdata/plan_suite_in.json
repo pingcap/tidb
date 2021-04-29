@@ -676,5 +676,28 @@
       "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
       "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);"
     ]
+  },
+  {
+    "name": "TestEnumIndex",
+    "cases": [
+      "select e from t where e = 'b'",
+      "select e from t where e != 'b'",
+      "select e from t where e > 'b'",
+      "select e from t where e >= 'b'",
+      "select e from t where e < 'b'",
+      "select e from t where e <= 'b'",
+      "select e from t where e = 2",
+      "select e from t where e != 2",
+      "select e from t where e > 2",
+      "select e from t where e >= 2",
+      "select e from t where e < 2",
+      "select e from t where e <= 2",
+
+      // Out of range
+      "select e from t where e > ''",
+      "select e from t where e > 'd'",
+      "select e from t where e > -1",
+      "select e from t where e > 5"
+    ]
   }
 ]

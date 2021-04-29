@@ -178,11 +178,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
 	case TiDBLastTxnInfo:
-		info, err := json.Marshal(s.LastTxnInfo)
-		if err != nil {
-			return "", true, err
-		}
-		return string(info), true, nil
+		return s.LastTxnInfo, true, nil
 	case TiDBLastQueryInfo:
 		info, err := json.Marshal(s.LastQueryInfo)
 		if err != nil {
@@ -279,20 +275,12 @@ func GetScopeNoneSystemVar(key string) (string, bool, error) {
 const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
-func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
+func SetSessionSystemVar(vars *SessionVars, name string, value string) error {
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	sVal := ""
-	var err error
-	if !value.IsNull() {
-		sVal, err = value.ToString()
-	}
-	if err != nil {
-		return err
-	}
-	sVal, err = sysVar.Validate(vars, sVal, ScopeSession)
+	sVal, err := sysVar.Validate(vars, value, ScopeSession)
 	if err != nil {
 		return err
 	}
