@@ -5702,6 +5702,7 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 }
 
 func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultSetNode, cteName model.CIStr) error {
+	cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 	switch x := (cte).(type) {
 	case *ast.SetOprStmt:
 		if x.With != nil {
@@ -5715,7 +5716,6 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			}
 		}
 
-		cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 		seed := make([]LogicalPlan, 0)
 		recursive := make([]LogicalPlan, 0)
 		var tmpAfterSetOptsForSeed []*ast.SetOprType
@@ -5819,7 +5819,6 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 		cInfo.recurLP = recurPart
 		return nil
 	default:
-		cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 		p, err := b.buildResultSetNode(ctx, x)
 		if err != nil {
 			if errors.ErrorEqual(err, ErrCTERecursiveRequiresNonRecursiveFirst) {
