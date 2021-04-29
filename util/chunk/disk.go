@@ -373,12 +373,15 @@ func (format *diskFormatRow) toMutRow(fields []*types.FieldType) MutRow {
 	return MutRow{c: chk}
 }
 
+// ReaderWithCache helps to read data that has not be flushed to underlying layer.
+// By using ReaderWithCache, user can still write data into ListInDisk even after reading.
 type ReaderWithCache struct {
 	r        io.ReaderAt
 	cacheOff int64
 	cache    []byte
 }
 
+// NewReaderWithCache returns a ReaderWithCache
 func NewReaderWithCache(r io.ReaderAt, cache []byte, cacheOff int64) *ReaderWithCache {
 	return &ReaderWithCache{
 		r:        r,
@@ -387,6 +390,7 @@ func NewReaderWithCache(r io.ReaderAt, cache []byte, cacheOff int64) *ReaderWith
 	}
 }
 
+// ReadAt implements the ReadAt interface
 func (r *ReaderWithCache) ReadAt(p []byte, off int64) (readCnt int, err error) {
 	readCnt, err = r.r.ReadAt(p, off)
 	if err != io.EOF {

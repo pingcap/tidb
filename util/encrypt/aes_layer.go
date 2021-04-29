@@ -136,10 +136,12 @@ func (w *Writer) Flush() error {
 	return nil
 }
 
+// GetCache returns the byte slice that holds the data not flushed to disk.
 func (w *Writer) GetCache() []byte {
 	return w.buf[:w.n]
 }
 
+// GetCacheDataOffset return the user data offset in cache.
 func (w *Writer) GetCacheDataOffset() int64 {
 	return w.flushedUserDataCnt
 }

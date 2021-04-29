@@ -110,7 +110,7 @@ func (c *RowContainer) Reset() error {
 	return nil
 }
 
-// AlreadySpilled indicates that records have spilled out into disk.
+// alreadySpilled indicates that records have spilled out into disk.
 func (c *RowContainer) alreadySpilled() bool {
 	return c.m.recordsInDisk != nil
 }
