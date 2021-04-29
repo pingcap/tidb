@@ -730,25 +730,26 @@ func intersectionRange(start, end, newStart, newEnd int) (int, int) {
 }
 
 func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, tbl table.PartitionedTable, conds []expression.Expression,
-	columns []*expression.Column, names types.NameSlice, condsToBePruned *[]expression.Expression) (partitionRangeOR, error) {
+	columns []*expression.Column, names types.NameSlice, condsToBePruned *[]expression.Expression) (partitionRangeOR, []expression.Expression, error) {
 	partExpr, err := tbl.(partitionTable).PartitionExpr()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Partition by range columns.
 	if len(pi.Columns) > 0 {
-		return s.pruneRangeColumnsPartition(ctx, conds, pi, partExpr, columns, names)
+		result, err := s.pruneRangeColumnsPartition(ctx, conds, pi, partExpr, columns, names)
+		return result, nil, err
 	}
 
 	// Partition by range.
 	col, fn, mono, err := makePartitionByFnCol(ctx, columns, names, pi.Expr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result := fullRange(len(pi.Definitions))
 	if col == nil {
-		return result, nil
+		return result, nil, nil
 	}
 
 	// Extract the partition column, if the column is not null, it's possible to prune.
@@ -764,7 +765,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 	result = partitionRangeForCNFExpr(ctx, conds, &pruner, result)
 
 	if condsToBePruned == nil {
-		return result, nil
+		return result, nil, nil
 	}
 	// remove useless predicates after partition pruning
 	newConds := make([]expression.Expression, 0, len(*condsToBePruned))
@@ -786,15 +787,17 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 		}
 		newConds = append(newConds, cond)
 	}
-	*condsToBePruned = newConds
 
-	return result, nil
+	return result, newConds, nil
 }
 
 func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	used, err := s.pruneRangePartition(ds.ctx, pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names, &ds.pushedDownConds)
+	used, prunedConds, err := s.pruneRangePartition(ds.ctx, pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names, &ds.pushedDownConds)
 	if err != nil {
 		return nil, err
+	}
+	if prunedConds != nil {
+		ds.pushedDownConds = prunedConds
 	}
 	return s.makeUnionAllChildren(ds, pi, used)
 }
