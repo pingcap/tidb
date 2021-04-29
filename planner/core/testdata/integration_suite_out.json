@@ -812,6 +812,7 @@
           "  └─TableFullScan_13 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo"
         ],
         "Warn": null
+<<<<<<< HEAD
       },
       {
         "SQL": "select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t",
@@ -825,6 +826,8 @@
           "  └─TableFullScan_13 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": null
+=======
+>>>>>>> 257ce7d93... planner: filter conflict read_from_storage hints (#24313)
       }
     ]
   },
