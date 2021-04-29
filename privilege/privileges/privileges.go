@@ -43,7 +43,8 @@ var dynamicPrivs = []string{
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
-	"RESTRICTED_TABLES_ADMIN",
+	"RESTRICTED_TABLES_ADMIN", // Can see system tables when SEM is enabled
+	"RESTRICTED_STATUS_ADMIN", // Can see all status vars when SEM is enabled.
 }
 var dynamicPrivLock sync.Mutex
 
