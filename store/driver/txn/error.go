@@ -36,6 +36,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// tikv error instance
+var (
+	// ErrTiKVServerTimeout is the error when tikv server is timeout.
+	ErrTiKVServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+)
+
 func genKeyExistsError(name string, value string, err error) error {
 	if err != nil {
 		logutil.BgLogger().Info("extractKeyExistsErr meets error", zap.Error(err))
@@ -158,6 +164,10 @@ func toTiDBErr(err error) error {
 		return kv.ErrNotExist
 	}
 
+	if e, ok := err.(*tikverr.ErrWriteConflictInLatch); ok {
+		return kv.ErrWriteConflictInTiDB.FastGenByArgs(e.StartTS)
+	}
+
 	if e, ok := err.(*tikverr.ErrTxnTooLarge); ok {
 		return kv.ErrTxnTooLarge.GenWithStackByArgs(e.Size)
 	}
@@ -175,7 +185,7 @@ func toTiDBErr(err error) error {
 	}
 
 	if errors.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
-		return dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+		return ErrTiKVServerTimeout
 	}
 
 	return errors.Trace(err)
