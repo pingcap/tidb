@@ -69,6 +69,8 @@ const (
 	CmdRemoveLockObserver
 	CmdPhysicalScanLock
 
+	CmdStoreSafeTS
+
 	CmdCop CmdType = 512 + iota
 	CmdCopStream
 	CmdBatchCop
@@ -165,6 +167,8 @@ func (t CmdType) String() string {
 		return "DebugGetRegionProperties"
 	case CmdTxnHeartBeat:
 		return "TxnHeartBeat"
+	case CmdStoreSafeTS:
+		return "StoreSafeTS"
 	}
 	return "Unknown"
 }
@@ -417,6 +421,11 @@ func (req *Request) CheckSecondaryLocks() *kvrpcpb.CheckSecondaryLocksRequest {
 // TxnHeartBeat returns TxnHeartBeatRequest in request.
 func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
+}
+
+// StoreSafeTS returns StoreSafeTSRequest in request.
+func (req *Request) StoreSafeTS() *kvrpcpb.StoreSafeTSRequest {
+	return req.Req.(*kvrpcpb.StoreSafeTSRequest)
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -924,6 +933,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.KvCheckSecondaryLocks(ctx, req.CheckSecondaryLocks())
 	case CmdTxnHeartBeat:
 		resp.Resp, err = client.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
+	case CmdStoreSafeTS:
+		resp.Resp, err = client.GetStoreSafeTS(ctx, req.StoreSafeTS())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
