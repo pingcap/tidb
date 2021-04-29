@@ -425,7 +425,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
 	c.hasNoNeedCommitKeys = checkCnt > 0
 	c.lockTTL = txnLockTTL(txn.startTime, size)
-	c.priority = getTxnPriority(txn)
+	c.priority = txn.priority.ToPB()
 	c.syncLog = txn.syncLog
 	c.setDetail(commitDetail)
 	return nil
@@ -1647,25 +1647,6 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	close(exitCh)
 	metrics.TiKVTokenWaitDuration.Observe(float64(batchExe.tokenWaitDuration.Nanoseconds()))
 	return err
-}
-
-func getTxnPriority(txn *KVTxn) pb.CommandPri {
-	if pri := txn.us.GetOption(kv.Priority); pri != nil {
-		return PriorityToPB(pri.(int))
-	}
-	return pb.CommandPri_Normal
-}
-
-// PriorityToPB converts priority type to wire type.
-func PriorityToPB(pri int) pb.CommandPri {
-	switch pri {
-	case kv.PriorityLow:
-		return pb.CommandPri_Low
-	case kv.PriorityHigh:
-		return pb.CommandPri_High
-	default:
-		return pb.CommandPri_Normal
-	}
 }
 
 func (c *twoPhaseCommitter) setDetail(d *util.CommitDetails) {

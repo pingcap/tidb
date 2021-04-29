@@ -77,6 +77,7 @@ type KVTxn struct {
 	binlog             BinlogExecutor
 	schemaLeaseChecker SchemaLeaseChecker
 	syncLog            bool
+	priority           Priority
 	isPessimistic      bool
 	kvFilter           KVFilter
 }
@@ -215,6 +216,12 @@ func (txn *KVTxn) EnableForceSyncLog() {
 // SetPessimistic indicates if the transaction should use pessimictic lock.
 func (txn *KVTxn) SetPessimistic(b bool) {
 	txn.isPessimistic = b
+}
+
+// SetPriority sets the priority for both write and read.
+func (txn *KVTxn) SetPriority(pri Priority) {
+	txn.priority = pri
+	txn.GetSnapshot().SetPriority(pri)
 }
 
 // SetKVFilter sets the filter to ignore key-values in memory buffer.

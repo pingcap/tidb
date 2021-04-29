@@ -136,6 +136,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetIsolationLevel(level)
 	case tikvstore.SyncLog:
 		txn.EnableForceSyncLog()
+	case tikvstore.Priority:
+		txn.KVTxn.SetPriority(getTiKVPriority(val.(int)))
 	case tikvstore.Pessimistic:
 		txn.SetPessimistic(val.(bool))
 	default:
