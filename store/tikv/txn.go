@@ -72,8 +72,11 @@ type KVTxn struct {
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info string, err error)
-	binlog         BinlogExecutor
-	kvFilter       KVFilter
+
+	binlog             BinlogExecutor
+	schemaLeaseChecker SchemaLeaseChecker
+	isPessimistic      bool
+	kvFilter           KVFilter
 }
 
 func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
@@ -197,6 +200,16 @@ func (txn *KVTxn) DelOption(opt int) {
 	txn.us.DelOption(opt)
 }
 
+// SetSchemaLeaseChecker sets a hook to check schema version.
+func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
+	txn.schemaLeaseChecker = checker
+}
+
+// SetPessimistic indicates if the transaction should use pessimictic lock.
+func (txn *KVTxn) SetPessimistic(b bool) {
+	txn.isPessimistic = b
+}
+
 // SetKVFilter sets the filter to ignore key-values in memory buffer.
 func (txn *KVTxn) SetKVFilter(filter KVFilter) {
 	txn.kvFilter = filter
@@ -204,7 +217,7 @@ func (txn *KVTxn) SetKVFilter(filter KVFilter) {
 
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
-	return txn.us.GetOption(kv.Pessimistic) != nil
+	return txn.isPessimistic
 }
 
 // Commit commits the transaction operations to KV store.
