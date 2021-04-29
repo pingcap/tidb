@@ -95,7 +95,7 @@ type Meta struct {
 // If the current Meta needs to handle a job, jobListKey is the type of the job's list.
 func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	txn.SetOption(tikvstore.Priority, kv.PriorityHigh)
-	txn.SetOption(tikvstore.SyncLog, true)
+	txn.SetOption(tikvstore.SyncLog, struct{}{})
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	listKey := DefaultJobListKey
 	if len(jobListKeys) != 0 {

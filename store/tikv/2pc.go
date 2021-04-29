@@ -426,7 +426,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	c.hasNoNeedCommitKeys = checkCnt > 0
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = txn.priority.ToPB()
-	c.syncLog = getTxnSyncLog(txn)
+	c.syncLog = txn.syncLog
 	c.setDetail(commitDetail)
 	return nil
 }
@@ -1647,13 +1647,6 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	close(exitCh)
 	metrics.TiKVTokenWaitDuration.Observe(float64(batchExe.tokenWaitDuration.Nanoseconds()))
 	return err
-}
-
-func getTxnSyncLog(txn *KVTxn) bool {
-	if syncOption := txn.us.GetOption(kv.SyncLog); syncOption != nil {
-		return syncOption.(bool)
-	}
-	return false
 }
 
 func (c *twoPhaseCommitter) setDetail(d *util.CommitDetails) {
