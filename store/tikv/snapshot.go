@@ -357,6 +357,10 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			}
 		}
 		if batchGetResp.ExecDetailsV2 != nil {
+			readKeys := len(batchGetResp.Pairs)
+			readByte := batchGetResp.ExecDetailsV2.GetScanDetailV2().GetReadBytes()
+			readTime := float64(batchGetResp.ExecDetailsV2.GetTimeDetail().GetKvReadWallTimeMs())
+			sli.ObserveReadSLI(uint64(readKeys), readByte, readTime)
 			s.mergeExecDetail(batchGetResp.ExecDetailsV2)
 		}
 		if len(lockedKeys) > 0 {
@@ -470,21 +474,6 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		execDetail := &pb.ExecDetailsV2{}
-		var affectRow int
-		switch r := resp.Resp.(type) {
-		case pb.GetResponse:
-			execDetail = r.ExecDetailsV2
-			affectRow = len(r.Value)
-		case pb.BatchGetResponse:
-			execDetail = r.ExecDetailsV2
-			affectRow = len(r.Pairs)
-		}
-		if execDetail != nil {
-			readByte := execDetail.GetScanDetailV2().GetReadBytes()
-			readTime := float64(execDetail.GetTimeDetail().GetKvReadWallTimeMs())
-			sli.ObserveReadSLI(uint64(affectRow), readByte, readTime)
-		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -501,6 +490,10 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		}
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		if cmdGetResp.ExecDetailsV2 != nil {
+			readKeys := len(cmdGetResp.Value)
+			readByte := cmdGetResp.ExecDetailsV2.GetScanDetailV2().GetReadBytes()
+			readTime := float64(cmdGetResp.ExecDetailsV2.GetTimeDetail().GetKvReadWallTimeMs())
+			sli.ObserveReadSLI(uint64(readKeys), readByte, readTime)
 			s.mergeExecDetail(cmdGetResp.ExecDetailsV2)
 		}
 		val := cmdGetResp.GetValue()
