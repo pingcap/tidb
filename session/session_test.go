@@ -2624,13 +2624,13 @@ func (s *testSessionSuite3) TestSetTransactionIsolationOneShot(c *C) {
 
 	// Check isolation level is set to read committed.
 	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
-		c.Assert(req.IsolationLevel, Equals, tikvstore.SI)
+		c.Assert(req.IsolationLevel, Equals, kv.SI)
 	})
 	tk.Se.Execute(ctx, "select * from t where k = 1")
 
 	// Check it just take effect for one time.
 	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
-		c.Assert(req.IsolationLevel, Equals, tikvstore.SI)
+		c.Assert(req.IsolationLevel, Equals, kv.SI)
 	})
 	tk.Se.Execute(ctx, "select * from t where k = 1")
 
@@ -2658,7 +2658,7 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	tk.MustExec("begin")
 	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
-	vars := txn.GetVars()
+	vars := txn.GetVars().(*tikv.Variables)
 	c.Assert(vars.BackoffLockFast, Equals, 1)
 	c.Assert(vars.BackOffWeight, Equals, 100)
 	tk.MustExec("rollback")
@@ -2668,7 +2668,7 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(tk.Se.GetSessionVars().InTxn(), IsTrue)
 	txn, err = tk.Se.Txn(false)
 	c.Assert(err, IsNil)
-	vars = txn.GetVars()
+	vars = txn.GetVars().(*tikv.Variables)
 	c.Assert(vars.BackOffWeight, Equals, 50)
 
 	tk.MustExec("set @@autocommit = 1")
