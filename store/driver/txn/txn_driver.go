@@ -142,6 +142,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.EnableForceSyncLog()
 	case tikvstore.Pessimistic:
 		txn.SetPessimistic(val.(bool))
+	case tikvstore.SnapshotTS:
+		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}
