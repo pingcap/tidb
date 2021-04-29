@@ -130,6 +130,15 @@ func NewErrWriteConfictWithArgs(startTs, conflictTs, conflictCommitTs uint64, ke
 	return &ErrWriteConflict{WriteConflict: &conflict}
 }
 
+// ErrWriteConflictInLatch is the error when the commit meets an write conflict error when local latch is enabled.
+type ErrWriteConflictInLatch struct {
+	StartTS uint64
+}
+
+func (e *ErrWriteConflictInLatch) Error() string {
+	return fmt.Sprintf("write conflict in latch,startTS: %v", e.StartTS)
+}
+
 // ErrRetryable wraps *kvrpcpb.Retryable to implement the error interface.
 type ErrRetryable struct {
 	Retryable string
@@ -137,6 +146,15 @@ type ErrRetryable struct {
 
 func (k *ErrRetryable) Error() string {
 	return k.Retryable
+}
+
+// ErrTxnTooLarge is the error when transaction is too large, lock time reached the maximum value.
+type ErrTxnTooLarge struct {
+	Size int
+}
+
+func (e *ErrTxnTooLarge) Error() string {
+	return fmt.Sprintf("txn too large, size: %v.", e.Size)
 }
 
 // ErrEntryTooLarge is the error when a key value entry is too large.
