@@ -357,14 +357,20 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 			return
 		}
 	case mysql.TypeEnum:
-		flag = compactBytesFlag
-		v := uint64(row.GetEnum(idx).ToNumber())
-		str := ""
-		if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
-			// str will be empty string if v out of definition of enum.
-			str = enum.Name
+		if mysql.HasEnumSetAsIntFlag(tp.Flag) {
+			flag = uvarintFlag
+			v := uint64(row.GetEnum(idx).ToNumber())
+			b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+		} else {
+			flag = compactBytesFlag
+			v := uint64(row.GetEnum(idx).ToNumber())
+			str := ""
+			if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
+				// str will be empty string if v out of definition of enum.
+				str = enum.Name
+			}
+			b = ConvertByCollation(hack.Slice(str), tp)
 		}
-		b = ConvertByCollation(hack.Slice(str), tp)
 	case mysql.TypeSet:
 		flag = compactBytesFlag
 		s, err := types.ParseSetValue(tp.Elems, row.GetSet(idx).Value)
@@ -572,6 +578,10 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = !ignoreNull
+			} else if mysql.HasEnumSetAsIntFlag(tp.Flag) {
+				buf[0] = uvarintFlag
+				v := uint64(column.GetEnum(i).ToNumber())
+				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
 			} else {
 				buf[0] = compactBytesFlag
 				v := uint64(column.GetEnum(i).ToNumber())

@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"runtime/trace"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -70,9 +72,12 @@ type KVTxn struct {
 	// SchemaAmender is used amend pessimistic txn commit mutations for schema change
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
-	commitCallback func(info tidbkv.TxnInfo, err error)
+	commitCallback func(info string, err error)
 
-	binlog BinlogExecutor
+	binlog             BinlogExecutor
+	schemaLeaseChecker SchemaLeaseChecker
+	isPessimistic      bool
+	kvFilter           KVFilter
 }
 
 func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
@@ -131,7 +136,7 @@ func (txn *KVTxn) GetVars() *kv.Variables {
 // Get implements transaction interface.
 func (txn *KVTxn) Get(ctx context.Context, k []byte) ([]byte, error) {
 	ret, err := txn.us.Get(ctx, k)
-	if tidbkv.IsErrNotFound(err) {
+	if tikverr.IsErrNotFound(err) {
 		return nil, err
 	}
 	if err != nil {
@@ -139,23 +144,6 @@ func (txn *KVTxn) Get(ctx context.Context, k []byte) ([]byte, error) {
 	}
 
 	return ret, nil
-}
-
-// NewBufferBatchGetter creates a new BufferBatchGetter.
-func NewBufferBatchGetter(buffer unionstore.BatchBufferGetter, middleCache unionstore.Getter, snapshot unionstore.BatchGetter) *unionstore.BufferBatchGetter {
-	return unionstore.NewBufferBatchGetter(buffer, middleCache, snapshot)
-}
-
-// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
-// Do not use len(value) == 0 or value == nil to represent non-exist.
-// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
-func (txn *KVTxn) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
 }
 
 // Set sets the value for key k as v into kv store.
@@ -199,7 +187,7 @@ func (txn *KVTxn) SetOption(opt int, val interface{}) {
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
 	case kv.CommitHook:
-		txn.commitCallback = val.(func(info tidbkv.TxnInfo, err error))
+		txn.commitCallback = val.(func(info string, err error))
 	}
 }
 
@@ -213,16 +201,24 @@ func (txn *KVTxn) DelOption(opt int) {
 	txn.us.DelOption(opt)
 }
 
-// IsPessimistic returns true if it is pessimistic.
-func (txn *KVTxn) IsPessimistic() bool {
-	return txn.us.GetOption(kv.Pessimistic) != nil
+// SetSchemaLeaseChecker sets a hook to check schema version.
+func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
+	txn.schemaLeaseChecker = checker
 }
 
-func (txn *KVTxn) getKVFilter() KVFilter {
-	if filter := txn.us.GetOption(kv.KVFilter); filter != nil {
-		return filter.(KVFilter)
-	}
-	return nil
+// SetPessimistic indicates if the transaction should use pessimictic lock.
+func (txn *KVTxn) SetPessimistic(b bool) {
+	txn.isPessimistic = b
+}
+
+// SetKVFilter sets the filter to ignore key-values in memory buffer.
+func (txn *KVTxn) SetKVFilter(filter KVFilter) {
+	txn.kvFilter = filter
+}
+
+// IsPessimistic returns true if it is pessimistic.
+func (txn *KVTxn) IsPessimistic() bool {
+	return txn.isPessimistic
 }
 
 // Commit commits the transaction operations to KV store.
@@ -235,7 +231,7 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	defer trace.StartRegion(ctx, "CommitTxn").End()
 
 	if !txn.valid {
-		return tidbkv.ErrInvalidTxn
+		return tikverr.ErrInvalidTxn
 	}
 	defer txn.close()
 
@@ -331,7 +327,7 @@ func (txn *KVTxn) close() {
 // Rollback undoes the transaction operations to KV store.
 func (txn *KVTxn) Rollback() error {
 	if !txn.valid {
-		return tidbkv.ErrInvalidTxn
+		return tikverr.ErrInvalidTxn
 	}
 	start := time.Now()
 	// Clean up pessimistic lock.
@@ -370,6 +366,17 @@ func (txn *KVTxn) collectLockedKeys() [][]byte {
 	return keys
 }
 
+// TxnInfo is used to keep track the info of a committed transaction (mainly for diagnosis and testing)
+type TxnInfo struct {
+	TxnScope            string `json:"txn_scope"`
+	StartTS             uint64 `json:"start_ts"`
+	CommitTS            uint64 `json:"commit_ts"`
+	TxnCommitMode       string `json:"txn_commit_mode"`
+	AsyncCommitFallback bool   `json:"async_commit_fallback"`
+	OnePCFallback       bool   `json:"one_pc_fallback"`
+	ErrMsg              string `json:"error,omitempty"`
+}
+
 func (txn *KVTxn) onCommitted(err error) {
 	if txn.commitCallback != nil {
 		isAsyncCommit := txn.committer.isAsyncCommit()
@@ -382,7 +389,7 @@ func (txn *KVTxn) onCommitted(err error) {
 			commitMode = "async_commit"
 		}
 
-		info := tidbkv.TxnInfo{
+		info := TxnInfo{
 			TxnScope:            txn.GetUnionStore().GetOption(kv.TxnScope).(string),
 			StartTS:             txn.startTS,
 			CommitTS:            txn.commitTS,
@@ -393,7 +400,9 @@ func (txn *KVTxn) onCommitted(err error) {
 		if err != nil {
 			info.ErrMsg = err.Error()
 		}
-		txn.commitCallback(info, err)
+		infoStr, err2 := json.Marshal(info)
+		_ = err2
+		txn.commitCallback(string(infoStr), err)
 	}
 }
 
@@ -443,7 +452,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput .
 		} else if txn.IsPessimistic() {
 			if checkKeyExists && valueExist {
 				alreadyExist := kvrpcpb.AlreadyExist{Key: key}
-				e := &kv.ErrKeyExist{AlreadyExist: &alreadyExist}
+				e := &tikverr.ErrKeyExist{AlreadyExist: &alreadyExist}
 				return txn.committer.extractKeyExistsErr(e)
 			}
 		}
@@ -504,11 +513,11 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput .
 					txn.us.UnmarkPresumeKeyNotExists(key)
 				}
 			}
-			keyMayBeLocked := !(kv.IsErrWriteConflict(err) || kv.IsErrKeyExist(err))
+			keyMayBeLocked := !(tikverr.IsErrWriteConflict(err) || tikverr.IsErrKeyExist(err))
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
 				wg := txn.asyncPessimisticRollback(ctx, keys)
-				if dl, ok := errors.Cause(err).(*kv.ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
+				if dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
 					dl.IsRetryable = true
 					// Wait for the pessimistic rollback to finish before we retry the statement.
 					wg.Wait()

@@ -1001,6 +1001,21 @@ func (svr *Server) CheckLeader(context.Context, *kvrpcpb.CheckLeaderRequest) (*k
 	panic("unimplemented")
 }
 
+// RawCompareAndSwap implements the tikvpb.TikvServer interface.
+func (svr *Server) RawCompareAndSwap(context.Context, *kvrpcpb.RawCASRequest) (*kvrpcpb.RawCASResponse, error) {
+	panic("implement me")
+}
+
+// CoprocessorV2 implements the tikvpb.TikvServer interface.
+func (svr *Server) CoprocessorV2(context.Context, *coprocessor_v2.RawCoprocessorRequest) (*coprocessor_v2.RawCoprocessorResponse, error) {
+	panic("implement me")
+}
+
+// GetStoreSafeTS implements the tikvpb.TikvServer interface.
+func (svr *Server) GetStoreSafeTS(context.Context, *kvrpcpb.StoreSafeTSRequest) (*kvrpcpb.StoreSafeTSResponse, error) {
+	return &kvrpcpb.StoreSafeTSResponse{}, nil
+}
+
 func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if err == nil {
 		return nil
