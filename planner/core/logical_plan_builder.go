@@ -5851,6 +5851,10 @@ func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExp
 		}
 	}
 	p.SetOutputNames(outPutNames)
+	for i, col := range p.Schema().Columns {
+		p.Schema().Columns[i] = col.Clone().(*expression.Column)
+		p.Schema().Columns[i].UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+	}
 	return nil
 }
 
