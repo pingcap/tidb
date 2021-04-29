@@ -303,6 +303,9 @@ const (
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
 
+	// tidb_batch_mode is used to disable lock keys in DML (except select for update statement) in pessimistic transaction.
+	TiDBBatchMode = "tidb_batch_mode"
+
 	// tidb_skip_ascii_check skips the ASCII validate process
 	// old tidb may already have fields with invalid ASCII bytes
 	// disable ASCII validate can guarantee a safe replication
@@ -563,6 +566,7 @@ const (
 	DefAutoIncrementOffset             = 1
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
+	DefBatchMode                       = true
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false

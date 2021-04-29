@@ -563,6 +563,9 @@ type SessionVars struct {
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
 
+	// BatchMode disables DML locks in pessimistic transaction.
+	BatchMode bool
+
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
 
@@ -1054,6 +1057,7 @@ func NewSessionVars() *SessionVars {
 		MaxChunkSize:       DefMaxChunkSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
+	vars.BatchMode = DefBatchMode
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
 		enableStreaming = "1"
@@ -1432,6 +1436,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.WindowingUseHighPrecision = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
+	case TiDBBatchMode:
+		s.BatchMode = TiDBOptOn(val)
 	case TiDBSkipASCIICheck:
 		s.SkipASCIICheck = TiDBOptOn(val)
 	case TiDBOptAggPushDown:

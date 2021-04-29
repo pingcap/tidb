@@ -412,9 +412,8 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if toCheck.Schema().Len() == 0 {
 		handled = !isExplainAnalyze
-		sc := a.Ctx.GetSessionVars().StmtCtx
 		isDML := sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt
-		if isPessimistic && !isDML {
+		if isPessimistic && a.Ctx.GetSessionVars().BatchMode && !isDML {
 			return handled, nil, a.handlePessimisticDML(ctx, toCheck)
 		}
 		r, err := a.handleNoDelayExecutor(ctx, toCheck)

@@ -985,11 +985,12 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 // locked by others. used for (select for update nowait) situation
 // except 0 means alwaysWait 1 means nowait
 func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
-	sctx := se.GetSessionVars().StmtCtx
+	sv := se.GetSessionVars()
+	sctx := sv.StmtCtx
 	if !sctx.InUpdateStmt && !sctx.InDeleteStmt {
 		atomic.StoreUint32(&se.GetSessionVars().TxnCtx.ForUpdate, 1)
 	}
-	if sctx.InInsertStmt || sctx.InUpdateStmt || sctx.InDeleteStmt {
+	if sv.BatchMode && (sctx.InInsertStmt || sctx.InUpdateStmt || sctx.InDeleteStmt) {
 		return nil
 	}
 	// Lock keys only once when finished fetching all results.
