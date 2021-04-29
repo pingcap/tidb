@@ -565,8 +565,6 @@ func (s *KVSnapshot) IterReverse(k []byte) (unionstore.Iterator, error) {
 // value of this option. Only ReplicaRead is supported for snapshot
 func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case kv.NotFillCache:
-		s.notFillCache = val.(bool)
 	case kv.SnapshotTS:
 		s.setSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
@@ -608,6 +606,12 @@ func (s *KVSnapshot) DelOption(opt int) {
 		s.mu.stats = nil
 		s.mu.Unlock()
 	}
+}
+
+// SetNotFillCache indicates whether tikv should skip filling cache when
+// loading data.
+func (s *KVSnapshot) SetNotFillCache(b bool) {
+	s.notFillCache = b
 }
 
 // SetKeyOnly indicates if tikv can return only keys.
