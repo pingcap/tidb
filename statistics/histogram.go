@@ -348,6 +348,7 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 }
 
 // RemoveVals remove the given values from the histogram.
+// This function contains an **ASSUMPTION**: valCntPairs is sorted in ascending order.
 func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 	totalSubCnt := int64(0)
 	var cmpResult int
@@ -356,6 +357,7 @@ func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 			// If the current val smaller than current bucket's lower bound, skip it.
 			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(bktIdx*2), valCntPairs[pairIdx].Encoded)
 			if cmpResult > 0 {
+				pairIdx++
 				continue
 			}
 			// If the current val bigger than current bucket's upper bound, break.
