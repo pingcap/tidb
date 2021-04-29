@@ -285,5 +285,12 @@
     "cases": [
       "select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;"
     ]
+  },
+    },
+  {
+    "name": "TestIssue23887",
+    "cases": [
+        "select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t"
+    ]
   }
 ]

@@ -314,9 +314,15 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) error {
 	if err != nil {
 		return err
 	}
+	if err = addConstOneForEmptyProjection(p.children[0]); err != nil {
+		return err
+	}
 
 	err = p.children[1].PruneColumns(rightCols)
 	if err != nil {
+		return err
+	}
+	if err = addConstOneForEmptyProjection(p.children[1]); err != nil {
 		return err
 	}
 
@@ -337,6 +343,9 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 	if err != nil {
 		return err
 	}
+	if err = addConstOneForEmptyProjection(la.children[1]); err != nil {
+		return err
+	}
 
 	la.CorCols = extractCorColumnsBySchema4LogicalPlan(la.children[1], la.children[0].Schema())
 	for _, col := range la.CorCols {
@@ -345,6 +354,9 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 
 	err = la.children[0].PruneColumns(leftCols)
 	if err != nil {
+		return err
+	}
+	if err = addConstOneForEmptyProjection(la.children[0]); err != nil {
 		return err
 	}
 
@@ -430,4 +442,25 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
 
 func (*columnPruner) name() string {
 	return "column_prune"
+}
+
+func addConstOneForEmptyProjection(p LogicalPlan) (err error) {
+	proj, ok := p.(*LogicalProjection)
+	if !ok {
+		return nil
+	}
+	if proj.Schema().Len() != 0 {
+		return nil
+	}
+
+	constOne := expression.NewOne()
+	proj.schema.Append(&expression.Column{
+		UniqueID: proj.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  constOne.GetType(),
+	})
+	proj.Exprs = append(proj.Exprs, &expression.Constant{
+		Value:   constOne.Value,
+		RetType: constOne.GetType(),
+	})
+	return nil
 }
