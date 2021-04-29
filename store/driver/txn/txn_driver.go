@@ -19,6 +19,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -146,6 +147,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
 	case tikvstore.CommitHook:
 		txn.SetCommitCallback(val.(func(string, error)))
+	case tikvstore.MatchStoreLabels:
+		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}

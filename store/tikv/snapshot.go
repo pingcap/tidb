@@ -584,10 +584,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 		s.mu.Lock()
 		s.mu.isStaleness = val.(bool)
 		s.mu.Unlock()
-	case kv.MatchStoreLabels:
-		s.mu.Lock()
-		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
-		s.mu.Unlock()
 	case kv.TxnScope:
 		s.txnScope = val.(string)
 	}
@@ -626,6 +622,13 @@ func (s *KVSnapshot) SetIsolationLevel(level IsoLevel) {
 // SetPriority sets the priority for tikv to execute commands.
 func (s *KVSnapshot) SetPriority(pri Priority) {
 	s.priority = pri
+}
+
+// SetMatchStoreLabels sets up labels to filter target stores.
+func (s *KVSnapshot) SetMatchStoreLabels(labels []*metapb.StoreLabel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.matchStoreLabels = labels
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.
