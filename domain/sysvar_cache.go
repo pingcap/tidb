@@ -43,23 +43,26 @@ func (do *Domain) GetSysVarCache() *SysVarCache {
 	return &do.sysVarCache
 }
 
-func (svc *SysVarCache) rebuildCacheIfNeeded(ctx sessionctx.Context) {
+func (svc *SysVarCache) rebuildCacheIfNeeded(ctx sessionctx.Context) (err error) {
 	svc.RLock()
 	cacheNeedsRebuild := len(svc.session) == 0 || len(svc.global) == 0
 	svc.RUnlock()
 	if cacheNeedsRebuild {
 		logutil.BgLogger().Warn("sysvar cache is empty, triggering rebuild")
-		if err := svc.RebuildSysVarCache(ctx); err != nil {
+		if err = svc.RebuildSysVarCache(ctx); err != nil {
 			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 		}
 	}
+	return err
 }
 
 // GetSessionCache gets a copy of the session sysvar cache.
 // The intention is to copy it directly to the systems[] map
 // on creating a new session.
-func (svc *SysVarCache) GetSessionCache(ctx sessionctx.Context) map[string]string {
-	svc.rebuildCacheIfNeeded(ctx)
+func (svc *SysVarCache) GetSessionCache(ctx sessionctx.Context) (map[string]string, error) {
+	if err := svc.rebuildCacheIfNeeded(ctx); err != nil {
+		return nil, err
+	}
 	svc.RLock()
 	defer svc.RUnlock()
 	// Perform a deep copy since this will be assigned directly to the session
@@ -67,12 +70,14 @@ func (svc *SysVarCache) GetSessionCache(ctx sessionctx.Context) map[string]strin
 	for k, v := range svc.session {
 		newMap[k] = v
 	}
-	return newMap
+	return newMap, nil
 }
 
 // GetGlobalVar gets an individual global var from the sysvar cache.
 func (svc *SysVarCache) GetGlobalVar(ctx sessionctx.Context, name string) (string, error) {
-	svc.rebuildCacheIfNeeded(ctx)
+	if err := svc.rebuildCacheIfNeeded(ctx); err != nil {
+		return "", err
+	}
 	svc.RLock()
 	defer svc.RUnlock()
 

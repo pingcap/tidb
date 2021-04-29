@@ -2607,7 +2607,10 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 
 	// Deep copy sessionvar cache
 	// Eventually this whole map will be applied to systems[], which is a MySQL behavior.
-	sessionCache := domain.GetDomain(s).GetSysVarCache().GetSessionCache(s)
+	sessionCache, err := domain.GetDomain(s).GetSysVarCache().GetSessionCache(s)
+	if err != nil {
+		return err
+	}
 	for _, varName := range builtinGlobalVariable {
 		// The item should be in the sessionCache, but due to a strange current behavior there are some Global-only
 		// vars that are in builtinGlobalVariable. For compatibility we need to fall back to the Global cache on these items.
