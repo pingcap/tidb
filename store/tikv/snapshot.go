@@ -557,8 +557,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 		s.notFillCache = val.(bool)
 	case kv.SyncLog:
 		s.syncLog = val.(bool)
-	case kv.KeyOnly:
-		s.keyOnly = val.(bool)
 	case kv.SnapshotTS:
 		s.setSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
@@ -600,6 +598,11 @@ func (s *KVSnapshot) DelOption(opt int) {
 		s.mu.stats = nil
 		s.mu.Unlock()
 	}
+}
+
+// SetKeyOnly indicates if tikv can return only keys.
+func (s *KVSnapshot) SetKeyOnly(b bool) {
+	s.keyOnly = b
 }
 
 // SetIsolationLevel sets the isolation level used to scan data from tikv.
