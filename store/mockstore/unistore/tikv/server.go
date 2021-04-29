@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"context"
-	"github.com/pingcap/kvproto/pkg/coprocessor_v2"
 	goctx "golang.org/x/net/context"
 	"io"
 	"sync/atomic"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/coprocessor_v2"
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"

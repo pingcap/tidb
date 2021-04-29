@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/util/sli"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -821,16 +820,10 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 // cancel function will be sent to the channel, together with a lease checked by a background goroutine.
 func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Response, error) {
 	resp := &Response{}
-	execDetail := &kvrpcpb.ExecDetailsV2{}
-	var affectRow int
 	var err error
 	switch req.Type {
 	case CmdGet:
-		r := &kvrpcpb.GetResponse{}
-		r, err = client.KvGet(ctx, req.Get())
-		affectRow = len(r.Value)
-		execDetail = r.GetExecDetailsV2()
-		resp.Resp = r
+		resp.Resp, err = client.KvGet(ctx, req.Get())
 	case CmdScan:
 		resp.Resp, err = client.KvScan(ctx, req.Scan())
 	case CmdPrewrite:
@@ -844,11 +837,7 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 	case CmdCleanup:
 		resp.Resp, err = client.KvCleanup(ctx, req.Cleanup())
 	case CmdBatchGet:
-		r := &kvrpcpb.BatchGetResponse{}
-		r, err = client.KvBatchGet(ctx, req.BatchGet())
-		affectRow = len(r.Pairs)
-		execDetail = r.GetExecDetailsV2()
-		resp.Resp = r
+		resp.Resp, err = client.KvBatchGet(ctx, req.BatchGet())
 	case CmdBatchRollback:
 		resp.Resp, err = client.KvBatchRollback(ctx, req.BatchRollback())
 	case CmdScanLock:
@@ -926,11 +915,6 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
-	}
-	if execDetail != nil {
-		readByte := execDetail.GetScanDetailV2().GetReadBytes()
-		readTime := float64(execDetail.GetTimeDetail().GetKvReadWallTimeMs())
-		sli.ObserveReadSLI(uint64(affectRow), readByte, readTime)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
