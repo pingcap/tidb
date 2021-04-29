@@ -21,6 +21,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pingcap/tidb/sessionctx"
+
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
@@ -513,6 +515,27 @@ func (c *TopN) String() string {
 	fmt.Fprint(builder, "]")
 	fmt.Fprint(builder, "}")
 	return builder.String()
+}
+
+func (c *TopN) DecodedString(ctx sessionctx.Context, colTypes []byte) (string, error) {
+	builder := &strings.Builder{}
+	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
+	fmt.Fprint(builder, "[")
+	var tmpDatum types.Datum
+	for i := 0; i < len(c.TopN); i++ {
+		tmpDatum.SetBytes(c.TopN[i].Encoded)
+		valStr, err := ValueToString(ctx.GetSessionVars(), &tmpDatum, len(colTypes), colTypes)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(builder, "(%v, %v)", valStr, c.TopN[i].Count)
+		if i+1 != len(c.TopN) {
+			fmt.Fprint(builder, ", ")
+		}
+	}
+	fmt.Fprint(builder, "]")
+	fmt.Fprint(builder, "}")
+	return builder.String(), nil
 }
 
 // Copy makes a copy for current TopN.

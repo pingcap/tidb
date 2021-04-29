@@ -537,7 +537,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 			StatsVer: colExec.analyzeVer,
 			Count:    count,
 		}
-		idxResult := analyzeResult{
+		colGroupResult := analyzeResult{
 			TableID:  colExec.tableID,
 			Hist:     hists[cLen:],
 			TopNs:    topns[cLen:],
@@ -547,7 +547,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 			Count:    count,
 			IsIndex:  1,
 		}
-		return []analyzeResult{colResult, idxResult}
+		return []analyzeResult{colResult, colGroupResult}
 	}
 	collExtStats := colExec.ctx.GetSessionVars().EnableExtendedStats
 	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, collExtStats)
