@@ -314,17 +314,13 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) error {
 	if err != nil {
 		return err
 	}
-	if err = addConstOneForEmptyProjection(p.children[0]); err != nil {
-		return err
-	}
+	addConstOneForEmptyProjection(p.children[0])
 
 	err = p.children[1].PruneColumns(rightCols)
 	if err != nil {
 		return err
 	}
-	if err = addConstOneForEmptyProjection(p.children[1]); err != nil {
-		return err
-	}
+	addConstOneForEmptyProjection(p.children[1])
 
 	p.mergeSchema()
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
@@ -343,9 +339,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 	if err != nil {
 		return err
 	}
-	if err = addConstOneForEmptyProjection(la.children[1]); err != nil {
-		return err
-	}
+	addConstOneForEmptyProjection(la.children[1])
 
 	la.CorCols = extractCorColumnsBySchema4LogicalPlan(la.children[1], la.children[0].Schema())
 	for _, col := range la.CorCols {
@@ -356,9 +350,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 	if err != nil {
 		return err
 	}
-	if err = addConstOneForEmptyProjection(la.children[0]); err != nil {
-		return err
-	}
+	addConstOneForEmptyProjection(la.children[0])
 
 	la.mergeSchema()
 	return nil
@@ -444,13 +436,13 @@ func (*columnPruner) name() string {
 	return "column_prune"
 }
 
-func addConstOneForEmptyProjection(p LogicalPlan) (err error) {
+func addConstOneForEmptyProjection(p LogicalPlan) {
 	proj, ok := p.(*LogicalProjection)
 	if !ok {
-		return nil
+		return
 	}
 	if proj.Schema().Len() != 0 {
-		return nil
+		return
 	}
 
 	constOne := expression.NewOne()
@@ -462,5 +454,4 @@ func addConstOneForEmptyProjection(p LogicalPlan) (err error) {
 		Value:   constOne.Value,
 		RetType: constOne.GetType(),
 	})
-	return nil
 }
