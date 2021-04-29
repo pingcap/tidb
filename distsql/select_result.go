@@ -300,9 +300,9 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	if r.selectResp != nil && len(r.selectResp.GetExecutionSummaries()) > 0 {
 		readKeys := copStats.ScanDetail.ProcessedKeys
-		readTime := copStats.TimeDetail.KvReadWallTimeMs
+		readTime := copStats.TimeDetail.KvReadWallTimeMs.Seconds()
 		readByte := copStats.ScanDetail.ReadBytes
-		sli.ObserveReadSLI(uint64(readKeys), readByte, float64(readTime))
+		sli.ObserveReadSLI(uint64(readKeys), readByte, readTime)
 	}
 	if r.stats == nil {
 		id := r.rootPlanID

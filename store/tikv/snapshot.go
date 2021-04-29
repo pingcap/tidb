@@ -359,7 +359,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 		if batchGetResp.ExecDetailsV2 != nil {
 			readKeys := len(batchGetResp.Pairs)
 			readByte := batchGetResp.ExecDetailsV2.GetScanDetailV2().GetReadBytes()
-			readTime := float64(batchGetResp.ExecDetailsV2.GetTimeDetail().GetKvReadWallTimeMs())
+			readTime := float64(batchGetResp.ExecDetailsV2.GetTimeDetail().GetKvReadWallTimeMs() / 1000)
 			sli.ObserveReadSLI(uint64(readKeys), readByte, readTime)
 			s.mergeExecDetail(batchGetResp.ExecDetailsV2)
 		}
@@ -492,7 +492,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		if cmdGetResp.ExecDetailsV2 != nil {
 			readKeys := len(cmdGetResp.Value)
 			readByte := cmdGetResp.ExecDetailsV2.GetScanDetailV2().GetReadBytes()
-			readTime := float64(cmdGetResp.ExecDetailsV2.GetTimeDetail().GetKvReadWallTimeMs())
+			readTime := float64(cmdGetResp.ExecDetailsV2.GetTimeDetail().GetKvReadWallTimeMs() / 1000)
 			sli.ObserveReadSLI(uint64(readKeys), readByte, readTime)
 			s.mergeExecDetail(cmdGetResp.ExecDetailsV2)
 		}
