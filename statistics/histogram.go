@@ -354,7 +354,7 @@ func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(bktIdx*2), valCntPairs[pairIdx].Encoded)
 			if cmpResult > 0 {
 				pairIdx++
-				break
+				continue
 			}
 			// If the current val bigger than current bucket's upper bound, break.
 			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(bktIdx*2+1), valCntPairs[pairIdx].Encoded)
