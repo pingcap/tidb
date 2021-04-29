@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -76,6 +75,8 @@ type KVTxn struct {
 
 	binlog             BinlogExecutor
 	schemaLeaseChecker SchemaLeaseChecker
+	syncLog            bool
+	priority           Priority
 	isPessimistic      bool
 	kvFilter           KVFilter
 }
@@ -184,8 +185,6 @@ func (txn *KVTxn) SetOption(opt int, val interface{}) {
 	switch opt {
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
-	case kv.CommitHook:
-		txn.commitCallback = val.(func(info string, err error))
 	}
 }
 
@@ -204,6 +203,11 @@ func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
 	txn.schemaLeaseChecker = checker
 }
 
+// EnableForceSyncLog indicates tikv to always sync log for the transaction.
+func (txn *KVTxn) EnableForceSyncLog() {
+	txn.syncLog = true
+}
+
 // SetPessimistic indicates if the transaction should use pessimictic lock.
 func (txn *KVTxn) SetPessimistic(b bool) {
 	txn.isPessimistic = b
@@ -212,6 +216,18 @@ func (txn *KVTxn) SetPessimistic(b bool) {
 // SetSchemaVer updates schema version to validate transaction.
 func (txn *KVTxn) SetSchemaVer(schemaVer SchemaVer) {
 	txn.schemaVer = schemaVer
+}
+
+// SetPriority sets the priority for both write and read.
+func (txn *KVTxn) SetPriority(pri Priority) {
+	txn.priority = pri
+	txn.GetSnapshot().SetPriority(pri)
+}
+
+// SetCommitCallback sets up a function that will be called when the transaction
+// is finished.
+func (txn *KVTxn) SetCommitCallback(f func(string, error)) {
+	txn.commitCallback = f
 }
 
 // SetKVFilter sets the filter to ignore key-values in memory buffer.
@@ -310,7 +326,7 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		return tidbkv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
+		return &tikverr.ErrWriteConflictInLatch{StartTS: txn.startTS}
 	}
 	err = committer.execute(ctx)
 	if val == nil || sessionID > 0 {

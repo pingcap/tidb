@@ -134,10 +134,20 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case tikvstore.IsolationLevel:
 		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
 		txn.KVTxn.GetSnapshot().SetIsolationLevel(level)
+	case tikvstore.Priority:
+		txn.KVTxn.SetPriority(getTiKVPriority(val.(int)))
+	case tikvstore.NotFillCache:
+		txn.KVTxn.GetSnapshot().SetNotFillCache(val.(bool))
+	case tikvstore.SyncLog:
+		txn.EnableForceSyncLog()
 	case tikvstore.Pessimistic:
 		txn.SetPessimistic(val.(bool))
+	case tikvstore.SnapshotTS:
+		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
 	case tikvstore.InfoSchema:
 		txn.SetSchemaVer(val.(tikv.SchemaVer))
+	case tikvstore.CommitHook:
+		txn.SetCommitCallback(val.(func(string, error)))
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}
