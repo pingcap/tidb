@@ -137,7 +137,7 @@ The following tables will be hidden unless the user has the `RESTRICTED_TABLES_A
 * tidb
 * global_variables
 
-The remaining system tables will be limited to read-only operations.
+The remaining system tables will be limited to read-only operations and can not create new tables.
 
 ### Metrics Schema
 
