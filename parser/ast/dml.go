@@ -1061,6 +1061,9 @@ type SelectStmt struct {
 	TableHints []*TableOptimizerHint
 	// IsInBraces indicates whether it's a stmt in brace.
 	IsInBraces bool
+	// WithBeforeBraces indicates whether stmt's with clause is before the brace.
+	// It's used to distinguish (with xxx select xxx) and with xxx (select xxx)
+	WithBeforeBraces bool
 	// QueryBlockOffset indicates the order of this SelectStmt if counted from left to right in the sql text.
 	QueryBlockOffset int
 	// SelectIntoOpt is the select-into option.
@@ -1122,13 +1125,19 @@ func (n *WithClause) Accept(v Visitor) (Node, bool) {
 
 // Restore implements Node interface.
 func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
+	if n.WithBeforeBraces {
+		err := n.With.Restore(ctx)
+		if err != nil {
+			return err
+		}
+	}
 	if n.IsInBraces {
 		ctx.WritePlain("(")
 		defer func() {
 			ctx.WritePlain(")")
 		}()
 	}
-	if n.With != nil {
+	if !n.WithBeforeBraces && n.With != nil {
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1397,12 +1406,18 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 type SetOprSelectList struct {
 	node
 
+	With             *WithClause
 	AfterSetOperator *SetOprType
 	Selects          []Node
 }
 
 // Restore implements Node interface.
 func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
+	if n.With != nil {
+		if err := n.With.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.With")
+		}
+	}
 	for i, stmt := range n.Selects {
 		switch selectStmt := stmt.(type) {
 		case *SelectStmt:
@@ -1434,6 +1449,13 @@ func (n *SetOprSelectList) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetOprSelectList)
+	if n.With != nil {
+		node, ok := n.With.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.With = node.(*WithClause)
+	}
 	for i, sel := range n.Selects {
 		node, ok := sel.Accept(v)
 		if !ok {
