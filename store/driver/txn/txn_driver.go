@@ -35,7 +35,7 @@ type tikvTxn struct {
 
 // NewTiKVTxn returns a new Transaction.
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
-	txn.SetOption(tikvstore.KVFilter, TiDBKVFilter{})
+	txn.SetKVFilter(TiDBKVFilter{})
 
 	entryLimit := atomic.LoadUint64(&kv.TxnEntrySizeLimit)
 	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
@@ -129,6 +129,19 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 			txn:     txn.KVTxn,
 			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
 		})
+	case tikvstore.SchemaChecker:
+		txn.SetSchemaLeaseChecker(val.(tikv.SchemaLeaseChecker))
+	case tikvstore.IsolationLevel:
+		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
+		txn.KVTxn.GetSnapshot().SetIsolationLevel(level)
+	case tikvstore.Priority:
+		txn.KVTxn.SetPriority(getTiKVPriority(val.(int)))
+	case tikvstore.NotFillCache:
+		txn.KVTxn.GetSnapshot().SetNotFillCache(val.(bool))
+	case tikvstore.SyncLog:
+		txn.EnableForceSyncLog()
+	case tikvstore.Pessimistic:
+		txn.SetPessimistic(val.(bool))
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}

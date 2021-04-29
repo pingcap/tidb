@@ -26,6 +26,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
@@ -44,14 +45,43 @@ const (
 	maxTimestamp  = math.MaxUint64
 )
 
+// Priority is the priority for tikv to execute a command.
+type Priority kvrpcpb.CommandPri
+
+// Priority value for transaction priority.
+const (
+	PriorityNormal = Priority(kvrpcpb.CommandPri_Normal)
+	PriorityLow    = Priority(kvrpcpb.CommandPri_Low)
+	PriorityHigh   = Priority(kvrpcpb.CommandPri_High)
+)
+
+// ToPB converts priority to wire type.
+func (p Priority) ToPB() kvrpcpb.CommandPri {
+	return kvrpcpb.CommandPri(p)
+}
+
+// IsoLevel is the transaction's isolation level.
+type IsoLevel kvrpcpb.IsolationLevel
+
+const (
+	// SI stands for 'snapshot isolation'.
+	SI IsoLevel = IsoLevel(kvrpcpb.IsolationLevel_SI)
+	// RC stands for 'read committed'.
+	RC IsoLevel = IsoLevel(kvrpcpb.IsolationLevel_RC)
+)
+
+// ToPB converts isolation level to wire type.
+func (l IsoLevel) ToPB() kvrpcpb.IsolationLevel {
+	return kvrpcpb.IsolationLevel(l)
+}
+
 // KVSnapshot implements the tidbkv.Snapshot interface.
 type KVSnapshot struct {
 	store           *KVStore
 	version         uint64
-	isolationLevel  kv.IsoLevel
-	priority        pb.CommandPri
+	isolationLevel  IsoLevel
+	priority        Priority
 	notFillCache    bool
-	syncLog         bool
 	keyOnly         bool
 	vars            *kv.Variables
 	replicaReadSeed uint32
@@ -90,7 +120,7 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 	return &KVSnapshot{
 		store:           store,
 		version:         ts,
-		priority:        pb.CommandPri_Normal,
+		priority:        PriorityNormal,
 		vars:            kv.DefaultVars,
 		replicaReadSeed: replicaReadSeed,
 		resolvedLocks:   util.NewTSSet(5),
@@ -277,7 +307,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			Keys:    pending,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority,
+			Priority:     s.priority.ToPB(),
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
@@ -427,7 +457,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			Key:     k,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority,
+			Priority:     s.priority.ToPB(),
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
@@ -535,16 +565,6 @@ func (s *KVSnapshot) IterReverse(k []byte) (unionstore.Iterator, error) {
 // value of this option. Only ReplicaRead is supported for snapshot
 func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case kv.IsolationLevel:
-		s.isolationLevel = val.(kv.IsoLevel)
-	case kv.Priority:
-		s.priority = PriorityToPB(val.(int))
-	case kv.NotFillCache:
-		s.notFillCache = val.(bool)
-	case kv.SyncLog:
-		s.syncLog = val.(bool)
-	case kv.KeyOnly:
-		s.keyOnly = val.(bool)
 	case kv.SnapshotTS:
 		s.setSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
@@ -586,6 +606,27 @@ func (s *KVSnapshot) DelOption(opt int) {
 		s.mu.stats = nil
 		s.mu.Unlock()
 	}
+}
+
+// SetNotFillCache indicates whether tikv should skip filling cache when
+// loading data.
+func (s *KVSnapshot) SetNotFillCache(b bool) {
+	s.notFillCache = b
+}
+
+// SetKeyOnly indicates if tikv can return only keys.
+func (s *KVSnapshot) SetKeyOnly(b bool) {
+	s.keyOnly = b
+}
+
+// SetIsolationLevel sets the isolation level used to scan data from tikv.
+func (s *KVSnapshot) SetIsolationLevel(level IsoLevel) {
+	s.isolationLevel = level
+}
+
+// SetPriority sets the priority for tikv to execute commands.
+func (s *KVSnapshot) SetPriority(pri Priority) {
+	s.priority = pri
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.

@@ -40,33 +40,6 @@ type nextPartition interface {
 	nextPartition(context.Context, table.PhysicalTable) (Executor, error)
 }
 
-// nolint:structcheck
-type innerPartitionInfo struct {
-	isFullPartition bool
-}
-
-type nextPartitionForTableReader struct {
-	*innerPartitionInfo
-	rangeBuilders map[int64]kvRangeBuilder
-	exec          *TableReaderExecutor
-}
-
-func (n nextPartitionForTableReader) GetInnerPartitionInfo() *innerPartitionInfo {
-	return n.innerPartitionInfo
-}
-
-func (n nextPartitionForTableReader) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
-	n.exec.table = tbl
-	n.exec.kvRanges = n.exec.kvRanges[:0]
-	if n.innerPartitionInfo != nil && !n.isFullPartition {
-		n.exec.kvRangeBuilder = n.rangeBuilders[tbl.GetPhysicalID()]
-	}
-	if err := updateDAGRequestTableID(ctx, n.exec.dagPB, tbl.GetPhysicalID()); err != nil {
-		return nil, err
-	}
-	return n.exec, nil
-}
-
 type nextPartitionForUnionScan struct {
 	b     *executorBuilder
 	us    *plannercore.PhysicalUnionScan
@@ -94,23 +67,6 @@ func nextPartitionWithTrace(ctx context.Context, n nextPartition, tbl table.Phys
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	return n.nextPartition(ctx, tbl)
-}
-
-// updateDAGRequestTableID update the table ID in the DAG request to partition ID.
-// TiKV only use that table ID for log, but TiFlash use it.
-func updateDAGRequestTableID(ctx context.Context, dag *tipb.DAGRequest, partitionID int64) error {
-	// TiFlash set RootExecutor field and ignore Executors field.
-	if dag.RootExecutor != nil {
-		return updateExecutorTableID(ctx, dag.RootExecutor, partitionID, true)
-	}
-	for i := 0; i < len(dag.Executors); i++ {
-		exec := dag.Executors[i]
-		err := updateExecutorTableID(ctx, exec, partitionID, false)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID int64, recursive bool) error {
