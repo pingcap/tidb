@@ -75,6 +75,7 @@ type KVTxn struct {
 
 	binlog             BinlogExecutor
 	schemaLeaseChecker SchemaLeaseChecker
+	syncLog            bool
 	priority           Priority
 	isPessimistic      bool
 	kvFilter           KVFilter
@@ -204,6 +205,11 @@ func (txn *KVTxn) DelOption(opt int) {
 // SetSchemaLeaseChecker sets a hook to check schema version.
 func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
 	txn.schemaLeaseChecker = checker
+}
+
+// EnableForceSyncLog indicates tikv to always sync log for the transaction.
+func (txn *KVTxn) EnableForceSyncLog() {
+	txn.syncLog = true
 }
 
 // SetPessimistic indicates if the transaction should use pessimictic lock.
