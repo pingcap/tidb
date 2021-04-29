@@ -638,7 +638,7 @@ func NewTopN(n int) *TopN {
 //     1. `*TopN` is the final global-level topN.
 //     2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
 //     3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
-func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, topNs []*TopN, n uint32, hists []*Histogram, isIndex bool) (*TopN, []TopNMeta, []*Histogram, error) {
+func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs []*TopN, n uint32, hists []*Histogram, isIndex bool) (*TopN, []TopNMeta, []*Histogram, error) {
 	if checkEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
@@ -674,7 +674,7 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, topNs []*TopN, n uin
 			// 1. Check the topN first.
 			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 			for j := 0; j < partNum; j++ {
-				if j == i || topNs[j].findTopN(val.Encoded) != -1 {
+				if (j == i && version >= 2) || topNs[j].findTopN(val.Encoded) != -1 {
 					continue
 				}
 				// Get the encodedVal from the hists[j]
@@ -706,7 +706,7 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, topNs []*TopN, n uin
 				if count != 0 {
 					counter[encodedVal] += count
 					// Remove the value corresponding to encodedVal from the histogram.
-					removeVals[j] = append(removeVals[j], TopNMeta{Encoded: val.Encoded, Count: uint64(count)})
+					removeVals[j] = append(removeVals[j], TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
 				}
 			}
 		}
@@ -714,7 +714,12 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, topNs []*TopN, n uin
 	// Remove the value from the Hists.
 	for i := 0; i < partNum; i++ {
 		if len(removeVals[i]) > 0 {
-			hists[i].RemoveVals(removeVals[i])
+			tmp := removeVals[i]
+			sort.Slice(tmp, func(i, j int) bool {
+				cmpResult := bytes.Compare(tmp[i].Encoded, tmp[j].Encoded)
+				return cmpResult < 0
+			})
+			hists[i].RemoveVals(tmp)
 		}
 	}
 	numTop := len(counter)
