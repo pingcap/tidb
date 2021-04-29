@@ -28,7 +28,8 @@
       "explain format = 'brief' select * from t8 where (a is null) or (a between 5 and 8)",
       "explain format = 'brief' select * from t8 where a between 5 and 12",
       "explain format = 'brief' select * from t8 where (a <= 10 and a >= 8) or (a <= 13 and a >= 11) or (a <= 16 and a >= 14)",
-      "explain format = 'brief' select * from t8 where a < 12 and a > 9"
+      "explain format = 'brief' select * from t8 where a < 12 and a > 9",
+      "explain format = 'brief' select * from t9"
     ]
   },
   {
