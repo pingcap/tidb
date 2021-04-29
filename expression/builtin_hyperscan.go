@@ -709,6 +709,7 @@ func (b *baseBuiltinHsSig) cloneFromBaseHsSig(source *baseBuiltinHsSig) {
 	b.sourceType = source.sourceType
 	b.matchType = source.matchType
 	b.numPatterns = source.numPatterns
+	b.supportDBSource = source.supportDBSource
 	b.scratch = nil
 	if source.db != nil {
 		b.db = b.cloneDb()
