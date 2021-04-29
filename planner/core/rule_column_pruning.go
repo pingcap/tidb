@@ -436,6 +436,8 @@ func (*columnPruner) name() string {
 	return "column_prune"
 }
 
+// By add const one, we can avoid empty Projection is eliminated.
+// Because in some cases, Projectoin cannot be eliminated even its output is empty.
 func addConstOneForEmptyProjection(p LogicalPlan) {
 	proj, ok := p.(*LogicalProjection)
 	if !ok {
