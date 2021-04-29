@@ -5828,6 +5828,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 		if err != nil {
 			return err
 		}
+		recurPart =  b.buildProjection4CTEUnion(ctx, cInfo.seedLP, recurPart)
 		if recurPart.Schema().Len() != cInfo.seedLP.Schema().Len() {
 			return ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 		}
@@ -5919,4 +5920,20 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		b.optFlag = saveFlag
 	}
 	return nil
+}
+
+func (b *PlanBuilder) buildProjection4CTEUnion(ctx context.Context, seed LogicalPlan, recur LogicalPlan) LogicalPlan {
+	exprs := make([]expression.Expression, len(seed.Schema().Columns))
+	for i, col := range recur.Schema().Columns {
+		if !seed.Schema().Columns[i].RetType.Equal(col.RetType) {
+			exprs[i] = expression.BuildCastFunction4Union(b.ctx, col, seed.Schema().Columns[i].RetType)
+		} else {
+			exprs[i] = col
+		}
+	}
+	b.optFlag |= flagEliminateProjection
+	proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
+	proj.SetSchema(seed.Schema().Clone())
+	proj.SetChildren(recur)
+	return proj
 }
