@@ -129,11 +129,13 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 			txn:     txn.KVTxn,
 			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
 		})
-	case tikvstore.SyncLog:
-		txn.EnableForceSyncLog()
+	case tikvstore.SchemaChecker:
+		txn.SetSchemaLeaseChecker(val.(tikv.SchemaLeaseChecker))
 	case tikvstore.IsolationLevel:
 		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
 		txn.KVTxn.GetSnapshot().SetIsolationLevel(level)
+	case tikvstore.SyncLog:
+		txn.EnableForceSyncLog()
 	case tikvstore.Pessimistic:
 		txn.SetPessimistic(val.(bool))
 	default:
