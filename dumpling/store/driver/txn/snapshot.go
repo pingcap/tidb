@@ -71,6 +71,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetPriority(getTiKVPriority(val.(int)))
 	case tikvstore.NotFillCache:
 		s.KVSnapshot.SetNotFillCache(val.(bool))
+	case tikvstore.SnapshotTS:
+		s.KVSnapshot.SetSnapshotTS(val.(uint64))
 	default:
 		s.KVSnapshot.SetOption(opt, val)
 	}
