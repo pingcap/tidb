@@ -190,6 +190,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 						}
 						used = append(used, int(idx))
 					}
+					continue
 				} else {
 					// maximum number of partitions is 1024
 					if col.RetType.Flen < 10 {
@@ -199,16 +200,14 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 							for i := 0; i < maxUsedPartitions; i++ {
 								used = append(used, i)
 							}
+							continue
 						}
-					} else {
-						used = []int{FullRange}
 					}
-					break
 				}
-			} else {
-				used = []int{FullRange}
-				break
 			}
+
+			used = []int{FullRange}
+			break
 		}
 	}
 	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
