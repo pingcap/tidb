@@ -78,6 +78,7 @@ type KVTxn struct {
 	syncLog            bool
 	priority           Priority
 	isPessimistic      bool
+	enable1PC          bool
 	scope              string
 	kvFilter           KVFilter
 }
@@ -228,6 +229,11 @@ func (txn *KVTxn) SetPriority(pri Priority) {
 // is finished.
 func (txn *KVTxn) SetCommitCallback(f func(string, error)) {
 	txn.commitCallback = f
+}
+
+// SetEnable1PC indicates if the transaction will try to use 1 phase commit.
+func (txn *KVTxn) SetEnable1PC(b bool) {
+	txn.enable1PC = b
 }
 
 // SetScope sets the geographical scope of the transaction.
