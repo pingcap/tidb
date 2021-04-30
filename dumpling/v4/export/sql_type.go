@@ -17,38 +17,49 @@ var (
 	doubleQuotationMark = []byte{'"'}
 )
 
+// There are two kinds of scenes to use this dataType
+// The first is to be the receiver of table sample, which will use tidb's INFORMATION_SCHEMA.COLUMNS's DATA_TYPE column, which is from
+// https://github.com/pingcap/tidb/blob/619c4720059ea619081b01644ef3084b426d282f/executor/infoschema_reader.go#L654
+// https://github.com/pingcap/parser/blob/8e8ed7927bde11c4cf0967afc5e05ab5aeb14cc7/types/etc.go#L44-70
+// The second is to be the receiver of select row type, which will use sql.DB's rows.DatabaseTypeName(), which is from
+// https://github.com/go-sql-driver/mysql/blob/v1.5.0/fields.go#L17-97
 func initColTypeRowReceiverMap() {
-	for _, s := range dataTypeString {
+	dataTypeStringArr := []string{
+		"CHAR", "NCHAR", "VARCHAR", "NVARCHAR", "CHARACTER", "VARCHARACTER",
+		"TIMESTAMP", "DATETIME", "DATE", "TIME", "YEAR", "SQL_TSI_YEAR",
+		"TEXT", "TINYTEXT", "MEDIUMTEXT", "LONGTEXT",
+		"ENUM", "SET", "JSON", "NULL", "VAR_STRING",
+	}
+
+	dataTypeNumArr := []string{
+		"INTEGER", "BIGINT", "TINYINT", "SMALLINT", "MEDIUMINT",
+		"INT", "INT1", "INT2", "INT3", "INT8",
+		"FLOAT", "REAL", "DOUBLE", "DOUBLE PRECISION",
+		"DECIMAL", "NUMERIC", "FIXED",
+		"BOOL", "BOOLEAN",
+	}
+
+	dataTypeBinArr := []string{
+		"BLOB", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB", "LONG",
+		"BINARY", "VARBINARY",
+		"BIT", "GEOMETRY",
+	}
+
+	for _, s := range dataTypeStringArr {
+		dataTypeString[s] = struct{}{}
 		colTypeRowReceiverMap[s] = SQLTypeStringMaker
 	}
-	for _, s := range dataTypeNum {
+	for _, s := range dataTypeNumArr {
+		dataTypeNum[s] = struct{}{}
 		colTypeRowReceiverMap[s] = SQLTypeNumberMaker
 	}
-	for _, s := range dataTypeBin {
+	for _, s := range dataTypeBinArr {
+		dataTypeBin[s] = struct{}{}
 		colTypeRowReceiverMap[s] = SQLTypeBytesMaker
 	}
 }
 
-var dataTypeString = []string{
-	"CHAR", "NCHAR", "VARCHAR", "NVARCHAR", "CHARACTER", "VARCHARACTER",
-	"TIMESTAMP", "DATETIME", "DATE", "TIME", "YEAR", "SQL_TSI_YEAR",
-	"TEXT", "TINYTEXT", "MEDIUMTEXT", "LONGTEXT",
-	"ENUM", "SET", "JSON",
-}
-
-var dataTypeNum = []string{
-	"INTEGER", "BIGINT", "TINYINT", "SMALLINT", "MEDIUMINT",
-	"INT", "INT1", "INT2", "INT3", "INT8",
-	"FLOAT", "REAL", "DOUBLE", "DOUBLE PRECISION",
-	"DECIMAL", "NUMERIC", "FIXED",
-	"BOOL", "BOOLEAN",
-}
-
-var dataTypeBin = []string{
-	"BLOB", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB", "LONG",
-	"BINARY", "VARBINARY",
-	"BIT",
-}
+var dataTypeString, dataTypeNum, dataTypeBin = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
 
 func escapeBackslashSQL(s []byte, bf *bytes.Buffer) {
 	var (
