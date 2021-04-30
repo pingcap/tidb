@@ -14,8 +14,10 @@
 package executor_test
 
 import (
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
+	"strings"
 )
 
 func (s *testSuite1) TestSingleTableRead(c *C) {
@@ -77,4 +79,39 @@ func (s *testSuite1) TestIssue16910(c *C) {
 	tk.MustExec("create table t2 (a int not null, b bigint not null, index (a), index (b)) partition by hash(a) partitions 10;")
 	tk.MustExec("insert into t2 values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, 18), (19, 19), (20, 20), (21, 21), (22, 22), (23, 23);")
 	tk.MustQuery("select /*+ USE_INDEX_MERGE(t1, a, b) */ * from t1 partition (p0) join t2 partition (p1) on t1.a = t2.a where t1.a < 40 or t1.b < 30;").Check(testkit.Rows("1 1 1 1"))
+}
+
+func (s *testSuite1) TestIssue23569(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec(`create table tt(id bigint(20) NOT NULL,create_time bigint(20) NOT NULL DEFAULT '0' ,driver varchar(64), PRIMARY KEY (id,create_time))
+	PARTITION BY RANGE ( create_time ) (
+		PARTITION p201901 VALUES LESS THAN (1577808000),
+		PARTITION p202001 VALUES LESS THAN (1585670400),
+		PARTITION p202002 VALUES LESS THAN (1593532800),
+		PARTITION p202003 VALUES LESS THAN (1601481600),
+		PARTITION p202004 VALUES LESS THAN (1609430400),
+		PARTITION p202101 VALUES LESS THAN (1617206400),
+		PARTITION p202102 VALUES LESS THAN (1625068800),
+		PARTITION p202103 VALUES LESS THAN (1633017600),
+		PARTITION p202104 VALUES LESS THAN (1640966400),
+		PARTITION p202201 VALUES LESS THAN (1648742400),
+		PARTITION p202202 VALUES LESS THAN (1656604800),
+		PARTITION p202203 VALUES LESS THAN (1664553600),
+		PARTITION p202204 VALUES LESS THAN (1672502400),
+		PARTITION p202301 VALUES LESS THAN (1680278400)
+	);`)
+	tk.MustExec("insert tt value(1, 1577807000, 'jack'), (2, 1577809000, 'mike'), (3, 1585670500, 'right'), (4, 1601481500, 'hello');")
+	tk.MustExec("set @@tidb_enable_index_merge=true;")
+	rows := tk.MustQuery("explain select count(*) from tt partition(p202003) where _tidb_rowid is null or (_tidb_rowid>=1 and _tidb_rowid<100);").Rows()
+	containsIndexMerge := false
+	for _, r := range rows {
+		if strings.Contains(fmt.Sprintf("%s", r[0]), "IndexMerge") {
+			containsIndexMerge = true
+			break
+		}
+	}
+	c.Assert(containsIndexMerge, IsTrue)
+	tk.MustQuery("select count(*) from tt partition(p202003) where _tidb_rowid is null or (_tidb_rowid>=1 and _tidb_rowid<100);").Check(testkit.Rows("1"))
 }
