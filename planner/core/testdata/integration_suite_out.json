@@ -879,19 +879,6 @@
           "  └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo"
         ],
         "Warn": null
-      },
-      {
-        "SQL": "select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t",
-        "Plan": [
-          "PartitionUnion 30000.00 root  ",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
-        ],
-        "Warn": null
       }
     ]
   },
@@ -1506,6 +1493,30 @@
           "      ├─Selection(Build) 0.02 cop[tikv]  or(eq(test.t2.b, 1), eq(test.t2.b, 2))",
           "      │ └─IndexRangeScan 10.00 cop[tikv] table:t2, index:PRIMARY(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
           "      └─TableRowIDScan(Probe) 0.02 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue24095",
+    "Cases": [
+      {
+        "SQL": "select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#10",
+          "└─HashJoin 1.00 root  inner join, equal:[eq(test.t.id, test.t.id) eq(test.t.value, test.t.value)]",
+          "  ├─Selection(Build) 0.80 root  not(isnull(test.t.id)), not(isnull(test.t.value))",
+          "  │ └─TopN 1.00 root  test.t.value, offset:0, count:1",
+          "  │   └─HashJoin 12487.50 root  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "  │     ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.id))",
+          "  │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │     └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │       └─Selection 9990.00 cop[tikv]  not(isnull(test.t.id))",
+          "  │         └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t.id)), not(isnull(test.t.value))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
