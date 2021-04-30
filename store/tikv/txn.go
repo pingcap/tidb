@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -74,7 +73,12 @@ type KVTxn struct {
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info string, err error)
 
-	binlog BinlogExecutor
+	binlog             BinlogExecutor
+	schemaLeaseChecker SchemaLeaseChecker
+	syncLog            bool
+	priority           Priority
+	isPessimistic      bool
+	kvFilter           KVFilter
 }
 
 func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
@@ -133,7 +137,7 @@ func (txn *KVTxn) GetVars() *kv.Variables {
 // Get implements transaction interface.
 func (txn *KVTxn) Get(ctx context.Context, k []byte) ([]byte, error) {
 	ret, err := txn.us.Get(ctx, k)
-	if tidbkv.IsErrNotFound(err) {
+	if tikverr.IsErrNotFound(err) {
 		return nil, err
 	}
 	if err != nil {
@@ -183,8 +187,6 @@ func (txn *KVTxn) SetOption(opt int, val interface{}) {
 		txn.txnInfoSchema = val.(SchemaVer)
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
-	case kv.CommitHook:
-		txn.commitCallback = val.(func(info string, err error))
 	}
 }
 
@@ -198,16 +200,41 @@ func (txn *KVTxn) DelOption(opt int) {
 	txn.us.DelOption(opt)
 }
 
-// IsPessimistic returns true if it is pessimistic.
-func (txn *KVTxn) IsPessimistic() bool {
-	return txn.us.GetOption(kv.Pessimistic) != nil
+// SetSchemaLeaseChecker sets a hook to check schema version.
+func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
+	txn.schemaLeaseChecker = checker
 }
 
-func (txn *KVTxn) getKVFilter() KVFilter {
-	if filter := txn.us.GetOption(kv.KVFilter); filter != nil {
-		return filter.(KVFilter)
-	}
-	return nil
+// EnableForceSyncLog indicates tikv to always sync log for the transaction.
+func (txn *KVTxn) EnableForceSyncLog() {
+	txn.syncLog = true
+}
+
+// SetPessimistic indicates if the transaction should use pessimictic lock.
+func (txn *KVTxn) SetPessimistic(b bool) {
+	txn.isPessimistic = b
+}
+
+// SetPriority sets the priority for both write and read.
+func (txn *KVTxn) SetPriority(pri Priority) {
+	txn.priority = pri
+	txn.GetSnapshot().SetPriority(pri)
+}
+
+// SetCommitCallback sets up a function that will be called when the transaction
+// is finished.
+func (txn *KVTxn) SetCommitCallback(f func(string, error)) {
+	txn.commitCallback = f
+}
+
+// SetKVFilter sets the filter to ignore key-values in memory buffer.
+func (txn *KVTxn) SetKVFilter(filter KVFilter) {
+	txn.kvFilter = filter
+}
+
+// IsPessimistic returns true if it is pessimistic.
+func (txn *KVTxn) IsPessimistic() bool {
+	return txn.isPessimistic
 }
 
 // Commit commits the transaction operations to KV store.
@@ -220,7 +247,7 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	defer trace.StartRegion(ctx, "CommitTxn").End()
 
 	if !txn.valid {
-		return tidbkv.ErrInvalidTxn
+		return tikverr.ErrInvalidTxn
 	}
 	defer txn.close()
 
@@ -296,7 +323,7 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		return tidbkv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
+		return &tikverr.ErrWriteConflictInLatch{StartTS: txn.startTS}
 	}
 	err = committer.execute(ctx)
 	if val == nil || sessionID > 0 {
@@ -316,7 +343,7 @@ func (txn *KVTxn) close() {
 // Rollback undoes the transaction operations to KV store.
 func (txn *KVTxn) Rollback() error {
 	if !txn.valid {
-		return tidbkv.ErrInvalidTxn
+		return tikverr.ErrInvalidTxn
 	}
 	start := time.Now()
 	// Clean up pessimistic lock.

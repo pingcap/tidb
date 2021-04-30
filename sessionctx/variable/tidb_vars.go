@@ -701,29 +701,3 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 )
-
-// FeatureSwitchVariables is used to filter result of show variables, these switches should be turn blind to users.
-var FeatureSwitchVariables = []string{
-	TiDBEnableChangeColumnType,
-	TiDBEnablePointGetCache,
-	TiDBEnableAlterPlacement,
-	TiDBEnableChangeMultiSchema,
-	TiDBEnableAsyncCommit,
-	TiDBEnable1PC,
-	TiDBGuaranteeLinearizability,
-	TiDBTrackAggregateMemoryUsage,
-	TiDBAnalyzeVersion,
-	TiDBPartitionPruneMode,
-	TiDBEnableExtendedStats,
-	TiDBEnableIndexMergeJoin,
-}
-
-// FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
-func FilterImplicitFeatureSwitch(sysVar *SysVar) bool {
-	for _, one := range FeatureSwitchVariables {
-		if one == sysVar.Name {
-			return true
-		}
-	}
-	return false
-}
