@@ -18,7 +18,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -27,7 +26,7 @@ import (
 func (s *testAsyncCommitCommon) begin1PC(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.Enable1PC, true)
+	txn.SetEnable1PC(true)
 	return tikv.TxnProbe{KVTxn: txn}
 }
 
@@ -254,7 +253,7 @@ func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
 
 	localTxn := s.begin1PC(c)
 	err := localTxn.Set([]byte("a"), []byte("a1"))
-	localTxn.SetOption(kv.TxnScope, "bj")
+	localTxn.SetScope("bj")
 	c.Assert(err, IsNil)
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = localTxn.Commit(ctx)
@@ -263,7 +262,7 @@ func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
 
 	globalTxn := s.begin1PC(c)
 	err = globalTxn.Set([]byte("b"), []byte("b1"))
-	globalTxn.SetOption(kv.TxnScope, oracle.GlobalTxnScope)
+	globalTxn.SetScope(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = globalTxn.Commit(ctx)
 	c.Assert(err, IsNil)

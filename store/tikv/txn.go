@@ -78,6 +78,8 @@ type KVTxn struct {
 	syncLog            bool
 	priority           Priority
 	isPessimistic      bool
+	enable1PC          bool
+	scope              string
 	kvFilter           KVFilter
 }
 
@@ -93,7 +95,7 @@ func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
 // newTiKVTxnWithStartTS creates a txn with startTS.
 func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*KVTxn, error) {
 	snapshot := newTiKVSnapshot(store, startTS, replicaReadSeed)
-	newTiKVTxn := &KVTxn{
+	return &KVTxn{
 		snapshot:  snapshot,
 		us:        unionstore.NewUnionStore(snapshot),
 		store:     store,
@@ -101,9 +103,8 @@ func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, repl
 		startTime: time.Now(),
 		valid:     true,
 		vars:      kv.DefaultVars,
-	}
-	newTiKVTxn.SetOption(kv.TxnScope, txnScope)
-	return newTiKVTxn, nil
+		scope:     txnScope,
+	}, nil
 }
 
 func newTiKVTxnWithExactStaleness(store *KVStore, txnScope string, prevSec uint64) (*KVTxn, error) {
@@ -230,6 +231,16 @@ func (txn *KVTxn) SetCommitCallback(f func(string, error)) {
 	txn.commitCallback = f
 }
 
+// SetEnable1PC indicates if the transaction will try to use 1 phase commit.
+func (txn *KVTxn) SetEnable1PC(b bool) {
+	txn.enable1PC = b
+}
+
+// SetScope sets the geographical scope of the transaction.
+func (txn *KVTxn) SetScope(scope string) {
+	txn.scope = scope
+}
+
 // SetKVFilter sets the filter to ignore key-values in memory buffer.
 func (txn *KVTxn) SetKVFilter(filter KVFilter) {
 	txn.kvFilter = filter
@@ -238,6 +249,11 @@ func (txn *KVTxn) SetKVFilter(filter KVFilter) {
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
 	return txn.isPessimistic
+}
+
+// GetScope returns the geographical scope of the transaction.
+func (txn *KVTxn) GetScope() string {
+	return txn.scope
 }
 
 // Commit commits the transaction operations to KV store.
@@ -409,7 +425,7 @@ func (txn *KVTxn) onCommitted(err error) {
 		}
 
 		info := TxnInfo{
-			TxnScope:            txn.GetUnionStore().GetOption(kv.TxnScope).(string),
+			TxnScope:            txn.GetScope(),
 			StartTS:             txn.startTS,
 			CommitTS:            txn.commitTS,
 			TxnCommitMode:       commitMode,
