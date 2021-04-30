@@ -40,6 +40,8 @@ import (
 var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	// ErrRegionUnavailable is the error when region is not available.
+	ErrRegionUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrRegionUnavailable)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -188,6 +190,9 @@ func toTiDBErr(err error) error {
 		return ErrTiKVServerTimeout
 	}
 
+	if errors.ErrorEqual(err, tikverr.ErrRegionUnavailable) {
+		return ErrRegionUnavailable
+	}
 	return errors.Trace(err)
 }
 
