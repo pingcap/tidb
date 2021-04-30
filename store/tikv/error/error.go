@@ -33,6 +33,8 @@ var (
 	ErrCannotSetNilValue = errors.New("can not set nil value")
 	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
 	ErrInvalidTxn = errors.New("invalid transaction")
+	// ErrTiKVServerTimeout is the error when tikv server is timeout.
+	ErrTiKVServerTimeout = errors.New("tikv server timeout")
 )
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
@@ -40,7 +42,6 @@ const MismatchClusterID = "mismatch cluster id"
 
 // error instances.
 var (
-	ErrTiKVServerTimeout           = dbterror.ClassTiKV.NewStd(CodeTiKVServerTimeout)
 	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
 	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(CodeResolveLockTimeout)
 	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(CodePDServerTimeout)
