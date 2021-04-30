@@ -191,17 +191,17 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 						used = append(used, int(idx))
 					}
 					continue
-				} else {
-					// maximum number of partitions is 1024
-					if col.RetType.Flen < 10 {
-						// all possible hash values
-						maxUsedPartitions := 1 << col.RetType.Flen
-						if maxUsedPartitions < numPartitions {
-							for i := 0; i < maxUsedPartitions; i++ {
-								used = append(used, i)
-							}
-							continue
+				}
+
+				// maximum number of partitions is 1024
+				if col.RetType.Flen < 10 {
+					// all possible hash values
+					maxUsedPartitions := 1 << col.RetType.Flen
+					if maxUsedPartitions < numPartitions {
+						for i := 0; i < maxUsedPartitions; i++ {
+							used = append(used, i)
 						}
+						continue
 					}
 				}
 			}
