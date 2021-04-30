@@ -40,6 +40,8 @@ import (
 var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	// ErrPDServerTimeout is the error when pd server is timeout.
+	ErrPDServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrPDServerTimeout)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -188,6 +190,12 @@ func toTiDBErr(err error) error {
 		return ErrTiKVServerTimeout
 	}
 
+	if e, ok := err.(*tikverr.ErrPDServerTimeout); ok {
+		if len(e.Error()) == 0 {
+			return ErrPDServerTimeout
+		}
+		return ErrPDServerTimeout.GenWithStackByArgs(e.Error())
+	}
 	return errors.Trace(err)
 }
 

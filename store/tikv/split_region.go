@@ -185,7 +185,7 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 		if batchResp.err == nil {
 			batchResp.err = err
 		}
-		if tikverr.ErrPDServerTimeout.Equal(err) {
+		if _, ok := err.(*tikverr.ErrPDServerTimeout); ok {
 			break
 		}
 	}
@@ -219,7 +219,7 @@ func (s *KVStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64) 
 
 		if val, err2 := util.MockScatterRegionTimeout.Eval(); err2 == nil {
 			if val.(bool) {
-				err = tikverr.ErrPDServerTimeout
+				err = tikverr.NewErrPDServerTimeout("")
 			}
 		}
 

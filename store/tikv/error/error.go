@@ -44,7 +44,6 @@ const MismatchClusterID = "mismatch cluster id"
 var (
 	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
 	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(CodeResolveLockTimeout)
-	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(CodePDServerTimeout)
 	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(CodeRegionUnavailable)
 	ErrTiKVServerBusy              = dbterror.ClassTiKV.NewStd(CodeTiKVServerBusy)
 	ErrTiFlashServerBusy           = dbterror.ClassTiKV.NewStd(CodeTiFlashServerBusy)
@@ -166,4 +165,18 @@ type ErrEntryTooLarge struct {
 
 func (e *ErrEntryTooLarge) Error() string {
 	return fmt.Sprintf("entry size too large, size: %v,limit: %v.", e.Size, e.Limit)
+}
+
+// ErrPDServerTimeout is the error when pd server is timeout.
+type ErrPDServerTimeout struct {
+	msg string
+}
+
+// NewErrPDServerTimeout creates an ErrPDServerTimeout.
+func NewErrPDServerTimeout(msg string) error {
+	return &ErrPDServerTimeout{msg}
+}
+
+func (e *ErrPDServerTimeout) Error() string {
+	return e.msg
 }
