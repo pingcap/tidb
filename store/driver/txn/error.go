@@ -40,6 +40,8 @@ import (
 var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	// ErrTiKVServerBusy is the error when tikv server is busy.
+	ErrTiKVServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerBusy)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -188,6 +190,9 @@ func toTiDBErr(err error) error {
 		return ErrTiKVServerTimeout
 	}
 
+	if errors.ErrorEqual(err, tikverr.ErrTiKVServerBusy) {
+		return ErrTiKVServerBusy
+	}
 	return errors.Trace(err)
 }
 

@@ -26,7 +26,6 @@ const (
 
 	// TiKV/PD/TiFlash errors.
 	CodePDServerTimeout    = 9001
-	CodeTiKVServerBusy     = 9003
 	CodeResolveLockTimeout = 9004
 	CodeRegionUnavailable  = 9005
 	CodeGCTooEarly         = 9006

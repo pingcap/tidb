@@ -35,6 +35,8 @@ var (
 	ErrInvalidTxn = errors.New("invalid transaction")
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout = errors.New("tikv server timeout")
+	// ErrTiKVServerBusy is the error when tikv server is busy.
+	ErrTiKVServerBusy = errors.New("tikv server busy")
 )
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
@@ -46,7 +48,6 @@ var (
 	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(CodeResolveLockTimeout)
 	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(CodePDServerTimeout)
 	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(CodeRegionUnavailable)
-	ErrTiKVServerBusy              = dbterror.ClassTiKV.NewStd(CodeTiKVServerBusy)
 	ErrTiFlashServerBusy           = dbterror.ClassTiKV.NewStd(CodeTiFlashServerBusy)
 	ErrTiKVStaleCommand            = dbterror.ClassTiKV.NewStd(CodeTiKVStaleCommand)
 	ErrTiKVMaxTimestampNotSynced   = dbterror.ClassTiKV.NewStd(CodeTiKVMaxTimestampNotSynced)
