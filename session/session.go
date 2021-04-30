@@ -2734,7 +2734,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
-		txnScope := s.txn.GetUnionStore().GetOption(tikvstore.TxnScope).(string)
+		txnScope := s.txn.GetOption(tikvstore.TxnScope).(string)
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return err
