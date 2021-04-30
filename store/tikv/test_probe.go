@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
 	"time"
@@ -304,6 +305,12 @@ func (c CommitterProbe) BuildPrewriteRequest(regionID, regionConf, regionVersion
 	var batch batchMutations
 	batch.mutations = mutations
 	batch.region = RegionVerID{regionID, regionConf, regionVersion}
+	for _, key := range mutations.GetKeys() {
+		if bytes.Equal(key, c.primary()) {
+			batch.isPrimary = true
+			break
+		}
+	}
 	return c.buildPrewriteRequest(batch, txnSize)
 }
 
