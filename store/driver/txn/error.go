@@ -39,7 +39,8 @@ import (
 // tikv error instance
 var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
-	ErrTiKVServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	ErrTiKVServerTimeout  = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	ErrResolveLockTimeout = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
 	// ErrGCTooEarly is the error that GC life time is shorter than transaction duration
 	ErrGCTooEarly = dbterror.ClassTiKV.NewStd(errno.ErrGCTooEarly)
 )
@@ -195,6 +196,10 @@ func ToTiDBErr(err error) error {
 
 	if e, ok := err.(*tikverr.ErrGCTooEarly); ok {
 		return ErrGCTooEarly.GenWithStackByArgs(e.TxnStartTS, e.GCSafePoint)
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrResolveLockTimeout) {
+		return ErrResolveLockTimeout
 	}
 
 	return errors.Trace(originErr)

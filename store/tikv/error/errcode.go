@@ -25,10 +25,9 @@ const (
 	CodeLockAcquireFailAndNoWaitSet = 3572
 
 	// TiKV/PD/TiFlash errors.
-	CodePDServerTimeout    = 9001
-	CodeTiKVServerBusy     = 9003
-	CodeResolveLockTimeout = 9004
-	CodeRegionUnavailable  = 9005
+	CodePDServerTimeout   = 9001
+	CodeTiKVServerBusy    = 9003
+	CodeRegionUnavailable = 9005
 
 	CodeTiKVStoreLimit = 9008
 
