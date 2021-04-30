@@ -168,8 +168,7 @@
       "select /*+ hash_join(t1, t2 partition(p0)) */ * from t t1 join t t2 on t1.a = t2.a",
       "select /*+ use_index_merge(t partition(p0)) */ * from t where t.b = 1 or t.c = \"8\"",
       "select /*+ use_index_merge(t partition(p0, p1) primary, b) */ * from t where t.a = 1 or t.b = 2",
-      "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)",
-      "select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t"
+      "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)"
     ]
   },
   {

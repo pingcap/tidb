@@ -18,6 +18,7 @@ package unionstore
 import (
 	"encoding/binary"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -50,7 +51,7 @@ func (db *MemDB) DeleteKey(key []byte) {
 	if x.isNull() {
 		return
 	}
-	db.size -= len(db.vlog.getValue(x.vptr))
+	atomic.AddInt64(&db.size, -int64(len(db.vlog.getValue(x.vptr))))
 	db.deleteNode(x)
 }
 

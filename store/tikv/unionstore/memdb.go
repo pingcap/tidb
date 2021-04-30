@@ -21,7 +21,6 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	tidbkv "github.com/pingcap/tidb/kv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
@@ -218,7 +217,7 @@ func (db *MemDB) UpdateFlags(key []byte, ops ...kv.FlagsOp) {
 // v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
 func (db *MemDB) Set(key []byte, value []byte) error {
 	if len(value) == 0 {
-		return tidbkv.ErrCannotSetNilValue
+		return tikverr.ErrCannotSetNilValue
 	}
 	return db.set(key, value)
 }
@@ -226,7 +225,7 @@ func (db *MemDB) Set(key []byte, value []byte) error {
 // SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
 func (db *MemDB) SetWithFlags(key []byte, value []byte, ops ...kv.FlagsOp) error {
 	if len(value) == 0 {
-		return tidbkv.ErrCannotSetNilValue
+		return tikverr.ErrCannotSetNilValue
 	}
 	return db.set(key, value, ops...)
 }
@@ -282,7 +281,10 @@ func (db *MemDB) set(key []byte, value []byte, ops ...kv.FlagsOp) error {
 
 	if value != nil {
 		if size := uint64(len(key) + len(value)); size > db.entrySizeLimit {
-			return tidbkv.ErrEntryTooLarge.GenWithStackByArgs(db.entrySizeLimit, size)
+			return &tikverr.ErrEntryTooLarge{
+				Limit: db.entrySizeLimit,
+				Size:  size,
+			}
 		}
 	}
 
@@ -308,7 +310,7 @@ func (db *MemDB) set(key []byte, value []byte, ops ...kv.FlagsOp) error {
 
 	db.setValue(x, value)
 	if uint64(db.Size()) > db.bufferSizeLimit {
-		return tidbkv.ErrTxnTooLarge.GenWithStackByArgs(db.Size())
+		return &tikverr.ErrTxnTooLarge{Size: db.Size()}
 	}
 	return nil
 }

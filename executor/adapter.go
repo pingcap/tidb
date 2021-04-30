@@ -214,7 +214,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 	if err != nil {
 		return nil, err
 	}
-	a.Ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityHigh
+	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 
 	// try to reuse point get executor
 	if a.PsStmt.Executor != nil {
@@ -733,15 +733,15 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 			if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
 				switch {
 				case useMaxTS:
-					stmtCtx.Priority = tikvstore.PriorityHigh
+					stmtCtx.Priority = kv.PriorityHigh
 				case a.LowerPriority:
-					stmtCtx.Priority = tikvstore.PriorityLow
+					stmtCtx.Priority = kv.PriorityLow
 				}
 			}
 		}
 	}
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
-		ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityLow
+		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema)
@@ -761,7 +761,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		if executorExec.lowerPriority {
-			ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityLow
+			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 		}
 		e = executorExec.stmtExec
 	}
