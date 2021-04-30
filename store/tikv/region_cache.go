@@ -999,7 +999,7 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 		store.workTiFlashIdx = atomic.LoadInt32(&oldRegionStore.workTiFlashIdx)
 		delete(c.mu.regions, oldRegion.VerID())
 		for i, ver := range c.mu.versions[cachedRegion.VerID().id] {
-			if ver.Equal(oldRegion.VerID()) {
+			if ver.Equals(oldRegion.VerID()) {
 				c.mu.versions[cachedRegion.VerID().id] = append(
 					c.mu.versions[cachedRegion.VerID().id][:i],
 					c.mu.versions[cachedRegion.VerID().id][i+1:]...)
@@ -1582,7 +1582,7 @@ func (r *RegionVerID) String() string {
 }
 
 // Equals checks whether the RegionVerID equals to another one
-func (r *RegionVerID) Equal(another RegionVerID) bool {
+func (r *RegionVerID) Equals(another RegionVerID) bool {
 	return r.id == another.id && r.confVer == another.confVer && r.ver == another.ver
 }
 
