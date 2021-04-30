@@ -450,13 +450,10 @@ func (s *session) TxnInfo() *txnInfo.TxnInfo {
 	if txnInfo == nil {
 		return nil
 	}
-	var username string = ""
-	if s.sessionVars.User != nil {
-		username = s.sessionVars.User.Username
-	}
-	txnInfo.ConnectionID = s.sessionVars.ConnectionID
-	txnInfo.Username = username
-	txnInfo.CurrentDB = s.sessionVars.CurrentDB
+	processInfo := s.ShowProcess()
+	txnInfo.ConnectionID = processInfo.ID
+	txnInfo.Username = processInfo.User
+	txnInfo.CurrentDB = processInfo.DB
 	return txnInfo
 }
 
@@ -1413,7 +1410,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
 	if s.txn.Valid() {
 		_, digest := parser.NormalizeDigest(stmtNode.Text())
-		s.txn.CurrentSQLDigest = digest
+		s.txn.CurrentSQLDigest.Store(&digest)
 	}
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {

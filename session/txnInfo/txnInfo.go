@@ -22,7 +22,7 @@ import (
 )
 
 // TxnRunningState is the current state of a transaction
-type TxnRunningState = int
+type TxnRunningState = int32
 
 const (
 	// TxnRunningNormal means the transaction is running normally
@@ -46,9 +46,9 @@ type TxnInfo struct {
 	// last trying to block start time
 	BlockStartTime *time.Time
 	// How many entries are in MemDB
-	Len int
+	Len int64
 	// MemDB used memory
-	Size int
+	Size int64
 
 	// the following fields will be filled in `session` instead of `LazyTxn`
 

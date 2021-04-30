@@ -18,6 +18,7 @@ import (
 	"math"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -60,8 +61,8 @@ type MemDB struct {
 
 	entrySizeLimit  uint64
 	bufferSizeLimit uint64
-	count           int
-	size            int
+	count           int64
+	size            int64
 
 	vlogInvalid bool
 	dirty       bool
@@ -260,12 +261,12 @@ func (db *MemDB) GetValueByHandle(handle MemKeyHandle) ([]byte, bool) {
 
 // Len returns the number of entries in the DB.
 func (db *MemDB) Len() int {
-	return db.count
+	return int(atomic.LoadInt64(&db.count))
 }
 
 // Size returns sum of keys and values length.
 func (db *MemDB) Size() int {
-	return db.size
+	return int(atomic.LoadInt64(&db.size))
 }
 
 // Dirty returns whether the root staging buffer is updated.
@@ -332,7 +333,7 @@ func (db *MemDB) setValue(x memdbNodeAddr, value []byte) {
 		}
 	}
 	x.vptr = db.vlog.appendValue(x.addr, x.vptr, value)
-	db.size = db.size - len(oldVal) + len(value)
+	atomic.AddInt64(&db.size, int64(len(value)-len(oldVal)))
 }
 
 // traverse search for and if not found and insert is true, will add a new node in.
@@ -536,8 +537,8 @@ func (db *MemDB) rightRotate(y memdbNodeAddr) {
 func (db *MemDB) deleteNode(z memdbNodeAddr) {
 	var x, y memdbNodeAddr
 
-	db.count--
-	db.size -= int(z.klen)
+	atomic.AddInt64(&db.count, -1)
+	atomic.AddInt64(&db.size, -int64(z.klen))
 
 	if z.left.isNull() || z.right.isNull() {
 		y = z
@@ -736,8 +737,8 @@ func (db *MemDB) getRoot() memdbNodeAddr {
 }
 
 func (db *MemDB) allocNode(key []byte) memdbNodeAddr {
-	db.size += len(key)
-	db.count++
+	atomic.AddInt64(&db.size, int64(len(key)))
+	atomic.AddInt64(&db.count, int64(1))
 	x, xn := db.allocator.allocNode(key)
 	return memdbNodeAddr{xn, x}
 }

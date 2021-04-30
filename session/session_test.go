@@ -4254,9 +4254,11 @@ func (s *testTxnStateSuite) TestBasic(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1);")
+	info := tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
 	tk.MustExec("begin pessimistic;")
 	tk.MustExec("select * from t for update;")
-	info := tk.Se.TxnInfo()
+	info = tk.Se.TxnInfo()
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
 	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest)
 	c.Assert(info.State, Equals, txnInfo.TxnRunningNormal)
@@ -4266,6 +4268,8 @@ func (s *testTxnStateSuite) TestBasic(c *C) {
 	c.Assert(info.Username, Equals, "")
 	c.Assert(info.CurrentDB, Equals, "test")
 	tk.MustExec("commit;")
+	info = tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
 }
 
 func (s *testTxnStateSuite) TestBlocked(c *C) {
@@ -4292,11 +4296,11 @@ func (s *testTxnStateSuite) TestLenAndSize(c *C) {
 	tk.MustExec("begin pessimistic;")
 	tk.MustExec("insert into t(a) values (1);")
 	info := tk.Se.TxnInfo()
-	c.Assert(info.Len, Equals, 1)
-	c.Assert(info.Size, Equals, 29)
+	c.Assert(info.Len, Equals, int64(1))
+	c.Assert(info.Size, Equals, int64(29))
 	tk.MustExec("insert into t(a) values (2);")
 	info = tk.Se.TxnInfo()
-	c.Assert(info.Len, Equals, 2)
-	c.Assert(info.Size, Equals, 58)
+	c.Assert(info.Len, Equals, int64(2))
+	c.Assert(info.Size, Equals, int64(58))
 	tk.MustExec("commit;")
 }
