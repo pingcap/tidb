@@ -36,5 +36,4 @@ const (
 	CodeTiKVStaleCommand          = 9010
 	CodeTiKVMaxTimestampNotSynced = 9011
 	CodeTiFlashServerTimeout      = 9012
-	CodeTiFlashServerBusy         = 9013
 )

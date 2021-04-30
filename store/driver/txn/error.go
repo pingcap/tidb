@@ -40,6 +40,8 @@ import (
 var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	// ErrTiFlashServerBusy is the error that tiflash server is busy.
+	ErrTiFlashServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiFlashServerBusy)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -186,6 +188,10 @@ func toTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
 		return ErrTiKVServerTimeout
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrTiFlashServerBusy) {
+		return ErrTiFlashServerBusy
 	}
 
 	return errors.Trace(err)
