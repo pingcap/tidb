@@ -36,7 +36,7 @@ import (
 
 // MPPClient servers MPP requests.
 type MPPClient struct {
-	store *tikv.KVStore
+	store *kvStoreDriver
 }
 
 // GetAddress returns the network address.
@@ -117,7 +117,7 @@ func (m *mppResponse) RespTime() time.Duration {
 }
 
 type mppIterator struct {
-	store *tikv.KVStore
+	store *kvStoreDriver
 
 	tasks    []*kv.MPPDispatchRequest
 	finishCh chan struct{}

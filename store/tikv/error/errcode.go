@@ -29,7 +29,6 @@ const (
 	CodeTiKVServerBusy     = 9003
 	CodeResolveLockTimeout = 9004
 	CodeRegionUnavailable  = 9005
-	CodeGCTooEarly         = 9006
 
 	CodeTiKVStoreLimit = 9008
 

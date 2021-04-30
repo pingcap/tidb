@@ -14,19 +14,58 @@
 package copr
 
 import (
+	"context"
 	"math/rand"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	txndriver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
+type kvStoreDriver struct {
+	store *tikv.KVStore
+}
+
+// GetRegionCache returns the region cache instance.
+func (s *kvStoreDriver) GetRegionCache() *tikv.RegionCache {
+	return s.store.GetRegionCache()
+}
+
+// CheckVisibility checks if it is safe to read using given ts.
+func (s *kvStoreDriver) CheckVisibility(startTime uint64) error {
+	err := s.store.CheckVisibility(startTime)
+	return txndriver.ToTiDBErr(err)
+}
+
+// GetTiKVClient gets the client instance.
+func (s *kvStoreDriver) GetTiKVClient() tikv.Client {
+	client := s.store.GetTiKVClient()
+	return &tikvClient{c: client}
+}
+
+type tikvClient struct {
+	c tikv.Client
+}
+
+func (c *tikvClient) Close() error {
+	err := c.c.Close()
+	return txndriver.ToTiDBErr(err)
+}
+
+// SendRequest sends Request.
+func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	res, err := c.c.SendRequest(ctx, addr, req, timeout)
+	return res, txndriver.ToTiDBErr(err)
+}
+
 // Store wraps tikv.KVStore and provides coprocessor utilities.
 type Store struct {
-	*tikv.KVStore
+	*kvStoreDriver
 	coprCache       *coprCache
 	replicaReadSeed uint32
 }
@@ -38,7 +77,7 @@ func NewStore(kvStore *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (
 		return nil, errors.Trace(err)
 	}
 	return &Store{
-		KVStore:         kvStore,
+		kvStoreDriver:   &kvStoreDriver{store: kvStore},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
 	}, nil
@@ -66,7 +105,7 @@ func (s *Store) GetClient() kv.Client {
 // GetMPPClient gets a mpp client instance.
 func (s *Store) GetMPPClient() kv.MPPClient {
 	return &MPPClient{
-		store: s.KVStore,
+		store: s.kvStoreDriver,
 	}
 }
 

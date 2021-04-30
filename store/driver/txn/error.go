@@ -40,6 +40,8 @@ import (
 var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	// ErrGCTooEarly is the error that GC life time is shorter than transaction duration
+	ErrGCTooEarly = dbterror.ClassTiKV.NewStd(errno.ErrGCTooEarly)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -153,13 +155,16 @@ func extractKeyErr(err error) error {
 		notFoundDetail := prettyLockNotFoundKey(e.Retryable)
 		return kv.ErrTxnRetryable.GenWithStackByArgs(e.Retryable + " " + notFoundDetail)
 	}
-	return toTiDBErr(err)
+	return ToTiDBErr(err)
 }
 
-func toTiDBErr(err error) error {
+// ToTiDBErr checks and converts a tikv error to a tidb error.
+func ToTiDBErr(err error) error {
+	originErr := err
 	if err == nil {
 		return nil
 	}
+	err = errors.Cause(err)
 	if tikverr.IsErrNotFound(err) {
 		return kv.ErrNotExist
 	}
@@ -188,7 +193,11 @@ func toTiDBErr(err error) error {
 		return ErrTiKVServerTimeout
 	}
 
-	return errors.Trace(err)
+	if e, ok := err.(*tikverr.ErrGCTooEarly); ok {
+		return ErrGCTooEarly.GenWithStackByArgs(e.TxnStartTS, e.GCSafePoint)
+	}
+
+	return errors.Trace(originErr)
 }
 
 func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {

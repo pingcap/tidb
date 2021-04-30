@@ -183,12 +183,12 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		return copErrorResponse{err}
 	}
 	it := &batchCopIterator{
-		store:        c.store.KVStore,
+		store:        c.store.kvStoreDriver,
 		req:          req,
 		finishCh:     make(chan struct{}),
 		vars:         vars,
 		memTracker:   req.MemTracker,
-		ClientHelper: tikv.NewClientHelper(c.store.KVStore, util.NewTSSet(5)),
+		ClientHelper: tikv.NewClientHelper(c.store.kvStoreDriver.store, util.NewTSSet(5)),
 		rpcCancel:    tikv.NewRPCanceller(),
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
@@ -201,7 +201,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 type batchCopIterator struct {
 	*tikv.ClientHelper
 
-	store    *tikv.KVStore
+	store    *kvStoreDriver
 	req      *kv.Request
 	finishCh chan struct{}
 
