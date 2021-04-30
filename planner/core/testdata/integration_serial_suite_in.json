@@ -9,6 +9,13 @@
     ]
   },
   {
+    "name": "TestPushDownToTiFlashWithKeepOrder",
+    "cases": [
+      "explain select max(a) from t",
+      "explain select min(a) from t"
+    ]
+  },
+  {
     "name": "TestBroadcastJoin",
     "cases": [
       "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
