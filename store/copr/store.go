@@ -27,23 +27,23 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
-type kvStoreDriver struct {
+type kvStore struct {
 	store *tikv.KVStore
 }
 
 // GetRegionCache returns the region cache instance.
-func (s *kvStoreDriver) GetRegionCache() *tikv.RegionCache {
+func (s *kvStore) GetRegionCache() *tikv.RegionCache {
 	return s.store.GetRegionCache()
 }
 
 // CheckVisibility checks if it is safe to read using given ts.
-func (s *kvStoreDriver) CheckVisibility(startTime uint64) error {
+func (s *kvStore) CheckVisibility(startTime uint64) error {
 	err := s.store.CheckVisibility(startTime)
 	return txndriver.ToTiDBErr(err)
 }
 
 // GetTiKVClient gets the client instance.
-func (s *kvStoreDriver) GetTiKVClient() tikv.Client {
+func (s *kvStore) GetTiKVClient() tikv.Client {
 	client := s.store.GetTiKVClient()
 	return &tikvClient{c: client}
 }
@@ -65,19 +65,19 @@ func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.
 
 // Store wraps tikv.KVStore and provides coprocessor utilities.
 type Store struct {
-	*kvStoreDriver
+	*kvStore
 	coprCache       *coprCache
 	replicaReadSeed uint32
 }
 
 // NewStore creates a new store instance.
-func NewStore(kvStore *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store, error) {
+func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store, error) {
 	coprCache, err := newCoprCache(coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return &Store{
-		kvStoreDriver:   &kvStoreDriver{store: kvStore},
+		kvStore:         &kvStore{store: s},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
 	}, nil
@@ -105,7 +105,7 @@ func (s *Store) GetClient() kv.Client {
 // GetMPPClient gets a mpp client instance.
 func (s *Store) GetMPPClient() kv.MPPClient {
 	return &MPPClient{
-		store: s.kvStoreDriver,
+		store: s.kvStore,
 	}
 }
 
