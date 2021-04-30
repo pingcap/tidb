@@ -73,6 +73,9 @@ type stmtSummaryByDigestMap struct {
 
 	// sysVars encapsulates system variables needed to control statement summary.
 	sysVars *systemVars
+
+	// other stores summary of evicted data.
+	other *stmtSummaryByDigestEvicted
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -235,11 +238,26 @@ type StmtExecInfo struct {
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	sysVars := newSysVars()
+
+	now := time.Now().Unix()
+	intervalSeconds := sysVars.getVariable(typeRefreshInterval)
+	beginTimeForCurrentInterval := now - now%intervalSeconds
+
+	ssbde := newStmtSummaryByDigestEvicted()
+
 	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
-	return &stmtSummaryByDigestMap{
-		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
-		sysVars:    sysVars,
+	ssMap := kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0)
+	newSsMap := &stmtSummaryByDigestMap{
+		summaryMap:              ssMap,
+		beginTimeForCurInterval: beginTimeForCurrentInterval,
+		sysVars:                 sysVars,
+		other:                   ssbde,
 	}
+	ssMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+		historySize := newSsMap.historySize()
+		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
+	})
+	return newSsMap
 }
 
 // AddStatement adds a statement to StmtSummaryByDigestMap.
@@ -276,6 +294,8 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
 			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
 			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
+			// update ssMap.other
+			ssMap.other.AddEvicted(new(stmtSummaryByDigestKey), new(stmtSummaryByDigest), ssMap.historySize())
 		}
 
 		beginTime := ssMap.beginTimeForCurInterval
@@ -304,6 +324,7 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	defer ssMap.Unlock()
 
 	ssMap.summaryMap.DeleteAll()
+	ssMap.other.Clear()
 	ssMap.beginTimeForCurInterval = 0
 }
 
