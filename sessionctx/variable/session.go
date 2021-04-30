@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -173,7 +174,9 @@ type TransactionContext struct {
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
 
-	GlobalTemporaryTables map[int64]struct{}
+	// GlobalTemporaryTables is used to store transaction-specific information for global temporary tables.
+	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
+	GlobalTemporaryTables map[int64]*TemporaryTable
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -1424,6 +1427,24 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
 }
 
+// GetTemporaryTable returns a TemporaryTable by tableInfo.
+func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) *TemporaryTable {
+	if tblInfo.TempTableType == model.TempTableGlobal {
+		if s.TxnCtx.GlobalTemporaryTables == nil {
+			s.TxnCtx.GlobalTemporaryTables = make(map[int64]*TemporaryTable)
+		}
+		globalTempTables := s.TxnCtx.GlobalTemporaryTables
+		globalTempTable, ok := globalTempTables[tblInfo.ID]
+		if !ok {
+			globalTempTable = newTemporaryTable(tblInfo)
+			globalTempTables[tblInfo.ID] = globalTempTable
+		}
+		return globalTempTable
+	}
+	// TODO: check local temporary tables
+	return nil
+}
+
 // SetLocalSystemVar sets values of the local variables which in "server" scope.
 func SetLocalSystemVar(name string, val string) {
 	switch name {
@@ -2052,4 +2073,24 @@ type QueryInfo struct {
 	StartTS     uint64 `json:"start_ts"`
 	ForUpdateTS uint64 `json:"for_update_ts"`
 	ErrMsg      string `json:"error,omitempty"`
+}
+
+// TemporaryTable is used to store transaction-specific or session-specific information for global / local temporary tables.
+// For example, stats and autoID should have their own copies of data, instead of being shared by all sessions.
+type TemporaryTable struct {
+	// Whether it's modified in this transaction.
+	Modified bool
+	// The stats of this table (*statistics.Table). So far it's always pseudo stats.
+	// Define it an interface{} here to avoid cycle imports.
+	Stats interface{}
+	// The autoID allocator of this table.
+	AutoIdAllocator autoid.Allocator
+}
+
+func newTemporaryTable(tblInfo *model.TableInfo) *TemporaryTable {
+	return &TemporaryTable{
+		Modified: false,
+		// Stats: statistics.PseudoTable(tblInfo),
+		AutoIdAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
+	}
 }

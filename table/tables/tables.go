@@ -323,7 +323,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	defer memBuffer.Cleanup(sh)
 
 	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
-		addTemporaryTableID(sctx, meta.ID)
+		addTemporaryTable(sctx, meta)
 	}
 
 	var colIDs, binlogColIDs []int64
@@ -588,12 +588,9 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
-func addTemporaryTableID(sctx sessionctx.Context, id int64) {
-	txnCtx := sctx.GetSessionVars().TxnCtx
-	if txnCtx.GlobalTemporaryTables == nil {
-		txnCtx.GlobalTemporaryTables = make(map[int64]struct{})
-	}
-	txnCtx.GlobalTemporaryTables[id] = struct{}{}
+func addTemporaryTable(sctx sessionctx.Context, tblInfo *model.TableInfo) {
+	tempTable := sctx.GetSessionVars().GetTemporaryTable(tblInfo)
+	tempTable.Modified = true
 }
 
 // AddRecord implements table.Table AddRecord interface.
@@ -609,7 +606,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
-		addTemporaryTableID(sctx, meta.ID)
+		addTemporaryTable(sctx, meta)
 	}
 
 	var ctx context.Context
@@ -1010,7 +1007,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 
 	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
-		addTemporaryTableID(ctx, meta.ID)
+		addTemporaryTable(ctx, meta)
 	}
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
@@ -1369,8 +1366,15 @@ func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uin
 
 // Allocators implements table.Table Allocators interface.
 func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
-	if ctx == nil || ctx.GetSessionVars().IDAllocator == nil {
+	if ctx == nil {
 		return t.allocs
+	} else if ctx.GetSessionVars().IDAllocator == nil {
+		if t.meta.TempTableType == model.TempTableGlobal {
+			alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).AutoIdAllocator
+			return autoid.Allocators{alloc}
+		} else {
+			return t.allocs
+		}
 	}
 
 	// Replace the row id allocator with the one in session variables.
