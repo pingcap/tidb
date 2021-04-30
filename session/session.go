@@ -513,7 +513,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Filter out the temporary table key-values.
 	if tables := s.sessionVars.TxnCtx.GlobalTemporaryTables; tables != nil {
 		memBuffer := s.txn.GetMemBuffer()
-		for tid := range tables {
+		for tid, tempTable := range tables {
+			if !tempTable.Modified {
+				continue
+			}
 			seekKey := tablecodec.EncodeTablePrefix(tid)
 			endKey := tablecodec.EncodeTablePrefix(tid + 1)
 			iter, err := memBuffer.Iter(seekKey, endKey)
