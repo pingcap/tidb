@@ -196,11 +196,10 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 						for i := 0; i < maxUsedPartitions; i++ {
 							used = append(used, i)
 						}
-						break
 					} else {
 						used = []int{FullRange}
-						break
 					}
+					break
 				}
 			} else {
 				used = []int{FullRange}
