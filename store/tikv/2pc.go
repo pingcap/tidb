@@ -852,8 +852,7 @@ func (c *twoPhaseCommitter) checkOnePC() bool {
 		return false
 	}
 
-	enable1PCOption := c.txn.us.GetOption(kv.Enable1PC)
-	return c.sessionID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
+	return c.sessionID > 0 && !c.shouldWriteBinlog() && c.txn.enable1PC
 }
 
 func (c *twoPhaseCommitter) needLinearizability() bool {
