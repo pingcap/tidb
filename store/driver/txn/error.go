@@ -40,6 +40,10 @@ import (
 var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
+	ErrTiKVStaleCommand = dbterror.ClassTiKV.NewStd(errno.ErrTiKVStaleCommand)
+	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
+	ErrTiKVMaxTimestampNotSynced = dbterror.ClassTiKV.NewStd(errno.ErrTiKVMaxTimestampNotSynced)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -186,6 +190,14 @@ func toTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
 		return ErrTiKVServerTimeout
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrTiKVStaleCommand) {
+		return ErrTiKVStaleCommand
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrTiKVMaxTimestampNotSynced) {
+		return ErrTiKVMaxTimestampNotSynced
 	}
 
 	return errors.Trace(err)
