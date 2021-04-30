@@ -23,9 +23,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/util"
 )
 
@@ -65,7 +64,7 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 
 	// We don't need to call "Rollback" after "Commit" fails.
 	err = t1.Rollback()
-	c.Assert(err, Equals, kv.ErrInvalidTxn)
+	c.Assert(err, Equals, tikverr.ErrInvalidTxn)
 
 	// Create a new transaction to check. The previous transaction should actually commit.
 	t2 := s.beginAsyncCommit(c)

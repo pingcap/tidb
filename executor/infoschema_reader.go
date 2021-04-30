@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -132,7 +133,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableSessionVar:
 			err = e.setDataFromSessionVar(sctx)
 		case infoschema.TableTiDBServersInfo:
-			err = e.setDataForServersInfo()
+			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
 			e.dataForTableTiFlashReplica(sctx, dbs)
 		case infoschema.TableTiKVStoreStatus:
@@ -980,6 +981,18 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
 		row[17].SetMysqlTime(lastHeartbeatTs)
 		row[18].SetString(storeStat.Status.Uptime, mysql.DefaultCollationName)
+		if sem.IsEnabled() {
+			// Patch out IP addresses etc if the user does not have the RESTRICTED_TABLES_ADMIN privilege
+			checker := privilege.GetPrivilegeManager(ctx)
+			if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
+				row[1].SetString(strconv.FormatInt(storeStat.Store.ID, 10), mysql.DefaultCollationName)
+				row[1].SetNull()
+				row[6].SetNull()
+				row[7].SetNull()
+				row[16].SetNull()
+				row[18].SetNull()
+			}
+		}
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -1122,6 +1135,15 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			upTimeStr,
 			server.ServerID,
 		)
+		if sem.IsEnabled() {
+			checker := privilege.GetPrivilegeManager(ctx)
+			if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
+				row[1].SetString(strconv.FormatUint(server.ServerID, 10), mysql.DefaultCollationName)
+				row[2].SetNull()
+				row[5].SetNull()
+				row[6].SetNull()
+			}
+		}
 		rows = append(rows, row)
 	}
 	e.rows = rows
@@ -1145,7 +1167,7 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, sc
 
 func (e *memtableRetriever) setDataForClusterProcessList(ctx sessionctx.Context) error {
 	e.setDataForProcessList(ctx)
-	rows, err := infoschema.AppendHostInfoToRows(e.rows)
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
 	if err != nil {
 		return err
 	}
@@ -1731,7 +1753,7 @@ func (e *memtableRetriever) setDataForPseudoProfiling(sctx sessionctx.Context) {
 	}
 }
 
-func (e *memtableRetriever) setDataForServersInfo() error {
+func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error {
 	serversInfo, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
 		return err
@@ -1749,6 +1771,12 @@ func (e *memtableRetriever) setDataForServersInfo() error {
 			info.BinlogStatus,    // BINLOG_STATUS
 			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
+		if sem.IsEnabled() {
+			checker := privilege.GetPrivilegeManager(ctx)
+			if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
+				row[1].SetNull() // clear IP
+			}
+		}
 		rows = append(rows, row)
 	}
 	e.rows = rows
@@ -1846,7 +1874,7 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 	switch tableName {
 	case infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory:
-		rows, err := infoschema.AppendHostInfoToRows(e.rows)
+		rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
 		if err != nil {
 			return err
 		}
