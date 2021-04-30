@@ -391,7 +391,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	txnScope := e.txn.GetUnionStore().GetOption(tikvstore.TxnScope).(string)
+	txnScope := e.txn.GetOption(tikvstore.TxnScope).(string)
 	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
 		return nil
 	}
