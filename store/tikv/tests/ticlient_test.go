@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type testTiclientSuite struct {
@@ -68,7 +69,7 @@ func (s *testTiclientSuite) TestSingleKey(c *C) {
 	txn := s.beginTxn(c)
 	err := txn.Set(encodeKey(s.prefix, "key"), []byte("value"))
 	c.Assert(err, IsNil)
-	err = txn.LockKeys(context.Background(), new(kv.LockCtx), encodeKey(s.prefix, "key"))
+	err = txn.LockKeys(context.Background(), new(tikvstore.LockCtx), encodeKey(s.prefix, "key"))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -121,6 +122,7 @@ func (s *testTiclientSuite) TestNotExist(c *C) {
 func (s *testTiclientSuite) TestLargeRequest(c *C) {
 	largeValue := make([]byte, 9*1024*1024) // 9M value.
 	txn := s.beginTxn(c)
+	txn.GetUnionStore().SetEntrySizeLimit(1024*1024, 100*1024*1024)
 	err := txn.Set([]byte("key"), largeValue)
 	c.Assert(err, NotNil)
 	err = txn.Commit(context.Background())

@@ -135,6 +135,13 @@ func getFullRange() []*point {
 	}
 }
 
+func getNotNullFullRange() []*point {
+	return []*point{
+		{value: types.MinNotNullDatum(), start: true},
+		{value: types.MaxValueDatum()},
+	}
+}
+
 // FullIntRange is used for table range. Since table range cannot accept MaxValueDatum as the max value.
 // So we need to set it to MaxInt64.
 func FullIntRange(isUnsigned bool) []*Range {
@@ -221,31 +228,53 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 		ft    *types.FieldType
 	)
 
-	// refineValue refines the constant datum:
+	// refineValueAndOp refines the constant datum and operator:
 	// 1. for string type since we may eval the constant to another collation instead of its own collation.
 	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
-	refineValue := func(col *expression.Column, value *types.Datum) (err error) {
+	refineValueAndOp := func(col *expression.Column, value *types.Datum, op *string) (err error) {
 		if col.RetType.EvalType() == types.ETString && (value.Kind() == types.KindString || value.Kind() == types.KindBinaryLiteral) {
 			value.SetString(value.GetString(), col.RetType.Collate)
 		}
 		if col.GetType().Tp == mysql.TypeYear {
-			*value, err = types.ConvertDatumToFloatYear(r.sc, *value)
+			// If the original value is adjusted, we need to change the condition.
+			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
+			// col < 2155 is wrong. It should be col <= 2155.
+			preValue, err1 := value.ToInt64(r.sc)
+			if err1 != nil {
+				return err1
+			}
+			*value, err = value.ConvertToMysqlYear(r.sc, col.RetType)
+			if errors.ErrorEqual(err, types.ErrInvalidYear) {
+				// Keep err for EQ and NE.
+				switch *op {
+				case ast.GT:
+					if value.GetInt64() > preValue {
+						*op = ast.GE
+					}
+					err = nil
+				case ast.LT:
+					if value.GetInt64() < preValue {
+						*op = ast.LE
+					}
+					err = nil
+				case ast.GE, ast.LE:
+					err = nil
+				}
+			}
 		}
 		return
 	}
-	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
+	var col *expression.Column
+	var ok bool
+	if col, ok = expr.GetArgs()[0].(*expression.Column); ok {
 		ft = col.RetType
 		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
 		if err != nil {
 			return nil
 		}
-		err = refineValue(col, &value)
-		if err != nil {
-			return nil
-		}
 		op = expr.FuncName.L
 	} else {
-		col, ok := expr.GetArgs()[1].(*expression.Column)
+		col, ok = expr.GetArgs()[1].(*expression.Column)
 		if !ok {
 			return nil
 		}
@@ -254,11 +283,6 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 		if err != nil {
 			return nil
 		}
-		err = refineValue(col, &value)
-		if err != nil {
-			return nil
-		}
-
 		switch expr.FuncName.L {
 		case ast.GE:
 			op = ast.LE
@@ -275,6 +299,15 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 	if op != ast.NullEQ && value.IsNull() {
 		return nil
 	}
+	err = refineValueAndOp(col, &value, &op)
+	if err != nil {
+		if op == ast.NE {
+			// col != an impossible value (not valid year)
+			return getNotNullFullRange()
+		}
+		// col = an impossible value (not valid year)
+		return nil
+	}
 
 	value, op, isValidRange := handleUnsignedCol(ft, value, op)
 	if !isValidRange {
@@ -284,6 +317,10 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 	value, op, isValidRange = handleBoundCol(ft, value, op)
 	if !isValidRange {
 		return nil
+	}
+
+	if ft.Tp == mysql.TypeEnum && ft.EvalType() == types.ETString {
+		return handleEnumFromBinOp(r.sc, ft, value, op)
 	}
 
 	switch op {
@@ -400,6 +437,50 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 	return val, op, true
 }
 
+func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum, op string) []*point {
+	res := make([]*point, 0, len(ft.Elems)*2)
+	appendPointFunc := func(d types.Datum) {
+		res = append(res, &point{value: d, excl: false, start: true})
+		res = append(res, &point{value: d, excl: false, start: false})
+	}
+
+	tmpEnum := types.Enum{}
+	for i := range ft.Elems {
+		tmpEnum.Name = ft.Elems[i]
+		tmpEnum.Value = uint64(i)
+		d := types.NewMysqlEnumDatum(tmpEnum)
+		if v, err := d.CompareDatum(sc, &val); err == nil {
+			switch op {
+			case ast.LT:
+				if v < 0 {
+					appendPointFunc(d)
+				}
+			case ast.LE:
+				if v <= 0 {
+					appendPointFunc(d)
+				}
+			case ast.GT:
+				if v > 0 {
+					appendPointFunc(d)
+				}
+			case ast.GE:
+				if v >= 0 {
+					appendPointFunc(d)
+				}
+			case ast.EQ:
+				if v == 0 {
+					appendPointFunc(d)
+				}
+			case ast.NE:
+				if v != 0 {
+					appendPointFunc(d)
+				}
+			}
+		}
+	}
+	return res
+}
+
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []*point {
 	if isNot == 1 {
 		if keepNull {
@@ -472,10 +553,10 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			dt.SetString(dt.GetString(), colCollate)
 		}
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeYear {
-			dt, err = types.ConvertDatumToFloatYear(r.sc, dt)
+			dt, err = dt.ConvertToMysqlYear(r.sc, expr.GetArgs()[0].GetType())
 			if err != nil {
-				r.err = ErrUnsupportedType.GenWithStack("expr:%v is not converted to year", e)
-				return getFullRange(), hasNull
+				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
+				continue
 			}
 		}
 		var startValue, endValue types.Datum

@@ -1001,11 +1001,17 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, /*ast.Mod,*/
 		ast.If, ast.Ifnull, ast.Case,
-		ast.Substr, ast.Substring,
 		ast.Month,
 		ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
 		ast.JSONLength:
 		return true
+	case ast.Substr, ast.Substring:
+		switch function.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_Substring2ArgsUTF8,
+			tipb.ScalarFuncSig_Substring3ArgsUTF8:
+			return true
+		}
 	case ast.Cast:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastIntAsTime,
@@ -1014,33 +1020,24 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastDecimalAsTime,
 			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime:
 			return true
-		default:
-			return false
 		}
 	case ast.DateAdd:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
 			return true
-		default:
-			return false
 		}
 	case ast.Round:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundDec:
+		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal:
 			return true
-		default:
-			return false
 		}
 	case ast.Extract:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_ExtractDatetime:
 			return true
-		default:
-			return false
 		}
-	default:
-		return false
 	}
+	return false
 }
 
 func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
@@ -1156,11 +1153,20 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
-	if storeType == kv.TiFlash && expr.GetType().Tp == mysql.TypeDuration {
-		if pc.sc.InExplainStmt {
-			pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Duration type"))
+	if storeType == kv.TiFlash {
+		switch expr.GetType().Tp {
+		case mysql.TypeDuration:
+			if pc.sc.InExplainStmt {
+				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Duration type"))
+			}
+			return false
+		case mysql.TypeEnum:
+			if pc.sc.InExplainStmt {
+				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Enum type"))
+			}
+			return false
+		default:
 		}
-		return false
 	}
 	switch x := expr.(type) {
 	case *CorrelatedColumn:

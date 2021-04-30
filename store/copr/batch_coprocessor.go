@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -169,13 +171,14 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 	}
 }
 
-func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.Variables) kv.Response {
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
 	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), tikv.NewKeyRanges(req.KeyRanges), req.StoreType)
+	ranges := toTiKVKeyRanges(req.KeyRanges)
+	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), ranges, req.StoreType)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -207,7 +210,7 @@ type batchCopIterator struct {
 	// Batch results are stored in respChan.
 	respChan chan *batchCopResponse
 
-	vars *kv.Variables
+	vars *tikv.Variables
 
 	memTracker *memory.Tracker
 
@@ -266,7 +269,7 @@ func (b *batchCopIterator) recvFromRespCh(ctx context.Context) (resp *batchCopRe
 			return
 		case <-ticker.C:
 			if atomic.LoadUint32(b.vars.Killed) == 1 {
-				resp = &batchCopResponse{err: tikvstore.ErrQueryInterrupted}
+				resp = &batchCopResponse{err: tikverr.ErrQueryInterrupted}
 				ok = true
 				return
 			}
@@ -310,9 +313,9 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *tikv.Backoffer, t
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
-	var ranges []kv.KeyRange
+	var ranges []tikvstore.KeyRange
 	for _, taskCtx := range batchTask.copTasks {
-		taskCtx.task.ranges.Do(func(ran *kv.KeyRange) {
+		taskCtx.task.ranges.Do(func(ran *tikvstore.KeyRange) {
 			ranges = append(ranges, *ran)
 		})
 	}
@@ -321,7 +324,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backo
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
 	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
-	var regionInfos []*coprocessor.RegionInfo
+	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.copTasks))
 	for _, task := range task.copTasks {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
 			RegionId: task.task.region.GetID(),
@@ -342,8 +345,8 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffe
 	}
 
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
-		IsolationLevel: tikv.IsolationLevelToPB(b.req.IsolationLevel),
-		Priority:       tikv.PriorityToPB(b.req.Priority),
+		IsolationLevel: isolationLevelToPB(b.req.IsolationLevel),
+		Priority:       priorityToPB(b.req.Priority),
 		NotFillCache:   b.req.NotFillCache,
 		RecordTimeStat: true,
 		RecordScanStat: true,
@@ -392,7 +395,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return tikvstore.ErrTiFlashServerTimeout
+			return tikverr.ErrTiFlashServerTimeout
 		}
 	}
 }
@@ -435,4 +438,9 @@ func (b *batchCopIterator) sendToRespCh(resp *batchCopResponse) (exit bool) {
 		exit = true
 	}
 	return
+}
+
+func toTiKVKeyRanges(ranges []kv.KeyRange) *tikv.KeyRanges {
+	res := *(*[]tikvstore.KeyRange)(unsafe.Pointer(&ranges))
+	return tikv.NewKeyRanges(res)
 }

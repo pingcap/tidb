@@ -15,20 +15,26 @@ package txn
 
 import (
 	"context"
+	"unsafe"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type tikvSnapshot struct {
 	*tikv.KVSnapshot
 }
 
+// NewSnapshot creates a kv.Snapshot with tikv.KVSnapshot.
+func NewSnapshot(snapshot *tikv.KVSnapshot) kv.Snapshot {
+	return &tikvSnapshot{snapshot}
+}
+
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	data, err := s.KVSnapshot.BatchGet(ctx, keys)
+	data, err := s.KVSnapshot.BatchGet(ctx, toTiKVKeys(keys))
 	return data, extractKeyErr(err)
 }
 
@@ -42,7 +48,7 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	scanner, err := s.KVSnapshot.Iter(k, upperBound)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, toTiDBErr(err)
 	}
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
 }
@@ -51,7 +57,50 @@ func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	scanner, err := s.KVSnapshot.IterReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, toTiDBErr(err)
 	}
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
+}
+
+func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
+	switch opt {
+	case tikvstore.IsolationLevel:
+		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
+		s.KVSnapshot.SetIsolationLevel(level)
+	case tikvstore.Priority:
+		s.KVSnapshot.SetPriority(getTiKVPriority(val.(int)))
+	case tikvstore.NotFillCache:
+		s.KVSnapshot.SetNotFillCache(val.(bool))
+	case tikvstore.SnapshotTS:
+		s.KVSnapshot.SetSnapshotTS(val.(uint64))
+	default:
+		s.KVSnapshot.SetOption(opt, val)
+	}
+}
+
+func toTiKVKeys(keys []kv.Key) [][]byte {
+	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
+	return bytesKeys
+}
+
+func getTiKVIsolationLevel(level kv.IsoLevel) tikv.IsoLevel {
+	switch level {
+	case kv.SI:
+		return tikv.SI
+	case kv.RC:
+		return tikv.RC
+	default:
+		return tikv.SI
+	}
+}
+
+func getTiKVPriority(pri int) tikv.Priority {
+	switch pri {
+	case kv.PriorityHigh:
+		return tikv.PriorityHigh
+	case kv.PriorityLow:
+		return tikv.PriorityLow
+	default:
+		return tikv.PriorityNormal
+	}
 }

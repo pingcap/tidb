@@ -14,9 +14,7 @@
 package unionstore
 
 import (
-	"context"
 	"encoding/binary"
-	"math"
 	"math/rand"
 	"testing"
 )
@@ -26,19 +24,12 @@ const (
 	valueSize = 128
 )
 
-func newMemDBForBench() *MemDB {
-	db := newMemDB()
-	db.bufferSizeLimit = math.MaxUint64
-	db.entrySizeLimit = math.MaxUint64
-	return db
-}
-
 func BenchmarkLargeIndex(b *testing.B) {
 	buf := make([][valueSize]byte, 10000000)
 	for i := range buf {
 		binary.LittleEndian.PutUint32(buf[i][:], uint32(i))
 	}
-	db := newMemDBForBench()
+	db := newMemDB()
 	b.ResetTimer()
 
 	for i := range buf {
@@ -52,7 +43,7 @@ func BenchmarkPut(b *testing.B) {
 		binary.BigEndian.PutUint32(buf[i][:], uint32(i))
 	}
 
-	p := newMemDBForBench()
+	p := newMemDB()
 	b.ResetTimer()
 
 	for i := range buf {
@@ -66,7 +57,7 @@ func BenchmarkPutRandom(b *testing.B) {
 		binary.LittleEndian.PutUint32(buf[i][:], uint32(rand.Int()))
 	}
 
-	p := newMemDBForBench()
+	p := newMemDB()
 	b.ResetTimer()
 
 	for i := range buf {
@@ -80,14 +71,14 @@ func BenchmarkGet(b *testing.B) {
 		binary.BigEndian.PutUint32(buf[i][:], uint32(i))
 	}
 
-	p := newMemDBForBench()
+	p := newMemDB()
 	for i := range buf {
 		p.Set(buf[i][:keySize], buf[i][:])
 	}
 
 	b.ResetTimer()
 	for i := range buf {
-		p.Get(context.TODO(), buf[i][:keySize])
+		p.Get(buf[i][:keySize])
 	}
 }
 
@@ -97,14 +88,14 @@ func BenchmarkGetRandom(b *testing.B) {
 		binary.LittleEndian.PutUint32(buf[i][:], uint32(rand.Int()))
 	}
 
-	p := newMemDBForBench()
+	p := newMemDB()
 	for i := range buf {
 		p.Set(buf[i][:keySize], buf[i][:])
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		p.Get(context.TODO(), buf[i][:keySize])
+		p.Get(buf[i][:keySize])
 	}
 }
 
@@ -159,7 +150,7 @@ func benchmarkSetGet(b *testing.B, buffer *MemDB, data [][]byte) {
 			buffer.Set(k, k)
 		}
 		for _, k := range data {
-			buffer.Get(context.TODO(), k)
+			buffer.Get(k)
 		}
 	}
 }

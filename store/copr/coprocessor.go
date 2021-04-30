@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -63,14 +63,19 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
+	vars, ok := variables.(*tikv.Variables)
+	if !ok {
+		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
+	}
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars)
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
 	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), tikv.NewKeyRanges(req.KeyRanges), req)
+	ranges := toTiKVKeyRanges(req.KeyRanges)
+	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -240,7 +245,7 @@ type copIterator struct {
 	// Otherwise, results are stored in respChan.
 	respChan chan *copResponse
 
-	vars *kv.Variables
+	vars *tikv.Variables
 
 	memTracker *memory.Tracker
 
@@ -267,7 +272,7 @@ type copIteratorWorker struct {
 	req      *kv.Request
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
-	vars     *kv.Variables
+	vars     *tikv.Variables
 	*tikv.ClientHelper
 
 	memTracker *memory.Tracker
@@ -471,7 +476,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 			return
 		case <-ticker.C:
 			if atomic.LoadUint32(it.vars.Killed) == 1 {
-				resp = &copResponse{err: tikvstore.ErrQueryInterrupted}
+				resp = &copResponse{err: tikverr.ErrQueryInterrupted}
 				ok = true
 				return
 			}
@@ -692,8 +697,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *tikv.Backoffer, task *copTas
 	}
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead, &worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel: tikv.IsolationLevelToPB(worker.req.IsolationLevel),
-		Priority:       tikv.PriorityToPB(worker.req.Priority),
+		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
+		Priority:       priorityToPB(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
 		RecordTimeStat: true,
 		RecordScanStat: true,
@@ -891,7 +896,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *tikv.Backoffer, rpcCtx *t
 	if resp.pbResp.Range != nil {
 		resp.startKey = resp.pbResp.Range.Start
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
-		resp.startKey = task.ranges.At(0).StartKey
+		resp.startKey = kv.Key(task.ranges.At(0).StartKey)
 	}
 	if resp.detail == nil {
 		resp.detail = new(CopRuntimeStats)
@@ -911,8 +916,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *tikv.Backoffer, rpcCtx *t
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	resp.respTime = costTime
-	sd := &execdetails.ScanDetail{}
-	td := execdetails.TimeDetail{}
+	sd := &util.ScanDetail{}
+	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
@@ -975,11 +980,11 @@ type CopRuntimeStats struct {
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
 	errCode := errno.ErrUnknown
 	errMsg := err.Error()
-	if terror.ErrorEqual(err, tikvstore.ErrTiKVServerTimeout) {
+	if terror.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
 		errCode = errno.ErrTiKVServerTimeout
 		errMsg = "TiDB server timeout, address is " + task.storeAddr
 	}
-	if terror.ErrorEqual(err, tikvstore.ErrTiFlashServerTimeout) {
+	if terror.ErrorEqual(err, tikverr.ErrTiFlashServerTimeout) {
 		errCode = errno.ErrTiFlashServerTimeout
 		errMsg = "TiDB server timeout, address is " + task.storeAddr
 	}
@@ -1185,4 +1190,27 @@ func (e *rateLimitAction) setEnabled(enabled bool) {
 
 func (e *rateLimitAction) isEnabled() bool {
 	return atomic.LoadUint32(&e.enabled) > 0
+}
+
+// priorityToPB converts priority type to wire type.
+func priorityToPB(pri int) kvrpcpb.CommandPri {
+	switch pri {
+	case kv.PriorityLow:
+		return kvrpcpb.CommandPri_Low
+	case kv.PriorityHigh:
+		return kvrpcpb.CommandPri_High
+	default:
+		return kvrpcpb.CommandPri_Normal
+	}
+}
+
+func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
+	switch level {
+	case kv.RC:
+		return kvrpcpb.IsolationLevel_RC
+	case kv.SI:
+		return kvrpcpb.IsolationLevel_SI
+	default:
+		return kvrpcpb.IsolationLevel_SI
+	}
 }

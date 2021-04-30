@@ -53,7 +53,7 @@ partition p2 values less than (10))`)
 
 	// Index Merge
 	tk.MustExec("set @@tidb_enable_index_merge = 1")
-	tk.MustQuery("select /*+ use_index(i_c, i_id) */ * from pt where id = 4 or c < 7").Check(testkit.Rows("0 0", "2 2", "4 4", "6 6"))
+	tk.MustQuery("select /*+ use_index(i_c, i_id) */ * from pt where id = 4 or c < 7").Sort().Check(testkit.Rows("0 0", "2 2", "4 4", "6 6"))
 }
 
 func (s *partitionTableSuite) TestPartitionIndexJoin(c *C) {
@@ -250,31 +250,4 @@ func (s *globalIndexSuite) TestIssue21731(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists p, t")
 	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
-}
-
-func (s *globalIndexSuite) TestBatchPointGetTablePartition(c *C) {
-	testKit := testkit.NewTestKitWithInit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
-	testKit.MustExec("insert into t values(1,1),(1,2),(2,1),(2,2)")
-
-	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
-	testKit.MustQuery("select * from t where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
-		"1 1",
-		"2 1",
-	))
-	testKit.MustQuery("select * from t where a = 1  and b in (1,2)").Sort().Check(testkit.Rows(
-		"1 1",
-		"1 2",
-	))
-	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	testKit.MustQuery("select * from t where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
-		"1 1",
-		"2 1",
-	))
-	testKit.MustQuery("select * from t where a = 1  and b in (1,2)").Sort().Check(testkit.Rows(
-		"1 1",
-		"1 2",
-	))
 }

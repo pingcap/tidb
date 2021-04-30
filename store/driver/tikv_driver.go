@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -131,7 +131,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		),
 		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
 		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
-	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
+	pdCli = util.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -315,6 +315,10 @@ func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction
 		txn, err = s.BeginWithStartTS(txnScope, *option.StartTS)
 	} else if option.PrevSec != nil {
 		txn, err = s.BeginWithExactStaleness(txnScope, *option.PrevSec)
+	} else if option.MaxPrevSec != nil {
+		txn, err = s.BeginWithMaxPrevSec(txnScope, *option.MaxPrevSec)
+	} else if option.MinStartTS != nil {
+		txn, err = s.BeginWithMinStartTS(txnScope, *option.MinStartTS)
 	} else {
 		txn, err = s.BeginWithTxnScope(txnScope)
 	}
@@ -328,11 +332,16 @@ func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 // if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
-	return s.KVStore.GetSnapshot(ver.Ver)
+	return txn_driver.NewSnapshot(s.KVStore.GetSnapshot(ver.Ver))
 }
 
 // CurrentVersion returns current max committed version with the given txnScope (local or global).
 func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
 	return kv.NewVersion(ver), err
+}
+
+// ShowStatus returns the specified status of the storage
+func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, kv.ErrNotImplemented
 }

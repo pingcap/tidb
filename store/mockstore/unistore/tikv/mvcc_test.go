@@ -390,12 +390,6 @@ func MustPrewritePessimisticPutErr(pk []byte, key []byte, value []byte, startTs 
 	store.c.Assert(err, NotNil)
 }
 
-func MustPrewritePessimisticErr(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
-	isPessimisticLock []bool, forUpdateTs uint64, store *TestStore) {
-	err := PrewritePessimistic(pk, key, value, startTs, lockTTL, isPessimisticLock, forUpdateTs, store)
-	store.c.Assert(err, NotNil)
-}
-
 func MustCommitKeyPut(key, val []byte, startTs, commitTs uint64, store *TestStore) {
 	err := store.MvccStore.Commit(store.newReqCtx(), [][]byte{key}, startTs, commitTs)
 	store.c.Assert(err, IsNil)
@@ -1501,8 +1495,8 @@ func (s *testMvccSuite) TestResolveCommit(c *C) {
 }
 
 func MustLoad(startTS, commitTS uint64, store *TestStore, pairs ...string) {
-	var keys [][]byte
-	var vals [][]byte
+	var keys = make([][]byte, 0, len(pairs))
+	var vals = make([][]byte, 0, len(pairs))
 	for _, pair := range pairs {
 		strs := strings.Split(pair, ":")
 		keys = append(keys, []byte(strs[0]))

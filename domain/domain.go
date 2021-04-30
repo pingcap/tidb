@@ -648,34 +648,6 @@ func (do *Domain) Close() {
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
-type ddlCallback struct {
-	ddl.BaseCallback
-	do *Domain
-}
-
-// OnChanged overrides ddl Callback interface.
-func (c *ddlCallback) OnChanged(err error) error {
-	if err != nil {
-		return err
-	}
-	logutil.BgLogger().Info("performing DDL change, must reload")
-
-	err = c.do.Reload()
-	if err != nil {
-		logutil.BgLogger().Error("performing DDL change failed", zap.Error(err))
-	}
-
-	return nil
-}
-
-// OnSchemaStateChange overrides the ddl Callback interface.
-func (c *ddlCallback) OnSchemaStateChanged() {
-	err := c.do.Reload()
-	if err != nil {
-		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
-	}
-}
-
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
@@ -746,7 +718,12 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
-	callback := &ddlCallback{do: do}
+	var callback ddl.Callback
+	newCallbackFunc, err := ddl.GetCustomizedHook("default_hook")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	callback = newCallbackFunc(do)
 	d := do.ddl
 	do.ddl = ddl.NewDDL(
 		ctx,
@@ -756,7 +733,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
 	)
-	err := do.ddl.Start(sysCtxPool)
+	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
 		return err
 	}
@@ -1030,6 +1007,11 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 // in BootstrapSession.
 func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 	ctx.GetSessionVars().InRestrictedSQL = true
+	err := telemetry.InitialRun(ctx, do.GetEtcdClient())
+	if err != nil {
+		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
+	}
+
 	do.wg.Add(1)
 	go func() {
 		defer func() {

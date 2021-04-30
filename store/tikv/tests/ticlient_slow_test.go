@@ -19,7 +19,6 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
@@ -65,10 +64,10 @@ func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 		checkKeyRegion(bo, startKey, endKey, Equals)
 		txn := s.beginTxn(c)
 		if m == "pessimistic" {
-			txn.SetOption(kv.Pessimistic, true)
-			lockCtx := &tidbkv.LockCtx{}
+			txn.SetPessimistic(true)
+			lockCtx := &kv.LockCtx{}
 			lockCtx.ForUpdateTS = txn.StartTS()
-			keys := make([]tidbkv.Key, 0, preSplitThresholdInTest)
+			keys := make([][]byte, 0, preSplitThresholdInTest)
 			for i := 0; i < preSplitThresholdInTest; i++ {
 				keys = append(keys, encodeKey(s.prefix, s08d("pkey", i)))
 			}

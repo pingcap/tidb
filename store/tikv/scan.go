@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -32,11 +32,11 @@ type Scanner struct {
 	batchSize    int
 	cache        []*pb.KvPair
 	idx          int
-	nextStartKey tidbkv.Key
-	endKey       tidbkv.Key
+	nextStartKey []byte
+	endKey       []byte
 
 	// Use for reverse scan.
-	nextEndKey tidbkv.Key
+	nextEndKey []byte
 	reverse    bool
 
 	valid bool
@@ -58,7 +58,7 @@ func newScanner(snapshot *KVSnapshot, startKey []byte, endKey []byte, batchSize 
 		nextEndKey:   endKey,
 	}
 	err := scanner.Next()
-	if tidbkv.IsErrNotFound(err) {
+	if tikverr.IsErrNotFound(err) {
 		return scanner, nil
 	}
 	return scanner, errors.Trace(err)
@@ -70,7 +70,7 @@ func (s *Scanner) Valid() bool {
 }
 
 // Key return key.
-func (s *Scanner) Key() tidbkv.Key {
+func (s *Scanner) Key() []byte {
 	if s.valid {
 		return s.cache[s.idx].Key
 	}
@@ -110,8 +110,8 @@ func (s *Scanner) Next() error {
 		}
 
 		current := s.cache[s.idx]
-		if (!s.reverse && (len(s.endKey) > 0 && tidbkv.Key(current.Key).Cmp(s.endKey) >= 0)) ||
-			(s.reverse && len(s.nextStartKey) > 0 && tidbkv.Key(current.Key).Cmp(s.nextStartKey) < 0) {
+		if (!s.reverse && (len(s.endKey) > 0 && kv.CmpKey(current.Key, s.endKey) >= 0)) ||
+			(s.reverse && len(s.nextStartKey) > 0 && kv.CmpKey(current.Key, s.nextStartKey) < 0) {
 			s.eof = true
 			s.Close()
 			return nil
@@ -157,8 +157,8 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 
 func (s *Scanner) getData(bo *Backoffer) error {
 	logutil.BgLogger().Debug("txn getData",
-		zap.Stringer("nextStartKey", s.nextStartKey),
-		zap.Stringer("nextEndKey", s.nextEndKey),
+		zap.String("nextStartKey", kv.StrKey(s.nextStartKey)),
+		zap.String("nextEndKey", kv.StrKey(s.nextEndKey)),
 		zap.Bool("reverse", s.reverse),
 		zap.Uint64("txnStartTS", s.startTS()))
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
@@ -189,9 +189,9 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 		sreq := &pb.ScanRequest{
 			Context: &pb.Context{
-				Priority:       s.snapshot.priority,
+				Priority:       s.snapshot.priority.ToPB(),
 				NotFillCache:   s.snapshot.notFillCache,
-				IsolationLevel: IsolationLevelToPB(s.snapshot.isolationLevel),
+				IsolationLevel: s.snapshot.isolationLevel.ToPB(),
 			},
 			StartKey:   s.nextStartKey,
 			EndKey:     reqEndKey,
@@ -207,7 +207,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 		s.snapshot.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.mu.replicaRead, &s.snapshot.replicaReadSeed, pb.Context{
-			Priority:     s.snapshot.priority,
+			Priority:     s.snapshot.priority.ToPB(),
 			NotFillCache: s.snapshot.notFillCache,
 			TaskId:       s.snapshot.mu.taskID,
 		})
@@ -230,7 +230,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			continue
 		}
 		if resp.Resp == nil {
-			return errors.Trace(kv.ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdScanResp := resp.Resp.(*pb.ScanResponse)
 
@@ -280,8 +280,8 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			} else {
 				s.nextEndKey = reqStartKey
 			}
-			if (!s.reverse && (len(loc.EndKey) == 0 || (len(s.endKey) > 0 && s.nextStartKey.Cmp(s.endKey) >= 0))) ||
-				(s.reverse && (len(loc.StartKey) == 0 || (len(s.nextStartKey) > 0 && s.nextStartKey.Cmp(s.nextEndKey) >= 0))) {
+			if (!s.reverse && (len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.CmpKey(s.nextStartKey, s.endKey) >= 0))) ||
+				(s.reverse && (len(loc.StartKey) == 0 || (len(s.nextStartKey) > 0 && kv.CmpKey(s.nextStartKey, s.nextEndKey) >= 0))) {
 				// Current Region is the last one.
 				s.eof = true
 			}
@@ -293,7 +293,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// more data.
 		lastKey := kvPairs[len(kvPairs)-1].GetKey()
 		if !s.reverse {
-			s.nextStartKey = tidbkv.Key(lastKey).Next()
+			s.nextStartKey = kv.NextKey(lastKey)
 		} else {
 			s.nextEndKey = lastKey
 		}

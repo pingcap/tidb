@@ -15,12 +15,19 @@ package copr
 
 import (
 	"context"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
 
 type testCoprocessorSuite struct {
 }
@@ -230,10 +237,10 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	s.taskEqual(c, tasks[0], regionIDs[2], "q", "z")
 }
 
-func buildKeyRanges(keys ...string) []kv.KeyRange {
-	var ranges []kv.KeyRange
+func buildKeyRanges(keys ...string) []tikvstore.KeyRange {
+	var ranges []tikvstore.KeyRange
 	for i := 0; i < len(keys); i += 2 {
-		ranges = append(ranges, kv.KeyRange{
+		ranges = append(ranges, tikvstore.KeyRange{
 			StartKey: []byte(keys[i]),
 			EndKey:   []byte(keys[i+1]),
 		})
@@ -254,7 +261,7 @@ func (s *testCoprocessorSuite) taskEqual(c *C, task *copTask, regionID uint64, k
 	}
 }
 
-func (s *testCoprocessorSuite) rangeEqual(c *C, ranges []kv.KeyRange, keys ...string) {
+func (s *testCoprocessorSuite) rangeEqual(c *C, ranges []tikvstore.KeyRange, keys ...string) {
 	for i := 0; i < len(ranges); i++ {
 		r := ranges[i]
 		c.Assert(string(r.StartKey), Equals, keys[2*i])
