@@ -277,13 +277,8 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
 
-	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, "-1")
-	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
-
-	max := int64(maxDDLReorgWorkerCount) + 1
-	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, strconv.FormatInt(max, 10))
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
+	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, "4") // wrong scope global only
+	c.Assert(terror.ErrorEqual(err, errGlobalVariable), IsTrue)
 
 	err = SetSessionSystemVar(v, TiDBRetryLimit, "3")
 	c.Assert(err, IsNil)
@@ -564,9 +559,6 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBEnableTablePartition, "OFF", false},
 		{TiDBEnableTablePartition, "AUTO", false},
 		{TiDBEnableTablePartition, "UN", true},
-		{TiDBEnableListTablePartition, "ON", false},
-		{TiDBEnableListTablePartition, "OFF", false},
-		{TiDBEnableListTablePartition, "list", true},
 		{TiDBOptCorrelationExpFactor, "a", true},
 		{TiDBOptCorrelationExpFactor, "-10", true},
 		{TiDBOptCorrelationThreshold, "a", true},
@@ -602,10 +594,6 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBTxnMode, "pessimistic", false},
 		{TiDBTxnMode, "optimistic", false},
 		{TiDBTxnMode, "", false},
-		{TiDBIsolationReadEngines, "", true},
-		{TiDBIsolationReadEngines, "tikv", false},
-		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
-		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
 		{TiDBShardAllocateStep, "ad", true},
 		{TiDBShardAllocateStep, "-123", false},
 		{TiDBShardAllocateStep, "128", false},
@@ -622,6 +610,30 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 
 	for _, t := range tests {
 		_, err := GetSysVar(t.key).Validate(v, t.value, ScopeGlobal)
+		if t.error {
+			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
+		} else {
+			c.Assert(err, IsNil, Commentf("%v got err=%v", t, err))
+		}
+	}
+
+	// Test session scoped vars.
+	tests = []struct {
+		key   string
+		value string
+		error bool
+	}{
+		{TiDBEnableListTablePartition, "ON", false},
+		{TiDBEnableListTablePartition, "OFF", false},
+		{TiDBEnableListTablePartition, "list", true},
+		{TiDBIsolationReadEngines, "", true},
+		{TiDBIsolationReadEngines, "tikv", false},
+		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
+		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+	}
+
+	for _, t := range tests {
+		_, err := GetSysVar(t.key).Validate(v, t.value, ScopeSession)
 		if t.error {
 			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
 		} else {

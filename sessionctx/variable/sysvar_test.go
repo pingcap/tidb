@@ -213,3 +213,17 @@ func (*testSysVarSuite) TestDeprecation(c *C) {
 	warn := vars.StmtCtx.GetWarnings()[0].Err
 	c.Assert(warn.Error(), Equals, "[variable:1287]'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead")
 }
+
+func (*testSysVarSuite) TestScope(c *C) {
+	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsTrue)
+	c.Assert(sv.HasGlobalScope(), IsTrue)
+
+	sv = SysVar{Scope: ScopeGlobal, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsFalse)
+	c.Assert(sv.HasGlobalScope(), IsTrue)
+
+	sv = SysVar{Scope: ScopeNone, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsFalse)
+	c.Assert(sv.HasGlobalScope(), IsFalse)
+}

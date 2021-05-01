@@ -108,7 +108,8 @@ type SysVar struct {
 	AllowAutoValue bool
 	// Validation is a callback after the type validation has been performed, but before the Set function
 	Validation func(*SessionVars, string, string, ScopeFlag) (string, error)
-	// SetSession is called after validation but before updating systems[]
+	// SetSession is called after validation but before updating systems[]. It also doubles as an Init function
+	// and will be called on all variables in builtinGlobalVariable, regardless of their scope.
 	SetSession func(*SessionVars, string) error
 	// SetGlobal is called after validation
 	SetGlobal func(*SessionVars, string) error
@@ -170,6 +171,16 @@ func (sv *SysVar) SetGlobalFromHook(s *SessionVars, val string, skipAliases bool
 	return nil
 }
 
+// HasSessionScope returns true if the scope for the sysVar includes session.
+func (sv *SysVar) HasSessionScope() bool {
+	return sv.Scope&ScopeSession != 0
+}
+
+// HasGlobalScope returns true if the scope for the sysVar includes global.
+func (sv *SysVar) HasGlobalScope() bool {
+	return sv.Scope&ScopeGlobal != 0
+}
+
 // Validate checks if system variable satisfies specific restriction.
 func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// Normalize the value and apply validation based on type.
@@ -187,10 +198,17 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 
 // validateFromType provides automatic validation based on the SysVar's type
 func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
-	// Some sysvars are read-only. Attempting to set should always fail.
+	// Check that the scope is correct and return the appropriate error message.
 	if sv.ReadOnly || sv.Scope == ScopeNone {
-		return value, ErrIncorrectScope.GenWithStackByArgs(sv.Name, "read only")
+		return value, ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
 	}
+	if scope == ScopeGlobal && !sv.HasGlobalScope() {
+		return value, errLocalVariable.FastGenByArgs(sv.Name)
+	}
+	if scope == ScopeSession && !sv.HasSessionScope() {
+		return value, errGlobalVariable.FastGenByArgs(sv.Name)
+	}
+
 	// The string "DEFAULT" is a special keyword in MySQL, which restores
 	// the compiled sysvar value. In which case we can skip further validation.
 	if strings.EqualFold(value, "DEFAULT") {

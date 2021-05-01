@@ -107,16 +107,9 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	if sysVar == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	if sysVar.Scope == variable.ScopeNone {
-		return errors.Errorf("Variable '%s' is a read only variable", name)
-	}
 	var valStr string
 	var err error
 	if v.IsGlobal {
-		// Set global scope system variable.
-		if sysVar.Scope&variable.ScopeGlobal == 0 {
-			return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
-		}
 		valStr, err = e.getVarValue(v, sysVar)
 		if err != nil {
 			return err
@@ -137,10 +130,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	} else {
-		// Set session scope system variable.
-		if sysVar.Scope&variable.ScopeSession == 0 {
-			return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
-		}
 		valStr, err = e.getVarValue(v, nil)
 		if err != nil {
 			return err
