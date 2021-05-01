@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
@@ -227,8 +228,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion startKey", curRegion.StartKey),
-				zap.Stringer("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion", curRegion),
 				zap.Reflect("kvResp", kvResp),
 				zap.Error(err))
 			return nil, errors.Trace(err)
@@ -239,8 +239,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion startKey", curRegion.StartKey),
-				zap.Stringer("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion", curRegion),
 				zap.Reflect("kvResp", kvResp),
 				zap.Stringer("error", err))
 			continue
@@ -251,8 +250,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion startKey", curRegion.StartKey),
-				zap.Stringer("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion", curRegion),
 				zap.Reflect("kvResp", kvResp),
 				zap.String("error", data.GetError()))
 			return nil, errors.New(data.GetError())
@@ -270,7 +268,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 		if len(curRegion.EndKey) == 0 {
 			return nil, nil
 		}
-		startKey = curRegion.EndKey
+		startKey = kv.Key(curRegion.EndKey)
 	}
 }
 
@@ -448,6 +446,12 @@ type allServerInfoHandler struct {
 
 type profileHandler struct {
 	*tikvHandlerTool
+}
+
+// ddlHookHandler is the handler for use pre-defined ddl callback.
+// It's convenient to provide some APIs for integration tests.
+type ddlHookHandler struct {
+	store kv.Storage
 }
 
 // valueHandler is the handler for get value.
@@ -732,9 +736,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			switch asyncCommit {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOff)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.BoolOn)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -755,9 +759,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			switch onePC {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOff)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.BoolOn)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -1968,4 +1972,31 @@ func (h *testHandler) handleGCResolveLocks(w http.ResponseWriter, req *http.Requ
 			"physicalUsed": physicalUsed,
 		})
 	}
+}
+
+// ServeHTTP handles request of resigning ddl owner.
+func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method."))
+		return
+	}
+
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		log.Error(err)
+		writeError(w, err)
+	}
+
+	newCallbackFunc, err := ddl.GetCustomizedHook(req.FormValue("ddl_hook"))
+	if err != nil {
+		log.Error(err)
+		writeError(w, err)
+	}
+	callback := newCallbackFunc(dom)
+
+	dom.DDL().SetHook(callback)
+	writeData(w, "success!")
+
+	ctx := req.Context()
+	logutil.Logger(ctx).Info("change ddl hook success", zap.String("to_ddl_hook", req.FormValue("ddl_hook")))
 }

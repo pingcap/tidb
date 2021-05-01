@@ -563,7 +563,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		d.mu.hook.OnJobUpdated(job)
 		d.mu.RUnlock()
 
-		if job.IsSynced() || job.IsCancelled() {
+		if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
@@ -621,12 +621,59 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 	return t
 }
 
+// countForPanic records the error count for DDL job.
+func (w *worker) countForPanic(job *model.Job) {
+	// If run DDL job panic, just cancel the DDL jobs.
+	if job.State == model.JobStateRollingback {
+		job.State = model.JobStateCancelled
+	} else {
+		job.State = model.JobStateCancelling
+	}
+	job.ErrorCount++
+
+	// Load global DDL variables.
+	if err1 := loadDDLVars(w); err1 != nil {
+		logutil.Logger(w.logCtx).Error("[ddl] load DDL global variable failed", zap.Error(err1))
+	}
+	errorCount := variable.GetDDLErrorCountLimit()
+
+	if job.ErrorCount > errorCount {
+		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
+		logutil.Logger(w.logCtx).Warn(msg)
+		job.Error = toTError(errors.New(msg))
+		job.State = model.JobStateCancelled
+	}
+}
+
+// countForError records the error count for DDL job.
+func (w *worker) countForError(err error, job *model.Job) error {
+	job.Error = toTError(err)
+	job.ErrorCount++
+
+	// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
+	if job.State == model.JobStateCancelled {
+		logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
+		return nil
+	}
+	logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
+
+	// Load global DDL variables.
+	if err1 := loadDDLVars(w); err1 != nil {
+		logutil.Logger(w.logCtx).Error("[ddl] load DDL global variable failed", zap.Error(err1))
+	}
+	// Check error limit to avoid falling into an infinite loop.
+	if job.ErrorCount > variable.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && admin.IsJobRollbackable(job) {
+		logutil.Logger(w.logCtx).Warn("[ddl] DDL job error count exceed the limit, cancelling it now", zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
+		job.State = model.JobStateCancelling
+	}
+	return err
+}
+
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runDDLJob", w),
 		func() {
-			// If run DDL job panic, just cancel the DDL jobs.
-			job.State = model.JobStateCancelling
+			w.countForPanic(job)
 		}, false)
 
 	// Mock for run ddl job panic.
@@ -743,27 +790,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		err = errInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
 
-	// Save errors in job, so that others can know errors happened.
+	// Save errors in job if any, so that others can know errors happened.
 	if err != nil {
-		job.Error = toTError(err)
-		job.ErrorCount++
-
-		// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
-		if job.State == model.JobStateCancelled {
-			logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
-			return ver, nil
-		}
-		logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
-
-		// Load global ddl variables.
-		if err1 := loadDDLVars(w); err1 != nil {
-			logutil.Logger(w.logCtx).Error("[ddl] load DDL global variable failed", zap.Error(err1))
-		}
-		// Check error limit to avoid falling into an infinite loop.
-		if job.ErrorCount > variable.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && admin.IsJobRollbackable(job) {
-			logutil.Logger(w.logCtx).Warn("[ddl] DDL job error count exceed the limit, cancelling it now", zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
-			job.State = model.JobStateCancelling
-		}
+		err = w.countForError(err, job)
 	}
 	return
 }

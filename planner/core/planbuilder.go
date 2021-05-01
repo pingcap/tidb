@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 
 	"github.com/cznic/mathutil"
@@ -59,12 +60,14 @@ import (
 )
 
 type visitInfo struct {
-	privilege     mysql.PrivilegeType
-	db            string
-	table         string
-	column        string
-	err           error
-	alterWritable bool
+	privilege        mysql.PrivilegeType
+	db               string
+	table            string
+	column           string
+	err              error
+	alterWritable    bool
+	dynamicPriv      string
+	dynamicWithGrant bool
 }
 
 type indexNestedLoopJoinTables struct {
@@ -467,9 +470,6 @@ type PlanBuilder struct {
 	// correlatedAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
 	correlatedAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 
-	// cache ResultSetNodes and HandleHelperMap to avoid rebuilding.
-	cachedResultSetNodes  map[*ast.Join]LogicalPlan
-	cachedHandleHelperMap map[*ast.Join]map[int64][]HandleCols
 	// isForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
@@ -479,11 +479,6 @@ type PlanBuilder struct {
 type handleColHelper struct {
 	id2HandleMapStack []map[int64][]HandleCols
 	stackTail         int
-}
-
-func (hch *handleColHelper) appendColToLastMap(tblID int64, handleCols HandleCols) {
-	tailMap := hch.id2HandleMapStack[hch.stackTail-1]
-	tailMap[tblID] = append(tailMap[tblID], handleCols)
 }
 
 func (hch *handleColHelper) popMap() map[int64][]HandleCols {
@@ -522,6 +517,11 @@ func (hch *handleColHelper) tailMap() map[int64][]HandleCols {
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
 func (b *PlanBuilder) GetVisitInfo() []visitInfo {
 	return b.visitInfo
+}
+
+// GetIsForUpdateRead gets if the PlanBuilder use forUpdateRead
+func (b *PlanBuilder) GetIsForUpdateRead() bool {
+	return b.isForUpdateRead
 }
 
 // GetDBTableInfo gets the accessed dbs and tables info.
@@ -579,15 +579,13 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
-		ctx:                   sctx,
-		is:                    is,
-		colMapper:             make(map[*ast.ColumnNameExpr]int),
-		handleHelper:          &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
-		hintProcessor:         processor,
-		correlatedAggMapper:   make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
-		cachedResultSetNodes:  make(map[*ast.Join]LogicalPlan),
-		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]HandleCols),
-		isForUpdateRead:       sctx.GetSessionVars().IsPessimisticReadConsistency(),
+		ctx:                 sctx,
+		is:                  is,
+		colMapper:           make(map[*ast.ColumnNameExpr]int),
+		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		hintProcessor:       processor,
+		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		isForUpdateRead:     sctx.GetSessionVars().IsPessimisticReadConsistency(),
 	}, savedBlockNames
 }
 
@@ -719,8 +717,8 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 	p := &Set{}
 	for _, vars := range v.Variables {
 		if vars.IsGlobal {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or SYSTEM_VARIABLES_ADMIN")
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "SYSTEM_VARIABLES_ADMIN", false, err)
 		}
 		assign := &expression.VarAssignment{
 			Name:     vars.Name,
@@ -2138,8 +2136,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 	case ast.ShowBackups, ast.ShowRestores:
-		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
 	case ast.ShowTableNextRowId:
 		p := &ShowNextRowID{TableName: show.Table}
 		p.setSchemaAndNames(buildShowNextRowID())
@@ -2213,7 +2211,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("RELOAD")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReloadPriv, "", "", "", err)
 	case *ast.AlterInstanceStmt:
-		err := ErrSpecificAccessDenied.GenWithStack("ALTER INSTANCE")
+		err := ErrSpecificAccessDenied.GenWithStack("SUPER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
@@ -2227,11 +2225,11 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.BRIEStmt:
 		p.setSchemaAndNames(buildBRIESchema())
-		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
 	case *ast.GrantRoleStmt, *ast.RevokeRoleStmt:
-		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)
 	case *ast.RevokeStmt:
 		b.visitInfo = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
 	case *ast.KillStmt:
@@ -2242,7 +2240,8 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 			if pi, ok := sm.GetProcessInfo(raw.ConnectionID); ok {
 				loginUser := b.ctx.GetSessionVars().User
 				if pi.User != loginUser.Username {
-					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+					err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
+					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
 				}
 			}
 		}
@@ -2261,13 +2260,19 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
-	if dbName == "" {
+	// This supports a local revoke SELECT on tablename, but does
+	// not add dbName to the visitInfo of a *.* grant.
+	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
-	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
-
+	var nonDynamicPrivilege bool
 	var allPrivs []mysql.PrivilegeType
 	for _, item := range stmt.Privs {
+		if item.Priv == mysql.ExtendedPriv {
+			vi = appendDynamicVisitInfo(vi, strings.ToUpper(item.Name), true, nil) // verified in MySQL: requires the dynamic grant option to revoke.
+			continue
+		}
+		nonDynamicPrivilege = true
 		if item.Priv == mysql.AllPriv {
 			switch stmt.Level.Level {
 			case ast.GrantLevelGlobal:
@@ -2285,7 +2290,11 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 	for _, priv := range allPrivs {
 		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
 	}
-
+	if nonDynamicPrivilege {
+		// Dynamic privileges use their own GRANT OPTION. If there were any non-dynamic privilege requests,
+		// we need to attach the "GLOBAL" version of the GRANT OPTION.
+		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
+	}
 	return vi
 }
 
@@ -2294,13 +2303,31 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
-	if dbName == "" {
+	// This supports a local revoke SELECT on tablename, but does
+	// not add dbName to the visitInfo of a *.* grant.
+	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
-	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
-
+	var nonDynamicPrivilege bool
 	var allPrivs []mysql.PrivilegeType
 	for _, item := range stmt.Privs {
+		if item.Priv == mysql.ExtendedPriv {
+			// The observed MySQL behavior is that the error is:
+			// ERROR 1227 (42000): Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation
+			// This is ambiguous, because it doesn't say the GRANT OPTION for which dynamic privilege.
+
+			// In privilege/privileges/cache.go:RequestDynamicVerification SUPER+Grant_Priv will also be accepted here by TiDB, but it is *not* by MySQL.
+			// This extension is currently required because:
+			// - The visitInfo system does not accept OR conditions. There are many scenarios where SUPER or a DYNAMIC privilege are supported,
+			//   this is the one case where SUPER is not intended to be an alternative.
+			// - The "ALL" privilege for TiDB does not include all dynamic privileges. This could be fixed by a bootstrap task to assign all SUPER users
+			//   with dynamic privileges.
+
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("GRANT OPTION")
+			vi = appendDynamicVisitInfo(vi, item.Name, true, err)
+			continue
+		}
+		nonDynamicPrivilege = true
 		if item.Priv == mysql.AllPriv {
 			switch stmt.Level.Level {
 			case ast.GrantLevelGlobal:
@@ -2318,7 +2345,11 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	for _, priv := range allPrivs {
 		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
 	}
-
+	if nonDynamicPrivilege {
+		// Dynamic privileges use their own GRANT OPTION. If there were any non-dynamic privilege requests,
+		// we need to attach the "GLOBAL" version of the GRANT OPTION.
+		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
+	}
 	return vi
 }
 
@@ -2442,14 +2473,30 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
+	user := b.ctx.GetSessionVars().User
 	var authErr error
-	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
-			b.ctx.GetSessionVars().User.AuthHostname, tableInfo.Name.L)
+	if user != nil {
+		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
 	}
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tn.DBInfo.Name.L,
 		tableInfo.Name.L, "", authErr)
+
+	// `REPLACE INTO` requires both INSERT + DELETE privilege
+	// `ON DUPLICATE KEY UPDATE` requires both INSERT + UPDATE privilege
+	var extraPriv mysql.PrivilegeType
+	if insert.IsReplace {
+		extraPriv = mysql.DeletePriv
+	} else if insert.OnDuplicate != nil {
+		extraPriv = mysql.UpdatePriv
+	}
+	if extraPriv != 0 {
+		if user != nil {
+			cmd := strings.ToUpper(mysql.Priv2Str[extraPriv])
+			authErr = ErrTableaccessDenied.GenWithStackByArgs(cmd, user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, extraPriv, tn.DBInfo.Name.L, tableInfo.Name.L, "", authErr)
+	}
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
@@ -3491,6 +3538,9 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (Plan, error) {
+	if sem.IsEnabled() {
+		return nil, ErrNotSupportedWithSem.GenWithStackByArgs("SELECT INTO")
+	}
 	selectIntoInfo := sel.SelectIntoOpt
 	sel.SelectIntoOpt = nil
 	targetPlan, _, err := OptimizeAstNode(ctx, b.ctx, sel, b.is)
@@ -3646,11 +3696,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowIndex:
 		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
 			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
-			"Null", "Index_type", "Comment", "Index_comment", "Visible", "Expression"}
+			"Null", "Index_type", "Comment", "Index_comment", "Visible", "Expression", "Clustered"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPlugins:
 		names = []string{"Name", "Status", "Type", "Library", "License", "Version"}
 		ftypes = []byte{
@@ -3697,8 +3747,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation", "Source"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowAnalyzeStatus:
-		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "State"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeVarchar}
+		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "End_time", "State"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar}
 	case ast.ShowBuiltins:
 		names = []string{"Supported_builtin_functions"}
 		ftypes = []byte{mysql.TypeVarchar}

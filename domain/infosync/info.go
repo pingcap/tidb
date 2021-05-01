@@ -40,7 +40,9 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
@@ -251,7 +253,9 @@ func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress flo
 		return nil
 	}
 	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
-	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, strconv.FormatFloat(progress, 'f', 2, 64))
+	// truncate progress with 2 decimal digits so that it will not be rounded to 1 when the progress is 0.995
+	progressString := types.TruncateFloatToString(progress, 2)
+	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, progressString)
 }
 
 // DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
@@ -556,7 +560,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	now := time.Unix(0, oracle.ExtractPhysical(currentVer.Ver)*1e6)
-	startTSLowerLimit := oracle.GoTimeToTS(now.Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond))
+	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
 
 	minStartTS := oracle.GoTimeToTS(now)
 	for _, info := range pl {

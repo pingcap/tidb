@@ -155,8 +155,49 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 			}
 			used = append(used, int(idx))
 		} else {
-			used = []int{FullRange}
-			break
+			// processing hash partition pruning. eg:
+			// create table t2 (a int, b bigint, index (a), index (b)) partition by hash(a) partitions 10;
+			// desc select * from t2 where t2.a between 10 and 15;
+			// determine whether the partition key is int
+			if col, ok := pe.(*expression.Column); ok && col.RetType.EvalType() == types.ETInt {
+				numPartitions := len(pi.Definitions)
+
+				posHigh, highIsNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+				if err != nil {
+					return nil, nil, err
+				}
+
+				posLow, lowIsNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
+				if err != nil {
+					return nil, nil, err
+				}
+
+				// consider whether the range is closed or open
+				if r.LowExclude {
+					posLow++
+				}
+				if r.HighExclude {
+					posHigh--
+				}
+				rangeScalar := posHigh - posLow
+
+				// if range is less than the number of partitions, there will be unused partitions we can prune out.
+				if rangeScalar < int64(numPartitions) && !highIsNull && !lowIsNull {
+					for i := posLow; i <= posHigh; i++ {
+						idx := math.Abs(i % int64(pi.Num))
+						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+							continue
+						}
+						used = append(used, int(idx))
+					}
+				} else {
+					used = []int{FullRange}
+					break
+				}
+			} else {
+				used = []int{FullRange}
+				break
+			}
 		}
 	}
 	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
@@ -392,14 +433,23 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 	sc := l.ctx.GetSessionVars().StmtCtx
 	helper := tables.NewListPartitionLocationHelper()
 	for _, r := range ranges {
+		if len(r.LowVal) != 1 || len(r.HighVal) != 1 {
+			return nil, true, nil
+		}
+		var locations []tables.ListPartitionLocation
 		if r.IsPointNullable(sc) {
-			if len(r.HighVal) != 1 {
-				return nil, true, nil
-			}
 			location, err := colPrune.LocatePartition(sc, r.HighVal[0])
 			if err != nil {
 				return nil, false, err
 			}
+			locations = []tables.ListPartitionLocation{location}
+		} else {
+			locations, err = colPrune.LocateRanges(sc, r)
+			if err != nil {
+				return nil, false, nil
+			}
+		}
+		for _, location := range locations {
 			if len(l.partitionNames) > 0 {
 				for _, pg := range location {
 					if l.findByName(l.partitionNames, l.pi.Definitions[pg.PartIdx].Name.L) {
@@ -409,8 +459,6 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			} else {
 				helper.Union(location)
 			}
-		} else {
-			return nil, true, nil
 		}
 	}
 	return helper.GetLocation(), false, nil
@@ -534,6 +582,12 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if pi == nil {
 		return ds, nil
 	}
+	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.allConds, the condition
+	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
+	// TODO: there may be a better way to push down Not once for all.
+	for i, cond := range ds.allConds {
+		ds.allConds[i] = expression.PushDownNot(ds.ctx, cond)
+	}
 	// Try to locate partition directly for hash partition.
 	switch pi.Type {
 	case model.PartitionTypeRange:
@@ -646,6 +700,10 @@ func (or partitionRangeOR) union(x partitionRangeOR) partitionRangeOR {
 }
 
 func (or partitionRangeOR) simplify() partitionRangeOR {
+	// if the length of the `or` is zero. We should return early.
+	if len(or) == 0 {
+		return or
+	}
 	// Make the ranges order by start.
 	sort.Sort(or)
 	sorted := or
