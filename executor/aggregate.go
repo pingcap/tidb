@@ -189,7 +189,10 @@ type HashAggExec struct {
 	prepared         bool
 	executed         bool
 
+	// isAllFirstRow indicates whether all the aggregation functions return the result of function
+	// firstrow which is used to handle distinct immediately.
 	isAllFirstRow     bool
+	// firstRowProcessed indicates how many rows the firstrow function has been processed in a chunk.
 	firstRowProcessed int
 
 	memTracker *memory.Tracker // track memory usage.
@@ -960,6 +963,8 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 
 func (e *HashAggExec) executeAllFirstRow(ctx context.Context, chk *chunk.Chunk) (err error) {
 	for {
+		// If firstRowProcessed rows have been processed, a new chunk will be fetched.
+		// And the firstRowProcessed should be reset to 0.
 		if e.firstRowProcessed == e.childResult.NumRows() {
 			mSize := e.childResult.MemoryUsage()
 			e.firstRowProcessed = 0
@@ -985,7 +990,7 @@ func (e *HashAggExec) executeAllFirstRow(ctx context.Context, chk *chunk.Chunk) 
 		})
 
 		for e.firstRowProcessed < e.childResult.NumRows() {
-			groupKey := string(e.groupKeyBuffer[e.firstRowProcessed]) // do memory copy here, because e.groupKeyBuffer may be reused.
+			groupKey := string(hack.String(e.groupKeyBuffer[e.firstRowProcessed])) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
 				e.groupSet.Insert(groupKey)
 				for _, af := range e.PartialAggFuncs {
