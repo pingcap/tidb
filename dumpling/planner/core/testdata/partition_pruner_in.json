@@ -501,5 +501,17 @@
         "Pruner": "t1: p0,p1; t2: p0"
       }
     ]
+  },
+  {
+    "name": "TestRangePartitionPredicatePruner",
+    "cases": [
+      "explain format = 'brief' select * from t where a = 1",
+      "explain format = 'brief' select * from t where a = 2",
+      "explain format = 'brief' select * from t where a = 10",
+      "explain format = 'brief' select * from t where a = -1",
+      "explain format = 'brief' select * from t where a is NULL",
+      "explain format = 'brief' select * from t where a = 1.5",
+      "explain format = 'brief' select * from t where a in (2)"
+    ]
   }
 ]
