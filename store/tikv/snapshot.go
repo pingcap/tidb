@@ -607,7 +607,7 @@ func (s *KVSnapshot) SetKeyOnly(b bool) {
 	s.keyOnly = b
 }
 
-// SetReplicaRead sets up the replca read type.
+// SetReplicaRead sets up the replica read type.
 func (s *KVSnapshot) SetReplicaRead(readType kv.ReplicaReadType) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
