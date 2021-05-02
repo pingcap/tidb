@@ -326,3 +326,37 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 		"TableReader 6.00 root partition:all data:TableFullScan",
 		"└─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
 }
+
+func (s *testIntegrationSuite) TestNULLOnFullSampling(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_analyze_version = 3;")
+	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("insert into t values(1), (1), (1), (2), (2), (3), (4), (null), (null), (null)")
+	var (
+		input  []string
+		output [][]string
+	)
+	tk.MustExec("analyze table t with 2 topn")
+	is := s.do.InfoSchema()
+	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	h := s.do.StatsHandle()
+	c.Assert(h.Update(is), IsNil)
+	statsTblT := h.GetTableStats(tblT.Meta())
+	// Check the null count is 3.
+	for _, col := range statsTblT.Columns {
+		c.Assert(col.NullCount, Equals, int64(3))
+	}
+
+	s.testData.GetTestCases(c, &input, &output)
+	// Check the topn and buckets contains no null values.
+	for i := 0; i < len(input); i++ {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+}

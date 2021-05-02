@@ -176,7 +176,7 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
 		}
 		// The nil case has been considered in (*TopN).Equal() so we don't need to consider it here.
-		c.Assert(a.Columns[i].TopN.Equal(b.Columns[i].TopN), IsTrue)
+		c.Assert(a.Columns[i].TopN.Equal(b.Columns[i].TopN), IsTrue, Commentf("%v, %v", a.Columns[i].TopN, b.Columns[i].TopN))
 	}
 	c.Assert(len(a.Indices), Equals, len(b.Indices))
 	for i := range a.Indices {
