@@ -967,7 +967,7 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5000)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5500)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
