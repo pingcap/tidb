@@ -64,9 +64,6 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	if tblInfo.TempTableType == model.TempTableGlobal {
-		return nil, nil, nil, ErrPartitionNoTemporary
-	}
 	partInfo := &model.PartitionInfo{}
 	err = job.DecodeArgs(&partInfo)
 	if err != nil {

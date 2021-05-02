@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -3377,4 +3378,11 @@ func (s *testIntegrationSuite7) TestPartitionListWithNewCollation(c *C) {
 	tk.MustQuery(`select * from t11 partition (p1);`).Check(testkit.Rows("c", "C", "d"))
 	str := tk.MustQuery(`desc select * from t11 where a = 'b';`).Rows()[0][3].(string)
 	c.Assert(strings.Contains(str, "partition:p0"), IsTrue)
+}
+
+func (s *testSerialSuite) TestAddTableWithPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop table if exists partition_table;")
+	tk.MustGetErrCode("create global temporary table partition_table (a int, b int) partition by hash(a) partitions 3 ON COMMIT DELETE ROWS;", errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists partition_table;")
 }
