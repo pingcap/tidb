@@ -344,7 +344,7 @@ func (s *testSuite5) TestPartitionTableIndexJoinAndIndexReader(c *C) {
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec(`create table t (a int, b int, key(a)) partition by hash(a) partitions 4`)
 	tk.MustExec("create table tnormal (a int, b int, key(a), key(b))")
-	nRows := 64
+	nRows := 512
 	values := make([]string, 0, nRows)
 	for i := 0; i < nRows; i++ {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
