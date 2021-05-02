@@ -15,9 +15,13 @@ package statistics
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"reflect"
 	"sort"
+	"strings"
+
+	"github.com/pingcap/tidb/sessionctx"
 
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
@@ -426,19 +430,27 @@ func EncodeCMSketchWithoutTopN(c *CMSketch) ([]byte, error) {
 
 // DecodeCMSketchAndTopN decode a CMSketch from the given byte slice.
 func DecodeCMSketchAndTopN(data []byte, topNRows []chunk.Row) (*CMSketch, *TopN, error) {
-	if data == nil {
+	if data == nil && len(topNRows) == 0 {
 		return nil, nil, nil
+	}
+	pbTopN := make([]*tipb.CMSketchTopN, 0, len(topNRows))
+	for _, row := range topNRows {
+		data := make([]byte, len(row.GetBytes(0)))
+		copy(data, row.GetBytes(0))
+		pbTopN = append(pbTopN, &tipb.CMSketchTopN{
+			Data:  data,
+			Count: row.GetUint64(1),
+		})
+	}
+	if len(data) == 0 {
+		return nil, TopNFromProto(pbTopN), nil
 	}
 	p := &tipb.CMSketch{}
 	err := p.Unmarshal(data)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	for _, row := range topNRows {
-		data := make([]byte, len(row.GetBytes(0)))
-		copy(data, row.GetBytes(0))
-		p.TopN = append(p.TopN, &tipb.CMSketchTopN{Data: data, Count: row.GetUint64(1)})
-	}
+	p.TopN = pbTopN
 	cm, topN := CMSketchAndTopNFromProto(p)
 	return cm, topN, nil
 }
@@ -485,6 +497,46 @@ func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN []TopNMeta
+}
+
+func (c *TopN) String() string {
+	if c == nil {
+		return "EmptyTopN"
+	}
+	builder := &strings.Builder{}
+	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
+	fmt.Fprint(builder, "[")
+	for i := 0; i < len(c.TopN); i++ {
+		fmt.Fprintf(builder, "(%v, %v)", c.TopN[i].Encoded, c.TopN[i].Count)
+		if i+1 != len(c.TopN) {
+			fmt.Fprint(builder, ", ")
+		}
+	}
+	fmt.Fprint(builder, "]")
+	fmt.Fprint(builder, "}")
+	return builder.String()
+}
+
+// DecodedString returns the value with decoded result.
+func (c *TopN) DecodedString(ctx sessionctx.Context, colTypes []byte) (string, error) {
+	builder := &strings.Builder{}
+	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
+	fmt.Fprint(builder, "[")
+	var tmpDatum types.Datum
+	for i := 0; i < len(c.TopN); i++ {
+		tmpDatum.SetBytes(c.TopN[i].Encoded)
+		valStr, err := ValueToString(ctx.GetSessionVars(), &tmpDatum, len(colTypes), colTypes)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(builder, "(%v, %v)", valStr, c.TopN[i].Count)
+		if i+1 != len(c.TopN) {
+			fmt.Fprint(builder, ", ")
+		}
+	}
+	fmt.Fprint(builder, "]")
+	fmt.Fprint(builder, "}")
+	return builder.String(), nil
 }
 
 // Copy makes a copy for current TopN.
@@ -593,9 +645,9 @@ func (c *TopN) TotalCount() uint64 {
 
 // Equal checks whether the two TopN are equal.
 func (c *TopN) Equal(cc *TopN) bool {
-	if c == nil && cc == nil {
+	if c.TotalCount() == 0 && cc.TotalCount() == 0 {
 		return true
-	} else if c == nil || cc == nil {
+	} else if c.TotalCount() != cc.TotalCount() {
 		return false
 	}
 	if len(c.TopN) != len(cc.TopN) {

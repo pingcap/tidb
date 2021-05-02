@@ -505,8 +505,8 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	err = SetSessionSystemVar(v, "UnknownVariable", "on")
 	c.Assert(err, ErrorMatches, ".*]Unknown system variable 'UnknownVariable'")
 
-	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, "3")
-	c.Assert(err, ErrorMatches, ".*Variable 'tidb_analyze_version' can't be set to the value of '3'")
+	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, "4")
+	c.Assert(err, ErrorMatches, ".*Variable 'tidb_analyze_version' can't be set to the value of '4'")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
