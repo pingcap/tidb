@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
@@ -66,7 +65,7 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 		return nil, nil, nil, errors.Trace(err)
 	}
 	if tblInfo.TempTableType == model.TempTableGlobal {
-		return nil, nil, nil, errors.Trace(executor.ErrPartitionNoTemporary)
+		return nil, nil, nil, ErrPartitionNoTemporary
 	}
 	partInfo := &model.PartitionInfo{}
 	err = job.DecodeArgs(&partInfo)
