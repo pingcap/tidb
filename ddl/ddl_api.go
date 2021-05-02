@@ -5479,7 +5479,7 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 			}
 		case mysql.TypeString, mysql.TypeVarString:
 			switch vkind {
-			case types.KindString, types.KindBytes, types.KindNull:
+			case types.KindString, types.KindBytes, types.KindNull, types.KindBinaryLiteral:
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
