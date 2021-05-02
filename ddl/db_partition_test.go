@@ -3380,9 +3380,13 @@ func (s *testIntegrationSuite7) TestPartitionListWithNewCollation(c *C) {
 	c.Assert(strings.Contains(str, "partition:p0"), IsTrue)
 }
 
-func (s *testSerialSuite) TestAddTableWithPartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop table if exists partition_table;")
-	tk.MustGetErrCode("create global temporary table partition_table (a int, b int) partition by hash(a) partitions 3 ON COMMIT DELETE ROWS;", errno.ErrPartitionNoTemporary)
+func (s *testIntegrationSuite7) TestAddTableWithPartition(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists global_partition_table;")
+	tk.MustGetErrCode("create global temporary table global_partition_table (a int, b int) partition by hash(a) partitions 3 ON COMMIT DELETE ROWS;", errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists global_partition_table;")
+	_, err := tk.Exec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
+	c.Assert(err, IsNil)
 	tk.MustExec("drop table if exists partition_table;")
 }
