@@ -24,7 +24,6 @@ import (
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-
 	"github.com/pingcap/tidb/store/tikv/config"
 )
 
