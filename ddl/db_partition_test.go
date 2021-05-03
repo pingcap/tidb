@@ -584,6 +584,12 @@ create table log_message_1 (
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t(a int) partition by range (a) (partition p0 values less than (18446744073709551615));`)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a binary) partition by range columns (a) (partition p0 values less than (X'0C'));`)
+	tk.MustExec(`alter table t add partition (partition p1 values less than (X'0D'), partition p2 values less than (X'0E'));`)
+	tk.MustExec(`insert into t values (X'0B'), (X'0C'), (X'0D')`)
+	tk.MustQuery(`select * from t where a < X'0D'`).Check(testkit.Rows("\x0B", "\x0C"))
 }
 
 func (s *testIntegrationSuite1) TestDisableTablePartition(c *C) {
@@ -744,6 +750,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		"create table t (a bigint) partition by list (a) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a datetime) partition by list (to_seconds(a)) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a int, b int generated always as (a+1) virtual) partition by list (b + 1) (partition p0 values in (1));",
+		"create table t(a binary) partition by list columns (a) (partition p0 values in (X'0C'));",
 		s.generatePartitionTableByNum(ddl.PartitionCountLimit),
 	}
 
@@ -3335,7 +3342,7 @@ func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
 
 	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (0x20))")
 	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	c.Assert(ddl.ErrRangeNotIncreasing.Equal(err), IsTrue)
 
 	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (10))")
 	c.Assert(err, NotNil)
