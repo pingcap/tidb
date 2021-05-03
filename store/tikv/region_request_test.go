@@ -25,6 +25,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/coprocessor_v2"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -495,6 +496,18 @@ func (s *mockTikvGrpcServer) VerDeleteRange(context.Context, *kvrpcpb.VerDeleteR
 }
 
 func (s *mockTikvGrpcServer) CheckLeader(context.Context, *kvrpcpb.CheckLeaderRequest) (*kvrpcpb.CheckLeaderResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) GetStoreSafeTS(context.Context, *kvrpcpb.StoreSafeTSRequest) (*kvrpcpb.StoreSafeTSResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) RawCompareAndSwap(context.Context, *kvrpcpb.RawCASRequest) (*kvrpcpb.RawCASResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) CoprocessorV2(context.Context, *coprocessor_v2.RawCoprocessorRequest) (*coprocessor_v2.RawCoprocessorResponse, error) {
 	return nil, errors.New("unreachable")
 }
 

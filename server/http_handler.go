@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
@@ -445,6 +446,12 @@ type allServerInfoHandler struct {
 
 type profileHandler struct {
 	*tikvHandlerTool
+}
+
+// ddlHookHandler is the handler for use pre-defined ddl callback.
+// It's convenient to provide some APIs for integration tests.
+type ddlHookHandler struct {
+	store kv.Storage
 }
 
 // valueHandler is the handler for get value.
@@ -1965,4 +1972,31 @@ func (h *testHandler) handleGCResolveLocks(w http.ResponseWriter, req *http.Requ
 			"physicalUsed": physicalUsed,
 		})
 	}
+}
+
+// ServeHTTP handles request of resigning ddl owner.
+func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method."))
+		return
+	}
+
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		log.Error(err)
+		writeError(w, err)
+	}
+
+	newCallbackFunc, err := ddl.GetCustomizedHook(req.FormValue("ddl_hook"))
+	if err != nil {
+		log.Error(err)
+		writeError(w, err)
+	}
+	callback := newCallbackFunc(dom)
+
+	dom.DDL().SetHook(callback)
+	writeData(w, "success!")
+
+	ctx := req.Context()
+	logutil.Logger(ctx).Info("change ddl hook success", zap.String("to_ddl_hook", req.FormValue("ddl_hook")))
 }
