@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -1231,10 +1230,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		return
 	}
 	if sem.IsEnabled() && sem.IsInvisibleSysVar(sysVar.Name) {
-		checker := privilege.GetPrivilegeManager(er.b.ctx)
-		if checker == nil || !checker.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
-			er.err = ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
-		}
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
+		er.b.visitInfo = appendDynamicVisitInfo(er.b.visitInfo, "RESTRICTED_VARIABLES_ADMIN", false, err)
 	}
 	// Variable is @@gobal.variable_name or variable is only global scope variable.
 	if v.IsGlobal || sysVar.Scope == variable.ScopeGlobal {
