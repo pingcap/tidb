@@ -73,6 +73,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetNotFillCache(val.(bool))
 	case tikvstore.SnapshotTS:
 		s.KVSnapshot.SetSnapshotTS(val.(uint64))
+	case tikvstore.SampleStep:
+		s.KVSnapshot.SetSampleStep(val.(uint32))
 	default:
 		s.KVSnapshot.SetOption(opt, val)
 	}

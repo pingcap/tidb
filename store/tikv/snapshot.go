@@ -577,8 +577,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
 		s.mu.Unlock()
-	case kv.SampleStep:
-		s.sampleStep = val.(uint32)
 	case kv.IsStalenessReadOnly:
 		s.mu.Lock()
 		s.mu.isStaleness = val.(bool)
@@ -618,6 +616,11 @@ func (s *KVSnapshot) SetKeyOnly(b bool) {
 // SetIsolationLevel sets the isolation level used to scan data from tikv.
 func (s *KVSnapshot) SetIsolationLevel(level IsoLevel) {
 	s.isolationLevel = level
+}
+
+// SetSampleStep skips 'step - 1' number of keys after each returned key.
+func (s *KVSnapshot) SetSampleStep(step uint32) {
+	s.sampleStep = step
 }
 
 // SetPriority sets the priority for tikv to execute commands.
