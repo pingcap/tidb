@@ -152,6 +152,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetEnable1PC(val.(bool))
 	case tikvstore.TxnScope:
 		txn.SetScope(val.(string))
+	case tikvstore.IsStalenessReadOnly:
+		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}

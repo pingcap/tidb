@@ -579,10 +579,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 		s.mu.Unlock()
 	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
-	case kv.IsStalenessReadOnly:
-		s.mu.Lock()
-		s.mu.isStaleness = val.(bool)
-		s.mu.Unlock()
 	case kv.MatchStoreLabels:
 		s.mu.Lock()
 		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
@@ -623,6 +619,13 @@ func (s *KVSnapshot) SetIsolationLevel(level IsoLevel) {
 // SetPriority sets the priority for tikv to execute commands.
 func (s *KVSnapshot) SetPriority(pri Priority) {
 	s.priority = pri
+}
+
+// SetIsStatenessReadOnly indicates whether the transaction is staleness read only transaction
+func (s *KVSnapshot) SetIsStatenessReadOnly(b bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.isStaleness = b
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.
