@@ -684,8 +684,7 @@ func (s *testChecksumSuite) TestChecksumWriter(c *check.C) {
 	}
 
 	// write 1000 bytes and flush
-	cache := make([]byte, GetChecksumBlockSize())
-	w := NewWriterWithCache(f, cache)
+	w := NewWriter(f)
 	n, err := w.Write(buf.Bytes())
 	c.Assert(err, check.IsNil)
 	c.Assert(n, check.Equals, 1000)
@@ -710,8 +709,7 @@ func (s *testChecksumSuite) TestChecksumWriterAutoFlush(c *check.C) {
 		c.Assert(err, check.IsNil)
 	}()
 
-	cache := make([]byte, GetChecksumBlockSize())
-	w := NewWriterWithCache(f, cache)
+	w := NewWriter(f)
 
 	buf := bytes.NewBuffer(nil)
 	testData := "0123456789"
