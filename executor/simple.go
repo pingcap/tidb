@@ -1097,10 +1097,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		// rename privileges from mysql.global_priv
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.GlobalPrivTable, "User", "Host", userToUser); err != nil {
 			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.GlobalPrivTable+" error")
-			if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "rollback"); err != nil {
-				return err
-			}
-			continue
+			break
 		}
 
 		// rename privileges from mysql.db
