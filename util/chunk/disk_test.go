@@ -261,7 +261,7 @@ func testReaderWithCache(c *check.C) {
 
 	field := []*types.FieldType{types.NewFieldType(mysql.TypeString)}
 	chk := NewChunkWithCapacity(field, 1)
-	chk.AppendString(0, string(buf.Bytes()))
+	chk.AppendString(0, buf.String())
 	l := NewListInDisk(field)
 	err := l.Add(chk)
 	c.Assert(err, check.IsNil)
