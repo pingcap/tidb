@@ -77,6 +77,10 @@ type Manager interface {
 
 	// IsDynamicPrivilege returns if a privilege is in the list of privileges.
 	IsDynamicPrivilege(privNameInUpper string) bool
+
+	// IsRestrictedUser returns if a specific user has the property that they are restricted
+	// i.e. connections can't be KILLED be any regular users even if SUPER
+	IsRestrictedUser(user, host string) bool
 }
 
 const key keyType = 0

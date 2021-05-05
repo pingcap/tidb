@@ -1393,3 +1393,50 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
 		AuthHostname: "%",
 	}, nil, nil)
 }
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedUsers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3")
+	tk.MustExec("CREATE ROLE notimportant")
+	tk.MustExec("GRANT SUPER, CREATE USER ON *.* to ruroot1 WITH GRANT OPTION")
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+	tk.MustExec("GRANT SUPER, RESTRICTED_USER_ADMIN,  CREATE USER  ON *.* to ruroot2 WITH GRANT OPTION")
+	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to ruroot3")
+	tk.MustExec("GRANT notimportant TO ruroot2, ruroot3")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	stmts := []string{
+		"SET PASSWORD for ruroot3 = 'newpassword'",
+		"REVOKE notimportant FROM ruroot3",
+		"REVOKE SUPER ON *.* FROM ruroot3",
+		"DROP USER ruroot3",
+	}
+
+	// ruroot1 has SUPER but in SEM will be restricted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "ruroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	for _, stmt := range stmts {
+		err := tk.ExecToErr(stmt)
+		c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	}
+
+	// Switch to ruroot2, it should be permitted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "ruroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	for _, stmt := range stmts {
+		err := tk.ExecToErr(stmt)
+		c.Assert(err, IsNil)
+	}
+}
