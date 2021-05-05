@@ -660,11 +660,6 @@ var checkFlushedData = func(c *check.C, f io.ReaderAt, off int64, readBufLen int
 	c.Assert(n, check.Equals, assertN)
 	c.Assert(bytes.Compare(readBuf, assertRes), check.Equals, 0)
 }
-var checkCachedData = func(c *check.C, b1 []byte, b2 []byte, checkLen int) {
-	b3 := b1[:checkLen]
-	b4 := b2[:checkLen]
-	c.Assert(bytes.Compare(b3, b4), check.Equals, 0)
-}
 
 func (s *testChecksumSuite) TestChecksumWriter(c *check.C) {
 	path := "checksum"
