@@ -104,7 +104,7 @@ func (s *testCommitterSuite) begin(c *C) tikv.TxnProbe {
 func (s *testCommitterSuite) beginAsyncCommit(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetEnableAsyncCommit(true)
 	return txn
 }
 
