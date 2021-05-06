@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -536,15 +536,15 @@ func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {
 		c.Assert(expectErr.Equal(err), IsTrue)
 	}
 	// Test point get.
-	checkSelectResultError("select * from t where a='1'", tikvstore.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a='1'", tikverr.ErrGCTooEarly)
 	// Test batch point get.
-	checkSelectResultError("select * from t where a in ('1','2')", tikvstore.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a in ('1','2')", tikverr.ErrGCTooEarly)
 	// Test Index look up read.
-	checkSelectResultError("select * from t where b > 0 ", tikvstore.ErrGCTooEarly)
+	checkSelectResultError("select * from t where b > 0 ", tikverr.ErrGCTooEarly)
 	// Test Index read.
-	checkSelectResultError("select b from t where b > 0 ", tikvstore.ErrGCTooEarly)
+	checkSelectResultError("select b from t where b > 0 ", tikverr.ErrGCTooEarly)
 	// Test table read.
-	checkSelectResultError("select * from t", tikvstore.ErrGCTooEarly)
+	checkSelectResultError("select * from t", tikverr.ErrGCTooEarly)
 }
 
 func (s *testPointGetSuite) TestReturnValues(c *C) {

@@ -481,11 +481,6 @@ type handleColHelper struct {
 	stackTail         int
 }
 
-func (hch *handleColHelper) appendColToLastMap(tblID int64, handleCols HandleCols) {
-	tailMap := hch.id2HandleMapStack[hch.stackTail-1]
-	tailMap[tblID] = append(tailMap[tblID], handleCols)
-}
-
 func (hch *handleColHelper) popMap() map[int64][]HandleCols {
 	ret := hch.id2HandleMapStack[hch.stackTail-1]
 	hch.stackTail--
@@ -1638,6 +1633,43 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 	return ids, names, nil
 }
 
+func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
+	as *ast.AnalyzeTableStmt,
+	taskSlice []AnalyzeColumnsTask,
+	physicalIDs []int64,
+	names []string,
+	tbl *ast.TableName,
+	version int,
+) []AnalyzeColumnsTask {
+	idxInfos := make([]*model.IndexInfo, 0, len(tbl.TableInfo.Indices))
+	for _, idx := range tbl.TableInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		idxInfos = append(idxInfos, idx)
+	}
+	for i, id := range physicalIDs {
+		if id == tbl.TableInfo.ID {
+			id = -1
+		}
+		info := analyzeInfo{
+			DBName:        tbl.Schema.O,
+			TableName:     tbl.Name.O,
+			PartitionName: names[i],
+			TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+			Incremental:   as.Incremental,
+			StatsVersion:  version,
+		}
+		taskSlice = append(taskSlice, AnalyzeColumnsTask{
+			ColsInfo:    tbl.TableInfo.Columns,
+			analyzeInfo: info,
+			TblInfo:     tbl.TableInfo,
+			Indexes:     idxInfos,
+		})
+	}
+	return taskSlice
+}
+
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	for _, tbl := range as.TableNames {
@@ -1663,6 +1695,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					"because this table already has version 1 statistics and query feedback is also enabled. " +
 					"If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file."))
 			}
+		}
+		if version == statistics.Version3 {
+			p.ColTasks = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
+			continue
 		}
 		for _, idx := range idxInfo {
 			// For prefix common handle. We don't use analyze mixed to handle it with columns. Because the full value
@@ -1735,6 +1771,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
+	if version == statistics.Version3 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
+		return b.buildAnalyzeTable(as, opts, version)
+	}
 	for _, idxName := range as.IndexNames {
 		if isPrimaryIndex(idxName) {
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
@@ -1796,6 +1836,10 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
+	if version == statistics.Version3 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
+		return b.buildAnalyzeTable(as, opts, version)
+	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			for i, id := range physicalIDs {
@@ -1842,7 +1886,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       1024,
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
-	ast.AnalyzeOptNumSamples:    100000,
+	ast.AnalyzeOptNumSamples:    500000,
 }
 
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
@@ -2265,13 +2309,19 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
-	if dbName == "" {
+	// This supports a local revoke SELECT on tablename, but does
+	// not add dbName to the visitInfo of a *.* grant.
+	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
-	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
-
+	var nonDynamicPrivilege bool
 	var allPrivs []mysql.PrivilegeType
 	for _, item := range stmt.Privs {
+		if item.Priv == mysql.ExtendedPriv {
+			vi = appendDynamicVisitInfo(vi, strings.ToUpper(item.Name), true, nil) // verified in MySQL: requires the dynamic grant option to revoke.
+			continue
+		}
+		nonDynamicPrivilege = true
 		if item.Priv == mysql.AllPriv {
 			switch stmt.Level.Level {
 			case ast.GrantLevelGlobal:
@@ -2289,7 +2339,11 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 	for _, priv := range allPrivs {
 		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
 	}
-
+	if nonDynamicPrivilege {
+		// Dynamic privileges use their own GRANT OPTION. If there were any non-dynamic privilege requests,
+		// we need to attach the "GLOBAL" version of the GRANT OPTION.
+		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
+	}
 	return vi
 }
 
@@ -2298,7 +2352,9 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
-	if dbName == "" {
+	// This supports a local revoke SELECT on tablename, but does
+	// not add dbName to the visitInfo of a *.* grant.
+	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
 	var nonDynamicPrivilege bool

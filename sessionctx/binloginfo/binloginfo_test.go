@@ -540,6 +540,19 @@ func (s *testBinlogSuite) TestPartitionedTable(c *C) {
 	}
 }
 
+func (s *testBinlogSuite) TestPessimisticLockThenCommit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t select 1, 1")
+	tk.MustExec("commit")
+	prewriteVal := getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 1)
+}
+
 func (s *testBinlogSuite) TestDeleteSchema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -184,7 +185,7 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 		if batchResp.err == nil {
 			batchResp.err = err
 		}
-		if kv.ErrPDServerTimeout.Equal(err) {
+		if tikverr.ErrPDServerTimeout.Equal(err) {
 			break
 		}
 	}
@@ -218,7 +219,7 @@ func (s *KVStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64) 
 
 		if val, err2 := util.MockScatterRegionTimeout.Eval(); err2 == nil {
 			if val.(bool) {
-				err = kv.ErrPDServerTimeout
+				err = tikverr.ErrPDServerTimeout
 			}
 		}
 
@@ -293,7 +294,7 @@ func (s *KVStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64, 
 				return nil
 			}
 			if resp.GetHeader().GetError() != nil {
-				err = errors.AddStack(&kv.PDError{
+				err = errors.AddStack(&tikverr.PDError{
 					Err: resp.Header.Error,
 				})
 				logutil.BgLogger().Warn("wait scatter region error",

@@ -71,18 +71,6 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) er
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
-	// Here we add a constant 1 to avoid Projection operator is eliminated. (#23887)
-	if len(p.Exprs) == 0 {
-		constOne := expression.NewOne()
-		p.schema.Append(&expression.Column{
-			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  constOne.GetType(),
-		})
-		p.Exprs = append(p.Exprs, &expression.Constant{
-			Value:   constOne.Value,
-			RetType: constOne.GetType(),
-		})
-	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
 	return child.PruneColumns(selfUsedCols)
@@ -389,7 +377,7 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error {
 	windowColumns := p.GetWindowResultColumns()
-	len := 0
+	cnt := 0
 	for _, col := range parentUsedCols {
 		used := false
 		for _, windowColumn := range windowColumns {
@@ -399,11 +387,11 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error 
 			}
 		}
 		if !used {
-			parentUsedCols[len] = col
-			len++
+			parentUsedCols[cnt] = col
+			cnt++
 		}
 	}
-	parentUsedCols = parentUsedCols[:len]
+	parentUsedCols = parentUsedCols[:cnt]
 	parentUsedCols = p.extractUsedCols(parentUsedCols)
 	err := p.children[0].PruneColumns(parentUsedCols)
 	if err != nil {

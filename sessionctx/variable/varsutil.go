@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -97,19 +98,26 @@ func GetMaxDeltaSchemaCount() int64 {
 // BoolToOnOff returns the string representation of a bool, i.e. "ON/OFF"
 func BoolToOnOff(b bool) string {
 	if b {
-		return BoolOn
+		return On
 	}
-	return BoolOff
+	return Off
 }
 
 func int32ToBoolStr(i int32) string {
 	if i == 1 {
-		return BoolOn
+		return On
 	}
-	return BoolOff
+	return Off
 }
 
-func checkCharacterValid(normalizedValue string, argName string) (string, error) {
+func checkCollation(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	if _, err := collate.GetCollationByName(normalizedValue); err != nil {
+		return normalizedValue, errors.Trace(err)
+	}
+	return normalizedValue, nil
+}
+
+func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
 		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
 	}
@@ -128,14 +136,14 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 	}
 	if TiDBOptOn(normalizedValue) {
 		if !vars.EnableNoopFuncs && scope == ScopeSession {
-			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
 		}
 		val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
 		if err != nil {
 			return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
 		}
 		if scope == ScopeGlobal && !TiDBOptOn(val) {
-			return BoolOff, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
 		}
 	}
 	return normalizedValue, nil
@@ -170,11 +178,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
 	case TiDBLastTxnInfo:
-		info, err := json.Marshal(s.LastTxnInfo)
-		if err != nil {
-			return "", true, err
-		}
-		return string(info), true, nil
+		return s.LastTxnInfo, true, nil
 	case TiDBLastQueryInfo:
 		info, err := json.Marshal(s.LastQueryInfo)
 		if err != nil {
@@ -271,20 +275,12 @@ func GetScopeNoneSystemVar(key string) (string, bool, error) {
 const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
-func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
+func SetSessionSystemVar(vars *SessionVars, name string, value string) error {
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	sVal := ""
-	var err error
-	if !value.IsNull() {
-		sVal, err = value.ToString()
-	}
-	if err != nil {
-		return err
-	}
-	sVal, err = sysVar.Validate(vars, sVal, ScopeSession)
+	sVal, err := sysVar.Validate(vars, value, ScopeSession)
 	if err != nil {
 		return err
 	}
@@ -364,9 +360,9 @@ const (
 // TiDBOptMultiStmt converts multi-stmt options to int.
 func TiDBOptMultiStmt(opt string) int {
 	switch opt {
-	case BoolOff:
+	case Off:
 		return OffInt
-	case BoolOn:
+	case On:
 		return OnInt
 	}
 	return WarnInt
@@ -399,6 +395,14 @@ func TiDBOptEnableClustered(opt string) ClusteredIndexDefMode {
 func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil || val <= 0 {
+		return defaultVal
+	}
+	return val
+}
+
+func tidbOptInt(opt string, defaultVal int) int {
+	val, err := strconv.Atoi(opt)
+	if err != nil {
 		return defaultVal
 	}
 	return val

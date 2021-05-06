@@ -155,8 +155,49 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 			}
 			used = append(used, int(idx))
 		} else {
-			used = []int{FullRange}
-			break
+			// processing hash partition pruning. eg:
+			// create table t2 (a int, b bigint, index (a), index (b)) partition by hash(a) partitions 10;
+			// desc select * from t2 where t2.a between 10 and 15;
+			// determine whether the partition key is int
+			if col, ok := pe.(*expression.Column); ok && col.RetType.EvalType() == types.ETInt {
+				numPartitions := len(pi.Definitions)
+
+				posHigh, highIsNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+				if err != nil {
+					return nil, nil, err
+				}
+
+				posLow, lowIsNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
+				if err != nil {
+					return nil, nil, err
+				}
+
+				// consider whether the range is closed or open
+				if r.LowExclude {
+					posLow++
+				}
+				if r.HighExclude {
+					posHigh--
+				}
+				rangeScalar := posHigh - posLow
+
+				// if range is less than the number of partitions, there will be unused partitions we can prune out.
+				if rangeScalar < int64(numPartitions) && !highIsNull && !lowIsNull {
+					for i := posLow; i <= posHigh; i++ {
+						idx := math.Abs(i % int64(pi.Num))
+						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+							continue
+						}
+						used = append(used, int(idx))
+					}
+				} else {
+					used = []int{FullRange}
+					break
+				}
+			} else {
+				used = []int{FullRange}
+				break
+			}
 		}
 	}
 	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
@@ -730,25 +771,26 @@ func intersectionRange(start, end, newStart, newEnd int) (int, int) {
 }
 
 func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, tbl table.PartitionedTable, conds []expression.Expression,
-	columns []*expression.Column, names types.NameSlice) (partitionRangeOR, error) {
+	columns []*expression.Column, names types.NameSlice, condsToBePruned *[]expression.Expression) (partitionRangeOR, []expression.Expression, error) {
 	partExpr, err := tbl.(partitionTable).PartitionExpr()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Partition by range columns.
 	if len(pi.Columns) > 0 {
-		return s.pruneRangeColumnsPartition(ctx, conds, pi, partExpr, columns, names)
+		result, err := s.pruneRangeColumnsPartition(ctx, conds, pi, partExpr, columns, names)
+		return result, nil, err
 	}
 
 	// Partition by range.
 	col, fn, mono, err := makePartitionByFnCol(ctx, columns, names, pi.Expr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result := fullRange(len(pi.Definitions))
 	if col == nil {
-		return result, nil
+		return result, nil, nil
 	}
 
 	// Extract the partition column, if the column is not null, it's possible to prune.
@@ -762,13 +804,41 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 		monotonous: mono,
 	}
 	result = partitionRangeForCNFExpr(ctx, conds, &pruner, result)
-	return result, nil
+
+	if condsToBePruned == nil {
+		return result, nil, nil
+	}
+	// remove useless predicates after partition pruning
+	newConds := make([]expression.Expression, 0, len(*condsToBePruned))
+	for _, cond := range *condsToBePruned {
+		if dataForPrune, ok := pruner.extractDataForPrune(ctx, cond); ok {
+			switch dataForPrune.op {
+			case ast.EQ:
+				unsigned := mysql.HasUnsignedFlag(pruner.col.RetType.Flag)
+				start, _ := pruneUseBinarySearch(pruner.lessThan, dataForPrune, unsigned)
+				// if the type of partition key is Int
+				if pk, ok := partExpr.Expr.(*expression.Column); ok && pk.RetType.EvalType() == types.ETInt {
+					// see if can be removed
+					// see issue #22079: https://github.com/pingcap/tidb/issues/22079 for details
+					if start > 0 && pruner.lessThan.data[start-1] == dataForPrune.c && (pruner.lessThan.data[start]-1) == dataForPrune.c {
+						continue
+					}
+				}
+			}
+		}
+		newConds = append(newConds, cond)
+	}
+
+	return result, newConds, nil
 }
 
 func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	used, err := s.pruneRangePartition(ds.ctx, pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names)
+	used, prunedConds, err := s.pruneRangePartition(ds.ctx, pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names, &ds.pushedDownConds)
 	if err != nil {
 		return nil, err
+	}
+	if prunedConds != nil {
+		ds.pushedDownConds = prunedConds
 	}
 	return s.makeUnionAllChildren(ds, pi, used)
 }

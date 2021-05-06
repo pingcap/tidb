@@ -126,11 +126,11 @@ func (t *mockTxn) Reset() {
 	t.valid = false
 }
 
-func (t *mockTxn) SetVars(vars *Variables) {
+func (t *mockTxn) SetVars(vars interface{}) {
 
 }
 
-func (t *mockTxn) GetVars() *Variables {
+func (t *mockTxn) GetVars() interface{} {
 	return nil
 }
 

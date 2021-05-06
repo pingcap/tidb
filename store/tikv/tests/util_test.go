@@ -19,9 +19,12 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"unsafe"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
+	txndriver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -113,4 +116,13 @@ func valueBytes(n int) []byte {
 // e.g.: "0002" < "0011", otherwise "2" > "11"
 func s08d(prefix string, n int) string {
 	return fmt.Sprintf("%s%08d", prefix, n)
+}
+
+func toTiDBTxn(txn *tikv.TxnProbe) kv.Transaction {
+	return txndriver.NewTiKVTxn(txn.KVTxn)
+}
+
+func toTiDBKeys(keys [][]byte) []kv.Key {
+	kvKeys := *(*[]kv.Key)(unsafe.Pointer(&keys))
+	return kvKeys
 }

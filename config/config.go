@@ -208,6 +208,7 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 		OpenTracingEnable:     c.OpenTracing.Enable,
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
+		TxnScope:              c.Labels["zone"],
 	}
 }
 

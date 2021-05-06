@@ -293,11 +293,5 @@
       "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10",
       "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b desc, c desc limit 10"
     ]
-  },
-  {
-    "name": "TestIssue23887",
-    "cases": [
-      "select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t"
-    ]
   }
 ]

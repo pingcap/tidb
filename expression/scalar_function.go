@@ -359,7 +359,13 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	case types.ETJson:
 		res, isNull, err = sf.EvalJSON(sf.GetCtx(), row)
 	case types.ETString:
-		res, isNull, err = sf.EvalString(sf.GetCtx(), row)
+		var str string
+		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
+		if !isNull && err == nil && tp.Tp == mysql.TypeEnum {
+			res, err = types.ParseEnumName(tp.Elems, str, tp.Collate)
+		} else {
+			res = str
+		}
 	}
 
 	if isNull || err != nil {

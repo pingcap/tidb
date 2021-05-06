@@ -322,6 +322,10 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
+	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
+		addTemporaryTableID(sctx, meta.ID)
+	}
+
 	var colIDs, binlogColIDs []int64
 	var row, binlogOldRow, binlogNewRow []types.Datum
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
@@ -584,6 +588,14 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
+func addTemporaryTableID(sctx sessionctx.Context, id int64) {
+	txnCtx := sctx.GetSessionVars().TxnCtx
+	if txnCtx.GlobalTemporaryTables == nil {
+		txnCtx.GlobalTemporaryTables = make(map[int64]struct{})
+	}
+	txnCtx.GlobalTemporaryTables[id] = struct{}{}
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	txn, err := sctx.Txn(true)
@@ -594,6 +606,10 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	var opt table.AddRecordOpt
 	for _, fn := range opts {
 		fn.ApplyOn(&opt)
+	}
+
+	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
+		addTemporaryTableID(sctx, meta.ID)
 	}
 
 	var ctx context.Context
@@ -992,6 +1008,11 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	if err != nil {
 		return err
 	}
+
+	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
+		addTemporaryTableID(ctx, meta.ID)
+	}
+
 	// The table has non-public column and this column is doing the operation of "modify/change column".
 	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
 		r = append(r, r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset])
@@ -1443,80 +1464,6 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 		if len(idx.Meta().Columns) == 1 && strings.EqualFold(idx.Meta().Columns[0].Name.L, name) {
 			return idx
-		}
-	}
-	return nil
-}
-
-// CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore check whether recordID key or unique index key exists. if not exists, return nil,
-// otherwise return kv.ErrKeyExists error.
-func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, newRow []types.Datum, modified []bool) error {
-	physicalTableID := t.Meta().ID
-	if pt, ok := t.(*partitionedTable); ok {
-		info := t.Meta().GetPartitionInfo()
-		pid, err := pt.locatePartition(sctx, info, newRow)
-		if err != nil {
-			return err
-		}
-		partition := pt.GetPartition(pid)
-		physicalTableID = partition.GetPhysicalID()
-	}
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return err
-	}
-
-	// Check primary key exists.
-	{
-		prefix := tablecodec.GenTableRecordPrefix(physicalTableID)
-		recordKey := tablecodec.EncodeRecordKey(prefix, recordID)
-		_, err = txn.Get(ctx, recordKey)
-		if err == nil {
-			handleStr := getDuplicateErrorHandleString(t, recordID, newRow)
-			return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
-		} else if !kv.ErrNotExist.Equal(err) {
-			return err
-		}
-	}
-
-	// Check unique key exists.
-	{
-		shouldSkipIgnoreCheck := func(idx table.Index) bool {
-			if !IsIndexWritable(idx) || !idx.Meta().Unique || (t.Meta().IsCommonHandle && idx.Meta().Primary) {
-				return true
-			}
-			for _, c := range idx.Meta().Columns {
-				if modified[c.Offset] {
-					return false
-				}
-			}
-			return true
-		}
-
-		for _, idx := range t.Indices() {
-			if shouldSkipIgnoreCheck(idx) {
-				continue
-			}
-			newVals, err := idx.FetchValues(newRow, nil)
-			if err != nil {
-				return err
-			}
-			key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, newVals, recordID, nil)
-			if err != nil {
-				return err
-			}
-			_, err = txn.Get(ctx, key)
-			if kv.IsErrNotFound(err) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			entryKey, err := genIndexKeyStr(newVals)
-			if err != nil {
-				return err
-			}
-			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name.String())
 		}
 	}
 	return nil
