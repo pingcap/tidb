@@ -113,7 +113,10 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 	if startTime < cachedSafePoint {
 		t1 := oracle.GetTimeFromTS(startTime)
 		t2 := oracle.GetTimeFromTS(cachedSafePoint)
-		return tikverr.ErrGCTooEarly.GenWithStackByArgs(t1, t2)
+		return &tikverr.ErrGCTooEarly{
+			TxnStartTS:  t1,
+			GCSafePoint: t2,
+		}
 	}
 
 	return nil

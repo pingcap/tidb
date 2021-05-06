@@ -15,6 +15,7 @@ package error
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -48,13 +49,11 @@ const MismatchClusterID = "mismatch cluster id"
 
 // error instances.
 var (
-	ErrTiFlashServerTimeout = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
-	ErrPDServerTimeout      = dbterror.ClassTiKV.NewStd(CodePDServerTimeout)
-	ErrRegionUnavailable    = dbterror.ClassTiKV.NewStd(CodeRegionUnavailable)
-	ErrTiKVServerBusy       = dbterror.ClassTiKV.NewStd(CodeTiKVServerBusy)
-	ErrTiFlashServerBusy    = dbterror.ClassTiKV.NewStd(CodeTiFlashServerBusy)
-
-	ErrGCTooEarly                  = dbterror.ClassTiKV.NewStd(CodeGCTooEarly)
+	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
+	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(CodePDServerTimeout)
+	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(CodeRegionUnavailable)
+	ErrTiKVServerBusy              = dbterror.ClassTiKV.NewStd(CodeTiKVServerBusy)
+	ErrTiFlashServerBusy           = dbterror.ClassTiKV.NewStd(CodeTiFlashServerBusy)
 	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(CodeLockAcquireFailAndNoWaitSet)
 	ErrLockWaitTimeout             = dbterror.ClassTiKV.NewStd(CodeLockWaitTimeout)
@@ -170,4 +169,14 @@ type ErrEntryTooLarge struct {
 
 func (e *ErrEntryTooLarge) Error() string {
 	return fmt.Sprintf("entry size too large, size: %v,limit: %v.", e.Size, e.Limit)
+}
+
+// ErrGCTooEarly is the error that GC life time is shorter than transaction duration
+type ErrGCTooEarly struct {
+	TxnStartTS  time.Time
+	GCSafePoint time.Time
+}
+
+func (e *ErrGCTooEarly) Error() string {
+	return fmt.Sprintf("GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v", e.TxnStartTS, e.GCSafePoint)
 }
