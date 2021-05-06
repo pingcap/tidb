@@ -1707,9 +1707,6 @@ func (s *testColumnTypeChangeSuite) TestAlterPrimaryKeyToNull(c *C) {
 	tk.MustExec("use test")
 	// Enable column change variable.
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = false
-	}()
 
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int not null, b int not null, primary key(a, b));")
