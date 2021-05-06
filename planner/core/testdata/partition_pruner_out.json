@@ -2827,5 +2827,73 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestRangePartitionPredicatePruner",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a = 1",
+        "Result": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a = 2",
+        "Result": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a = 10",
+        "Result": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(test_partition.t.a, 10)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p_max keep order:false, stats:pseudo"         
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a = -1",
+        "Result": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(test_partition.t.a, -1)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"         
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a is NULL",
+        "Result": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  isnull(test_partition.t.a)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a = 1.5",
+        "Result": [
+          "PartitionUnion 32000.00 root  ",
+          "├─TableReader 8000.00 root  data:Selection",
+          "│ └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(20,0) BINARY), 1.5)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 8000.00 root  data:Selection",
+          "│ └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(20,0) BINARY), 1.5)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
+          "├─TableReader 8000.00 root  data:Selection",
+          "│ └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(20,0) BINARY), 1.5)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo",
+          "└─TableReader 8000.00 root  data:Selection",
+          "  └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(20,0) BINARY), 1.5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t, partition:p_max keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a in (2)",
+        "Result": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
