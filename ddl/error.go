@@ -276,5 +276,5 @@ var (
 	errExchangePartitionDisabled = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it", nil))
 
 	// ErrPartitionNoTemporary returns when partition at temporary mode
-	ErrPartitionNoTemporary = dbterror.ClassAdmin.NewStd(mysql.ErrPartitionNoTemporary)
+	ErrPartitionNoTemporary = dbterror.ClassDDL.NewStd(mysql.ErrPartitionNoTemporary)
 )

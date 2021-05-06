@@ -3396,4 +3396,17 @@ func (s *testIntegrationSuite7) TestAddTableWithPartition(c *C) {
 	_, err := tk.Exec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
 	c.Assert(err, IsNil)
 	tk.MustExec("drop table if exists partition_table;")
+	_, err = tk.Exec(`CREATE TABLE partition_range_table (c1 smallint(6) NOT NULL, c2 char(5) DEFAULT NULL) PARTITION BY RANGE ( c1 ) (
+			PARTITION p0 VALUES LESS THAN (10),
+			PARTITION p1 VALUES LESS THAN (20),
+			PARTITION p2 VALUES LESS THAN (30),
+			PARTITION p3 VALUES LESS THAN (MAXVALUE)
+	)`)
+	c.Assert(err, IsNil)
+	_, err = tk.Exec(`create table partition_list_table (id int) partition by list  (id) (
+	    partition p0 values in (1,2),
+	    partition p1 values in (3,4),
+	    partition p3 values in (5,null)
+	);`)
+	c.Assert(err, IsNil)
 }

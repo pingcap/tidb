@@ -56,7 +56,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if tbInfo.Partition != nil && tbInfo.Partition.Enable && tbInfo.TempTableType == model.TempTableGlobal {
+	if tbInfo.Partition != nil && (tbInfo.TempTableType == model.TempTableGlobal || tbInfo.TempTableType == model.TempTableLocal) {
 		// unsupported ddl, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(ErrPartitionNoTemporary)
