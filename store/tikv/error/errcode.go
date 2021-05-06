@@ -11,31 +11,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package errno
+package error
 
 // MySQL error code.
 // This value is numeric. It is not portable to other database systems.
 const (
-	ErrUnknown                     = 1105
-	ErrLockWaitTimeout             = 1205
-	ErrTruncatedWrongValue         = 1292
-	ErrQueryInterrupted            = 1317
-	ErrDivisionByZero              = 1365
-	ErrDataOutOfRange              = 1690
-	ErrLockAcquireFailAndNoWaitSet = 3572
+	CodeUnknown                     = 1105
+	CodeLockWaitTimeout             = 1205
+	CodeTruncatedWrongValue         = 1292
+	CodeQueryInterrupted            = 1317
+	CodeDivisionByZero              = 1365
+	CodeDataOutOfRange              = 1690
+	CodeLockAcquireFailAndNoWaitSet = 3572
 
 	// TiKV/PD/TiFlash errors.
-	ErrPDServerTimeout    = 9001
-	ErrTiKVServerTimeout  = 9002
-	ErrTiKVServerBusy     = 9003
-	ErrResolveLockTimeout = 9004
-	ErrRegionUnavailable  = 9005
-	ErrGCTooEarly         = 9006
+	CodePDServerTimeout   = 9001
+	CodeRegionUnavailable = 9005
 
-	ErrTiKVStoreLimit = 9008
+	CodeTiKVStoreLimit = 9008
 
-	ErrTiKVStaleCommand          = 9010
-	ErrTiKVMaxTimestampNotSynced = 9011
-	ErrTiFlashServerTimeout      = 9012
-	ErrTiFlashServerBusy         = 9013
+	CodeTiFlashServerTimeout = 9012
+	CodeTiFlashServerBusy    = 9013
 )
