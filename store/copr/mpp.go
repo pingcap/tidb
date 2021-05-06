@@ -36,7 +36,7 @@ import (
 
 // MPPClient servers MPP requests.
 type MPPClient struct {
-	store *tikv.KVStore
+	store *kvStore
 }
 
 // GetAddress returns the network address.
@@ -117,7 +117,7 @@ func (m *mppResponse) RespTime() time.Duration {
 }
 
 type mppIterator struct {
-	store *tikv.KVStore
+	store *kvStore
 
 	tasks    []*kv.MPPDispatchRequest
 	finishCh chan struct{}
@@ -244,6 +244,13 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	if realResp.Error != nil {
 		m.sendError(errors.New(realResp.Error.Msg))
 		return
+	}
+	if len(realResp.RetryRegions) > 0 {
+		for _, retry := range realResp.RetryRegions {
+			id := tikv.NewRegionVerID(retry.Id, retry.RegionEpoch.ConfVer, retry.RegionEpoch.Version)
+			logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
+			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+		}
 	}
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
 		if val.(bool) && !req.IsRoot {

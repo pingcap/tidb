@@ -36,5 +36,5 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mockstorage.NewMockStorage(kvstore), nil
+	return mockstorage.NewMockStorage(kvstore)
 }
