@@ -26,10 +26,10 @@ import (
 )
 
 type RegionInfo struct {
-	Region        RegionVerID
-	Meta          *metapb.Region
-	Ranges        *KeyRanges
-	AllStoreAddrs []string
+	Region    RegionVerID
+	Meta      *metapb.Region
+	Ranges    *KeyRanges
+	AllStores []uint64
 }
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.

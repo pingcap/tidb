@@ -203,8 +203,7 @@ func (s *RegionRequestSender) getRPCContext(
 		}
 		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed, opts...)
 	case kv.TiFlash:
-		context, _, err := s.regionCache.GetTiFlashRPCContext(bo, regionID, true, false)
-		return context, err
+		return s.regionCache.GetTiFlashRPCContext(bo, regionID, true)
 	case kv.TiDB:
 		return &RPCContext{Addr: s.storeAddr}, nil
 	default:

@@ -536,19 +536,49 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}, nil
 }
 
+func (c *RegionCache) GetAllValidTiFlashStores(id RegionVerID, currentStore *Store) []uint64 {
+	allStores := make([]uint64, 0, 1)
+	allStores = append(allStores, currentStore.storeID)
+	ts := time.Now().Unix()
+	cachedRegion := c.getCachedRegionWithRLock(id)
+	if cachedRegion == nil {
+		return allStores
+	}
+	if !cachedRegion.checkRegionCacheTTL(ts) {
+		return allStores
+	}
+	regionStore := cachedRegion.getStore()
+	currentIndex := regionStore.getAccessIndex(TiFlashOnly, currentStore)
+	if currentIndex == -1 {
+		return allStores
+	}
+	for startOffset := 1; startOffset < regionStore.accessStoreNum(TiFlashOnly); startOffset++ {
+		accessIdx := AccessIndex((int(currentIndex) + startOffset) % regionStore.accessStoreNum(TiFlashOnly))
+		storeIdx, store := regionStore.accessStore(TiFlashOnly, accessIdx)
+		if store.getResolveState() == needCheck {
+			continue
+		}
+		storeFailEpoch := atomic.LoadUint32(&store.epoch)
+		if storeFailEpoch != regionStore.storeEpochs[storeIdx] {
+			continue
+		}
+		allStores = append(allStores, store.storeID)
+	}
+	return allStores
+}
+
 // GetTiFlashRPCContext returns RPCContext for a region must access flash store. If it returns nil, the region
 // must be out of date and already dropped from cache or not flash store found.
 // `loadBalance` is an option. For MPP and batch cop, it is pointless and might cause try the failed store repeatly.
-func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBalance bool, collectAllStoreAddrs bool) (*RPCContext, []string, error) {
+func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBalance bool) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
-	allStoreAddrs := make([]string, 0, 1)
 	cachedRegion := c.getCachedRegionWithRLock(id)
 	if cachedRegion == nil {
-		return nil, nil, nil
+		return nil, nil
 	}
 	if !cachedRegion.checkRegionCacheTTL(ts) {
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	regionStore := cachedRegion.getStore()
@@ -565,11 +595,11 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 		storeIdx, store := regionStore.accessStore(TiFlashOnly, accessIdx)
 		addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if len(addr) == 0 {
 			cachedRegion.invalidate(StoreNotFound)
-			return nil, nil, nil
+			return nil, nil
 		}
 		if store.getResolveState() == needCheck {
 			_, err := store.reResolve(c)
@@ -586,7 +616,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 			// TiFlash will always try to find out a valid peer, avoiding to retry too many times.
 			continue
 		}
-		rpcContex := &RPCContext{
+		return &RPCContext{
 			Region:     id,
 			Meta:       cachedRegion.meta,
 			Peer:       peer,
@@ -595,31 +625,11 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 			Addr:       addr,
 			AccessMode: TiFlashOnly,
 			TiKVNum:    regionStore.accessStoreNum(TiKVOnly),
-		}
-		if collectAllStoreAddrs {
-			allStoreAddrs = append(allStoreAddrs, addr)
-			for startOffset := 1; startOffset < regionStore.accessStoreNum(TiFlashOnly); startOffset++ {
-				accessIdx = AccessIndex((sIdx + i + startOffset) % regionStore.accessStoreNum(TiFlashOnly))
-				storeIdx, store = regionStore.accessStore(TiFlashOnly, accessIdx)
-				addr, err = c.getStoreAddr(bo, cachedRegion, store, storeIdx)
-				if err != nil {
-					continue
-				}
-				if len(addr) == 0 {
-					continue
-				}
-				if store.getResolveState() == needCheck {
-					continue
-				}
-				allStoreAddrs = append(allStoreAddrs, addr)
-			}
-			return rpcContex, allStoreAddrs, nil
-		}
-		return rpcContex, nil, nil
+		}, nil
 	}
 
 	cachedRegion.invalidate(Other)
-	return nil, nil, nil
+	return nil, nil
 }
 
 // KeyLocation is the region and range that a key is located.
