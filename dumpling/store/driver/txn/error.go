@@ -47,6 +47,8 @@ var (
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
 	ErrTiKVMaxTimestampNotSynced = dbterror.ClassTiKV.NewStd(errno.ErrTiKVMaxTimestampNotSynced)
 	ErrResolveLockTimeout        = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
+	// ErrTiKVServerBusy is the error when tikv server is busy.
+	ErrTiKVServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerBusy)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -196,6 +198,10 @@ func ToTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
 		return ErrTiKVServerTimeout
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrTiKVServerBusy) {
+		return ErrTiKVServerBusy
 	}
 
 	if e, ok := err.(*tikverr.ErrGCTooEarly); ok {
