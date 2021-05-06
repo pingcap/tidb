@@ -262,7 +262,7 @@ func (s *tikvStore) StartGCWorker() error {
 
 	gcWorker, err := gcworker.NewGCWorker(s, s.pdClient)
 	if err != nil {
-		return errors.Trace(err)
+		return txn_driver.ToTiDBErr(err)
 	}
 	gcWorker.Start()
 	s.gcWorker = gcWorker
@@ -286,7 +286,8 @@ func (s *tikvStore) Close() error {
 		s.gcWorker.Close()
 	}
 	s.coprStore.Close()
-	return s.KVStore.Close()
+	err := s.KVStore.Close()
+	return txn_driver.ToTiDBErr(err)
 }
 
 // GetMemCache return memory manager of the storage
@@ -298,7 +299,7 @@ func (s *tikvStore) GetMemCache() kv.MemManager {
 func (s *tikvStore) Begin() (kv.Transaction, error) {
 	txn, err := s.KVStore.Begin()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, txn_driver.ToTiDBErr(err)
 	}
 	return txn_driver.NewTiKVTxn(txn), err
 }
@@ -323,7 +324,7 @@ func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction
 		txn, err = s.BeginWithTxnScope(txnScope)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, txn_driver.ToTiDBErr(err)
 	}
 
 	return txn_driver.NewTiKVTxn(txn), err
@@ -338,7 +339,7 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 // CurrentVersion returns current max committed version with the given txnScope (local or global).
 func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
-	return kv.NewVersion(ver), err
+	return kv.NewVersion(ver), txn_driver.ToTiDBErr(err)
 }
 
 // ShowStatus returns the specified status of the storage
