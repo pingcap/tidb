@@ -31,6 +31,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	txndriver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -733,10 +734,10 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 
 	timeoutErr := <-timeoutErrCh
 	c.Assert(timeoutErr, NotNil)
-	c.Assert(timeoutErr.Error(), Equals, tikverr.ErrLockWaitTimeout.Error())
+	c.Assert(timeoutErr.Error(), Equals, txndriver.ErrLockWaitTimeout.Error())
 	timeoutErr = <-timeoutErrCh
 	c.Assert(timeoutErr, NotNil)
-	c.Assert(timeoutErr.Error(), Equals, tikverr.ErrLockWaitTimeout.Error())
+	c.Assert(timeoutErr.Error(), Equals, txndriver.ErrLockWaitTimeout.Error())
 
 	// tk4 lock c1 = 2
 	tk4.MustExec("begin pessimistic")
@@ -749,7 +750,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	_, err := tk2.Exec("delete from tk where c1 = 2")
 	c.Check(time.Since(start), GreaterEqual, 1000*time.Millisecond)
 	c.Check(time.Since(start), Less, 3000*time.Millisecond) // unit test diff should not be too big
-	c.Check(err.Error(), Equals, tikverr.ErrLockWaitTimeout.Error())
+	c.Check(err.Error(), Equals, txndriver.ErrLockWaitTimeout.Error())
 
 	tk4.MustExec("commit")
 
@@ -767,7 +768,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	_, err = tk2.Exec("delete from tk where c1 = 3") // tk2 tries to lock c1 = 3 fail, this delete should be rollback, but previous update should be keeped
 	c.Check(time.Since(start), GreaterEqual, 1000*time.Millisecond)
 	c.Check(time.Since(start), Less, 3000*time.Millisecond) // unit test diff should not be too big
-	c.Check(err.Error(), Equals, tikverr.ErrLockWaitTimeout.Error())
+	c.Check(err.Error(), Equals, txndriver.ErrLockWaitTimeout.Error())
 
 	tk2.MustExec("commit")
 	tk3.MustExec("commit")
@@ -841,7 +842,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
 	waitErr := <-done
 	c.Assert(waitErr, NotNil)
-	c.Check(waitErr.Error(), Equals, tikverr.ErrLockWaitTimeout.Error())
+	c.Check(waitErr.Error(), Equals, txndriver.ErrLockWaitTimeout.Error())
 	c.Check(duration, GreaterEqual, 1000*time.Millisecond)
 	c.Check(duration, LessEqual, 3000*time.Millisecond)
 	tk2.MustExec("rollback")
@@ -1279,7 +1280,7 @@ func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
 	tk2.MustExec("begin pessimistic")
 	err := tk2.ExecToErr("insert into t1 values(2, 2, 2)")
 	c.Assert(err, NotNil)
-	c.Assert(tikverr.ErrLockWaitTimeout.Equal(err), IsTrue)
+	c.Assert(txndriver.ErrLockWaitTimeout.Equal(err), IsTrue)
 	err = tk2.ExecToErr("select * from t1 where c2 = 3 for update nowait")
 	c.Assert(err, NotNil)
 	c.Assert(tikverr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
