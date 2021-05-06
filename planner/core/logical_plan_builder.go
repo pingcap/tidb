@@ -3592,6 +3592,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
 
+	if tableInfo.IsSequence() {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in sequences")
+		}
+		// When the source is a Sequence, we convert it to a TableDual, as what most databases do.
+		return b.buildTableDual(), nil
+	}
+
 	if tableInfo.GetPartitionInfo() != nil {
 		// Use the new partition implementation, clean up the code here when it's full implemented.
 		if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
