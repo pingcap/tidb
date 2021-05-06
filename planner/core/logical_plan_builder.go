@@ -3650,10 +3650,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				p.SetSchema(cte.seedLP.Schema())
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				if len(asName.String()) > 0 {
-					on := p.OutputNames()
-					for i := range on {
-						cpOn := *on[i]
-						on[i] = &cpOn
+					var on types.NameSlice
+					for _, name := range p.OutputNames() {
+						cpOn := *name
+						on = append(on, &cpOn)
 						on[i].TblName = *asName
 					}
 					p.SetOutputNames(on)
