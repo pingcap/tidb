@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cznic/mathutil"
 	"github.com/go-yaml/yaml"
@@ -225,21 +226,21 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 }
 
 func checkTooLongSchema(schema model.CIStr) error {
-	if len(schema.L) > mysql.MaxDatabaseNameLength {
+	if utf8.RuneCountInString(schema.L) > mysql.MaxDatabaseNameLength {
 		return ErrTooLongIdent.GenWithStackByArgs(schema)
 	}
 	return nil
 }
 
 func checkTooLongTable(table model.CIStr) error {
-	if len(table.L) > mysql.MaxTableNameLength {
+	if utf8.RuneCountInString(table.L) > mysql.MaxTableNameLength {
 		return ErrTooLongIdent.GenWithStackByArgs(table)
 	}
 	return nil
 }
 
 func checkTooLongIndex(index model.CIStr) error {
-	if len(index.L) > mysql.MaxIndexIdentifierLen {
+	if utf8.RuneCountInString(index.L) > mysql.MaxIndexIdentifierLen {
 		return ErrTooLongIdent.GenWithStackByArgs(index)
 	}
 	return nil
@@ -1090,7 +1091,7 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 func checkTooLongColumn(cols []*model.ColumnInfo) error {
 	for _, col := range cols {
 		colName := col.Name.O
-		if len(colName) > mysql.MaxColumnNameLength {
+		if utf8.RuneCountInString(colName) > mysql.MaxColumnNameLength {
 			return ErrTooLongIdent.GenWithStackByArgs(colName)
 		}
 	}
@@ -2705,7 +2706,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(colName) > mysql.MaxColumnNameLength {
+	if utf8.RuneCountInString(colName) > mysql.MaxColumnNameLength {
 		return nil, ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
@@ -4981,7 +4982,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		}
 		idxPart.Length = types.UnspecifiedLength
 		// The index part is an expression, prepare a hidden column for it.
-		if len(idxPart.Column.Name.L) > mysql.MaxColumnNameLength {
+		if utf8.RuneCountInString(idxPart.Column.Name.L) > mysql.MaxColumnNameLength {
 			// TODO: Refine the error message.
 			return nil, ErrTooLongIdent.GenWithStackByArgs("hidden column")
 		}
@@ -5471,7 +5472,7 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 			}
 		case mysql.TypeString, mysql.TypeVarString:
 			switch vkind {
-			case types.KindString, types.KindBytes, types.KindNull:
+			case types.KindString, types.KindBytes, types.KindNull, types.KindBinaryLiteral:
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
