@@ -35,6 +35,10 @@ var (
 	ErrInvalidTxn = errors.New("invalid transaction")
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout = errors.New("tikv server timeout")
+	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
+	ErrTiKVStaleCommand = errors.New("tikv stale command")
+	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
+	ErrTiKVMaxTimestampNotSynced = errors.New("tikv max timestamp not synced")
 	// ErrResolveLockTimeout is the error that resolve lock timeout.
 	ErrResolveLockTimeout = errors.New("resolve lock timeout")
 )
@@ -44,13 +48,12 @@ const MismatchClusterID = "mismatch cluster id"
 
 // error instances.
 var (
-	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
-	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(CodePDServerTimeout)
-	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(CodeRegionUnavailable)
-	ErrTiKVServerBusy              = dbterror.ClassTiKV.NewStd(CodeTiKVServerBusy)
-	ErrTiFlashServerBusy           = dbterror.ClassTiKV.NewStd(CodeTiFlashServerBusy)
-	ErrTiKVStaleCommand            = dbterror.ClassTiKV.NewStd(CodeTiKVStaleCommand)
-	ErrTiKVMaxTimestampNotSynced   = dbterror.ClassTiKV.NewStd(CodeTiKVMaxTimestampNotSynced)
+	ErrTiFlashServerTimeout = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
+	ErrPDServerTimeout      = dbterror.ClassTiKV.NewStd(CodePDServerTimeout)
+	ErrRegionUnavailable    = dbterror.ClassTiKV.NewStd(CodeRegionUnavailable)
+	ErrTiKVServerBusy       = dbterror.ClassTiKV.NewStd(CodeTiKVServerBusy)
+	ErrTiFlashServerBusy    = dbterror.ClassTiKV.NewStd(CodeTiFlashServerBusy)
+
 	ErrGCTooEarly                  = dbterror.ClassTiKV.NewStd(CodeGCTooEarly)
 	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(CodeLockAcquireFailAndNoWaitSet)
