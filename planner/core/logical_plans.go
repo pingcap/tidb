@@ -279,6 +279,10 @@ type LogicalProjection struct {
 	// This can be removed after column pool being supported.
 	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
 	AvoidColumnEvaluator bool
+
+	// AvoidEliminateForCTE indicates this projection is used to change the unique ID for CTE table.
+	// In this case, the projection can not be eliminated.
+	AvoidEliminateForCTE bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

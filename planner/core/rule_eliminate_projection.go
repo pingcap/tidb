@@ -35,6 +35,9 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 // canProjectionBeEliminatedStrict checks whether a projection can be
 // eliminated, returns true if the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
+	if p.AvoidEliminateForCTE {
+		return false
+	}
 	// This is due to the in-compatibility between TiFlash and TiDB:
 	// For TiDB, the output schema of final agg is all the aggregated functions and for
 	// TiFlash, the output schema of agg(TiFlash not aware of the aggregation mode) is

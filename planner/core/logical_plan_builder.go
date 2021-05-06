@@ -5688,7 +5688,7 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 			return nil, err
 		}
 
-		err = b.adjustCTEPlanSchema(p, cte)
+		p, err = b.adjustCTEPlanSchema(p, cte)
 		if err != nil {
 			return nil, err
 		}
@@ -5775,7 +5775,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 						return err
 					}
 
-					err = b.adjustCTEPlanSchema(p, cInfo.def)
+					p, err = b.adjustCTEPlanSchema(p, cInfo.def)
 					if err != nil {
 						return err
 					}
@@ -5809,6 +5809,19 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 
 		}
 
+		if len(recursive) == 0 {
+			p, err := b.buildSetOpr(ctx, x)
+			if err != nil {
+				return err
+			}
+			p, err = b.adjustCTEPlanSchema(p, cInfo.def)
+			if err != nil {
+				return err
+			}
+			cInfo.seedLP = p
+			return nil
+		}
+
 		recurPart, err := b.buildUnion(ctx, recursive, tmpAfterSetOptsForRecur)
 		if err != nil {
 			return err
@@ -5827,7 +5840,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			}
 			return err
 		}
-		err = b.adjustCTEPlanSchema(p, cInfo.def)
+		p, err = b.adjustCTEPlanSchema(p, cInfo.def)
 		if err != nil {
 			return err
 		}
@@ -5836,7 +5849,17 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 	}
 }
 
-func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExpression) error {
+func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExpression) (LogicalPlan, error) {
+	exprs := make([]expression.Expression, len(p.Schema().Columns))
+	tmpSchema := p.Schema().Clone()
+	for i, col := range p.Schema().Columns {
+		colc := col.Clone().(*expression.Column)
+		exprs[i] = colc
+		tmpSchema.Columns[i].UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+	}
+	proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true, AvoidEliminateForCTE: true}.Init(b.ctx, b.getSelectOffset())
+	proj.SetSchema(tmpSchema)
+	proj.SetChildren(p)
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
 		name.TblName = def.Name
@@ -5844,18 +5867,14 @@ func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExp
 	}
 	if len(def.ColNameList) > 0 {
 		if len(def.ColNameList) != len(p.OutputNames()) {
-			return errors.New("CTE columns length is not consistent.")
+			return nil, errors.New("CTE columns length is not consistent.")
 		}
 		for i, n := range def.ColNameList {
 			outPutNames[i].ColName = n
 		}
 	}
-	p.SetOutputNames(outPutNames)
-	for i, col := range p.Schema().Columns {
-		p.Schema().Columns[i] = col.Clone().(*expression.Column)
-		p.Schema().Columns[i].UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
-	}
-	return nil
+	proj.SetOutputNames(outPutNames)
+	return proj, nil
 }
 
 func (b *PlanBuilder) prepareCTECheckForSubQuery() []*cteInfo {
