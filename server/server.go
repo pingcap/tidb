@@ -562,7 +562,7 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 func (s *Server) ShowTxnList() []txnInfo.TxnInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := []txnInfo.TxnInfo{}
+	rs := make([]txnInfo.TxnInfo, 0, len(s.clients))
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
 			info := client.ctx.Session.TxnInfo()
