@@ -1095,7 +1095,8 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 			return err
 		}
 		if exists {
-			failedUsers = append(failedUsers, newUser.String())
+			// MySQL reports the old user, even when the issue is the new user.
+			failedUsers = append(failedUsers, oldUser.String())
 			break
 		}
 
