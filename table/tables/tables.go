@@ -409,7 +409,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	}
 	memBuffer.Release(sh)
 	if shouldWriteBinlog(sctx, t.meta) {
-		if !t.meta.PKIsHandle {
+		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
 			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h.IntValue()))
 			binlogNewRow = append(binlogNewRow, types.NewIntDatum(h.IntValue()))
@@ -1029,7 +1029,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 			colIDs = append(colIDs, col.ID)
 		}
 		var binlogRow []types.Datum
-		if !t.meta.PKIsHandle {
+		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
 			colIDs = append(colIDs, model.ExtraHandleID)
 			binlogRow = make([]types.Datum, 0, len(r)+1)
 			binlogRow = append(binlogRow, r...)
@@ -1407,7 +1407,7 @@ func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
 	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}
-	return !ctx.GetSessionVars().InRestrictedSQL && !tblInfo.IsCommonHandle
+	return !ctx.GetSessionVars().InRestrictedSQL
 }
 
 func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
