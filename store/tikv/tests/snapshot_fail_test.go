@@ -211,7 +211,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	err = txn.Set([]byte("k2"), []byte("v2"))
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, false)
-	txn.SetOption(kv.Enable1PC, false)
+	txn.SetEnable1PC(false)
 	txn.SetOption(kv.GuaranteeLinearizability, false)
 
 	// Prewrite the lock without committing it
