@@ -96,12 +96,6 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 	return rs.respTime
 }
 
-type copTaskAndRPCContext struct {
-	task          *copTask
-	allStoreAddrs []string
-	ctx           *tikv.RPCContext
-}
-
 func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 	storeTaskMap := make(map[uint64]*batchCopTask)
 	storeCandidateTaskMap := make(map[uint64]map[string]tikv.RegionInfo)
