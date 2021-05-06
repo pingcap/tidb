@@ -1705,7 +1705,6 @@ func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
 func (s *testColumnTypeChangeSuite) TestAlterPrimaryKeyToNull(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// Enable column change variable.
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	tk.MustExec("drop table if exists t, t1")
