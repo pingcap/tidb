@@ -107,7 +107,7 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 	diff := time.Since(cachedTime)
 
 	if diff > (GcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
-		return tikverr.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point")
+		return tikverr.NewErrPDServerTimeout("start timestamp may fall behind safe point")
 	}
 
 	if startTime < cachedSafePoint {
@@ -310,7 +310,7 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 		// This may cause duplicate data to be written.
 		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
 			if val.(bool) && !IsMockCommitErrorEnable() {
-				err = tikverr.ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
+				err = tikverr.NewErrPDServerTimeout("mock PD timeout")
 			}
 		})
 
