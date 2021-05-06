@@ -227,7 +227,7 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
 	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
 }
 
-func (s *partitionTableSuite) TestGlobalStats(c *C) {
+func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
@@ -279,7 +279,27 @@ func (s *partitionTableSuite) TestGlobalStats(c *C) {
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table tlist")
 
-	// afteer analyzing, the planner will use the Index(a)
+	// after analyzing, the planner will use the Index(a)
+	tk.MustIndexLookup("select * from thash where a<100")
+	tk.MustIndexLookup("select * from trange where a<100")
+	tk.MustIndexLookup("select * from tlist where a<1")
+
+	// create SQL bindings
+	tk.MustExec("create session binding for select * from thash where a<100 using select * from thash ignore index(a) where a<100")
+	tk.MustExec("create session binding for select * from trange where a<100 using select * from trange ignore index(a) where a<100")
+	tk.MustExec("create session binding for select * from tlist where a<100 using select * from tlist ignore index(a) where a<100")
+
+	// use TableScan again since the Index(a) is ignored
+	c.Assert(tk.HasPlan("select * from thash where a<100", "TableFullScan"), IsTrue)
+	c.Assert(tk.HasPlan("select * from trange where a<100", "TableFullScan"), IsTrue)
+	c.Assert(tk.HasPlan("select * from tlist where a<1", "TableFullScan"), IsTrue)
+
+	// drop SQL bindings
+	tk.MustExec("drop session binding for select * from thash where a<100")
+	tk.MustExec("drop session binding for select * from trange where a<100")
+	tk.MustExec("drop session binding for select * from tlist where a<100")
+
+	// use Index(a) again
 	tk.MustIndexLookup("select * from thash where a<100")
 	tk.MustIndexLookup("select * from trange where a<100")
 	tk.MustIndexLookup("select * from tlist where a<2")
