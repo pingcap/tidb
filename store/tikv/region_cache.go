@@ -1516,6 +1516,11 @@ type RegionVerID struct {
 	ver     uint64
 }
 
+// NewRegionVerID creates a region ver id, which used for invalidating regions.
+func NewRegionVerID(id, confVer, ver uint64) RegionVerID {
+	return RegionVerID{id, confVer, ver}
+}
+
 // GetID returns the id of the region
 func (r *RegionVerID) GetID() uint64 {
 	return r.id
