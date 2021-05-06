@@ -48,7 +48,7 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	scanner, err := s.KVSnapshot.Iter(k, upperBound)
 	if err != nil {
-		return nil, toTiDBErr(err)
+		return nil, ToTiDBErr(err)
 	}
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
 }
@@ -57,7 +57,7 @@ func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	scanner, err := s.KVSnapshot.IterReverse(k)
 	if err != nil {
-		return nil, toTiDBErr(err)
+		return nil, ToTiDBErr(err)
 	}
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
 }
@@ -71,6 +71,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetPriority(getTiKVPriority(val.(int)))
 	case tikvstore.NotFillCache:
 		s.KVSnapshot.SetNotFillCache(val.(bool))
+	case tikvstore.SnapshotTS:
+		s.KVSnapshot.SetSnapshotTS(val.(uint64))
 	default:
 		s.KVSnapshot.SetOption(opt, val)
 	}
