@@ -1236,6 +1236,9 @@ func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
 			1950+rand.Intn(100), 1+rand.Intn(12), 1+rand.Intn(28), // date
 			rand.Intn(24), rand.Intn(60), rand.Intn(60)) // time
 	}
+	randDate := func() string {
+		return fmt.Sprintf("%v-%v-%v", 1950+rand.Intn(100), 1+rand.Intn(12), 1+rand.Intn(28))
+	}
 	testcases := []testcase{
 		{ // hash partition + int
 			"create table t1(a int, b int) partition by hash(a) partitions 20",
@@ -1246,11 +1249,11 @@ func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
 		},
 		{ // range partition + int
 			`create table t1(a int, b int) partition by range(a) (
-	partition p0 values less than (20000000),
-	partition p1 values less than (40000000),
-	partition p2 values less than (60000000),
-	partition p3 values less than (80000000),
-	partition p4 values less than (100000000))`,
+						partition p0 values less than (20000000),
+						partition p1 values less than (40000000),
+						partition p2 values less than (60000000),
+						partition p3 values less than (80000000),
+						partition p4 values less than (100000000))`,
 			`create table t2(a int, b int)`,
 			func() string { return fmt.Sprintf("(%v, %v)", rand.Intn(100000000), rand.Intn(100000000)) },
 			func() string { return fmt.Sprintf("%v", rand.Intn(100000000)) },
@@ -1258,11 +1261,11 @@ func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
 		},
 		{ // range partition + varchar
 			`create table t1(a varchar(10), b varchar(10)) partition by range columns(a) (
-	partition p0 values less than ('200'),
-	partition p1 values less than ('400'),
-	partition p2 values less than ('600'),
-	partition p3 values less than ('800'),
-	partition p4 values less than ('9999'))`,
+						partition p0 values less than ('200'),
+						partition p1 values less than ('400'),
+						partition p2 values less than ('600'),
+						partition p3 values less than ('800'),
+						partition p4 values less than ('9999'))`,
 			`create table t2(a varchar(10), b varchar(10))`,
 			func() string { return fmt.Sprintf(`("%v", "%v")`, rand.Intn(1000), rand.Intn(1000)) },
 			func() string { return fmt.Sprintf(`"%v"`, rand.Intn(1000)) },
@@ -1270,22 +1273,34 @@ func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
 		},
 		{ // range partition + datetime
 			`create table t1(a datetime, b datetime) partition by range columns(a) (
-	partition p0 values less than ('1970-1-1 00:00:00'),
-	partition p1 values less than ('1990-1-1 00:00:00'),
-	partition p2 values less than ('2010-1-1 00:00:00'),
-	partition p3 values less than ('2030-1-1 00:00:00'),
-	partition p4 values less than ('2060-1-1 00:00:00'))`,
+						partition p0 values less than ('1970-01-01 00:00:00'),
+						partition p1 values less than ('1990-01-01 00:00:00'),
+						partition p2 values less than ('2010-01-01 00:00:00'),
+						partition p3 values less than ('2030-01-01 00:00:00'),
+						partition p4 values less than ('2060-01-01 00:00:00'))`,
 			`create table t2(a datetime, b datetime)`,
 			func() string { return fmt.Sprintf(`("%v", "%v")`, randDateTime(), randDateTime()) },
 			func() string { return fmt.Sprintf(`"%v"`, randDateTime()) },
 			`select * from %v where a > ?`,
 		},
+		{ // range partition + date
+			`create table t1(a date, b date) partition by range columns(a) (
+						partition p0 values less than ('1970-01-01'),
+						partition p1 values less than ('1990-01-01'),
+						partition p2 values less than ('2010-01-01'),
+						partition p3 values less than ('2030-01-01'),
+						partition p4 values less than ('2060-01-01'))`,
+			`create table t2(a date, b date)`,
+			func() string { return fmt.Sprintf(`("%v", "%v")`, randDate(), randDate()) },
+			func() string { return fmt.Sprintf(`"%v"`, randDate()) },
+			`select * from %v where a > ?`,
+		},
 		{ // list partition + int
 			`create table t1(a int, b int) partition by list(a) (
-	partition p0 values in (0, 1, 2, 3, 4),
-	partition p1 values in (5, 6, 7, 8, 9),
-	partition p2 values in (10, 11, 12, 13, 14),
-	partition p3 values in (15, 16, 17, 18, 19))`,
+						partition p0 values in (0, 1, 2, 3, 4),
+						partition p1 values in (5, 6, 7, 8, 9),
+						partition p2 values in (10, 11, 12, 13, 14),
+						partition p3 values in (15, 16, 17, 18, 19))`,
 			`create table t2(a int, b int)`,
 			func() string { return fmt.Sprintf("(%v, %v)", rand.Intn(20), rand.Intn(20)) },
 			func() string { return fmt.Sprintf("%v", rand.Intn(20)) },
