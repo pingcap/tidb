@@ -3393,6 +3393,7 @@ func (s *testIntegrationSuite7) TestAddTableWithPartition(c *C) {
 	tk.MustExec("drop table if exists global_partition_table;")
 	tk.MustGetErrCode("create global temporary table global_partition_table (a int, b int) partition by hash(a) partitions 3 ON COMMIT DELETE ROWS;", errno.ErrPartitionNoTemporary)
 	tk.MustExec("drop table if exists global_partition_table;")
+	tk.MustExec("drop table if exists partition_table;")
 	_, err := tk.Exec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
 	c.Assert(err, IsNil)
 	tk.MustExec("drop table if exists partition_table;")
