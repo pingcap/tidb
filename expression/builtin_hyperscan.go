@@ -581,6 +581,9 @@ func buildBlockDBFromHex(hexData string) (hs.BlockDatabase, int, error) {
 		return nil, 0, err
 	}
 	db, err := hs.UnmarshalBlockDatabase(data)
+	runtime.SetFinalizer(db, func(hsdb hs.BlockDatabase) {
+		hsdb.Close()
+	})
 	return db, 0, err
 }
 
@@ -590,6 +593,9 @@ func buildBlockDBFromBase64(base64Data string) (hs.BlockDatabase, int, error) {
 		return nil, 0, err
 	}
 	db, err := hs.UnmarshalBlockDatabase(data)
+	runtime.SetFinalizer(db, func(hsdb hs.BlockDatabase) {
+		hsdb.Close()
+	})
 	return db, 0, err
 }
 
