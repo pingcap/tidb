@@ -49,6 +49,8 @@ var (
 	ErrResolveLockTimeout        = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
 	// ErrTiKVServerBusy is the error when tikv server is busy.
 	ErrTiKVServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerBusy)
+	// ErrPDServerTimeout is the error when pd server is timeout.
+	ErrPDServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrPDServerTimeout)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -198,6 +200,13 @@ func ToTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
 		return ErrTiKVServerTimeout
+	}
+
+	if e, ok := err.(*tikverr.ErrPDServerTimeout); ok {
+		if len(e.Error()) == 0 {
+			return ErrPDServerTimeout
+		}
+		return ErrPDServerTimeout.GenWithStackByArgs(e.Error())
 	}
 
 	if errors.ErrorEqual(err, tikverr.ErrTiKVServerBusy) {
