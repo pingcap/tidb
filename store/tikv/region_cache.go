@@ -978,6 +978,20 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 	}
 }
 
+// removeVersionFromCache removes a RegionVerID from cache, tries to cleanup
+// both c.mu.regions and c.mu.versions. Note this function is not thread-safe.
+func (c *RegionCache) removeVersionFromCache(oldVer RegionVerID, regionID uint64) {
+	delete(c.mu.regions, oldVer)
+	for i, ver := range c.mu.versions[regionID] {
+		if ver.Equals(oldVer) {
+			c.mu.versions[regionID] = append(
+				c.mu.versions[regionID][:i],
+				c.mu.versions[regionID][i+1:]...)
+			break
+		}
+	}
+}
+
 // insertRegionToCache tries to insert the Region to cache.
 // It should be protected by c.mu.Lock().
 func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
@@ -997,15 +1011,7 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 		// Don't refresh TiFlash work idx for region. Otherwise, it will always goto a invalid store which
 		// is under transferring regions.
 		store.workTiFlashIdx = atomic.LoadInt32(&oldRegionStore.workTiFlashIdx)
-		delete(c.mu.regions, oldRegion.VerID())
-		for i, ver := range c.mu.versions[cachedRegion.VerID().id] {
-			if ver.Equals(oldRegion.VerID()) {
-				c.mu.versions[cachedRegion.VerID().id] = append(
-					c.mu.versions[cachedRegion.VerID().id][:i],
-					c.mu.versions[cachedRegion.VerID().id][i+1:]...)
-				break
-			}
-		}
+		c.removeVersionFromCache(oldRegion.VerID(), cachedRegion.VerID().id)
 	}
 	c.mu.regions[cachedRegion.VerID()] = cachedRegion
 	c.mu.versions[cachedRegion.VerID().id] = append(c.mu.versions[cachedRegion.VerID().id], cachedRegion.VerID())
@@ -1049,6 +1055,8 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 		r, ok := c.mu.regions[v]
 		if !ok {
 			// should not happen
+			logutil.BgLogger().Warn("region version not found",
+				zap.Uint64("regionID", regionID), zap.Stringer("version", &v))
 			continue
 		}
 		if v.id == regionID {
