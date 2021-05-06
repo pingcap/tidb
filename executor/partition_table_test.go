@@ -302,7 +302,7 @@ func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 	// use Index(a) again
 	tk.MustIndexLookup("select * from thash where a<100")
 	tk.MustIndexLookup("select * from trange where a<100")
-	tk.MustIndexLookup("select * from tlist where a<2")
+	tk.MustIndexLookup("select * from tlist where a<1")
 }
 
 func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
