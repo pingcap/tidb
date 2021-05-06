@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tidbmetrics "github.com/pingcap/tidb/metrics"
+	txndriver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -980,7 +981,7 @@ type CopRuntimeStats struct {
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
 	errCode := errno.ErrUnknown
 	errMsg := err.Error()
-	if terror.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
+	if terror.ErrorEqual(err, txndriver.ErrTiKVServerTimeout) {
 		errCode = errno.ErrTiKVServerTimeout
 		errMsg = "TiDB server timeout, address is " + task.storeAddr
 	}

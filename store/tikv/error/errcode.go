@@ -28,5 +28,4 @@ const (
 	CodeTiKVStoreLimit = 9008
 
 	CodeTiFlashServerTimeout = 9012
-	CodeTiFlashServerBusy    = 9013
 )
