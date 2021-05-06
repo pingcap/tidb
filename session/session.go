@@ -2618,7 +2618,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		var varVal string
 		var ok bool
 		if varVal, ok = sessionCache[varName]; !ok {
-			varVal, err = domain.GetDomain(s).GetSysVarCache().GetGlobalVar(s, varName)
+			varVal, err = s.GetGlobalSysVar(varName)
 			if err != nil {
 				continue // skip variables that are not loaded.
 			}
