@@ -3649,6 +3649,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				p := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IdForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(cte.seedLP.Schema())
 				p.SetOutputNames(cte.seedLP.OutputNames())
+				if len(asName.String()) > 0 {
+					on := p.OutputNames()
+					for i := range on {
+						cpOn := *on[i]
+						on[i] = &cpOn
+						on[i].TblName = *asName
+					}
+					p.SetOutputNames(on)
+				}
 				return p, nil
 			}
 		}
