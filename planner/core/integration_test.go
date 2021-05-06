@@ -1864,6 +1864,20 @@ func (s *testIntegrationSuite) TestReorderSimplifiedOuterJoins(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestDeleteStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("delete t from t;")
+	tk.MustExec("delete t from test.t as t;")
+	tk.MustGetErrCode("delete test.t from test.t as t;", mysql.ErrUnknownTable)
+	tk.MustExec("delete test.t from t;")
+	tk.MustExec("create database db1")
+	tk.MustExec("use db1")
+	tk.MustExec("create table t(a int)")
+	tk.MustGetErrCode("delete test.t from t;", mysql.ErrUnknownTable)
+}
+
 // Test for issue https://github.com/pingcap/tidb/issues/21607.
 func (s *testIntegrationSuite) TestConditionColPruneInPhysicalUnionScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
