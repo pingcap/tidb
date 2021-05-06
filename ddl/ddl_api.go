@@ -1440,11 +1440,6 @@ func buildTableInfo(
 				if isSingleIntPK {
 					tbInfo.PKIsHandle = true
 				} else {
-					hasBinlog := ctx.GetSessionVars().BinlogClient != nil
-					if hasBinlog {
-						msg := mysql.Message("Cannot create clustered index table when the binlog is ON", nil)
-						return nil, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
-					}
 					tbInfo.IsCommonHandle = true
 					tbInfo.CommonHandleVersion = 1
 				}
