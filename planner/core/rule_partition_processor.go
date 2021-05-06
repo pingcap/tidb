@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -190,14 +191,27 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 						}
 						used = append(used, int(idx))
 					}
-				} else {
-					used = []int{FullRange}
-					break
+					continue
 				}
-			} else {
-				used = []int{FullRange}
-				break
+
+				// issue:#22619
+				if col.RetType.Tp == mysql.TypeBit {
+					// maximum number of partitions is 8192
+					if col.RetType.Flen > 0 && col.RetType.Flen < int(math.Log2(ddl.PartitionCountLimit)) {
+						// all possible hash values
+						maxUsedPartitions := 1 << col.RetType.Flen
+						if maxUsedPartitions < numPartitions {
+							for i := 0; i < maxUsedPartitions; i++ {
+								used = append(used, i)
+							}
+							continue
+						}
+					}
+				}
 			}
+
+			used = []int{FullRange}
+			break
 		}
 	}
 	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {

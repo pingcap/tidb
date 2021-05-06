@@ -690,24 +690,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		}
 	}
 
-	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-
-	processColumnFlags(col)
-
-	err = checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	err = checkColumnValueConstraint(col, col.Collate)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	err = checkDefaultValue(ctx, col, hasDefaultValue)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	err = checkColumnFieldLength(col)
-	if err != nil {
+	if err = processAndCheckDefaultValueAndColumn(ctx, col, outPriKeyConstraint, hasDefaultValue, setOnUpdateNow, hasNullFlag); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	return col, constraints, nil
@@ -3675,6 +3658,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 
 	var hasDefaultValue, setOnUpdateNow bool
 	var err error
+	var hasNullFlag bool
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
@@ -3690,6 +3674,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionNotNull:
 			col.Flag |= mysql.NotNullFlag
 		case ast.ColumnOptionNull:
+			hasNullFlag = true
 			col.Flag &= ^mysql.NotNullFlag
 		case ast.ColumnOptionAutoIncrement:
 			col.Flag |= mysql.AutoIncrementFlag
@@ -3734,14 +3719,30 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		}
 	}
 
-	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-
-	processColumnFlags(col)
-
-	if hasDefaultValue {
-		return errors.Trace(checkDefaultValue(ctx, col, true))
+	if err = processAndCheckDefaultValueAndColumn(ctx, col, nil, hasDefaultValue, setOnUpdateNow, hasNullFlag); err != nil {
+		return errors.Trace(err)
 	}
 
+	return nil
+}
+
+func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column, outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
+	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+	processColumnFlags(col)
+
+	err := checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkColumnValueConstraint(col, col.Collate); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkDefaultValue(ctx, col, hasDefaultValue); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkColumnFieldLength(col); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -3854,10 +3855,6 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkColumnValueConstraint(newCol, newCol.Collate); err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	if err = checkModifyTypes(ctx, &col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		if strings.Contains(err.Error(), "Unsupported modifying collation") {
 			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
@@ -3892,10 +3889,6 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
 		modifyColumnTp = mysql.TypeNull
-	}
-
-	if err = checkColumnFieldLength(newCol); err != nil {
-		return nil, err
 	}
 
 	if err = checkColumnWithIndexConstraint(t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
