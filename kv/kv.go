@@ -439,6 +439,13 @@ type SplittableStore interface {
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
 
+// Priority value for transaction priority.
+const (
+	PriorityNormal = iota
+	PriorityLow
+	PriorityHigh
+)
+
 // IsoLevel is the transaction's isolation level.
 type IsoLevel int
 
