@@ -41,6 +41,17 @@ var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout    = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
 	ErrTiFlashServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiFlashServerTimeout)
+	// ErrGCTooEarly is the error that GC life time is shorter than transaction duration
+	ErrGCTooEarly = dbterror.ClassTiKV.NewStd(errno.ErrGCTooEarly)
+	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
+	ErrTiKVStaleCommand = dbterror.ClassTiKV.NewStd(errno.ErrTiKVStaleCommand)
+	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
+	ErrTiKVMaxTimestampNotSynced = dbterror.ClassTiKV.NewStd(errno.ErrTiKVMaxTimestampNotSynced)
+	ErrResolveLockTimeout        = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
+	// ErrTiKVServerBusy is the error when tikv server is busy.
+	ErrTiKVServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerBusy)
+	// ErrPDServerTimeout is the error when pd server is timeout.
+	ErrPDServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrPDServerTimeout)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -154,13 +165,16 @@ func extractKeyErr(err error) error {
 		notFoundDetail := prettyLockNotFoundKey(e.Retryable)
 		return kv.ErrTxnRetryable.GenWithStackByArgs(e.Retryable + " " + notFoundDetail)
 	}
-	return toTiDBErr(err)
+	return ToTiDBErr(err)
 }
 
-func toTiDBErr(err error) error {
+// ToTiDBErr checks and converts a tikv error to a tidb error.
+func ToTiDBErr(err error) error {
+	originErr := err
 	if err == nil {
 		return nil
 	}
+	err = errors.Cause(err)
 	if tikverr.IsErrNotFound(err) {
 		return kv.ErrNotExist
 	}
@@ -189,11 +203,38 @@ func toTiDBErr(err error) error {
 		return ErrTiKVServerTimeout
 	}
 
+	if e, ok := err.(*tikverr.ErrPDServerTimeout); ok {
+		if len(e.Error()) == 0 {
+			return ErrPDServerTimeout
+		}
+		return ErrPDServerTimeout.GenWithStackByArgs(e.Error())
+	}
+
 	if errors.ErrorEqual(err, tikverr.ErrTiFlashServerTimeout) {
 		return ErrTiFlashServerTimeout
 	}
 
-	return errors.Trace(err)
+	if errors.ErrorEqual(err, tikverr.ErrTiKVServerBusy) {
+		return ErrTiKVServerBusy
+	}
+
+	if e, ok := err.(*tikverr.ErrGCTooEarly); ok {
+		return ErrGCTooEarly.GenWithStackByArgs(e.TxnStartTS, e.GCSafePoint)
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrTiKVStaleCommand) {
+		return ErrTiKVStaleCommand
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrTiKVMaxTimestampNotSynced) {
+		return ErrTiKVMaxTimestampNotSynced
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrResolveLockTimeout) {
+		return ErrResolveLockTimeout
+	}
+
+	return errors.Trace(originErr)
 }
 
 func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
