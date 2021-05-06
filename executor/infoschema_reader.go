@@ -151,7 +151,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableTiDBTrx,
 			infoschema.ClusterTableTiDBTrx:
-			err = e.setDataForTiDBTrx(sctx)
+			e.setDataForTiDBTrx(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2014,16 +2014,28 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	return nil
 }
 
-func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) {
 	sm := ctx.GetSessionManager()
 	if sm == nil {
-		return nil
+		return
+	}
+
+	loginUser := ctx.GetSessionVars().User
+	var hasProcessPriv bool
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
 	}
 	infoList := sm.ShowTxnList()
 	for _, info := range infoList {
+		// If you have the PROCESS privilege, you can see all running transactions.
+		// Otherwise, you can see only your own transactions.
+		if !hasProcessPriv && loginUser != nil && info.Username != loginUser.Username {
+			continue
+		}
 		e.rows = append(e.rows, info.ToDatum())
 	}
-	return nil
 }
 
 type hugeMemTableRetriever struct {
