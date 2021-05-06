@@ -8096,3 +8096,17 @@ func (s *testIntegrationSuite) TestApproximatePercentile(c *C) {
 	tk.MustExec("insert into t values(b'1111')")
 	tk.MustQuery("select approx_percentile(a, 10) from t").Check(testkit.Rows("<nil>"))
 }
+
+func (s *testIntegrationSuite) TestIssue23889(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_decimal,test_t;")
+	tk.MustExec("create table test_decimal(col_decimal decimal(10,0));")
+	tk.MustExec("insert into test_decimal values(null),(8);")
+	tk.MustExec("create table test_t(a int(11), b decimal(32,0));")
+	tk.MustExec("insert into test_t values(1,4),(2,4),(5,4),(7,4),(9,4);")
+
+	tk.MustQuery("SELECT ( test_decimal . `col_decimal` , test_decimal . `col_decimal` )  IN ( select * from test_t ) as field1 FROM  test_decimal;").Check(
+		testkit.Rows("<nil>", "0"))
+}
