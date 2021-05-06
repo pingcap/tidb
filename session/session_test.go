@@ -42,7 +42,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/session/txnInfo"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -4282,7 +4282,7 @@ func (s *testTxnStateSuite) TestBasic(c *C) {
 	info = tk.Se.TxnInfo()
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
 	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest)
-	c.Assert(info.State, Equals, txnInfo.TxnRunningNormal)
+	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
 	c.Assert(info.BlockStartTime, IsNil)
 	// len and size will be covered in TestLenAndSize
 	c.Assert(info.ConnectionID, Equals, tk.Se.GetSessionVars().ConnectionID)
@@ -4306,7 +4306,7 @@ func (s *testTxnStateSuite) TestBlocked(c *C) {
 		tk2.MustExec("commit;")
 	}()
 	time.Sleep(200 * time.Millisecond)
-	c.Assert(tk2.Se.TxnInfo().State, Equals, txnInfo.TxnLockWaiting)
+	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnLockWaiting)
 	c.Assert(tk2.Se.TxnInfo().BlockStartTime, NotNil)
 	tk.MustExec("commit;")
 }
@@ -4317,11 +4317,11 @@ func (s *testTxnStateSuite) TestLenAndSize(c *C) {
 	tk.MustExec("begin pessimistic;")
 	tk.MustExec("insert into t(a) values (1);")
 	info := tk.Se.TxnInfo()
-	c.Assert(info.Len, Equals, int64(1))
-	c.Assert(info.Size, Equals, int64(29))
+	c.Assert(info.EntriesCount, Equals, int64(1))
+	c.Assert(info.EntriesSize, Equals, int64(29))
 	tk.MustExec("insert into t(a) values (2);")
 	info = tk.Se.TxnInfo()
-	c.Assert(info.Len, Equals, int64(2))
-	c.Assert(info.Size, Equals, int64(58))
+	c.Assert(info.EntriesCount, Equals, int64(2))
+	c.Assert(info.EntriesSize, Equals, int64(58))
 	tk.MustExec("commit;")
 }

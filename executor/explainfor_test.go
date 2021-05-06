@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/session/txnInfo"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/israce"
@@ -39,7 +39,7 @@ type mockSessionManager1 struct {
 	PS []*util.ProcessInfo
 }
 
-func (msm *mockSessionManager1) ShowTxnList() []txnInfo.TxnInfo {
+func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
 	return nil
 }
 

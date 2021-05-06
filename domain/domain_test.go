@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/session/txnInfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
@@ -242,7 +242,7 @@ type mockSessionManager struct {
 	PS []*util.ProcessInfo
 }
 
-func (msm *mockSessionManager) ShowTxnList() []txnInfo.TxnInfo {
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 	panic("unimplemented!")
 }
 

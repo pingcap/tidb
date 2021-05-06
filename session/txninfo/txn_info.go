@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package txnInfo
+package txninfo
 
 import (
 	"time"
@@ -50,9 +50,9 @@ type TxnInfo struct {
 	// last trying to block start time
 	BlockStartTime *time.Time
 	// How many entries are in MemDB
-	Len int64
+	EntriesCount int64
 	// MemDB used memory
-	Size int64
+	EntriesSize int64
 
 	// the following fields will be filled in `session` instead of `LazyTxn`
 
@@ -83,8 +83,8 @@ func (info TxnInfo) ToDatum() []types.Datum {
 	datums = append(datums, state)
 	datums = append(datums, types.MakeDatums(
 		blockStartTime,
-		info.Len,
-		info.Size,
+		info.EntriesCount,
+		info.EntriesSize,
 		info.ConnectionID,
 		info.Username,
 		info.CurrentDB)...)

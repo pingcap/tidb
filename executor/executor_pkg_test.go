@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	plannerutil "github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/session/txnInfo"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -61,7 +61,7 @@ type mockSessionManager struct {
 	serverID uint64
 }
 
-func (msm *mockSessionManager) ShowTxnList() []txnInfo.TxnInfo {
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 	panic("unimplemented!")
 }
 

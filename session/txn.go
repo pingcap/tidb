@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session/txnInfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
@@ -64,10 +64,8 @@ type LazyTxn struct {
 	// but we hope getting TxnInfo is a thread safe op
 
 	infoStartTS uint64
-	// digest of SQL current running
-	CurrentSQLDigest atomic.Value // string
 	// current executing state
-	State txnInfo.TxnRunningState
+	State txninfo.TxnRunningState
 	// last trying to block start time
 	blockStartTime unsafe.Pointer // *time.Time, cannot use atomic.Value here because it is possible to be nil
 }
@@ -84,7 +82,7 @@ func (txn *LazyTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 func (txn *LazyTxn) init() {
 	txn.mutations = make(map[int64]*binlog.TableMutation)
-	atomic.StoreInt32(&txn.State, txnInfo.TxnRunningNormal)
+	atomic.StoreInt32(&txn.State, txninfo.TxnRunningNormal)
 }
 
 func (txn *LazyTxn) initStmtBuf() {
@@ -175,7 +173,7 @@ func (txn *LazyTxn) GoString() string {
 
 func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
 	txn.Transaction = kvTxn
-	atomic.StoreInt32(&txn.State, txnInfo.TxnRunningNormal)
+	atomic.StoreInt32(&txn.State, txninfo.TxnRunningNormal)
 	atomic.StoreUint64(&txn.infoStartTS, kvTxn.StartTS())
 	txn.initStmtBuf()
 	txn.txnFuture = nil
@@ -202,7 +200,7 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 		return err
 	}
 	txn.Transaction = t
-	atomic.StoreInt32(&txn.State, txnInfo.TxnRunningNormal)
+	atomic.StoreInt32(&txn.State, txninfo.TxnRunningNormal)
 	atomic.StoreUint64(&txn.infoStartTS, t.StartTS())
 	txn.initStmtBuf()
 	return nil
@@ -255,7 +253,7 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
 
-	atomic.StoreInt32(&txn.State, txnInfo.TxnCommitting)
+	atomic.StoreInt32(&txn.State, txninfo.TxnCommitting)
 
 	// mockCommitError8942 is used for PR #8942.
 	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
@@ -285,14 +283,14 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 // Rollback overrides the Transaction interface.
 func (txn *LazyTxn) Rollback() error {
 	defer txn.reset()
-	txn.State = txnInfo.TxnRollingBack
+	txn.State = txninfo.TxnRollingBack
 	return txn.Transaction.Rollback()
 }
 
 // LockKeys Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	originState := atomic.LoadInt32(&txn.State)
-	atomic.StoreInt32(&txn.State, txnInfo.TxnLockWaiting)
+	atomic.StoreInt32(&txn.State, txninfo.TxnLockWaiting)
 	t := time.Now()
 	atomic.StorePointer(&txn.blockStartTime, unsafe.Pointer(&t))
 	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
@@ -356,18 +354,17 @@ func keyNeedToLock(k, v []byte, flags tikvstore.KeyFlags) bool {
 
 // Info dump the TxnState to Datum for displaying in `TIDB_TRX`
 // This function is supposed to be thread safe
-func (txn *LazyTxn) Info() *txnInfo.TxnInfo {
+func (txn *LazyTxn) Info() *txninfo.TxnInfo {
 	startTs := atomic.LoadUint64(&txn.infoStartTS)
 	if startTs == 0 {
 		return nil
 	}
-	return &txnInfo.TxnInfo{
-		StartTS:          startTs,
-		CurrentSQLDigest: *txn.CurrentSQLDigest.Load().(*string),
-		State:            atomic.LoadInt32(&txn.State),
-		BlockStartTime:   (*time.Time)(atomic.LoadPointer(&txn.blockStartTime)),
-		Len:              int64(txn.Len()),
-		Size:             int64(txn.Size()),
+	return &txninfo.TxnInfo{
+		StartTS:        startTs,
+		State:          atomic.LoadInt32(&txn.State),
+		BlockStartTime: (*time.Time)(atomic.LoadPointer(&txn.blockStartTime)),
+		EntriesCount:   int64(txn.Len()),
+		EntriesSize:    int64(txn.Size()),
 	}
 }
 

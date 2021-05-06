@@ -61,7 +61,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/session/txnInfo"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -148,7 +148,7 @@ type Session interface {
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	ShowProcess() *util.ProcessInfo
 	// Return the information of the txn current running
-	TxnInfo() *txnInfo.TxnInfo
+	TxnInfo() *txninfo.TxnInfo
 	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
@@ -446,12 +446,13 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
-func (s *session) TxnInfo() *txnInfo.TxnInfo {
+func (s *session) TxnInfo() *txninfo.TxnInfo {
 	txnInfo := s.txn.Info()
 	if txnInfo == nil {
 		return nil
 	}
 	processInfo := s.ShowProcess()
+	txnInfo.CurrentSQLDigest = processInfo.Digest
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
@@ -1434,11 +1435,6 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
-	if s.txn.Valid() {
-		_, digest := parser.NormalizeDigest(stmtNode.Text())
-		s.txn.CurrentSQLDigest.Store(&digest)
-	}
-
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ExecuteStmt", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()

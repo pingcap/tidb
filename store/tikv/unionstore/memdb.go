@@ -139,8 +139,8 @@ func (db *MemDB) Reset() {
 	db.stages = db.stages[:0]
 	db.dirty = false
 	db.vlogInvalid = false
-	db.size = 0
-	db.count = 0
+	atomic.StoreInt64(&db.size, 0)
+	atomic.StoreInt64(&db.count, 0)
 	db.vlog.reset()
 	db.allocator.reset()
 }

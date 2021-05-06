@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/session/txnInfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -797,7 +797,7 @@ type mockSessionManager1 struct {
 	Se session.Session
 }
 
-func (msm *mockSessionManager1) ShowTxnList() []txnInfo.TxnInfo {
+func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
 	panic("unimplemented!")
 }
 

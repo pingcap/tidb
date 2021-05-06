@@ -42,7 +42,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/session/txnInfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
@@ -436,7 +436,7 @@ type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
 }
 
-func (sm *mockSessionManager) ShowTxnList() []txnInfo.TxnInfo {
+func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 	panic("unimplemented!")
 }
 

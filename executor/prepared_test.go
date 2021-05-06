@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/session/txnInfo"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/israce"
@@ -136,7 +136,7 @@ type mockSessionManager2 struct {
 	killed bool
 }
 
-func (sm *mockSessionManager2) ShowTxnList() []txnInfo.TxnInfo {
+func (sm *mockSessionManager2) ShowTxnList() []*txninfo.TxnInfo {
 	panic("unimplemented!")
 }
 
