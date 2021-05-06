@@ -52,7 +52,6 @@ const MismatchClusterID = "mismatch cluster id"
 // error instances.
 var (
 	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
-	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(CodePDServerTimeout)
 	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(CodeRegionUnavailable)
 	ErrTiFlashServerBusy           = dbterror.ClassTiKV.NewStd(CodeTiFlashServerBusy)
 	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
@@ -170,6 +169,20 @@ type ErrEntryTooLarge struct {
 
 func (e *ErrEntryTooLarge) Error() string {
 	return fmt.Sprintf("entry size too large, size: %v,limit: %v.", e.Size, e.Limit)
+}
+
+// ErrPDServerTimeout is the error when pd server is timeout.
+type ErrPDServerTimeout struct {
+	msg string
+}
+
+// NewErrPDServerTimeout creates an ErrPDServerTimeout.
+func NewErrPDServerTimeout(msg string) error {
+	return &ErrPDServerTimeout{msg}
+}
+
+func (e *ErrPDServerTimeout) Error() string {
+	return e.msg
 }
 
 // ErrGCTooEarly is the error that GC life time is shorter than transaction duration
