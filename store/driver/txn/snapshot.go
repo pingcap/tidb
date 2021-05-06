@@ -67,6 +67,12 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	case tikvstore.IsolationLevel:
 		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
 		s.KVSnapshot.SetIsolationLevel(level)
+	case tikvstore.Priority:
+		s.KVSnapshot.SetPriority(getTiKVPriority(val.(int)))
+	case tikvstore.NotFillCache:
+		s.KVSnapshot.SetNotFillCache(val.(bool))
+	case tikvstore.SnapshotTS:
+		s.KVSnapshot.SetSnapshotTS(val.(uint64))
 	default:
 		s.KVSnapshot.SetOption(opt, val)
 	}
@@ -85,5 +91,16 @@ func getTiKVIsolationLevel(level kv.IsoLevel) tikv.IsoLevel {
 		return tikv.RC
 	default:
 		return tikv.SI
+	}
+}
+
+func getTiKVPriority(pri int) tikv.Priority {
+	switch pri {
+	case kv.PriorityHigh:
+		return tikv.PriorityHigh
+	case kv.PriorityLow:
+		return tikv.PriorityLow
+	default:
+		return tikv.PriorityNormal
 	}
 }
