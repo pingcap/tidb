@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -89,6 +90,13 @@ type scalar struct {
 
 // NewHistogram creates a new histogram.
 func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
+	if tp.EvalType() == types.ETString {
+		// The histogram will store the string value's 'sort key' representation of its collation.
+		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
+		// This would cause panic. So we apply a little trick here to avoid decoding it by explicitly changing the collation to 'CollationBin'.
+		tp = tp.Clone()
+		tp.Collate = charset.CollationBin
+	}
 	return &Histogram{
 		ID:                id,
 		NDV:               ndv,
