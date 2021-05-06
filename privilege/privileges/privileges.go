@@ -57,6 +57,21 @@ type UserPrivileges struct {
 	*Handle
 }
 
+// RequestDynamicVerificationWithUser implements the Manager interface.
+func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool {
+	if SkipWithGrant {
+		return true
+	}
+
+	if user == nil {
+		return false
+	}
+
+	mysqlPriv := p.Handle.Get()
+	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
+	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, privName, grantable)
+}
+
 // RequestDynamicVerification implements the Manager interface.
 func (p *UserPrivileges) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool {
 	if SkipWithGrant {
@@ -68,23 +83,6 @@ func (p *UserPrivileges) RequestDynamicVerification(activeRoles []*auth.RoleIden
 
 	mysqlPriv := p.Handle.Get()
 	return mysqlPriv.RequestDynamicVerification(activeRoles, p.user, p.host, privName, grantable)
-}
-
-// IsRestrictedUser implements the Manager interface.
-// This function is used by SEM to check if a user is non-modifyable by regular users.
-func (p *UserPrivileges) IsRestrictedUser(user, host string) bool {
-	if SkipWithGrant {
-		return false
-	}
-	if p.user == "" && p.host == "" {
-		return false
-	}
-	// Do the actual check to see if a user contains the privilege RESTRICTED_USER_ADMIN.
-	// This can only consider defaultRoles and not activeRoles because the sessionManager
-	// doesn't contain this / it is complicated to do this across global KILL.
-	mysqlPriv := p.Handle.Get()
-	roles := mysqlPriv.getDefaultRoles(user, host)
-	return mysqlPriv.RequestDynamicVerification(roles, user, host, "RESTRICTED_USER_ADMIN", false)
 }
 
 // RequestVerification implements the Manager interface.
