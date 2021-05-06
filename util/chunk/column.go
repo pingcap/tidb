@@ -20,9 +20,11 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"go.uber.org/zap"
 )
 
 // AppendDuration appends a duration value into this Column.
@@ -569,7 +571,9 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 	}
 	var val uint64
 	copy((*[8]byte)(unsafe.Pointer(&val))[:], c.data[start:])
-	return string(hack.String(c.data[start+8 : end])), val
+	s := string(hack.String(c.data[start+8 : end]))
+	log.Info("getNameValue", zap.String("s", s), zap.Uint64("val", val))
+	return s, val
 }
 
 // GetRaw returns the underlying raw bytes in the specific row.

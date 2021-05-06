@@ -28,12 +28,16 @@ const (
 	// TxnRunningNormal means the transaction is running normally
 	TxnRunningNormal TxnRunningState = iota
 	// TxnLockWaiting means the transaction is blocked on a lock
-	TxnLockWaiting TxnRunningState = iota
+	TxnLockWaiting
 	// TxnCommitting means the transaction is (at least trying to) committing
-	TxnCommitting TxnRunningState = iota
+	TxnCommitting
 	// TxnRollingBack means the transaction is rolling back
-	TxnRollingBack TxnRunningState = iota
+	TxnRollingBack
 )
+
+var TxnRunningStateStrs = []string{
+	"Normal", "LockWaiting", "Committing", "RollingBack",
+}
 
 // TxnInfo is information about a running transaction
 // This is supposed to be the datasource of `TIDB_TRX` in infoschema
@@ -69,13 +73,20 @@ func (info TxnInfo) ToDatum() []types.Datum {
 	} else {
 		blockStartTime = types.NewTime(types.FromGoTime(*info.BlockStartTime), mysql.TypeTimestamp, 0)
 	}
-	return types.MakeDatums(
+	e, _ := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
+	state := types.NewMysqlEnumDatum(e)
+	datums := types.MakeDatums(
 		info.StartTS,
 		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, 0),
 		info.CurrentSQLDigest,
-		info.State,
+	)
+	datums = append(datums, state)
+	datums = append(datums, types.MakeDatums(
 		blockStartTime,
 		info.Len,
 		info.Size,
-	)
+		info.ConnectionID,
+		info.Username,
+		info.CurrentDB)...)
+	return datums
 }

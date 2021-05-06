@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/session/txnInfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
@@ -241,19 +242,20 @@ var tableIDMap = map[string]int64{
 }
 
 type columnInfo struct {
-	name    string
-	tp      byte
-	size    int
-	decimal int
-	flag    uint
-	deflt   interface{}
-	comment string
+	name      string
+	tp        byte
+	size      int
+	decimal   int
+	flag      uint
+	deflt     interface{}
+	comment   string
+	enumElems []string
 }
 
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob {
+	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob || col.tp == mysql.TypeEnum {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
 	}
@@ -264,6 +266,7 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 		Flen:    col.size,
 		Decimal: col.decimal,
 		Flag:    col.flag,
+		Elems:   col.enumElems,
 	}
 	return &model.ColumnInfo{
 		Name:         model.NewCIStr(col.name),
@@ -1341,11 +1344,11 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: "ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag},
 	{name: "START_TIME", tp: mysql.TypeTimestamp, size: 26, comment: "Start time of the transaction"},
 	{name: "DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of the sql the transaction are currently running"},
-	{name: "STATE", tp: mysql.TypeLonglong, size: 64, comment: "Current running state of the transaction"},
+	{name: "STATE", tp: mysql.TypeEnum, enumElems: txnInfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
 	{name: "WAITING_START_TIME", tp: mysql.TypeTimestamp, size: 26, comment: "Current lock waiting's start time"},
 	{name: "LEN", tp: mysql.TypeLonglong, size: 64, comment: "How many entries are in MemDB"},
 	{name: "SIZE", tp: mysql.TypeLonglong, size: 64, comment: "MemDB used memory"},
-	{name: "SESSION_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Which session this transaction belongs to"},
+	{name: "SESSION_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag, comment: "Which session this transaction belongs to"},
 	{name: "USER", tp: mysql.TypeVarchar, size: 16, comment: "The user who open this session"},
 	{name: "DB", tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
 }
