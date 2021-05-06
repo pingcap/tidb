@@ -110,6 +110,15 @@ func (r *RegionStore) accessStore(mode AccessMode, idx AccessIndex) (int, *Store
 	return sidx, r.stores[sidx]
 }
 
+func (r *RegionStore) getAccessIndex(mode AccessMode, store *Store) AccessIndex {
+	for index, sidx := range r.accessIndex[mode] {
+		if r.stores[sidx].storeID == store.storeID {
+			return AccessIndex(index)
+		}
+	}
+	return -1
+}
+
 func (r *RegionStore) accessStoreNum(mode AccessMode) int {
 	return len(r.accessIndex[mode])
 }
@@ -683,6 +692,69 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 		}
 	}
 	return r, nil
+}
+
+// OnSendFailForBatchRegions handles send request fail logic.
+func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, regionInfos []RegionInfo, scheduleReload bool, err error) {
+	metrics.RegionCacheCounterWithSendFail.Inc()
+	if store.storeType != TiFlash {
+		logutil.Logger(bo.ctx).Warn("OnSendFailForBatchRegions only support TiFlash")
+		return
+	}
+	for _, ri := range regionInfos {
+		if ri.Meta == nil {
+			continue
+		}
+		r := c.getCachedRegionWithRLock(ri.Region)
+		if r != nil {
+			peersNum := len(r.meta.Peers)
+			if len(ri.Meta.Peers) != peersNum {
+				logutil.Logger(bo.ctx).Info("retry and refresh current region after send request fail and up/down stores length changed",
+					zap.Stringer("current", &ri.Region),
+					zap.Bool("needReload", scheduleReload),
+					zap.Reflect("oldPeers", ri.Meta.Peers),
+					zap.Reflect("newPeers", r.meta.Peers),
+					zap.Error(err))
+				continue
+			}
+
+			rs := r.getStore()
+
+			accessMode := TiFlashOnly
+			accessIdx := rs.getAccessIndex(accessMode, store)
+			if accessIdx == -1 {
+				logutil.Logger(bo.ctx).Warn("OnSendFailForBatchRegions can not get access index for region " + ri.Region.String())
+				continue
+			}
+			if err != nil {
+				storeIdx, s := rs.accessStore(accessMode, accessIdx)
+				//  Mark the store as failure if it's not a redirection request because we
+				//  can't know the status of the proxy store by it.
+				// send fail but store is reachable, keep retry current peer for replica leader request.
+				// but we still need switch peer for follower-read or learner-read(i.e. tiflash)
+				// invalidate regions in store.
+				epoch := rs.storeEpochs[storeIdx]
+				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
+					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+					metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+				}
+				// schedule a store addr resolve.
+				s.markNeedCheck(c.notifyCheckCh)
+			}
+
+			// try next peer to found new leader.
+			rs.switchNextFlashPeer(r, accessIdx)
+			logutil.Logger(bo.ctx).Info("switch region tiflash peer to next due to send request fail",
+				zap.Stringer("current", &ri.Region),
+				zap.Bool("needReload", scheduleReload),
+				zap.Error(err))
+
+			// force reload region when retry all known peers in region.
+			if scheduleReload {
+				r.scheduleReload()
+			}
+		}
+	}
 }
 
 // OnSendFail handles send request fail logic.

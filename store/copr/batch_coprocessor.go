@@ -38,8 +38,9 @@ import (
 type batchCopTask struct {
 	storeAddr string
 	cmdType   tikvrpc.CmdType
+	ctx       *tikv.RPCContext
 
-	copTasks []copTaskAndRPCContext
+	regionInfos []tikv.RegionInfo
 }
 
 type batchCopResponse struct {
@@ -99,28 +100,28 @@ type copTaskAndRPCContext struct {
 
 func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 	storeTaskMap := make(map[string]*batchCopTask)
-	storeCandidateTaskMap := make(map[string]map[string]copTaskAndRPCContext)
+	storeCandidateTaskMap := make(map[string]map[string]tikv.RegionInfo)
 	totalCandidateStoreNum := 0
 	totalCandidateCopTaskNum := 0
 	for _, task := range originalTasks {
 		batchTask := &batchCopTask{
-			storeAddr: task.storeAddr,
-			cmdType:   task.cmdType,
-			copTasks:  []copTaskAndRPCContext{task.copTasks[0]},
+			storeAddr:   task.storeAddr,
+			cmdType:     task.cmdType,
+			regionInfos: []tikv.RegionInfo{task.regionInfos[0]},
 		}
 		storeTaskMap[task.storeAddr] = batchTask
 	}
 	for _, task := range originalTasks {
-		for index, copTask := range task.copTasks {
+		for index, ri := range task.regionInfos {
 			// for each cop task, figure out the valid store num
 			validStoreNum := 0
 			if index == 0 {
 				continue
 			}
-			if len(copTask.allStoreAddrs) <= 1 {
+			if len(ri.AllStoreAddrs) <= 1 {
 				validStoreNum = 1
 			} else {
-				for _, storeAddr := range copTask.allStoreAddrs {
+				for _, storeAddr := range ri.AllStoreAddrs {
 					if _, ok := storeTaskMap[storeAddr]; ok {
 						validStoreNum++
 					}
@@ -128,24 +129,24 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 			}
 			if validStoreNum == 1 {
 				// if only one store is valid, just put it to storeTaskMap
-				storeTaskMap[task.storeAddr].copTasks = append(storeTaskMap[task.storeAddr].copTasks, copTask)
+				storeTaskMap[task.storeAddr].regionInfos = append(storeTaskMap[task.storeAddr].regionInfos, ri)
 			} else {
 				// if more than one store is valid, put the cop task
 				// to store candidate map
 				totalCandidateStoreNum += validStoreNum
 				totalCandidateCopTaskNum += 1
 				/// put this cop task to candidate task map
-				taskKey := copTask.task.region.String()
-				for _, storeAddr := range copTask.allStoreAddrs {
+				taskKey := ri.Region.String()
+				for _, storeAddr := range ri.AllStoreAddrs {
 					if candidateMap, ok := storeCandidateTaskMap[storeAddr]; ok {
 						if _, ok := candidateMap[taskKey]; ok {
 							// duplicated region, should not happen, just give up balance
 							return originalTasks
 						}
-						candidateMap[taskKey] = copTask
+						candidateMap[taskKey] = ri
 					} else {
-						candidateMap := make(map[string]copTaskAndRPCContext)
-						candidateMap[taskKey] = copTask
+						candidateMap := make(map[string]tikv.RegionInfo)
+						candidateMap[taskKey] = ri
 						storeCandidateTaskMap[storeAddr] = candidateMap
 					}
 				}
@@ -160,13 +161,13 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 		for storeAddr := range storeTaskMap {
 			if store == "" && len(storeCandidateTaskMap[storeAddr]) > 0 {
 				store = storeAddr
-				possibleTaskNum = float64(len(storeCandidateTaskMap[storeAddr]))/avgStorePerTask + float64(len(storeTaskMap[storeAddr].copTasks))
+				possibleTaskNum = float64(len(storeCandidateTaskMap[storeAddr]))/avgStorePerTask + float64(len(storeTaskMap[storeAddr].regionInfos))
 			} else {
 				num := float64(len(storeCandidateTaskMap[storeAddr])) / avgStorePerTask
 				if num == 0 {
 					continue
 				}
-				num += float64(len(storeTaskMap[storeAddr].copTasks))
+				num += float64(len(storeTaskMap[storeAddr].regionInfos))
 				if num < possibleTaskNum {
 					store = storeAddr
 					possibleTaskNum = num
@@ -183,22 +184,22 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 		if len(storeCandidateTaskMap[store]) == 0 {
 			store, possibleTaskNum = findNextStore()
 		}
-		for key, copTask := range storeCandidateTaskMap[store] {
-			storeTaskMap[store].copTasks = append(storeTaskMap[store].copTasks, copTask)
+		for key, ri := range storeCandidateTaskMap[store] {
+			storeTaskMap[store].regionInfos = append(storeTaskMap[store].regionInfos, ri)
 			totalCandidateCopTaskNum--
-			for _, addr := range copTask.allStoreAddrs {
+			for _, addr := range ri.AllStoreAddrs {
 				if _, ok := storeCandidateTaskMap[addr]; ok {
 					delete(storeCandidateTaskMap[addr], key)
 					totalCandidateStoreNum--
 				}
 			}
 			if totalCandidateCopTaskNum > 0 {
-				possibleTaskNum = float64(len(storeCandidateTaskMap[store]))/avgStorePerTask + float64(len(storeTaskMap[store].copTasks))
+				possibleTaskNum = float64(len(storeCandidateTaskMap[store]))/avgStorePerTask + float64(len(storeTaskMap[store].regionInfos))
 				avgStorePerTask = float64(totalCandidateStoreNum) / float64(totalCandidateCopTaskNum)
-				for _, addr := range copTask.allStoreAddrs {
-					if addr != store && len(storeCandidateTaskMap[addr]) > 0 && float64(len(storeCandidateTaskMap[addr]))/avgStorePerTask+float64(len(storeTaskMap[addr].copTasks)) <= possibleTaskNum {
+				for _, addr := range ri.AllStoreAddrs {
+					if addr != store && len(storeCandidateTaskMap[addr]) > 0 && float64(len(storeCandidateTaskMap[addr]))/avgStorePerTask+float64(len(storeTaskMap[addr].regionInfos)) <= possibleTaskNum {
 						store = addr
-						possibleTaskNum = float64(len(storeCandidateTaskMap[addr]))/avgStorePerTask + float64(len(storeTaskMap[addr].copTasks))
+						possibleTaskNum = float64(len(storeCandidateTaskMap[addr]))/avgStorePerTask + float64(len(storeTaskMap[addr].regionInfos))
 					}
 				}
 			}
@@ -252,12 +253,13 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 				continue
 			}
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
-				batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, allStoreAddrs: allStoreAddr, ctx: rpcCtx})
+				batchCop.regionInfos = append(batchCop.regionInfos, tikv.RegionInfo{task.region, rpcCtx.Meta, task.ranges, allStoreAddr})
 			} else {
 				batchTask := &batchCopTask{
-					storeAddr: rpcCtx.Addr,
-					cmdType:   cmdType,
-					copTasks:  []copTaskAndRPCContext{{task, allStoreAddr, rpcCtx}},
+					storeAddr:   rpcCtx.Addr,
+					cmdType:     cmdType,
+					ctx:         rpcCtx,
+					regionInfos: []tikv.RegionInfo{{task.region, rpcCtx.Meta, task.ranges, allStoreAddr}},
 				}
 				storeTaskMap[rpcCtx.Addr] = batchTask
 			}
@@ -429,8 +431,8 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *tikv.Backoffer, t
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
 	var ranges []kv.KeyRange
-	for _, taskCtx := range batchTask.copTasks {
-		taskCtx.task.ranges.Do(func(ran *kv.KeyRange) {
+	for _, ri := range batchTask.regionInfos {
+		ri.Ranges.Do(func(ran *kv.KeyRange) {
 			ranges = append(ranges, *ran)
 		})
 	}
@@ -438,16 +440,16 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backo
 }
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
-	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
-	var regionInfos []*coprocessor.RegionInfo
-	for _, task := range task.copTasks {
+	sender := tikv.NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
+	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
+	for _, ri := range task.regionInfos {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-			RegionId: task.task.region.GetID(),
+			RegionId: ri.Region.GetID(),
 			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: task.task.region.GetConfVer(),
-				Version: task.task.region.GetVer(),
+				ConfVer: ri.Region.GetConfVer(),
+				Version: ri.Region.GetVer(),
 			},
-			Ranges: task.task.ranges.ToPBRanges(),
+			Ranges: ri.Ranges.ToPBRanges(),
 		})
 	}
 
@@ -469,8 +471,8 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffe
 	})
 	req.StoreTp = kv.TiFlash
 
-	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.copTasks)))
-	resp, retry, cancel, err := sender.sendStreamReqToAddr(bo, task.copTasks, req, tikv.ReadTimeoutUltraLong)
+	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.regionInfos)))
+	resp, retry, cancel, err := sender.SendReqToAddr(bo, task.ctx, task.regionInfos, req, tikv.ReadTimeoutUltraLong)
 	// If there are store errors, we should retry for all regions.
 	if retry {
 		return b.retryBatchCopTask(ctx, bo, task)
