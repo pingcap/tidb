@@ -645,6 +645,31 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 			return err
 		}
 		opt.PrevSec = uint64(d.Seconds())
+	case ast.TimestampBoundMaxStaleness:
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid value for Bound Timestamp")
+		}
+		d, err := types.ParseDuration(e.ctx.GetSessionVars().StmtCtx, v.GetString(), types.GetFsp(v.GetString()))
+		if err != nil {
+			return err
+		}
+		opt.PrevSec = uint64(d.Seconds())
+	case ast.TimestampBoundMinReadTimestamp:
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid value for Bound Timestamp")
+		}
+		t, err := types.ParseTime(e.ctx.GetSessionVars().StmtCtx, v.GetString(), v.GetType().Tp, types.GetFsp(v.GetString()))
+		if err != nil {
+			return err
+		}
+		gt, err := t.GoTime(e.ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return err
+		}
+		startTS := oracle.ComposeTS(gt.Unix()*1000, 0)
+		opt.StartTS = startTS
 	}
 	err := e.ctx.NewTxnWithStalenessOption(ctx, opt)
 	if err != nil {
