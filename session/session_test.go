@@ -4238,3 +4238,24 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(sb.String(), Equals, "SELECT 3")
 }
+
+func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows")
+	tk.MustExec("begin")
+	tk.MustExec("insert into g_tmp values (3, 3, 3)")
+	tk.MustExec("insert into g_tmp values (4, 7, 9)")
+
+	// Cover table scan.
+	tk.MustQuery("select * from g_tmp").Check(testkit.Rows("3 3 3", "4 7 9"))
+	// Cover index reader.
+	tk.MustQuery("select b from g_tmp where b > 3").Check(testkit.Rows("7"))
+	// Cover index lookup.
+	tk.MustQuery("select c from g_tmp where b = 3").Check(testkit.Rows("3"))
+	// Cover point get.
+	tk.MustQuery("select * from g_tmp where a = 3").Check(testkit.Rows("3 3 3"))
+	tk.MustExec("commit")
+
+	// The global temporary table data is discard after the transaction commit.
+	tk.MustQuery("select * from g_tmp").Check(testkit.Rows())
+}

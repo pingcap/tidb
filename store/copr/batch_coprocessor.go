@@ -346,7 +346,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffe
 
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
 		IsolationLevel: isolationLevelToPB(b.req.IsolationLevel),
-		Priority:       tikv.PriorityToPB(b.req.Priority),
+		Priority:       priorityToPB(b.req.Priority),
 		NotFillCache:   b.req.NotFillCache,
 		RecordTimeStat: true,
 		RecordScanStat: true,

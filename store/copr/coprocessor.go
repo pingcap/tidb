@@ -698,7 +698,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *tikv.Backoffer, task *copTas
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead, &worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
-		Priority:       tikv.PriorityToPB(worker.req.Priority),
+		Priority:       priorityToPB(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
 		RecordTimeStat: true,
 		RecordScanStat: true,
@@ -1190,6 +1190,18 @@ func (e *rateLimitAction) setEnabled(enabled bool) {
 
 func (e *rateLimitAction) isEnabled() bool {
 	return atomic.LoadUint32(&e.enabled) > 0
+}
+
+// priorityToPB converts priority type to wire type.
+func priorityToPB(pri int) kvrpcpb.CommandPri {
+	switch pri {
+	case kv.PriorityLow:
+		return kvrpcpb.CommandPri_Low
+	case kv.PriorityHigh:
+		return kvrpcpb.CommandPri_High
+	default:
+		return kvrpcpb.CommandPri_Normal
+	}
 }
 
 func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
