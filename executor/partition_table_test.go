@@ -14,10 +14,15 @@
 package executor_test
 
 import (
+	"fmt"
+	"math/rand"
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -220,6 +225,53 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
 		"└─TableFullScan_4 10000.00 cop[tikv] table:t_info_null keep order:false, stats:pseudo"))
 	// No panic.
 	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
+}
+
+func (s *partitionTableSuite) TestGlobalStats(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_global_stats")
+	tk.MustExec("use test_global_stats")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// hash and range and list partition
+	tk.MustExec("create table thash(a int, b int, key(a)) partition by hash(a) partitions 4")
+	tk.MustExec(`create table trange(a int, b int, key(a)) partition by range(a) (
+		partition p0 values less than (20000),
+		partition p1 values less than (40000),
+		partition p2 values less than (60000),
+		partition p3 values less than (80000),
+		partition p4 values less than (100000))`)
+	tk.MustExec(`create table tlist(a int, b int, key(a)) partition by list (a) (
+		partition p0 values in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
+		partition p0 values in (10, 11, 12, 13, 14, 15, 16, 17, 18, 19),
+		partition p0 values in (20, 21, 22, 23, 24, 25, 26, 27, 28, 29),
+		partition p0 values in (30, 31, 32, 33, 34, 35, 36, 37, 38, 39),
+		partition p0 values in (40, 41, 42, 43, 44, 45, 46, 47, 48, 49))`)
+	vals := make([]string, 0, 2048)
+	listVals := make([]string, 0, 2048)
+	for i := 0; i < 2048; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(100000), rand.Intn(100000)))
+		listVals = append(listVals, fmt.Sprintf("(%v, %v)", rand.Intn(50), rand.Intn(100000)))
+	}
+	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
+	tk.MustExec("analyze table thash")
+	tk.MustExec("analyze table trange")
+	tk.MustExec("analyze table tlist")
+	for i := 0; i < 100; i++ {
+		// the planner can choose the index a automatically according to global-stats
+		tk.MustUseIndex(fmt.Sprintf("select a from thash where a=%v", rand.Intn(100000)), "a")
+		tk.MustIndexLookup(fmt.Sprintf("select * from thash where a=%v", rand.Intn(100000)))
+		tk.MustUseIndex(fmt.Sprintf("select a from trange where a=%v", rand.Intn(100000)), "a")
+		tk.MustIndexLookup(fmt.Sprintf("select * from trange where a=%v", rand.Intn(100000)))
+		tk.MustUseIndex(fmt.Sprintf("select a from tlist where a=%v", rand.Intn(100000)), "a")
+		tk.MustIndexLookup(fmt.Sprintf("select * from tlist where a=%v", rand.Intn(100000)))
+	}
 }
 
 func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
