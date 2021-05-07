@@ -274,8 +274,6 @@ func (s *partitionTableSuite) TestBatchGetandPointGet(c *C) {
 		tk.MustQuery(queryHash).Check(testkit.Rows(fmt.Sprintf("%v", x)))
 
 		queryRange := fmt.Sprintf("select a from trange where a=%v", x)
-		fmt.Println(queryRange)
-		tk.MustQuery("explain " + queryRange).Check(testkit.Rows())
 		c.Assert(tk.HasPlan(queryRange, "Point_Get"), IsTrue) // check if PointGet is used
 		tk.MustQuery(queryRange).Check(testkit.Rows(fmt.Sprintf("%v", x)))
 
