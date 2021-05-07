@@ -156,7 +156,7 @@ func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
 	return keyLocation.Region.GetID(), nil
 }
 
-func (t *tikvHandlerTool) getMvccByHandle(tb table.PhysicalTable, params map[string]string, values url.Values) (*mvccKV, error) {
+func (t *tikvHandlerTool) getHandle(tb table.PhysicalTable, params map[string]string, values url.Values) (kv.Handle, error) {
 	var handle kv.Handle
 	if intHandleStr, ok := params[pHandle]; ok {
 		if tb.Meta().IsCommonHandle {
@@ -195,16 +195,7 @@ func (t *tikvHandlerTool) getMvccByHandle(tb table.PhysicalTable, params map[str
 			return nil, errors.Trace(err)
 		}
 	}
-	encodedKey := tablecodec.EncodeRecordKey(tb.RecordPrefix(), handle)
-	data, err := t.GetMvccByEncodedKey(encodedKey)
-	if err != nil {
-		return nil, err
-	}
-	regionID, err := t.getRegionIDByKey(encodedKey)
-	if err != nil {
-		return nil, err
-	}
-	return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data, RegionID: regionID}, err
+	return handle, nil
 }
 
 func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*mvccKV, error) {
@@ -274,7 +265,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 	}
 }
 
-func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*mvccKV, error) {
+func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) (*mvccKV, error) {
 	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
@@ -283,11 +274,7 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	handle, err := strconv.ParseInt(handleStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, kv.IntHandle(handle), nil)
+	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -469,11 +456,10 @@ type mvccTxnHandler struct {
 }
 
 const (
-	opMvccGetByHex          = "hex"
-	opMvccGetByKey          = "key"
-	opMvccGetByIdx          = "idx"
-	opMvccGetByTxn          = "txn"
-	opMvccGetByClusteredKey = "cls_key"
+	opMvccGetByHex = "hex"
+	opMvccGetByKey = "key"
+	opMvccGetByIdx = "idx"
+	opMvccGetByTxn = "txn"
 )
 
 // ServeHTTP handles request of list a database or table's schemas.
@@ -1579,7 +1565,7 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	switch h.op {
 	case opMvccGetByHex:
 		data, err = h.handleMvccGetByHex(params)
-	case opMvccGetByIdx, opMvccGetByKey, opMvccGetByClusteredKey:
+	case opMvccGetByIdx, opMvccGetByKey:
 		if req.URL == nil {
 			err = errors.BadRequestf("Invalid URL")
 			break
@@ -1623,9 +1609,12 @@ func extractTableAndPartitionName(str string) (string, string) {
 func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.Values) (interface{}, error) {
 	dbName := params[pDBName]
 	tableName := params[pTableName]
-	handleStr := params[pHandle]
 
 	t, err := h.getTable(dbName, tableName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	handle, err := h.getHandle(t, params, values)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1644,7 +1633,7 @@ func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.
 	if idx == nil {
 		return nil, errors.NotFoundf("Index %s not found!", params[pIndexName])
 	}
-	return h.getMvccByIdxValue(idx, values, idxCols, handleStr)
+	return h.getMvccByIdxValue(idx, values, idxCols, handle)
 }
 
 func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.Values) (interface{}, error) {
@@ -1654,10 +1643,21 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp, err := h.getMvccByHandle(tb, params, values)
+	handle, err := h.getHandle(tb, params, values)
 	if err != nil {
 		return nil, err
 	}
+
+	encodedKey := tablecodec.EncodeRecordKey(tb.RecordPrefix(), handle)
+	data, err := h.GetMvccByEncodedKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	regionID, err := h.getRegionIDByKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	resp := &mvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data, RegionID: regionID}
 	if len(values.Get("decode")) == 0 {
 		return resp, nil
 	}
