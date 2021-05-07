@@ -1052,20 +1052,6 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 
 // Should cover same internal mysql.* tables as DROP USER, so this function is very similar
 func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
-	// Check privileges.
-	// Check `CREATE USER` privilege.
-	// TODO: Also allow UPDATE privilege for the mysql system schema?
-	if !config.GetGlobalConfig().Security.SkipGrantTable {
-		checker := privilege.GetPrivilegeManager(e.ctx)
-		if checker == nil {
-			return errors.New("miss privilege checker")
-		}
-		activeRoles := e.ctx.GetSessionVars().ActiveRoles
-		if !checker.RequestVerification(activeRoles, mysql.SystemDB, "", "", mysql.UpdatePriv) &&
-			!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-			return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER or UPDATE on mysql.*")
-		}
-	}
 
 	failedUsers := make([]string, 0, len(s.UserToUsers))
 	sysSession, err := e.getSysSession()
@@ -1081,22 +1067,22 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
-		exists, err := userExists(e.ctx, oldUser.Username, oldUser.Hostname)
+		exists, err := userExistsInternal(sqlExecutor, oldUser.Username, oldUser.Hostname)
 		if err != nil {
 			return err
 		}
 		if !exists {
-			failedUsers = append(failedUsers, oldUser.String())
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" old did not exist")
 			break
 		}
 
-		exists, err = userExists(e.ctx, newUser.Username, newUser.Hostname)
+		exists, err = userExistsInternal(sqlExecutor, newUser.Username, newUser.Hostname)
 		if err != nil {
 			return err
 		}
 		if exists {
 			// MySQL reports the old user, even when the issue is the new user.
-			failedUsers = append(failedUsers, oldUser.String())
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" new did exist")
 			break
 		}
 
@@ -1104,59 +1090,59 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		// Could be restructured with an array of table, user/host columns and break/continue for easier maintenance.
 
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.UserTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String())
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.user error")
 			break
 		}
 
-		// delete privileges from mysql.global_priv
+		// rename privileges from mysql.global_priv
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.GlobalPrivTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String())
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.globalprivtable error")
 			if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "rollback"); err != nil {
 				return err
 			}
 			continue
 		}
 
-		// delete privileges from mysql.db
+		// rename privileges from mysql.db
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.DBTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String())
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.dbtable error")
 			break
 		}
 
-		// delete privileges from mysql.tables_priv
+		// rename privileges from mysql.tables_priv
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.TablePrivTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String())
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.table-priv-table error")
 			break
 		}
 
-		// delete relationship from mysql.role_edges
+		// rename relationship from mysql.role_edges
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.RoleEdgeTable, "TO_USER", "TO_HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String())
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.role_edge_table (to) error")
 			break
 		}
 
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.RoleEdgeTable, "FROM_USER", "FROM_HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String())
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.role_edge_table (from) error")
 			// Should we really break here as in DROP USER? it should all be rolled back right for this Old to New rename?
 			// Since the FROM_USER/HOST is already done
 			break
 		}
 
-		// delete relationship from mysql.default_roles
+		// rename relationship from mysql.default_roles
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.DefaultRoleTable, "DEFAULT_ROLE_USER", "DEFAULT_ROLE_HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String())
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.default_role_table (default role user) error")
 			break
 		}
 
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.DefaultRoleTable, "USER", "HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String())
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.default_role_table error")
 			break
 		}
 
-		// delete relationship from mysql.global_grants
+		// rename relationship from mysql.global_grants
 		// TODO: add global_grants into the parser
 		if err = renameUserHostInSystemTable(sqlExecutor, "global_grants", "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String())
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.user error")
 			break
 		}
 
@@ -1341,6 +1327,24 @@ func userExists(ctx sessionctx.Context, name string, host string) (bool, error) 
 		return false, err
 	}
 	return len(rows) > 0, nil
+}
+
+// use the same internal executor to read within the same transaction, otherwise same as userExists
+func userExistsInternal(sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, error) {
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, host)
+	recordSet, err := sqlExecutor.ExecuteInternal(context.TODO(), sql.String())
+	if err != nil {
+		return false, err
+	}
+	req := recordSet.NewChunk()
+	err = recordSet.Next(context.TODO(), req)
+	if err != nil {
+		return false, err
+	}
+	rows := req.NumRows()
+	recordSet.Close()
+	return rows > 0, nil
 }
 
 func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
