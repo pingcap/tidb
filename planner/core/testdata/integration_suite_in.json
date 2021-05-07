@@ -168,8 +168,7 @@
       "select /*+ hash_join(t1, t2 partition(p0)) */ * from t t1 join t t2 on t1.a = t2.a",
       "select /*+ use_index_merge(t partition(p0)) */ * from t where t.b = 1 or t.c = \"8\"",
       "select /*+ use_index_merge(t partition(p0, p1) primary, b) */ * from t where t.a = 1 or t.b = 2",
-      "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)",
-      "select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t"
+      "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)"
     ]
   },
   {
@@ -284,6 +283,16 @@
     "name": "TestIssue24095",
     "cases": [
       "select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;"
+    ]
+  },
+  {
+    "name": "TestSequenceAsDataSource",
+    "cases": [
+      "select 1 from s1",
+      "select count(1) from s1",
+      "select count(*) from s1",
+      "select sum(1) from s1",
+      "select count(1) as cnt from s1 union select count(1) as cnt from s2"
     ]
   }
 ]
