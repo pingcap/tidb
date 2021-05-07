@@ -1055,6 +1055,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.DateFormat,
 		ast.FromDays,
 		// ast.ToDays,
+		ast.Day,
 		ast.DayOfYear,
 		ast.DayOfMonth,
 		ast.Year,
@@ -1068,8 +1069,11 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.PeriodAdd,
 		ast.PeriodDiff,
 		ast.TimestampDiff,
+		ast.DateDiff,
 		ast.DateAdd,
+		ast.DateSub,
 		ast.FromUnixTime,
+		ast.UnixTimestamp,
 		ast.Extract,
 
 		// encryption functions.
@@ -1243,8 +1247,8 @@ func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client k
 
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 	switch function.FuncName.L {
-	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
-		ast.FromUnixTime, ast.Extract:
+	case ast.Substr, ast.Substring, ast.DateAdd, ast.DateSub, ast.TimestampDiff, ast.DateDiff, ast.UnixTimestamp,
+		ast.FromUnixTime, ast.Extract, ast.Day:
 		return false
 	default:
 		return true
@@ -1253,7 +1257,7 @@ func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 
 func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
 	switch function.FuncName.L {
-	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
+	case ast.Substr, ast.Substring, ast.DateAdd, ast.DateSub, ast.TimestampDiff, ast.DateDiff, ast.UnixTimestamp,
 		ast.FromUnixTime:
 		return false
 	default:
@@ -1263,20 +1267,24 @@ func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
 
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	switch function.FuncName.L {
-	case ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.GE, ast.LE,
-		ast.EQ, ast.NE, ast.LT, ast.GT, ast.Ifnull, ast.IsNull,
-		ast.Or, ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
-		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
-		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.JSONLength, ast.If, ast.BitNeg, ast.Xor:
+	case
+		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or,
+		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
+		ast.Plus, ast.Minus, ast.Div, ast.Mul, /*ast.Mod,*/
+		ast.If, ast.Ifnull, ast.Case,
+		ast.Substr, ast.Substring, ast.Concat, ast.ConcatWS,
+		ast.Year, ast.Month, ast.Day, ast.Hour,
+		ast.TimestampDiff, ast.DateDiff, ast.DateFormat, ast.FromUnixTime, ast.UnixTimestamp,
+		ast.JSONLength,
+		ast.AggFuncApproxCountDistinct:
 		return true
 	case ast.Cast:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastIntAsTime,
+		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastIntAsTime,
 			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastRealAsTime,
-			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsDecimal, tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastStringAsTime,
-			tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastDecimalAsTime,
-			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime:
+			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastStringAsDecimal, tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastStringAsTime,
+			tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsTime,
+			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime, tipb.ScalarFuncSig_CastTimeAsString:
 			return true
 		default:
 			return false
@@ -1284,6 +1292,13 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.DateAdd:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
+			return true
+		default:
+			return false
+		}
+	case ast.DateSub:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt:
 			return true
 		default:
 			return false
