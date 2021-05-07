@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	"context"
 	"time"
 
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -60,6 +59,4 @@ type Storage interface {
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
 	SupportDeleteRange() (supported bool)
-	// ShowStatus returns the specified status of the storage
-	ShowStatus(ctx context.Context, key string) (interface{}, error)
 }
