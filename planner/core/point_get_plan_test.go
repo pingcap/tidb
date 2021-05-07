@@ -522,20 +522,6 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 		res.Check(testkit.Rows(output[i].Res...))
 	}
 }
-<<<<<<< HEAD
-=======
-
-func (s *testPointGetSuite) TestIssue18042(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, c int, primary key(a), index ab(a, b));")
-	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
-	tk.MustExec("SELECT /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 MB) */ * FROM t where a = 1;")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(1<<20))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
-	tk.MustExec("drop table t")
-}
 
 func (s *testPointGetSuite) TestIssue23511(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -557,4 +543,3 @@ func (s *testPointGetSuite) TestIssue23511(c *C) {
 	tk.MustQuery("select * from t2 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
 	tk.MustExec("drop table t1, t2;")
 }
->>>>>>> a234ce62f... planner, type: remove the prefix 0 in the bit array when we get the BinaryLiteral (#23523)
