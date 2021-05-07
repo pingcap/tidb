@@ -256,8 +256,8 @@ func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
 		// select * from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(10)
 		y := rand.Intn(100)
-		queryPartition := fmt.Sprintf("select * from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
-		queryRegular := fmt.Sprintf("select * from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
+		queryPartition := fmt.Sprintf("select * from trange use index(idx_a) where a > %v order by a, b limit %v;", x, y)
+		queryRegular := fmt.Sprintf("select * from tregular use index(idx_a) where a > %v order by a, b limit %v;", x, y)
 		c.Assert(tk.HasPlan(queryPartition, "IndexLookUp"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	}
