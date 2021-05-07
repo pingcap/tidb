@@ -54,6 +54,8 @@ var (
 	ErrTiFlashServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiFlashServerBusy)
 	// ErrPDServerTimeout is the error when pd server is timeout.
 	ErrPDServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrPDServerTimeout)
+	// ErrRegionUnavailable is the error when region is not available.
+	ErrRegionUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrRegionUnavailable)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -238,6 +240,10 @@ func ToTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrResolveLockTimeout) {
 		return ErrResolveLockTimeout
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrRegionUnavailable) {
+		return ErrRegionUnavailable
 	}
 
 	return errors.Trace(originErr)

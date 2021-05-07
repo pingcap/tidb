@@ -274,7 +274,7 @@ type copIteratorWorker struct {
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
 	vars     *tikv.Variables
-	*tikv.ClientHelper
+	kvclient *tikv.ClientHelper
 
 	memTracker *memory.Tracker
 
@@ -403,7 +403,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 			respChan:        it.respChan,
 			finishCh:        it.finishCh,
 			vars:            it.vars,
-			ClientHelper:    tikv.NewClientHelper(it.store.store, it.resolvedLocks),
+			kvclient:        tikv.NewClientHelper(it.store.store, it.resolvedLocks),
 			memTracker:      it.memTracker,
 			replicaReadSeed: it.replicaReadSeed,
 			actionOnExceed:  it.actionOnExceed,
@@ -707,8 +707,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *tikv.Backoffer, task *copTas
 	})
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
-	if worker.Stats == nil {
-		worker.Stats = make(map[tikvrpc.CmdType]*tikv.RPCRuntimeStats)
+	if worker.kvclient.Stats == nil {
+		worker.kvclient.Stats = make(map[tikvrpc.CmdType]*tikv.RPCRuntimeStats)
 	}
 	if worker.req.IsStaleness {
 		req.EnableStaleRead()
@@ -717,7 +717,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *tikv.Backoffer, task *copTas
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
 	}
-	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, tikv.ReadTimeoutMedium, getEndPointType(task.storeType), task.storeAddr, ops...)
+	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo, req, task.region, tikv.ReadTimeoutMedium, getEndPointType(task.storeType), task.storeAddr, ops...)
+	err = txndriver.ToTiDBErr(err)
 	if err != nil {
 		if task.storeType == kv.TiDB {
 			err = worker.handleTiDBSendReqErr(err, task, ch)
@@ -873,7 +874,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *tikv.Backoffer, rpcCtx *t
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		logutil.BgLogger().Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
-		msBeforeExpired, err1 := worker.ResolveLocks(bo, worker.req.StartTs, []*tikv.Lock{tikv.NewLock(lockErr)})
+		msBeforeExpired, err1 := worker.kvclient.ResolveLocks(bo, worker.req.StartTs, []*tikv.Lock{tikv.NewLock(lockErr)})
+		err1 = txndriver.ToTiDBErr(err1)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -902,8 +904,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *tikv.Backoffer, rpcCtx *t
 	if resp.detail == nil {
 		resp.detail = new(CopRuntimeStats)
 	}
-	resp.detail.Stats = worker.Stats
-	worker.Stats = nil
+	resp.detail.Stats = worker.kvclient.Stats
+	worker.kvclient.Stats = nil
 	backoffTimes := bo.GetBackoffTimes()
 	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
@@ -981,7 +983,7 @@ type CopRuntimeStats struct {
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
 	errCode := errno.ErrUnknown
 	errMsg := err.Error()
-	if terror.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
+	if terror.ErrorEqual(err, txndriver.ErrTiKVServerTimeout) {
 		errCode = errno.ErrTiKVServerTimeout
 		errMsg = "TiDB server timeout, address is " + task.storeAddr
 	}
