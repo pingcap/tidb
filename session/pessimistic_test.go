@@ -1997,11 +1997,11 @@ func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
 	waitErr2 := <-errCh
 	waitErr3 := <-errCh
 	c.Assert(waitErr, NotNil)
-	c.Check(waitErr.Error(), Equals, tikverr.ErrLockWaitTimeout.Error())
+	c.Check(waitErr.Error(), Equals, txndriver.ErrLockWaitTimeout.Error())
 	c.Assert(waitErr2, NotNil)
-	c.Check(waitErr2.Error(), Equals, tikverr.ErrLockWaitTimeout.Error())
+	c.Check(waitErr2.Error(), Equals, txndriver.ErrLockWaitTimeout.Error())
 	c.Assert(waitErr3, NotNil)
-	c.Check(waitErr3.Error(), Equals, tikverr.ErrLockWaitTimeout.Error())
+	c.Check(waitErr3.Error(), Equals, txndriver.ErrLockWaitTimeout.Error())
 	c.Assert(time.Since(start).Seconds(), Less, 45.0)
 	tk2.MustExec("commit")
 	tk3.MustExec("rollback")
