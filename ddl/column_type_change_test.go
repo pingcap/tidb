@@ -1702,6 +1702,20 @@ func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
 	tk.MustExec("drop table if exists orders, users")
 }
 
+func (s *testColumnTypeChangeSuite) TestAlterPrimaryKeyToNull(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int not null, b int not null, primary key(a, b));")
+	tk.MustGetErrCode("alter table t modify a bigint null;", mysql.ErrPrimaryCantHaveNull)
+	tk.MustGetErrCode("alter table t change column a a bigint null;", mysql.ErrPrimaryCantHaveNull)
+	tk.MustExec("create table t1(a int not null, b int not null, primary key(a));")
+	tk.MustGetErrCode("alter table t modify a bigint null;", mysql.ErrPrimaryCantHaveNull)
+	tk.MustGetErrCode("alter table t change column a a bigint null;", mysql.ErrPrimaryCantHaveNull)
+}
+
 // Close issue #23202
 func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

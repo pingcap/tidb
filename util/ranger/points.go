@@ -102,11 +102,22 @@ func (r *pointSorter) Less(i, j int) bool {
 }
 
 func rangePointLess(sc *stmtctx.StatementContext, a, b *point) (bool, error) {
+	if a.value.Kind() == types.KindMysqlEnum && b.value.Kind() == types.KindMysqlEnum {
+		return rangePointEnumLess(sc, a, b)
+	}
 	cmp, err := a.value.CompareDatum(sc, &b.value)
 	if cmp != 0 {
 		return cmp < 0, nil
 	}
 	return rangePointEqualValueLess(a, b), errors.Trace(err)
+}
+
+func rangePointEnumLess(sc *stmtctx.StatementContext, a, b *point) (bool, error) {
+	cmp := types.CompareInt64(a.value.GetInt64(), b.value.GetInt64())
+	if cmp != 0 {
+		return cmp < 0, nil
+	}
+	return rangePointEqualValueLess(a, b), nil
 }
 
 func rangePointEqualValueLess(a, b *point) bool {
@@ -551,6 +562,13 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 		}
 		if dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral {
 			dt.SetString(dt.GetString(), colCollate)
+		}
+		if expr.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
+			dt, err = dt.ConvertTo(r.sc, expr.GetArgs()[0].GetType())
+			if err != nil {
+				// in (..., an impossible value (not valid enum), ...), the range is empty, so skip it.
+				continue
+			}
 		}
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeYear {
 			dt, err = dt.ConvertToMysqlYear(r.sc, expr.GetArgs()[0].GetType())
