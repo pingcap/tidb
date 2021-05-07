@@ -79,11 +79,11 @@ var initialTxnCommitCounter metrics.TxnCommitCounter
 func GetTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
 	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableAsyncCommit); err == nil {
-		asyncCommitUsed = val == variable.BoolOn
+		asyncCommitUsed = val == variable.On
 	}
 	onePCUsed := false
 	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnable1PC); err == nil {
-		onePCUsed = val == variable.BoolOn
+		onePCUsed = val == variable.On
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)

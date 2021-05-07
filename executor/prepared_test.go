@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -78,6 +79,9 @@ func (s *testSuite1) TestIgnorePlanCache(c *C) {
 }
 
 func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("race test for this case takes too long time")
+	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 

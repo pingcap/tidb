@@ -1236,7 +1236,7 @@ func (s *testSuite5) TestShowVar(c *C) {
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if variable.FilterImplicitFeatureSwitch(v) {
+		if v.Hidden {
 			continue
 		}
 
@@ -1264,13 +1264,11 @@ func (s *testSuite5) TestShowVar(c *C) {
 	res = tk.MustQuery(showSQL)
 	c.Check(res.Rows(), HasLen, len(globalVars))
 
-	// Test for switch variable which shouldn't seen by users.
-	for _, one := range variable.FeatureSwitchVariables {
-		res := tk.MustQuery("show variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-		res = tk.MustQuery("show global variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-	}
+	// Test a known hidden variable.
+	res = tk.MustQuery("show variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
+	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {

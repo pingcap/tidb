@@ -15,7 +15,6 @@ package cophandler
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -406,10 +405,6 @@ type ExchangerTunnel struct {
 
 	connectedCh chan struct{}
 	ErrCh       chan error
-}
-
-func (tunnel *ExchangerTunnel) debugString() string {
-	return fmt.Sprintf("(%d->%d)", tunnel.sourceTask.TaskId, tunnel.targetTask.TaskId)
 }
 
 // RecvChunk recive tipb chunk

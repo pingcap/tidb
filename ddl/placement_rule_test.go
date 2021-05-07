@@ -64,26 +64,6 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Role:        ast.PlacementRoleVoter,
 				Tp:          ast.PlacementAdd,
 				Replicas:    3,
-				Constraints: `["+zone=sh", "+engine=tiflash"]`,
-			}},
-			err: ".*unsupported label constraint.*",
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
-				Constraints: `["+zone=sh", "+engine=TiFlash"]`,
-			}},
-			err: ".*unsupported label constraint.*",
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
 				Constraints: "",
 			}},
 			output: []*placement.Rule{{
@@ -91,26 +71,6 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Count:            3,
 				LabelConstraints: []placement.Constraint{},
 			}},
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
-				Constraints: `["+zone=sh", "-zone=sh"]`,
-			}},
-			err: ".*conflicting constraints.*",
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
-				Constraints: `["+zone=sh", "+zone=bj"]`,
-			}},
-			err: ".*conflicting constraints.*",
 		},
 
 		{
@@ -135,24 +95,6 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					},
 				},
 			},
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Constraints: `{"+zone=sh,-zone=sh": 2, "+zone=sh": 1}`,
-			}},
-			err: ".*conflicting constraints.*",
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Constraints: `{"+zone=sh,+zone=bj": 2, "+zone=sh": 1}`,
-			}},
-			err: ".*conflicting constraints.*",
 		},
 
 		{

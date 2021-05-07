@@ -129,7 +129,7 @@ drop placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 drop placement policy
 	role=follower`)
-	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".*no rule of role 'follower' to drop.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -202,7 +202,7 @@ drop placement policy
 	role=leader,
 drop placement policy
 	role=leader`)
-	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".*no rule of role 'leader' to drop.*")
 
 	s.dom.InfoSchema().SetBundle(bundle)
 	_, err = tk.Exec(`alter table t1 alter partition p0
@@ -261,67 +261,6 @@ add placement policy
 	role=leader`)
 	c.Assert(err, ErrorMatches, ".*should be larger or equal to the number of total replicas.*")
 
-	// checkPlacementSpecConstraint
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='[",,,"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+    "]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	// unknown operation
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["0000"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	// without =
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+000"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	// empty key
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+ =zone1"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+  =   z"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	// empty value
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+zone="]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+z  =   "]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
 	_, err = tk.Exec(`alter table t1 alter partition p
 add placement policy
 	constraints='["+zone=sh"]'
@@ -342,14 +281,6 @@ add placement policy
 	role=leader
 	replicas=0`)
 	c.Assert(err, ErrorMatches, ".*Invalid placement option REPLICAS, it is not allowed to be 0.*")
-
-	// ban tiflash
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+zone=sh", "+engine=tiflash"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*unsupported label.*")
 
 	// invalid partition
 	tk.MustExec("drop table if exists t1")
@@ -566,7 +497,7 @@ PARTITION BY RANGE (c) (
 
 	for _, testcase := range testCases {
 		c.Log(testcase.name)
-		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope",
+		failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
@@ -587,7 +518,7 @@ PARTITION BY RANGE (c) (
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, testcase.err.Error())
 		}
-		failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	}
 }
 
@@ -698,8 +629,8 @@ PARTITION BY RANGE (c) (
 			},
 		},
 	}
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	dbInfo := testGetSchemaByName(c, tk.Se, "test")
 	tk2 := testkit.NewTestKit(c, s.store)
 	var chkErr error
