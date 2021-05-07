@@ -91,9 +91,6 @@ func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error
 	var startTs uint64
 	var err error
 	if options.StartTS != nil {
-		if options.PrevSec != nil {
-			panic("StartTS and PrevSec should not be set at the same")
-		}
 		startTs = *options.StartTS
 	} else if options.PrevSec != nil {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)

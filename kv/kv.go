@@ -341,6 +341,8 @@ type Driver interface {
 }
 
 // TransactionOption indicates the option when beginning a transaction
+// `TxnScope` must be set for each object
+// Every other fields are optional, but currently at most one of them can be set
 type TransactionOption struct {
 	TxnScope   string
 	StartTS    *uint64
