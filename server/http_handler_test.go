@@ -274,8 +274,8 @@ func (ts *HTTPHandlerTestSuite) TestRegionsAPIForClusterIndex(c *C) {
 				frameCnt++
 			}
 		}
-		// Primary index is as the record frame, so frame count is 1.
-		c.Assert(frameCnt, Equals, 1)
+		// frameCnt = clustered primary key + secondary index(idx) = 2.
+		c.Assert(frameCnt, Equals, 2)
 		c.Assert(resp.Body.Close(), IsNil)
 	}
 }
@@ -294,8 +294,10 @@ func (ts *HTTPHandlerTestSuite) TestRangesAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.TableName, Equals, "t")
-	c.Assert(len(data.Indices), Equals, 1)
+	c.Assert(len(data.Indices), Equals, 2)
 	_, ok := data.Indices["PRIMARY"]
+	c.Assert(ok, IsTrue)
+	_, ok = data.Indices["idx"]
 	c.Assert(ok, IsTrue)
 }
 
