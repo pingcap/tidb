@@ -14,11 +14,14 @@
 package ddl
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
@@ -127,41 +130,8 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return ver, errCancelledDDLJob
 }
 
-<<<<<<< HEAD
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, colInfo, err := checkDropColumn(t, job)
-=======
-func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, columnInfos, _, _, _, _, err := checkAddColumns(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	if len(columnInfos) == 0 {
-		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
-	}
-
-	colNames := make([]model.CIStr, len(columnInfos))
-	originalState := columnInfos[0].State
-	for i, columnInfo := range columnInfos {
-		columnInfos[i].State = model.StateDeleteOnly
-		colNames[i] = columnInfo.Name
-	}
-	ifExists := make([]bool, len(columnInfos))
-
-	job.SchemaState = model.StateDeleteOnly
-	job.Args = []interface{}{colNames, ifExists}
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfos[0].State)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	job.State = model.JobStateRollingback
-	return ver, errCancelledDDLJob
-}
-
-func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfo, idxInfos, err := checkDropColumn(t, job)
->>>>>>> 4db325d04... ddl: fix the covert job to rollingback job (#23903)
+	_, colInfo, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -177,41 +147,6 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	return ver, nil
 }
 
-<<<<<<< HEAD
-=======
-func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfos, _, idxInfos, err := checkDropColumns(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	for _, indexInfo := range idxInfos {
-		switch indexInfo.State {
-		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
-			// We can not rollback now, so just continue to drop index.
-			// In function isJobRollbackable will let job rollback when state is StateNone.
-			// When there is no index related to the drop columns job it is OK, but when there has indices, we should
-			// make sure the job is not rollback.
-			job.State = model.JobStateRunning
-			return ver, nil
-		case model.StatePublic:
-		default:
-			return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
-		}
-	}
-
-	// StatePublic means when the job is not running yet.
-	if colInfos[0].State == model.StatePublic {
-		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
-	}
-	// In the state of drop columns `write only -> delete only -> reorganization`,
-	// We can not rollback now, so just continue to drop columns.
-	job.State = model.JobStateRunning
-	return ver, nil
-}
-
->>>>>>> 4db325d04... ddl: fix the covert job to rollingback job (#23903)
 func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	_, indexInfo, err := checkDropIndex(t, job)
 	if err != nil {
@@ -384,8 +319,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	}
 
 	if err != nil {
-<<<<<<< HEAD
-=======
 		if job.Error == nil {
 			job.Error = toTError(err)
 		}
@@ -414,15 +347,13 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 			}
 		}
 
->>>>>>> 4db325d04... ddl: fix the covert job to rollingback job (#23903)
 		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
 			logutil.Logger(w.logCtx).Error("[ddl] run DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		} else {
 			logutil.Logger(w.logCtx).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
+			// If job is cancelled, we shouldn't return an error.
+			return ver, nil
 		}
-
-		job.Error = toTError(err)
-		job.ErrorCount++
 	}
 	return
 }

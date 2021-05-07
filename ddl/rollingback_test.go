@@ -89,7 +89,7 @@ func (s *testRollingBackSuite) TestCancelAddIndexJobError(c *C) {
 
 	// Verification of the history job state.
 	var job *model.Job
-	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(jobID)
