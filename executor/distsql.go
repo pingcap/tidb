@@ -314,7 +314,8 @@ type IndexLookUpExecutor struct {
 	// fields about accessing partition tables
 	partitionTableMode bool                  // if this executor is accessing a partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
-	partitionKVRanges  [][]kv.KeyRange       // kvRanges of each partition table
+	partitionRangeMap  map[int64][]*ranger.Range
+	partitionKVRanges  [][]kv.KeyRange // kvRanges of each partition table
 
 	// All fields above are immutable.
 
@@ -401,11 +402,15 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 			// For example, a table partitioned by range(a), and p0=(1, 10), p1=(11, 20), for the condition "(a>1 and a<10) or (a>11 and a<20)",
 			// the first range is only suitable to p0 and the second is to p1, but now we'll also build kvRange for range0+p1 and range1+p0.
 			physicalID := p.GetPhysicalID()
+			ranges := e.ranges
+			if e.partitionRangeMap != nil && e.partitionRangeMap[physicalID] != nil {
+				ranges = e.partitionRangeMap[physicalID]
+			}
 			var kvRange []kv.KeyRange
 			if e.index.ID == -1 {
-				kvRange, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, e.ranges)
+				kvRange, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
 			} else {
-				kvRange, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
+				kvRange, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
 			}
 			if err != nil {
 				return err

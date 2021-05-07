@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -124,7 +123,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	client.priority = pb.CommandPri_High
-	txn.SetOption(kv.Priority, kv.PriorityHigh)
+	txn.SetPriority(tikv.PriorityHigh)
 	err = txn.Set([]byte("key"), []byte("value"))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
@@ -134,20 +133,20 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	client.priority = pb.CommandPri_Low
-	txn.SetOption(kv.Priority, kv.PriorityLow)
+	txn.SetPriority(tikv.PriorityLow)
 	_, err = txn.Get(context.TODO(), []byte("key"))
 	c.Assert(err, IsNil)
 
 	// A counter example.
 	client.priority = pb.CommandPri_Low
-	txn.SetOption(kv.Priority, kv.PriorityNormal)
+	txn.SetPriority(tikv.PriorityNormal)
 	_, err = txn.Get(context.TODO(), []byte("key"))
 	// err is translated to "try again later" by backoffer, so doesn't check error value here.
 	c.Assert(err, NotNil)
 
 	// Cover Seek request.
 	client.priority = pb.CommandPri_High
-	txn.SetOption(kv.Priority, kv.PriorityHigh)
+	txn.SetPriority(tikv.PriorityHigh)
 	iter, err := txn.Iter([]byte("key"), nil)
 	c.Assert(err, IsNil)
 	for iter.Valid() {

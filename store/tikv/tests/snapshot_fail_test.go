@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -210,7 +211,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	err = txn.Set([]byte("k2"), []byte("v2"))
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, false)
-	txn.SetOption(kv.Enable1PC, false)
+	txn.SetEnable1PC(false)
 	txn.SetOption(kv.GuaranteeLinearizability, false)
 
 	// Prewrite the lock without committing it
@@ -230,7 +231,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	// Should get nothing with max version, and **not pushing forward minCommitTS** of the primary lock
 	snapshot := s.store.GetSnapshot(math.MaxUint64)
 	_, err = snapshot.Get(context.Background(), []byte("k2"))
-	c.Assert(err, ErrorMatches, ".*key not exist")
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
 	initialCommitTS := committer.GetCommitTS()
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeCommit"), IsNil)
