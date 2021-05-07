@@ -3114,6 +3114,35 @@ func (s *testIntegrationSuite) TestReorderSimplifiedOuterJoins(c *C) {
 	}
 }
 
+// Apply operator may got panic because empty Projection is eliminated.
+func (s *testIntegrationSerialSuite) TestIssue23887(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustExec("insert into t values(1, 2), (3, 4);")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));")
+	tk.MustQuery("select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSerialSuite) TestDeleteStmt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3509,6 +3538,61 @@ func (s *testIntegrationSuite) TestIssue24095(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int, value decimal(10,5));")
 	tk.MustExec("desc format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestConflictReadFromStorage(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
+					a int, b int, c varchar(20),
+					primary key(a), key(b), key(c)
+				) partition by range columns(a) (
+					partition p0 values less than(6),
+					partition p1 values less than(11),
+					partition p2 values less than(16));`)
+	tk.MustExec(`insert into t values (1,1,"1"), (2,2,"2"), (8,8,"8"), (11,11,"11"), (15,15,"15")`)
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustQuery(`explain select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t`)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Storage hints are conflict, you can only specify one storage type of table test.t"))
+	tk.MustQuery(`explain select /*+ read_from_storage(tikv[t], tiflash[t]) */ * from t`)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Storage hints are conflict, you can only specify one storage type of table test.t"))
+}
+
+// TestSequenceAsDataSource is used to test https://github.com/pingcap/tidb/issues/24383.
+func (s *testIntegrationSuite) TestSequenceAsDataSource(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop sequence if exists s1, s2")
+	tk.MustExec("create sequence s1")
+	tk.MustExec("create sequence s2")
 
 	var input []string
 	var output []struct {

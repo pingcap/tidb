@@ -169,6 +169,51 @@ func (*testSysVarSuite) TestEnumValidation(c *C) {
 	c.Assert(val, Equals, "AUTO")
 }
 
+func (*testSysVarSuite) TestSynonyms(c *C) {
+	sysVar := GetSysVar(TxnIsolation)
+	c.Assert(sysVar, NotNil)
+
+	vars := NewSessionVars()
+
+	// It does not permit SERIALIZABLE by default.
+	_, err := sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+
+	// Enable Skip isolation check
+	c.Assert(GetSysVar(TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"), IsNil)
+
+	// Serializable is now permitted.
+	_, err = sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
+	c.Assert(err, IsNil)
+
+	// Currently TiDB returns a warning because of SERIALIZABLE, but in future
+	// it may also return a warning because TxnIsolation is deprecated.
+
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	c.Assert(warn.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+
+	c.Assert(sysVar.SetSessionFromHook(vars, "SERIALIZABLE"), IsNil)
+
+	// When we set TxnIsolation, it also updates TransactionIsolation.
+	c.Assert(vars.systems[TxnIsolation], Equals, "SERIALIZABLE")
+	c.Assert(vars.systems[TransactionIsolation], Equals, vars.systems[TxnIsolation])
+}
+
+func (*testSysVarSuite) TestDeprecation(c *C) {
+	sysVar := GetSysVar(TiDBIndexLookupConcurrency)
+	c.Assert(sysVar, NotNil)
+
+	vars := NewSessionVars()
+
+	_, err := sysVar.Validate(vars, "1234", ScopeSession)
+	c.Assert(err, IsNil)
+
+	// There was no error but there is a deprecation warning.
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	c.Assert(warn.Error(), Equals, "[variable:1287]'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead")
+}
+
 func (*testSysVarSuite) TestScope(c *C) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	c.Assert(sv.HasSessionScope(), IsTrue)
