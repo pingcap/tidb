@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) {
+func validInterval(sc *stmtctx.StatementContext, low, high *point) (bool, error) {
 	l, err := codec.EncodeKey(sc, nil, low.value)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -52,7 +52,7 @@ func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) 
 
 // points2Ranges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
-func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*Range, error) {
+func points2Ranges(sc *stmtctx.StatementContext, rangePoints []*point, tp *types.FieldType) ([]*Range, error) {
 	ranges := make([]*Range, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sc, rangePoints[i], tp)
@@ -86,7 +86,7 @@ func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.
 	return ranges, nil
 }
 
-func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType) (point, error) {
+func convertPoint(sc *stmtctx.StatementContext, point *point, tp *types.FieldType) (*point, error) {
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point, nil
@@ -97,6 +97,20 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 			// see issue #20101: overflow when converting integer to year
 		} else if tp.Tp == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
+		} else if tp.Tp == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
+			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
+			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
+			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
+		} else if tp.Tp == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
+			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
+			// We should cover Enum upper overflow, and convert to the biggest value.
+			if point.value.GetInt64() > 0 {
+				upperEnum, err := types.ParseEnumValue(tp.Elems, uint64(len(tp.Elems)))
+				if err != nil {
+					return nil, err
+				}
+				casted.SetMysqlEnum(upperEnum, tp.Collate)
+			}
 		} else {
 			return point, errors.Trace(err)
 		}
@@ -105,43 +119,43 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 	if err != nil {
 		return point, errors.Trace(err)
 	}
-	point.value = casted
+	npoint := point.Clone(casted)
 	if valCmpCasted == 0 {
-		return point, nil
+		return npoint, nil
 	}
-	if point.start {
-		if point.excl {
+	if npoint.start {
+		if npoint.excl {
 			if valCmpCasted < 0 {
 				// e.g. "a > 1.9" convert to "a >= 2".
-				point.excl = false
+				npoint.excl = false
 			}
 		} else {
 			if valCmpCasted > 0 {
 				// e.g. "a >= 1.1 convert to "a > 1"
-				point.excl = true
+				npoint.excl = true
 			}
 		}
 	} else {
-		if point.excl {
+		if npoint.excl {
 			if valCmpCasted > 0 {
 				// e.g. "a < 1.1" convert to "a <= 1"
-				point.excl = false
+				npoint.excl = false
 			}
 		} else {
 			if valCmpCasted < 0 {
 				// e.g. "a <= 1.9" convert to "a < 2"
-				point.excl = true
+				npoint.excl = true
 			}
 		}
 	}
-	return point, nil
+	return npoint, nil
 }
 
 // appendPoints2Ranges appends additional column ranges for multi-column index.
 // The additional column ranges can only be appended to point ranges.
 // for example we have an index (a, b), if the condition is (a > 1 and b = 2)
 // then we can not build a conjunctive ranges for this index.
-func appendPoints2Ranges(sc *stmtctx.StatementContext, origin []*Range, rangePoints []point,
+func appendPoints2Ranges(sc *stmtctx.StatementContext, origin []*Range, rangePoints []*point,
 	ft *types.FieldType) ([]*Range, error) {
 	var newIndexRanges []*Range
 	for i := 0; i < len(origin); i++ {
@@ -159,7 +173,7 @@ func appendPoints2Ranges(sc *stmtctx.StatementContext, origin []*Range, rangePoi
 	return newIndexRanges, nil
 }
 
-func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *Range, rangePoints []point,
+func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *Range, rangePoints []*point,
 	ft *types.FieldType) ([]*Range, error) {
 	newRanges := make([]*Range, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
@@ -221,7 +235,7 @@ func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
 
 // points2TableRanges build ranges for table scan from range points.
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
-func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*Range, error) {
+func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []*point, tp *types.FieldType) ([]*Range, error) {
 	ranges := make([]*Range, 0, len(rangePoints)/2)
 	var minValueDatum, maxValueDatum types.Datum
 	// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
@@ -273,7 +287,7 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 // buildColumnRange builds range from CNF conditions.
 func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, tableRange bool, colLen int) (ranges []*Range, err error) {
 	rb := builder{sc: sc}
-	rangePoints := fullRange
+	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
@@ -349,7 +363,7 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 			return nil, errors.Trace(err)
 		}
 	}
-	rangePoints := fullRange
+	rangePoints := getFullRange()
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessCondition); i++ {
 		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
@@ -548,7 +562,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 // 'points'. `col` is the target column to construct the Equal or In condition.
 // NOTE:
 // 1. 'points' should not be empty.
-func points2EqOrInCond(ctx sessionctx.Context, points []point, col *expression.Column) expression.Expression {
+func points2EqOrInCond(ctx sessionctx.Context, points []*point, col *expression.Column) expression.Expression {
 	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
 	// Constant and Column args should have same RetType, simply get from first arg
 	retType := col.GetType()

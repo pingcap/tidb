@@ -16,12 +16,13 @@ package kv
 import (
 	"context"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
 type mockTxn struct {
-	opts  map[Option]interface{}
+	opts  map[int]interface{}
 	valid bool
 }
 
@@ -43,15 +44,15 @@ func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 	return nil
 }
 
-func (t *mockTxn) SetOption(opt Option, val interface{}) {
+func (t *mockTxn) SetOption(opt int, val interface{}) {
 	t.opts[opt] = val
 }
 
-func (t *mockTxn) DelOption(opt Option) {
+func (t *mockTxn) DelOption(opt int) {
 	delete(t.opts, opt)
 }
 
-func (t *mockTxn) GetOption(opt Option) interface{} {
+func (t *mockTxn) GetOption(opt int) interface{} {
 	return t.opts[opt]
 }
 
@@ -125,18 +126,26 @@ func (t *mockTxn) Reset() {
 	t.valid = false
 }
 
-func (t *mockTxn) SetVars(vars *Variables) {
+func (t *mockTxn) SetVars(vars interface{}) {
 
 }
 
-func (t *mockTxn) GetVars() *Variables {
+func (t *mockTxn) GetVars() interface{} {
+	return nil
+}
+
+func (t *mockTxn) CacheTableInfo(id int64, info *model.TableInfo) {
+
+}
+
+func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
 	return nil
 }
 
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{
-		opts:  make(map[Option]interface{}),
+		opts:  make(map[int]interface{}),
 		valid: true,
 	}
 }
@@ -149,7 +158,7 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
-func (s *mockStorage) BeginWithTxnScope(txnScope string) (Transaction, error) {
+func (s *mockStorage) BeginWithOption(option TransactionOption) (Transaction, error) {
 	return newMockTxn(), nil
 }
 
@@ -157,19 +166,9 @@ func (*mockTxn) IsPessimistic() bool {
 	return false
 }
 
-// BeginWithStartTS begins transaction with given txnScope and startTS.
-func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
-	return s.Begin()
-}
-
-// BeginWithExactStaleness begins transaction with given exact staleness
-func (s *mockStorage) BeginWithExactStaleness(txnScope string, prevSec uint64) (Transaction, error) {
-	return s.Begin()
-}
-
 func (s *mockStorage) GetSnapshot(ver Version) Snapshot {
 	return &mockSnapshot{
-		store: newMemDB(),
+		store: newMockMap(),
 	}
 }
 
@@ -224,7 +223,7 @@ func newMockStorage() Storage {
 }
 
 type mockSnapshot struct {
-	store MemBuffer
+	store Retriever
 }
 
 func (s *mockSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
@@ -258,5 +257,5 @@ func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 	return s.store.IterReverse(k)
 }
 
-func (s *mockSnapshot) SetOption(opt Option, val interface{}) {}
-func (s *mockSnapshot) DelOption(opt Option)                  {}
+func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
+func (s *mockSnapshot) DelOption(opt int)                  {}

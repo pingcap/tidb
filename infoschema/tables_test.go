@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -244,7 +245,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 			"t CREATE TABLE `t` (\n" +
 			"  `c` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  `d` int(11) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`c`)\n" +
+			"  PRIMARY KEY (`c`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002"))
 
 	// Test auto_increment for table without auto_increment column
@@ -304,6 +305,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 			"  `INFO` longtext DEFAULT NULL,\n" +
 			"  `DIGEST` varchar(64) DEFAULT '',\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
+			"  `DISK` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `TxnStart` varchar(64) NOT NULL DEFAULT ''\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table information_schema.cluster_log").Check(
@@ -462,6 +464,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		ID:      1,
 		User:    "user-1",
 		Host:    "localhost",
+		Port:    "",
 		DB:      "information_schema",
 		Command: byte(1),
 		Digest:  "abc1",
@@ -473,6 +476,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		ID:      2,
 		User:    "user-2",
 		Host:    "localhost",
+		Port:    "",
 		DB:      "test",
 		Command: byte(2),
 		Digest:  "abc2",
@@ -480,21 +484,36 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Info:    strings.Repeat("x", 101),
 		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
+	sm.processInfoMap[3] = &util.ProcessInfo{
+		ID:      3,
+		User:    "user-3",
+		Host:    "127.0.0.1",
+		Port:    "12345",
+		DB:      "test",
+		Command: byte(2),
+		Digest:  "abc3",
+		State:   1,
+		Info:    "check port",
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 ", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 ", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0 ", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0 ", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
 			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "do something"),
 			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 100)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
 		testkit.Rows(
 			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "do something"),
 			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 
 	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
@@ -523,8 +542,8 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.Se.GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 ", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -538,11 +557,11 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 ", "in transaction", "<nil>"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "<nil>"),
 		))
 }
 
@@ -622,13 +641,10 @@ func (s *testTableSuite) TestTableRowIDShardingInfo(c *C) {
 	testFunc("performance_schema", nil)
 	testFunc("uucc", "NOT_SHARDED")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
-	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a bigint key auto_random)")
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a bigint key clustered auto_random)")
 	assertShardingInfo("t4", "PK_AUTO_RANDOM_BITS=5")
 
-	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key auto_random(1))")
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key clustered auto_random(1))")
 	assertShardingInfo("t5", "PK_AUTO_RANDOM_BITS=1")
 
 	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
@@ -807,7 +823,7 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
 		tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
 		tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
-		tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 ", "")))
+		tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0 ", "")))
 		tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
 		tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
@@ -858,7 +874,7 @@ select * from t3;
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 ", "")))
+	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0 ", "")))
 	tk.MustExec("create user user1")
 	tk.MustExec("create user user2")
 	user1 := testkit.NewTestKit(c, s.store)
@@ -956,12 +972,13 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("insert into t    values(2, 'b')")
 	tk.MustExec("insert into t VALUES(3, 'c')")
 	tk.MustExec("/**/insert into t values(4, 'd')")
-	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
-		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text
-		from information_schema.statements_summary
-		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a')"))
+
+	sql := "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys, " +
+		"max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, " +
+		"max_prewrite_regions, avg_affected_rows, query_sample_text " +
+		"from information_schema.statements_summary " +
+		"where digest_text like 'insert into `t`%'"
+	tk.MustQuery(sql).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a')"))
 
 	// Test point get.
 	tk.MustExec("drop table if exists p")
@@ -970,10 +987,9 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		tk.MustQuery("select b from p where a=1")
 		expectedResult := fmt.Sprintf("%d \tid         \ttask\testRows\toperator info\n\tPoint_Get_1\troot\t1      \ttable:p, handle:1 %s", i, "test.p")
 		// Also make sure that the plan digest is not empty
-		tk.MustQuery(`select exec_count, plan, table_names
-			from information_schema.statements_summary
-			where digest_text like 'select b from p%' and plan_digest != ''`,
-		).Check(testkit.Rows(expectedResult))
+		sql = "select exec_count, plan, table_names from information_schema.statements_summary " +
+			"where digest_text like 'select `b` from `p`%' and plan_digest != ''"
+		tk.MustQuery(sql).Check(testkit.Rows(expectedResult))
 	}
 
 	// Point get another database.
@@ -985,10 +1001,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(len(rows[0]), Equals, 1)
 	c.Assert(rows[0][0], Matches, ".*\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME.*")
-	tk.MustQuery(`select table_names
-			from information_schema.statements_summary
-			where digest_text like 'select variable_value%' and schema_name='test'`,
-	).Check(testkit.Rows("mysql.tidb"))
+
+	sql = "select table_names from information_schema.statements_summary " +
+		"where digest_text like 'select `variable_value`%' and `schema_name`='test'"
+	tk.MustQuery(sql).Check(testkit.Rows("mysql.tidb"))
 
 	// Test `create database`.
 	tk.MustExec("create database if not exists test")
@@ -1005,12 +1021,13 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	c.Assert(failpoint.Enable(failpointName, "return(100)"), IsNil)
 	defer func() { c.Assert(failpoint.Disable(failpointName), IsNil) }()
 	tk.MustQuery("select * from t where a=2")
-	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
-		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
-		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+
+	sql = "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys, " +
+		"max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, " +
+		"max_prewrite_regions, avg_affected_rows, query_sample_text, plan " +
+		"from information_schema.statements_summary " +
+		"where digest_text like 'select * from `t`%'"
+	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10    \troot     \t100    \t\n" +
 		"\t├─IndexRangeScan_8\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableRowIDScan_9\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
@@ -1026,12 +1043,12 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	// Test different plans with same digest.
 	c.Assert(failpoint.Enable(failpointName, "return(1000)"), IsNil)
 	tk.MustQuery("select * from t where a=3")
-	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
-		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
-		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows(
+	sql = "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys, " +
+		"max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, " +
+		"max_prewrite_regions, avg_affected_rows, query_sample_text, plan " +
+		"from information_schema.statements_summary " +
+		"where digest_text like 'select * from `t`%'"
+	tk.MustQuery(sql).Check(testkit.Rows(
 		"Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
 			"\tIndexLookUp_10    \troot     \t100    \t\n" +
 			"\t├─IndexRangeScan_8\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
@@ -1063,12 +1080,12 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values(1, 'a')")
 	tk.MustExec("commit")
-	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
-		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text
-		from information_schema.statements_summary
-		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("Insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 insert into t values(1, 'a') "))
+	sql = "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys, " +
+		"max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, " +
+		"max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text " +
+		"from information_schema.statements_summary " +
+		"where digest_text like 'insert into `t`%'"
+	tk.MustQuery(sql).Check(testkit.Rows("Insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 insert into t values(1, 'a') "))
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text
@@ -1077,12 +1094,12 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	).Check(testkit.Rows("Commit test <nil> <nil> 1 0 0 0 0 0 2 2 1 1 0 commit insert into t values(1, 'a')"))
 
 	tk.MustQuery("select * from t where a=2")
-	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
-		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
-		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+	sql = "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys, " +
+		"max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, " +
+		"max_prewrite_regions, avg_affected_rows, query_sample_text, plan " +
+		"from information_schema.statements_summary " +
+		"where digest_text like 'select * from `t`%'"
+	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10    \troot     \t1000   \t\n" +
 		"\t├─IndexRangeScan_8\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableRowIDScan_9\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
@@ -1096,12 +1113,12 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustQuery("select * from t where a=2")
 
 	// Statement summary is still enabled.
-	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
-		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
-		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+	sql = "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys, " +
+		"max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, " +
+		"max_prewrite_regions, avg_affected_rows, query_sample_text, plan " +
+		"from information_schema.statements_summary " +
+		"where digest_text like 'select * from `t`%'"
+	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10    \troot     \t1000   \t\n" +
 		"\t├─IndexRangeScan_8\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableRowIDScan_9\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
@@ -1133,16 +1150,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		AuthHostname: "%",
 	}, nil, nil)
 	tk.MustExec("select * from t where a=1")
-	result := tk.MustQuery(`select *
-		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
-	)
+	result := tk.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
 	// Super user can query all records.
 	c.Assert(len(result.Rows()), Equals, 1)
-	result = tk.MustQuery(`select *
-		from information_schema.statements_summary_history
-		where digest_text like 'select * from t%'`,
-	)
+	result = tk.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 1)
 	tk.Se.Auth(&auth.UserIdentity{
 		Username:     "test_user",
@@ -1150,28 +1161,16 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
 	}, nil, nil)
-	result = tk.MustQuery(`select *
-		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
-	)
+	result = tk.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
 	// Ordinary users can not see others' records
 	c.Assert(len(result.Rows()), Equals, 0)
-	result = tk.MustQuery(`select *
-		from information_schema.statements_summary_history
-		where digest_text like 'select * from t%'`,
-	)
+	result = tk.MustQuery("select *	from information_schema.statements_summary_history where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 0)
 	tk.MustExec("select * from t where a=1")
-	result = tk.MustQuery(`select *
-		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
-	)
+	result = tk.MustQuery("select *	from information_schema.statements_summary	where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 1)
 	tk.MustExec("select * from t where a=1")
-	result = tk.MustQuery(`select *
-		from information_schema.statements_summary_history
-		where digest_text like 'select * from t%'`,
-	)
+	result = tk.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 1)
 	// use root user to set variables back
 	tk.Se.Auth(&auth.UserIdentity{
@@ -1195,7 +1194,7 @@ func (s *testTableSuite) TestIssue18845(c *C) {
 }
 
 // Test statements_summary_history.
-func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
+func (s *testClusterTableSuite) TestStmtSummaryHistoryTable(c *C) {
 	tk := s.newTestKitWithRoot(c)
 	tk.MustExec("drop table if exists test_summary")
 	tk.MustExec("create table test_summary(a int, b varchar(10), key k(a))")
@@ -1217,12 +1216,13 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 	tk.MustExec("insert into test_summary    values(2, 'b')")
 	tk.MustExec("insert into TEST_SUMMARY VALUES(3, 'c')")
 	tk.MustExec("/**/insert into test_summary values(4, 'd')")
-	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
-		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text
-		from information_schema.statements_summary_history
-		where digest_text like 'insert into test_summary%'`,
-	).Check(testkit.Rows("Insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into test_summary values(1, 'a')"))
+
+	sql := "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys," +
+		"max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions," +
+		"max_prewrite_regions, avg_affected_rows, query_sample_text " +
+		"from information_schema.statements_summary_history " +
+		"where digest_text like 'insert into `test_summary`%'"
+	tk.MustQuery(sql).Check(testkit.Rows("Insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into test_summary values(1, 'a')"))
 
 	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -1230,6 +1230,20 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary_history`,
 	).Check(testkit.Rows())
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("drop table if exists `table`")
+	tk.MustExec("set global tidb_stmt_summary_history_size = 1")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustExec("create table `table`(`insert` int)")
+	tk.MustExec("select `insert` from `table`")
+
+	sql = "select digest_text from information_schema.statements_summary_history;"
+	tk.MustQuery(sql).Check(testkit.Rows(
+		"select `insert` from `table`",
+		"create table `table` ( `insert` int )",
+		"set global `tidb_enable_stmt_summary` = ?",
+	))
 }
 
 // Test statements_summary_history.
@@ -1272,16 +1286,16 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk.MustExec("admin evolve bindings")
 
 	// `exec_count` may be bigger than 1 because other cases are also running.
-	tk.MustQuery(`select digest_text
-		from information_schema.statements_summary
-		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows(
-		"select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation , source from mysql . bind_info" +
-			" where update_time > ? order by update_time"))
+	sql := "select digest_text " +
+		"from information_schema.statements_summary " +
+		"where digest_text like \"select `original_sql` , `bind_sql` , `default_db` , status%\""
+	tk.MustQuery(sql).Check(testkit.Rows(
+		"select `original_sql` , `bind_sql` , `default_db` , status , `create_time` , `update_time` , charset , " +
+			"collation , source from `mysql` . `bind_info` where `update_time` > ? order by `update_time`"))
 
 	// Test for issue #21642.
 	tk.MustQuery(`select tidb_version()`)
-	rows := tk.MustQuery(`select plan from information_schema.statements_summary
-		where digest_text like "select tidb_version%"`).Rows()
+	rows := tk.MustQuery("select plan from information_schema.statements_summary where digest_text like \"select `tidb_version`%\"").Rows()
 	c.Assert(strings.Contains(rows[0][0].(string), "Projection"), IsTrue)
 }
 
@@ -1300,14 +1314,12 @@ func (s *testTableSuite) TestStmtSummaryErrorCount(c *C) {
 	_, err := tk.Exec("insert into stmt_summary_test values(1)")
 	c.Assert(err, NotNil)
 
-	tk.MustQuery(`select exec_count, sum_errors, sum_warnings
-		from information_schema.statements_summary
-		where digest_text like "insert into stmt_summary_test%"`).Check(testkit.Rows("2 1 0"))
+	sql := "select exec_count, sum_errors, sum_warnings from information_schema.statements_summary where digest_text like \"insert into `stmt_summary_test`%\""
+	tk.MustQuery(sql).Check(testkit.Rows("2 1 0"))
 
 	tk.MustExec("insert ignore into stmt_summary_test values(1)")
-	tk.MustQuery(`select exec_count, sum_errors, sum_warnings
-		from information_schema.statements_summary
-		where digest_text like "insert ignore into stmt_summary_test%"`).Check(testkit.Rows("1 0 1"))
+	sql = "select exec_count, sum_errors, sum_warnings from information_schema.statements_summary where digest_text like \"insert ignore into `stmt_summary_test`%\""
+	tk.MustQuery(sql).Check(testkit.Rows("1 0 1"))
 }
 
 func (s *testTableSuite) TestStmtSummaryPreparedStatements(c *C) {
@@ -1366,12 +1378,12 @@ func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("prepare stmt from 'select * from t'")
 	tk.MustExec("execute stmt")
-	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
 		testkit.Rows("0 0"))
 	tk.MustExec("execute stmt")
 	tk.MustExec("execute stmt")
 	tk.MustExec("execute stmt")
-	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
 		testkit.Rows("3 1"))
 }
 
@@ -1430,7 +1442,7 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 				ID:      "0",
 				Role:    "voter",
 				Count:   3,
-				LabelConstraints: []placement.LabelConstraint{
+				LabelConstraints: []placement.Constraint{
 					{
 						Key:    "zone",
 						Op:     "in",
@@ -1459,4 +1471,41 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 	is.SetBundle(bundle1)
 	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by partition_name, rule_id").Check(testkit.Rows(
 		"0 test test_placement p0", "1 test test_placement p0", "0 test test_placement p1", "1 test test_placement p1"))
+
+	// do not report error for invalid ObjectID
+	// check pingcap/tidb/issues/22950
+	bundle1.ID = placement.GroupID(1)
+	tk.MustQuery("select rule_id from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
+		"0", "1"))
+
+	// test the failpoint for testing
+	fpName := "github.com/pingcap/tidb/executor/outputInvalidPlacementRules"
+	c.Assert(failpoint.Enable(fpName, "return(true)"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+	tk.MustQuery("select rule_id from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
+		"0", "0", "1", "1"))
+}
+
+func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
+	tk := s.newTestKitWithRoot(c)
+
+	tk.MustExec("FLUSH CLIENT_ERRORS_SUMMARY")
+
+	errno.IncrementError(1365, "root", "localhost")
+	errno.IncrementError(1365, "infoschematest", "localhost")
+	errno.IncrementError(1365, "root", "localhost")
+
+	tk.MustExec("CREATE USER 'infoschematest'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "infoschematest", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	err := tk.QueryToErr("SELECT * FROM information_schema.client_errors_summary_global")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.client_errors_summary_by_host")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	tk.MustQuery("SELECT error_number, error_count, warning_count FROM information_schema.client_errors_summary_by_user ORDER BY error_number").Check(testkit.Rows("1365 1 0"))
+
+	err = tk.ExecToErr("FLUSH CLIENT_ERRORS_SUMMARY")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RELOAD privilege(s) for this operation")
 }

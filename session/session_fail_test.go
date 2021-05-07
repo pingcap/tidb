@@ -19,7 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -84,7 +84,7 @@ func (s *testSessionSerialSuite) TestKillFlagInBackoff(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table kill_backoff (id int)")
 	var killValue uint32
-	tk.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {
+	tk.Se.GetSessionVars().KVVars.Hook = func(name string, vars *tikv.Variables) {
 		killValue = atomic.LoadUint32(vars.Killed)
 	}
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("callBackofferHook")`), IsNil)
@@ -102,4 +102,68 @@ func (s *testSessionSerialSuite) TestClusterTableSendError(c *C) {
 	tk.MustQuery("select * from information_schema.cluster_slow_query")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err, ErrorMatches, ".*TiDB server timeout, address is.*")
+}
+
+func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1;")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec(`create table t1 (c int)`)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/getMinCommitTSFromTSO", `panic`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/getMinCommitTSFromTSO"), IsNil)
+	}()
+
+	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1"), IsNil)
+	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_guarantee_linearizability", "1"), IsNil)
+
+	// Auto-commit transactions don't need to get minCommitTS from TSO
+	tk.MustExec("INSERT INTO t1 VALUES (1)")
+
+	tk.MustExec("BEGIN")
+	tk.MustExec("INSERT INTO t1 VALUES (2)")
+	// An explicit transaction needs to get minCommitTS from TSO
+	func() {
+		defer func() {
+			err := recover()
+			c.Assert(err, NotNil)
+		}()
+		tk.MustExec("COMMIT")
+	}()
+
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("INSERT INTO t1 VALUES (3)")
+	func() {
+		defer func() {
+			err := recover()
+			c.Assert(err, NotNil)
+		}()
+		tk.MustExec("COMMIT")
+	}()
+
+	// Same for 1PC
+	tk.MustExec("set autocommit = 1")
+	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_enable_1pc", "1"), IsNil)
+	tk.MustExec("INSERT INTO t1 VALUES (4)")
+
+	tk.MustExec("BEGIN")
+	tk.MustExec("INSERT INTO t1 VALUES (5)")
+	func() {
+		defer func() {
+			err := recover()
+			c.Assert(err, NotNil)
+		}()
+		tk.MustExec("COMMIT")
+	}()
+
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("INSERT INTO t1 VALUES (6)")
+	func() {
+		defer func() {
+			err := recover()
+			c.Assert(err, NotNil)
+		}()
+		tk.MustExec("COMMIT")
+	}()
 }

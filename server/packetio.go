@@ -108,6 +108,11 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 }
 
 func (p *packetIO) readPacket() ([]byte, error) {
+	if p.readTimeout == 0 {
+		if err := p.bufReadConn.SetReadDeadline(time.Time{}); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	data, err := p.readOnePacket()
 	if err != nil {
 		return nil, errors.Trace(err)

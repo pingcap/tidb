@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -74,6 +75,9 @@ type PhysicalTableReader struct {
 
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
+
+	// BatchCop = true means the cop task in the physical table reader will be executed in batch mode(use in TiFlash only)
+	BatchCop bool
 
 	IsCommonHandle bool
 
@@ -143,6 +147,7 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.StoreType = p.StoreType
+	cloned.BatchCop = p.BatchCop
 	cloned.IsCommonHandle = p.IsCommonHandle
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
@@ -515,6 +520,35 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
 }
 
+// ResolveCorrelatedColumns resolves the correlated columns in range access
+func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) {
+	access := ts.AccessCondition
+	if ts.Table.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(ts.Table)
+		idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
+		for _, cond := range access {
+			newCond, err := expression.SubstituteCorCol2Constant(cond)
+			if err != nil {
+				return nil, err
+			}
+			access = append(access, newCond)
+		}
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ts.SCtx(), access, idxCols, idxColLens)
+		if err != nil {
+			return nil, err
+		}
+		ts.Ranges = res.Ranges
+	} else {
+		var err error
+		pkTP := ts.Table.GetPkColInfo().FieldType
+		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx().GetSessionVars().StmtCtx, &pkTP)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return ts.Ranges, nil
+}
+
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
 func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
@@ -724,6 +758,7 @@ type PhysicalHashJoin struct {
 	// on which store the join executes.
 	storeTp          kv.StoreType
 	globalChildIndex int
+	mppShuffleJoin   bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -787,8 +822,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
-	outerSchema *expression.Schema
-	innerTask   task
+	innerTask task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges []*ranger.Range
@@ -848,8 +882,12 @@ type PhysicalMergeJoin struct {
 type PhysicalExchangeReceiver struct {
 	basePhysicalPlan
 
-	Tasks   []*kv.MPPTask
-	ChildPf *Fragment
+	Tasks []*kv.MPPTask
+}
+
+// GetExchangeSender return the connected sender of this receiver. We assume that its child must be a receiver.
+func (p *PhysicalExchangeReceiver) GetExchangeSender() *PhysicalExchangeSender {
+	return p.children[0].(*PhysicalExchangeSender)
 }
 
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
@@ -936,6 +974,15 @@ type basePhysicalAgg struct {
 	GroupByItems     []expression.Expression
 	MppRunMode       AggMppRunMode
 	MppPartitionCols []*expression.Column
+}
+
+func (p *basePhysicalAgg) isFinalAgg() bool {
+	if len(p.AggFuncs) > 0 {
+		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg, error) {

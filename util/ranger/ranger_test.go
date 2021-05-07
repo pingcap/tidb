@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -1219,16 +1220,16 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("set @@tidb_enable_clustered_index=0")
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")
-	testKit.MustQuery("explain select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
-		"Union_11 2.00 root  ",
-		"├─IndexReader_14 1.00 root  index:IndexRangeScan_13",
-		"│ └─IndexRangeScan_13 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
-		"└─IndexReader_17 1.00 root  index:IndexRangeScan_16",
-		"  └─IndexRangeScan_16 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
+	testKit.MustQuery("explain format = 'brief' select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
+		"Union 2.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
 	))
 	testKit.MustQuery("select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
 		"1 2",
@@ -1339,7 +1340,7 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF1(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_enable_clustered_index=1;")
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1373,7 +1374,7 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_enable_clustered_index=1;")
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b,c));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1443,6 +1444,8 @@ func (s *testRangerSuite) TestIndexRangeForBit(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test;")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	testKit.MustExec("set @@tidb_executor_concurrency = 1;")
 	testKit.MustExec("drop table if exists t;")
 	testKit.MustExec("CREATE TABLE `t` (" +
 		"a bit(1) DEFAULT NULL," +
@@ -1527,7 +1530,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 			exprStr:     `a not in (-1, 1, 2)`,
 			accessConds: "[not(in(test.t.a, -1, 1, 2))]",
 			filterConds: "[]",
-			resultStr:   `[(NULL,0) [0,2001) (2002,+inf]]`,
+			resultStr:   `[(NULL,2001) (2002,+inf]]`,
 		},
 		{
 			indexPos:    0,
@@ -1555,7 +1558,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 			exprStr:     `a not in (1, 2, 15698)`,
 			accessConds: "[not(in(test.t.a, 1, 2, 15698))]",
 			filterConds: "[]",
-			resultStr:   `[(NULL,2001) (2002,2155] (2155,+inf]]`,
+			resultStr:   `[(NULL,2001) (2002,+inf]]`,
 		},
 		{
 			indexPos:    0,
@@ -1583,7 +1586,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 			exprStr:     `a != 2156`,
 			accessConds: "[ne(test.t.a, 2156)]",
 			filterConds: "[]",
-			resultStr:   `[[-inf,2155] (2155,+inf]]`,
+			resultStr:   `[[-inf,+inf]]`,
 		},
 		{
 			exprStr:     "a < 99 or a > 01",
@@ -1697,5 +1700,39 @@ func (s *testRangerSuite) TestPrefixIndexRangeScan(c *C) {
 		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
 		got := fmt.Sprintf("%v", res.Ranges)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+	}
+}
+
+func (s *testRangerSuite) TestIndexRangeForDecimal(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test;")
+	testKit.MustExec("drop table if exists t1, t2;")
+	testKit.MustExec("create table t1(a decimal unsigned, key(a));")
+	testKit.MustExec("insert into t1 values(0),(null);")
+	testKit.MustExec("create table t2(a int, b decimal unsigned, key idx(a,b));")
+	testKit.MustExec("insert into t2 values(1,0),(1,null);")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }

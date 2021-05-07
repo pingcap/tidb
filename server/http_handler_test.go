@@ -179,6 +179,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionCommonHandleRange(c *C) {
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
 		StartKey: startKey,
+		EndKey:   nil,
 	}
 	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
@@ -483,7 +484,10 @@ func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 	ts.port = getPortFromTCPAddr(server.listener.Addr())
 	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	ts.waitUntilServerOnline()
 }
 
@@ -506,7 +510,10 @@ func (ts *basicHTTPHandlerTestSuite) stopServer(c *C) {
 func (ts *basicHTTPHandlerTestSuite) prepareData(c *C) {
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 	dbt := &DBTest{c, db}
 
 	dbt.mustExec("create database tidb;")
@@ -536,15 +543,16 @@ partition by range (a)
 
 	txn2, err := dbt.db.Begin()
 	c.Assert(err, IsNil)
-	txn2.Exec("insert into tidb.pt values (42, '123')")
-	txn2.Exec("insert into tidb.pt values (256, 'b')")
-	txn2.Exec("insert into tidb.pt values (666, 'def')")
+	_, err = txn2.Exec("insert into tidb.pt values (42, '123')")
+	c.Assert(err, IsNil)
+	_, err = txn2.Exec("insert into tidb.pt values (256, 'b')")
+	c.Assert(err, IsNil)
+	_, err = txn2.Exec("insert into tidb.pt values (666, 'def')")
+	c.Assert(err, IsNil)
 	err = txn2.Commit()
 	c.Assert(err, IsNil)
-
-	dbt.mustExec("set @@tidb_enable_clustered_index = 1")
 	dbt.mustExec("drop table if exists t")
-	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b))")
+	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b) clustered)")
 	dbt.mustExec("insert into t values(1.1,'111',1),(2.2,'222',2)")
 }
 
@@ -624,7 +632,6 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 
 	resp, err = ts.fetchStatus("/mvcc/key/tidb/pt(p0)/42?decode=true")
 	c.Assert(err, IsNil)
-	defer resp.Body.Close()
 	decoder = json.NewDecoder(resp.Body)
 	var data4 map[string]interface{}
 	err = decoder.Decode(&data4)
@@ -633,6 +640,25 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	c.Assert(data4["info"], NotNil)
 	c.Assert(data4["data"], NotNil)
 	c.Assert(data4["decode_error"], IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
+
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/t/42")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/t?a=1.1")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/t?a=1.1&b=111&decode=1")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	var data5 map[string]interface{}
+	err = decoder.Decode(&data5)
+	c.Assert(err, IsNil)
+	c.Assert(data4["key"], NotNil)
+	c.Assert(data4["info"], NotNil)
+	c.Assert(data4["data"], NotNil)
+	c.Assert(data4["decode_error"], IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
@@ -657,7 +683,10 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 	dbt := &DBTest{c, db}
 
 	defer func(originGC bool) {
@@ -688,7 +717,11 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	c.Assert(len(data), Equals, 0)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+	defer func() {
+		err = failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
+
 	dbt.mustExec("use tidb")
 	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 
@@ -724,7 +757,8 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 	c.Assert(len(data), Equals, 1)
 	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
 	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
@@ -738,7 +772,8 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 		decoder = json.NewDecoder(resp.Body)
 		err = decoder.Decode(&data)
 		c.Assert(err, IsNil)
-		resp.Body.Close()
+		err = resp.Body.Close()
+		c.Assert(err, IsNil)
 		c.Assert(len(data), Equals, 1)
 		c.Assert(data[0].ReplicaCount, Equals, uint64(2))
 		c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
@@ -765,7 +800,8 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 	c.Assert(len(data), Equals, 3)
 	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
 	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
@@ -779,13 +815,15 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid1)
 	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 	resp, err = ts.fetchStatus("/tiflash/replica")
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 	c.Assert(len(data), Equals, 3)
 	c.Assert(data[0].Available, Equals, false)
 	c.Assert(data[1].Available, Equals, true)
@@ -795,18 +833,21 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid0)
 	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid2)
 	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 	checkFunc = func() {
 		resp, err = ts.fetchStatus("/tiflash/replica")
 		c.Assert(err, IsNil)
 		decoder = json.NewDecoder(resp.Body)
 		err = decoder.Decode(&data)
 		c.Assert(err, IsNil)
-		resp.Body.Close()
+		err = resp.Body.Close()
+		c.Assert(err, IsNil)
 		c.Assert(len(data), Equals, 3)
 		c.Assert(data[0].Available, Equals, true)
 		c.Assert(data[1].Available, Equals, true)
@@ -955,7 +996,13 @@ func (ts *HTTPHandlerTestSuite) TestGetSettings(c *C) {
 	var settings *config.Config
 	err = decoder.Decode(&settings)
 	c.Assert(err, IsNil)
-	c.Assert(settings, DeepEquals, config.GetGlobalConfig())
+	var configBytes []byte
+	configBytes, err = json.Marshal(config.GetGlobalConfig())
+	c.Assert(err, IsNil)
+	var settingBytes []byte
+	settingBytes, err = json.Marshal(settings)
+	c.Assert(err, IsNil)
+	c.Assert(settingBytes, DeepEquals, configBytes)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
@@ -1028,7 +1075,10 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 	dbt := &DBTest{c, db}
 
 	dbt.mustExec("create database if not exists test;")
@@ -1076,7 +1126,8 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
 	txnMeta := meta.NewMeta(txn)
-	txnMeta.GetAllHistoryDDLJobs()
+	_, err = txnMeta.GetAllHistoryDDLJobs()
+	c.Assert(err, IsNil)
 	data, _ := txnMeta.GetAllHistoryDDLJobs()
 	err = decoder.Decode(&jobs)
 
@@ -1088,9 +1139,14 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
+	se, err := session.CreateSession(ts.store.(kv.Storage))
+	c.Assert(err, IsNil)
+
 	form := make(url.Values)
 	form.Set("log_level", "error")
 	form.Set("tidb_general_log", "1")
+	form.Set("tidb_enable_async_commit", "1")
+	form.Set("tidb_enable_1pc", "1")
 	resp, err := ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -1098,9 +1154,18 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
 	c.Assert(variable.ProcessGeneralLog.Load(), IsTrue)
+	val, err := variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.On)
+	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.On)
+
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
 	form.Set("tidb_general_log", "0")
+	form.Set("tidb_enable_async_commit", "0")
+	form.Set("tidb_enable_1pc", "0")
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -1108,6 +1173,12 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(log.GetLevel(), Equals, log.FatalLevel)
 	c.Assert(zaplog.GetLevel(), Equals, zap.FatalLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
+	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.Off)
+	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, variable.Off)
 	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold
@@ -1121,7 +1192,10 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	// test check_mb4_value_in_utf8
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 	dbt := &DBTest{c, db}
 
 	dbt.mustExec("create database tidb_test;")
@@ -1137,7 +1211,8 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(err, IsNil)
 	_, err = txn1.Exec("insert t2 values (unhex('F0A48BAE'));")
 	c.Assert(err, NotNil)
-	txn1.Commit()
+	err = txn1.Commit()
+	c.Assert(err, IsNil)
 
 	// Disable CheckMb4ValueInUTF8.
 	form = make(url.Values)
@@ -1156,8 +1231,10 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 	for retry := 0; retry < retryTime; retry++ {
 		resp, err := ts.fetchStatus("/debug/pprof/heap")
 		if err == nil {
-			ioutil.ReadAll(resp.Body)
-			resp.Body.Close()
+			_, err = ioutil.ReadAll(resp.Body)
+			c.Assert(err, IsNil)
+			err = resp.Body.Close()
+			c.Assert(err, IsNil)
 			return
 		}
 		time.Sleep(time.Millisecond * 10)
@@ -1266,7 +1343,10 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 	dbt := &DBTest{c, db}
 
 	dbt.mustExec("use test")
@@ -1356,31 +1436,62 @@ func (ts *HTTPHandlerTestSuite) TestTestHandler(c *C) {
 
 	resp, err = ts.fetchStatus("/test/gc/gc")
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 
 	resp, err = ts.fetchStatus("/test/gc/resolvelock")
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 
 	resp, err = ts.fetchStatus("/test/gc/resolvelock?safepoint=a")
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 
 	resp, err = ts.fetchStatus("/test/gc/resolvelock?physical=1")
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 
 	resp, err = ts.fetchStatus("/test/gc/resolvelock?physical=true")
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 
 	resp, err = ts.fetchStatus("/test/gc/resolvelock?safepoint=10000&physical=true")
 	c.Assert(err, IsNil)
-	resp.Body.Close()
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+}
+
+func (ts *HTTPHandlerTestSuite) TestDDLHookHandler(c *C) {
+	defer ts.stopServer(c)
+
+	ts.startServer(c)
+	resp, err := ts.fetchStatus("/test/ddl/hook")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=ctc_hook`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "\"success!\"")
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=default_hook`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err = ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "\"success!\"")
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 }

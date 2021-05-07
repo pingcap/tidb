@@ -21,14 +21,14 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -39,7 +39,7 @@ func equalRegionStartKey(key, regionStartKey []byte) bool {
 	return bytes.Equal(key, regionStartKey)
 }
 
-func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool, tableID *int64) (*tikvrpc.Response, error) {
+func (s *KVStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool, tableID *int64) (*tikvrpc.Response, error) {
 	// equalRegionStartKey is used to filter split keys.
 	// If the split key is equal to the start key of the region, then the key has been split, we need to skip the split key.
 	groups, _, err := s.regionCache.GroupKeysByRegion(bo, keys, equalRegionStartKey)
@@ -61,7 +61,7 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 			zap.Int("split key count", len(keys)),
 			zap.Int("batch count", len(batches)),
 			zap.Uint64("first batch, region ID", batches[0].regionID.id),
-			zap.Stringer("first split key", kv.Key(batches[0].keys[0])))
+			zap.String("first split key", kv.StrKey(batches[0].keys[0])))
 	}
 	if len(batches) == 1 {
 		resp := s.batchSendSingleRegion(bo, batches[0], scatter, tableID)
@@ -107,14 +107,14 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 	return &tikvrpc.Response{Resp: srResp}, errors.Trace(err)
 }
 
-func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool, tableID *int64) singleBatchResp {
-	failpoint.Inject("MockSplitRegionTimeout", func(val failpoint.Value) {
+func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool, tableID *int64) singleBatchResp {
+	if val, err := util.MockSplitRegionTimeout.Eval(); err == nil {
 		if val.(bool) {
 			if _, ok := bo.ctx.Deadline(); ok {
 				<-bo.ctx.Done()
 			}
 		}
-	})
+	}
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdSplitRegion, &kvrpcpb.SplitRegionRequest{
 		SplitKeys: batch.keys,
@@ -123,7 +123,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	})
 
 	sender := NewRegionRequestSender(s.regionCache, s.client)
-	resp, err := sender.SendReq(bo, req, batch.regionID, readTimeoutShort)
+	resp, err := sender.SendReq(bo, req, batch.regionID, ReadTimeoutShort)
 
 	batchResp := singleBatchResp{resp: resp}
 	if err != nil {
@@ -160,7 +160,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	}
 	logutil.BgLogger().Info("batch split regions complete",
 		zap.Uint64("batch region ID", batch.regionID.id),
-		zap.Stringer("first at", kv.Key(batch.keys[0])),
+		zap.String("first at", kv.StrKey(batch.keys[0])),
 		zap.String("first new region left", newRegionLeft),
 		zap.Int("new region count", len(spResp.Regions)))
 
@@ -172,20 +172,20 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 		if err = s.scatterRegion(bo, r.Id, tableID); err == nil {
 			logutil.BgLogger().Info("batch split regions, scatter region complete",
 				zap.Uint64("batch region ID", batch.regionID.id),
-				zap.Stringer("at", kv.Key(batch.keys[i])),
+				zap.String("at", kv.StrKey(batch.keys[i])),
 				zap.Stringer("new region left", logutil.Hex(r)))
 			continue
 		}
 
 		logutil.BgLogger().Info("batch split regions, scatter region failed",
 			zap.Uint64("batch region ID", batch.regionID.id),
-			zap.Stringer("at", kv.Key(batch.keys[i])),
+			zap.String("at", kv.StrKey(batch.keys[i])),
 			zap.Stringer("new region left", logutil.Hex(r)),
 			zap.Error(err))
 		if batchResp.err == nil {
 			batchResp.err = err
 		}
-		if ErrPDServerTimeout.Equal(err) {
+		if _, ok := err.(*tikverr.ErrPDServerTimeout); ok {
 			break
 		}
 	}
@@ -193,7 +193,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 }
 
 // SplitRegions splits regions by splitKeys.
-func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool, tableID *int64) (regionIDs []uint64, err error) {
+func (s *KVStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool, tableID *int64) (regionIDs []uint64, err error) {
 	bo := NewBackofferWithVars(ctx, int(math.Min(float64(len(splitKeys))*splitRegionBackoff, maxSplitRegionsBackoff)), nil)
 	resp, err := s.splitBatchRegionsReq(bo, splitKeys, scatter, tableID)
 	regionIDs = make([]uint64, 0, len(splitKeys))
@@ -207,7 +207,7 @@ func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatte
 	return regionIDs, errors.Trace(err)
 }
 
-func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64) error {
+func (s *KVStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64) error {
 	logutil.BgLogger().Info("start scatter region",
 		zap.Uint64("regionID", regionID))
 	for {
@@ -217,11 +217,11 @@ func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64
 		}
 		_, err := s.pdClient.ScatterRegions(bo.ctx, []uint64{regionID}, opts...)
 
-		failpoint.Inject("MockScatterRegionTimeout", func(val failpoint.Value) {
+		if val, err2 := util.MockScatterRegionTimeout.Eval(); err2 == nil {
 			if val.(bool) {
-				err = ErrPDServerTimeout
+				err = tikverr.NewErrPDServerTimeout("")
 			}
-		})
+		}
 
 		if err == nil {
 			break
@@ -236,7 +236,7 @@ func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64
 	return nil
 }
 
-func (s *tikvStore) preSplitRegion(ctx context.Context, group groupedMutations) bool {
+func (s *KVStore) preSplitRegion(ctx context.Context, group groupedMutations) bool {
 	splitKeys := make([][]byte, 0, 4)
 
 	preSplitSizeThresholdVal := atomic.LoadUint32(&preSplitSizeThreshold)
@@ -276,7 +276,7 @@ func (s *tikvStore) preSplitRegion(ctx context.Context, group groupedMutations) 
 // WaitScatterRegionFinish implements SplittableStore interface.
 // backOff is the back off time of the wait scatter region.(Milliseconds)
 // if backOff <= 0, the default wait scatter back off time will be used.
-func (s *tikvStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error {
+func (s *KVStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error {
 	if backOff <= 0 {
 		backOff = waitScatterRegionFinishBackoff
 	}
@@ -294,7 +294,7 @@ func (s *tikvStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64
 				return nil
 			}
 			if resp.GetHeader().GetError() != nil {
-				err = errors.AddStack(&PDError{
+				err = errors.AddStack(&tikverr.PDError{
 					Err: resp.Header.Error,
 				})
 				logutil.BgLogger().Warn("wait scatter region error",
@@ -321,7 +321,7 @@ func (s *tikvStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64
 }
 
 // CheckRegionInScattering uses to check whether scatter region finished.
-func (s *tikvStore) CheckRegionInScattering(regionID uint64) (bool, error) {
+func (s *KVStore) CheckRegionInScattering(regionID uint64) (bool, error) {
 	bo := NewBackofferWithVars(context.Background(), locateRegionMaxBackoff, nil)
 	for {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)

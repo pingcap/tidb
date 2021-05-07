@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -1017,8 +1016,16 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
 	case *driver.ValueExpr:
-		v.Datum.SetValue(v.Datum.GetValue(), &v.Type)
-		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
+		// set right not null flag for constant value
+		retType := v.Type.Clone()
+		switch v.Datum.Kind() {
+		case types.KindNull:
+			retType.Flag &= ^mysql.NotNullFlag
+		default:
+			retType.Flag |= mysql.NotNullFlag
+		}
+		v.Datum.SetValue(v.Datum.GetValue(), retType)
+		value := &expression.Constant{Value: v.Datum, RetType: retType}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
 		var value expression.Expression
@@ -1180,7 +1187,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		if v.Value != nil {
 			tp := er.ctxStack[stkLen-1].GetType()
 			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
-				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
+				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
 				er.ctxStack[stkLen-1])
 			er.ctxNameStk[stkLen-1] = types.EmptyName
 			// Store the field type of the variable into SessionVars.UserVarTypes.
@@ -1198,7 +1205,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			tp.Flen = mysql.MaxFieldVarCharLength
 		}
-		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
+		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
 		if err != nil {
 			er.err = err
 			return
@@ -1231,8 +1238,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = err
 		return
 	}
-	nativeVal, nativeType := sysVar.GetNativeValType(val)
-	e := expression.DatumToConstant(nativeVal, nativeType)
+	nativeVal, nativeType, nativeFlag := sysVar.GetNativeValType(val)
+	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
 	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStackAppend(e, types.EmptyName)
@@ -1375,7 +1382,8 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		er.ctxStackAppend(expression.NewNull(), types.EmptyName)
 		return
 	}
-	if leftEt == types.ETInt {
+	containMut := expression.ContainMutableConst(er.sctx, args)
+	if !containMut && leftEt == types.ETInt {
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
@@ -1560,6 +1568,11 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 			}
 			return expression.WrapWithCastAsString(ctx, e)
 		}
+	case types.ETDuration:
+		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDuration))
+		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDuration))
+		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldType(mysql.TypeDuration))
+		return
 	case types.ETDatetime:
 		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
 		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDatetime))
@@ -1994,28 +2007,18 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 			return "", errors.Trace(errors.Errorf("invalid record/index key: %X", key))
 		}
 		tblInfo := tbl.Meta()
-		var colInfos []rowcodec.ColInfo
-		var tps []*types.FieldType
 		var targetIndex *model.IndexInfo
 		for _, idx := range tblInfo.Indices {
 			if idx.ID == indexID {
 				targetIndex = idx
-				colInfos = make([]rowcodec.ColInfo, 0, len(idx.Columns))
-				tps = make([]*types.FieldType, 0, len(idx.Columns))
-				for _, idxCol := range idx.Columns {
-					col := tblInfo.Columns[idxCol.Offset]
-					colInfos = append(colInfos, rowcodec.ColInfo{
-						ID: col.ID,
-						Ft: rowcodec.FieldTypeFromModelColumn(col),
-					})
-					tps = append(tps, rowcodec.FieldTypeFromModelColumn(col))
-				}
 				break
 			}
 		}
-		if len(colInfos) == 0 || len(tps) == 0 || targetIndex == nil {
+		if targetIndex == nil {
 			return "", errors.Trace(errors.Errorf("index not found when decoding index key: %X", key))
 		}
+		colInfos := tables.BuildRowcodecColInfoForIndexColumns(targetIndex, tblInfo)
+		tps := tables.BuildFieldTypesForIndexColumns(targetIndex, tblInfo)
 		values, err := tablecodec.DecodeIndexKV(key, []byte{0}, len(colInfos), tablecodec.HandleNotNeeded, colInfos)
 		if err != nil {
 			return "", errors.Trace(err)

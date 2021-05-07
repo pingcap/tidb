@@ -37,7 +37,10 @@ func BenchmarkDecodeWithSize(b *testing.B) {
 	bs := composeEncodedData(valueCnt)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		Decode(bs, valueCnt)
+		_, err := Decode(bs, valueCnt)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -46,7 +49,10 @@ func BenchmarkDecodeWithOutSize(b *testing.B) {
 	bs := composeEncodedData(valueCnt)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		Decode(bs, 1)
+		_, err := Decode(bs, 1)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -65,12 +71,18 @@ func BenchmarkEncodeIntWithOutSize(b *testing.B) {
 
 func BenchmarkDecodeDecimal(b *testing.B) {
 	dec := &types.MyDecimal{}
-	dec.FromFloat64(1211.1211113)
+	err := dec.FromFloat64(1211.1211113)
+	if err != nil {
+		b.Fatal(err)
+	}
 	precision, frac := dec.PrecisionAndFrac()
 	raw, _ := EncodeDecimal([]byte{}, dec, precision, frac)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		DecodeDecimal(raw)
+		_, _, _, _, err := DecodeDecimal(raw)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -84,6 +96,9 @@ func BenchmarkDecodeOneToChunk(b *testing.B) {
 	b.ResetTimer()
 	decoder := NewDecoder(chunk.New([]*types.FieldType{intType}, 32, 32), nil)
 	for i := 0; i < b.N; i++ {
-		decoder.DecodeOne(raw, 0, intType)
+		_, err := decoder.DecodeOne(raw, 0, intType)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }

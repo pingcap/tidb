@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
@@ -68,7 +69,6 @@ import (
 )
 
 var (
-	baseConnID  uint32
 	serverPID   int
 	osUser      string
 	osVersion   string
@@ -99,6 +99,7 @@ var (
 	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
+	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -141,6 +142,7 @@ func (s *Server) ConnectionCount() int {
 func (s *Server) getToken() *Token {
 	start := time.Now()
 	tok := s.concurrentLimiter.Get()
+	metrics.TokenGauge.Inc()
 	// Note that data smaller than one microsecond is ignored, because that case can be viewed as non-block.
 	metrics.GetTokenDurationHistogram.Observe(float64(time.Since(start).Nanoseconds() / 1e3))
 	return tok
@@ -148,6 +150,7 @@ func (s *Server) getToken() *Token {
 
 func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
+	metrics.TokenGauge.Dec()
 }
 
 // SetDomain use to set the server domain.
@@ -167,11 +170,12 @@ func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := newClientConn(s)
-	if s.cfg.Performance.TCPKeepAlive {
-		if tcpConn, ok := conn.(*net.TCPConn); ok {
-			if err := tcpConn.SetKeepAlive(true); err != nil {
-				logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
-			}
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		if err := tcpConn.SetKeepAlive(s.cfg.Performance.TCPKeepAlive); err != nil {
+			logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
+		}
+		if err := tcpConn.SetNoDelay(s.cfg.Performance.TCPNoDelay); err != nil {
+			logutil.BgLogger().Error("failed to set tcp no delay option", zap.Error(err))
 		}
 	}
 	cc.setConn(conn)
@@ -179,8 +183,11 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	return cc
 }
 
+// isUnixSocket should ideally be a function of clientConnection!
+// But currently since unix-socket connections are forwarded to TCP when the server listens on both, it can really only be accurate on a server-level.
+// If the server is listening on both, it *must* return FALSE for remote-host authentication to be performed correctly. See #23460.
 func (s *Server) isUnixSocket() bool {
-	return s.cfg.Socket != ""
+	return s.cfg.Socket != "" && s.cfg.Port == 0
 }
 
 func (s *Server) forwardUnixSocketToTCP() {
@@ -301,12 +308,25 @@ func setSSLVariable(ca, key, cert string) {
 }
 
 func setTxnScope() {
-	variable.SetSysVar("txn_scope", config.GetGlobalConfig().TxnScope)
+	variable.SetSysVar("txn_scope", func() string {
+		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
+			return oracle.GlobalTxnScope
+		}
+		return oracle.LocalTxnScope
+	}())
+}
+
+// Export config-related metrics
+func (s *Server) reportConfig() {
+	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
+	metrics.ConfigStatus.WithLabelValues("mem-quota-query").Set(float64(s.cfg.MemQuotaQuery))
+	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
 }
 
 // Run runs the server.
 func (s *Server) Run() error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
+	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
@@ -336,7 +356,7 @@ func (s *Server) Run() error {
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if authPlugin.OnConnectionEvent != nil {
-				host, err := clientConn.PeerHost("")
+				host, _, err := clientConn.PeerHost("")
 				if err != nil {
 					logutil.BgLogger().Error("get peer host failed", zap.Error(err))
 					terror.Log(clientConn.Close())
@@ -461,6 +481,10 @@ func (s *Server) onConn(conn *clientConn) {
 	conn.Run(ctx)
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		// Audit plugin may be disabled before a conn is created, leading no connectionInfo in sessionVars.
+		if sessionVars.ConnectionInfo == nil {
+			sessionVars.ConnectionInfo = conn.connectInfo()
+		}
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
@@ -685,10 +709,3 @@ func setSystemTimeZoneVariable() {
 		variable.SetSysVar("system_time_zone", tz)
 	})
 }
-
-// Server error codes.
-const (
-	codeUnknownFieldType = 1
-	codeInvalidSequence  = 3
-	codeInvalidType      = 4
-)

@@ -48,7 +48,10 @@ func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	// Make sure it calls perfschema.Init().
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -107,7 +110,8 @@ func (*testSuite) TestT(c *C) {
 
 	dbInfos := []*model.DBInfo{dbInfo}
 	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		meta.NewMeta(txn).CreateDatabase(dbInfo)
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		c.Assert(err, IsNil)
 		return errors.Trace(err)
 	})
 	c.Assert(err, IsNil)
@@ -119,7 +123,8 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	checkApplyCreateNonExistsSchemaDoesNotPanic(c, txn, builder)
 	checkApplyCreateNonExistsTableDoesNotPanic(c, txn, builder, dbID)
-	txn.Rollback()
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
 
 	builder.Build()
 	is := handle.Get()
@@ -197,7 +202,8 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(tb, NotNil)
 
 	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		meta.NewMeta(txn).CreateTableOrView(dbID, tblInfo)
+		err := meta.NewMeta(txn).CreateTableOrView(dbID, tblInfo)
+		c.Assert(err, IsNil)
 		return errors.Trace(err)
 	})
 	c.Assert(err, IsNil)
@@ -205,7 +211,8 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID})
 	c.Assert(err, IsNil)
-	txn.Rollback()
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
 	builder.Build()
 	is = handle.Get()
 	schema, ok = is.SchemaByID(dbID)
@@ -282,7 +289,10 @@ func (*testSuite) TestInfoTables(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	handle := infoschema.NewHandle(store)
 	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, nil, 0)
 	c.Assert(err, IsNil)
@@ -344,7 +354,10 @@ func (*testSuite) TestGetBundle(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	handle := infoschema.NewHandle(store)
 	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, nil, 0)

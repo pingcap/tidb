@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
@@ -134,6 +135,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 			c.Assert(req.GetRow(0).GetString(1), Equals, "double")
 		}
 	}
+	c.Assert(rs.Close(), IsNil)
 
 	// test multiple collate specified in column when create.
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
@@ -469,7 +471,7 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())
-	r.Close()
+	c.Assert(r.Close(), IsNil)
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
@@ -496,7 +498,7 @@ func (s *testSuite6) TestAlterTableAddColumns(c *C) {
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
-	r.Close()
+	c.Assert(r.Close(), IsNil)
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
 	_, err = tk.Exec("alter table alter_view add column (c4 varchar(50), c5 varchar(50))")
@@ -544,12 +546,12 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	_, err = tk.Exec("alter table mc modify column c2 varchar(8)")
 	c.Assert(err, NotNil)
 	tk.MustExec("alter table mc modify column c2 varchar(11)")
-	tk.MustExec("alter table mc modify column c2 text(13)")
-	tk.MustExec("alter table mc modify column c2 text")
+	tk.MustGetErrCode("alter table mc modify column c2 text(13)", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table mc modify column c2 text", errno.ErrUnsupportedDDLOperation)
 	tk.MustExec("alter table mc modify column c3 bit")
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL,\n  `c3` bit(1) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` varchar(11) DEFAULT NULL,\n  `c3` bit(1) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
@@ -758,7 +760,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 		var hasShardedID bool
 		var count int
 		c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
-		err = t.IterRecords(tk.Se, t.FirstKey(), nil, func(h kv.Handle, rec []types.Datum, cols []*table.Column) (more bool, err error) {
+		err = tables.IterRecords(t, tk.Se, nil, func(h kv.Handle, rec []types.Datum, cols []*table.Column) (more bool, err error) {
 			c.Assert(h.IntValue(), GreaterEqual, int64(0))
 			first8bits := h.IntValue() >> 56
 			if first8bits > 0 {
@@ -788,12 +790,17 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
 	tk.MustExec("drop table auto")
 
+	errMsg := "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id"
+	tk.MustGetErrMsg("create table auto (id varchar(255) primary key clustered, b int) shard_row_id_bits = 4;", errMsg)
+	tk.MustExec("create table auto (id varchar(255) primary key clustered, b int) shard_row_id_bits = 0;")
+	tk.MustGetErrMsg("alter table auto shard_row_id_bits = 5;", errMsg)
+	tk.MustExec("alter table auto shard_row_id_bits = 0;")
+	tk.MustExec("drop table if exists auto;")
+
 	// After PR 10759, shard_row_id_bits is not supported with pk_is_handle tables.
-	err = tk.ExecToErr("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 4")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id")
+	tk.MustGetErrMsg("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 4", errMsg)
 	tk.MustExec("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 0")
-	err = tk.ExecToErr("alter table auto shard_row_id_bits = 5")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id")
+	tk.MustGetErrMsg("alter table auto shard_row_id_bits = 5", errMsg)
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
 
 	// Hack an existing table with shard_row_id_bits and primary key as handle
@@ -804,13 +811,14 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tblInfo.ShardRowIDBits = 5
 	tblInfo.MaxShardRowIDBits = 5
 
-	kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
 		c.Assert(m.UpdateTable(db.ID, tblInfo), IsNil)
 		return nil
 	})
+	c.Assert(err, IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
 
@@ -859,14 +867,6 @@ type testAutoRandomSuite struct {
 	*baseTestSuite
 }
 
-func (s *testAutoRandomSuite) SetUpTest(c *C) {
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-}
-
-func (s *testAutoRandomSuite) TearDownTest(c *C) {
-	testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-}
-
 func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -883,7 +883,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
-	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	tk.MustExec("create table t (a bigint primary key clustered auto_random(15), b int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t(b) values (?)", i)
 	}
@@ -899,7 +899,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	}
 	c.Assert(allZero, IsFalse)
 	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
-	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 15, mysql.TypeLonglong)
+	orderedHandles := testutil.MaskSortHandles(allHandles, 15, mysql.TypeLonglong)
 	size := int64(len(allHandles))
 	for i := int64(1); i <= size; i++ {
 		c.Assert(i, Equals, orderedHandles[i-1])
@@ -907,7 +907,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	// Test explicit insert.
 	autoRandBitsUpperBound := 2<<47 - 1
-	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	tk.MustExec("create table t (a bigint primary key clustered auto_random(15), b int)")
 	for i := -10; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i+autoRandBitsUpperBound, i))
 	}
@@ -941,7 +941,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 		tk.MustExec("insert into t(a, b) values (?, ?)", -i, i)
 	}
 	// orderedHandles should be [-100, -99, ..., -2, -1, 1, 2, ..., 99, 100]
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(extractAllHandles(), 15, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(extractAllHandles(), 15, mysql.TypeLonglong)
 	size = int64(len(allHandles))
 	for i := int64(0); i < 100; i++ {
 		c.Assert(orderedHandles[i], Equals, i-100)
@@ -1012,7 +1012,7 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(allHandles), Equals, 5)
 	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
-	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles := testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	size := int64(len(allHandles))
 	for i := int64(0); i < size; i++ {
 		c.Assert(i+1000, Equals, orderedHandles[i])
@@ -1026,7 +1026,7 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
 	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
 	c.Assert(err, IsNil)
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	size = int64(len(allHandles))
 	for i := int64(0); i < size; i++ {
 		c.Assert(orderedHandles[i], Equals, i+1)
@@ -1044,7 +1044,7 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
 	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
 	c.Assert(err, IsNil)
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	size = int64(len(allHandles))
 	for i := int64(0); i < size; i++ {
 		c.Assert(orderedHandles[i], Equals, i+3000000)
@@ -1076,7 +1076,7 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
 	c.Assert(err, IsNil)
 	c.Assert(len(allHandles), Equals, 1)
-	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles := testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	c.Assert(orderedHandles[0], Equals, int64(1))
 	tk.MustExec("delete from t")
 
@@ -1087,7 +1087,7 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
 	c.Assert(err, IsNil)
 	c.Assert(len(allHandles), Equals, 1)
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	c.Assert(orderedHandles[0], Equals, int64(2))
 	tk.MustExec("delete from t")
 
@@ -1098,7 +1098,7 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
 	c.Assert(err, IsNil)
 	c.Assert(len(allHandles), Equals, 1)
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	c.Assert(orderedHandles[0], Equals, int64(3000000))
 	tk.MustExec("delete from t")
 
@@ -1112,7 +1112,7 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t1")
 	c.Assert(err, IsNil)
 	c.Assert(len(allHandles), Equals, 1)
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	c.Assert(orderedHandles[0], Greater, int64(3000001))
 }
 
@@ -1165,6 +1165,9 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
+
+	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = 129")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {

@@ -84,7 +84,8 @@ func (s *testEvaluatorSuiteBase) SetUpTest(c *C) {
 	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
 	sc := s.ctx.GetSessionVars().StmtCtx
 	sc.TruncateAsWarning = true
-	s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
+	err := s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
+	c.Assert(err, IsNil)
 	s.ctx.GetSessionVars().PlanColumnID = 0
 }
 

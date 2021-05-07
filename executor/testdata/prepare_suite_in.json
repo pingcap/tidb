@@ -31,6 +31,10 @@
             "ExecuteSQL": "execute stmt using @v1"
           },
           {
+            "Vars": [{"Name": "v1", "Value": "-200"}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
             "Vars": [{"Name": "v1", "Value": "\"abc\""}],
             "ExecuteSQL": "execute stmt using @v1"
           }

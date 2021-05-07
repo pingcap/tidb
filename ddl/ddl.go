@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -54,7 +55,9 @@ const (
 	currentVersion = 1
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey = "/tidb/ddl/fg/owner"
-	ddlPrompt   = "ddl"
+	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
+	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
+	ddlPrompt          = "ddl"
 
 	shardRowIDBitsMax = 15
 
@@ -80,8 +83,6 @@ const (
 )
 
 var (
-	// TableIndexCountLimit is limit of the number of indexes in a table.
-	TableIndexCountLimit = uint32(64)
 	// EnableSplitTableRegion is a flag to decide whether to split a new region for
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
@@ -162,12 +163,14 @@ type DDL interface {
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
 	GetID() string
-	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
+	// GetTableMaxHandle gets the max row ID of a normal table or a partition.
 	GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetHook gets the hook. It's exported for testing.
 	GetHook() Callback
+	// SetHook sets the hook.
+	SetHook(h Callback)
 }
 
 type limitJobTask struct {
@@ -202,6 +205,7 @@ type ddlCtx struct {
 	infoHandle   *infoschema.Handle
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
+	etcdCli      *clientv3.Client
 
 	// hook may be modified.
 	mu struct {
@@ -288,6 +292,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		binlogCli:    binloginfo.GetPumpsClient(),
 		infoHandle:   opt.InfoHandle,
 		tableLockCkr: deadLockCkr,
+		etcdCli:      opt.EtcdCli,
 	}
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
@@ -446,18 +451,6 @@ func (d *ddl) GetID() string {
 	return d.uuid
 }
 
-func checkJobMaxInterval(job *model.Job) time.Duration {
-	// The job of adding index takes more time to process.
-	// So it uses the longer time.
-	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-		return 3 * time.Second
-	}
-	if job.Type == model.ActionCreateTable || job.Type == model.ActionCreateSchema {
-		return 500 * time.Millisecond
-	}
-	return 1 * time.Second
-}
-
 var (
 	fastDDLIntervalPolicy = []time.Duration{
 		500 * time.Millisecond,
@@ -495,16 +488,23 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
+func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	// If the workers don't run, we needn't to notify workers.
 	if !RunWorker {
 		return
 	}
 
+	var worker *worker
+	jobTp := job.Type
 	if jobTp == model.ActionAddIndex || jobTp == model.ActionAddPrimaryKey {
-		asyncNotify(d.workers[addIdxWorker].ddlJobCh)
+		worker = d.workers[addIdxWorker]
 	} else {
-		asyncNotify(d.workers[generalWorker].ddlJobCh)
+		worker = d.workers[generalWorker]
+	}
+	if d.ownerManager.IsOwner() {
+		asyncNotify(worker.ddlJobCh)
+	} else {
+		d.asyncNotifyByEtcd(worker.addingDDLJobKey, job)
 	}
 }
 
@@ -533,7 +533,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
-	d.asyncNotifyWorker(job.Type)
+	d.asyncNotifyWorker(job)
 	logutil.BgLogger().Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
 	var historyJob *model.Job
@@ -594,6 +594,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		}
 
 		if historyJob.Error != nil {
+			logutil.BgLogger().Info("[ddl] DDL job is failed", zap.Int64("jobID", jobID))
 			return errors.Trace(historyJob.Error)
 		}
 		// Only for JobStateCancelled job which is adding columns or drop columns.
@@ -624,6 +625,14 @@ func (d *ddl) GetHook() Callback {
 	defer d.mu.Unlock()
 
 	return d.mu.hook
+}
+
+// SetHook set the customized hook.
+func (d *ddl) SetHook(h Callback) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.mu.hook = h
 }
 
 func (d *ddl) startCleanDeadTableLock() {
@@ -668,6 +677,17 @@ type RecoverInfo struct {
 	SnapshotTS    uint64
 	CurAutoIncID  int64
 	CurAutoRandID int64
+}
+
+// delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
+// It should be called before any DDL that could break data consistency.
+// This provides a safe window for async commit and 1PC to commit with an old schema.
+func delayForAsyncCommit() {
+	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
+	duration := cfg.SafeWindow + cfg.AllowedClockDrift
+	logutil.BgLogger().Info("sleep before DDL finishes to make async commit and 1PC safe",
+		zap.Duration("duration", duration))
+	time.Sleep(duration)
 }
 
 var (

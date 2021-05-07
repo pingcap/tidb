@@ -33,12 +33,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -46,6 +45,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 )
 
 // MaxRecvMsgSize set max gRPC receive message size received from server. If any message size is larger than
@@ -55,7 +55,7 @@ var MaxRecvMsgSize = math.MaxInt64
 // Timeout durations.
 var (
 	dialTimeout               = 5 * time.Second
-	readTimeoutShort          = 20 * time.Second   // For requests that read/write several key-values.
+	ReadTimeoutShort          = 20 * time.Second   // For requests that read/write several key-values.
 	ReadTimeoutMedium         = 60 * time.Second   // For requests that may need scan region.
 	ReadTimeoutLong           = 150 * time.Second  // For requests that may need scan region multiple times.
 	ReadTimeoutUltraLong      = 3600 * time.Second // For requests that may scan many regions for tiflash.
@@ -68,6 +68,9 @@ const (
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
 )
+
+// forwardMetadataKey is the key of gRPC metadata which represents a forwarded request.
+const forwardMetadataKey = "tikv-forwarded-host"
 
 // Client is a client that sends RPC.
 // It should not be used after calling Close().
@@ -123,7 +126,7 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 		unaryInterceptor  grpc.UnaryClientInterceptor
 		streamInterceptor grpc.StreamClientInterceptor
 	)
-	if cfg.OpenTracing.Enable {
+	if cfg.OpenTracingEnable {
 		unaryInterceptor = grpc_opentracing.UnaryClientInterceptor()
 		streamInterceptor = grpc_opentracing.StreamClientInterceptor()
 	}
@@ -177,14 +180,16 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 
 		if allowBatch {
 			batchClient := &batchCommandsClient{
-				target:        a.target,
-				conn:          conn,
-				batched:       sync.Map{},
-				idAlloc:       0,
-				closed:        0,
-				tikvClientCfg: cfg.TiKVClient,
-				tikvLoad:      &a.tikvTransportLayerLoad,
-				dialTimeout:   a.dialTimeout,
+				target:           a.target,
+				conn:             conn,
+				forwardedClients: make(map[string]*batchCommandsStream),
+				batched:          sync.Map{},
+				epoch:            0,
+				closed:           0,
+				tikvClientCfg:    cfg.TiKVClient,
+				tikvLoad:         &a.tikvTransportLayerLoad,
+				dialTimeout:      a.dialTimeout,
+				tryLock:          tryLock{sync.NewCond(new(sync.Mutex)), false},
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 		}
@@ -218,11 +223,11 @@ func (a *connArray) Close() {
 	close(a.done)
 }
 
-// rpcClient is RPC client struct.
+// RPCClient is RPC client struct.
 // TODO: Add flow control between RPC clients in TiDB ond RPC servers in TiKV.
 // Since we use shared client connection to communicate to the same TiKV, it's possible
 // that there are too many concurrent requests which overload the service of TiKV.
-type rpcClient struct {
+type RPCClient struct {
 	sync.RWMutex
 
 	conns    map[string]*connArray
@@ -238,8 +243,9 @@ type rpcClient struct {
 	dialTimeout time.Duration
 }
 
-func newRPCClient(security config.Security, opts ...func(c *rpcClient)) *rpcClient {
-	cli := &rpcClient{
+// NewRPCClient creates a client that manages connections and rpc calls with tikv-servers.
+func NewRPCClient(security config.Security, opts ...func(c *RPCClient)) *RPCClient {
+	cli := &RPCClient{
 		conns:       make(map[string]*connArray),
 		security:    security,
 		dialTimeout: dialTimeout,
@@ -252,10 +258,10 @@ func newRPCClient(security config.Security, opts ...func(c *rpcClient)) *rpcClie
 
 // NewTestRPCClient is for some external tests.
 func NewTestRPCClient(security config.Security) Client {
-	return newRPCClient(security)
+	return NewRPCClient(security)
 }
 
-func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg *config.TiKVClient)) (*connArray, error) {
+func (c *RPCClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg *config.TiKVClient)) (*connArray, error) {
 	c.RLock()
 	if c.isClosed {
 		c.RUnlock()
@@ -273,7 +279,7 @@ func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg 
 	return array, nil
 }
 
-func (c *rpcClient) createConnArray(addr string, enableBatch bool, opts ...func(cfg *config.TiKVClient)) (*connArray, error) {
+func (c *RPCClient) createConnArray(addr string, enableBatch bool, opts ...func(cfg *config.TiKVClient)) (*connArray, error) {
 	c.Lock()
 	defer c.Unlock()
 	array, ok := c.conns[addr]
@@ -292,7 +298,7 @@ func (c *rpcClient) createConnArray(addr string, enableBatch bool, opts ...func(
 	return array, nil
 }
 
-func (c *rpcClient) closeConns() {
+func (c *RPCClient) closeConns() {
 	c.Lock()
 	if !c.isClosed {
 		c.isClosed = true
@@ -311,7 +317,7 @@ type sendReqHistCacheKey struct {
 	id uint64
 }
 
-func (c *rpcClient) updateTiKVSendReqHistogram(req *tikvrpc.Request, start time.Time) {
+func (c *RPCClient) updateTiKVSendReqHistogram(req *tikvrpc.Request, start time.Time) {
 	key := sendReqHistCacheKey{
 		req.Type,
 		req.Context.GetPeer().GetStoreId(),
@@ -329,7 +335,7 @@ func (c *rpcClient) updateTiKVSendReqHistogram(req *tikvrpc.Request, start time.
 }
 
 // SendRequest sends a Request to server and receives Response.
-func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("rpcClient.SendRequest, region ID: %d, type: %s", req.RegionId, req.Type), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -338,9 +344,9 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	start := time.Now()
 	defer func() {
-		stmtExec := ctx.Value(execdetails.StmtExecDetailKey)
+		stmtExec := ctx.Value(util.ExecDetailsKey)
 		if stmtExec != nil {
-			detail := stmtExec.(*execdetails.StmtExecDetails)
+			detail := stmtExec.(*util.ExecDetails)
 			atomic.AddInt64(&detail.WaitKVRespDuration, int64(time.Since(start)))
 		}
 		c.updateTiKVSendReqHistogram(req, start)
@@ -353,7 +359,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	// TiDB will not send batch commands to TiFlash, to resolve the conflict with Batch Cop Request.
-	enableBatch := req.StoreTp != kv.TiDB && req.StoreTp != kv.TiFlash
+	enableBatch := req.StoreTp != tikvrpc.TiDB && req.StoreTp != tikvrpc.TiFlash
 	c.recycleMu.RLock()
 	defer c.recycleMu.RUnlock()
 	connArray, err := c.getConnArray(addr, enableBatch)
@@ -366,14 +372,14 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
-			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
+			return sendBatchRequest(ctx, addr, req.ForwardedHost, connArray.batchConn, batchReq, timeout)
 		}
 	}
 
 	clientConn := connArray.Get()
 	if state := clientConn.GetState(); state == connectivity.TransientFailure {
 		storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-		metrics.GRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
+		metrics.TiKVGRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
 	}
 
 	if req.IsDebugReq() {
@@ -385,6 +391,10 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	client := tikvpb.NewTikvClient(clientConn)
 
+	// Set metadata for request forwarding. Needn't forward DebugReq.
+	if req.ForwardedHost != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, forwardMetadataKey, req.ForwardedHost)
+	}
 	switch req.Type {
 	case tikvrpc.CmdBatchCop:
 		return c.getBatchCopStreamResponse(ctx, client, req, timeout, connArray)
@@ -399,7 +409,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	return tikvrpc.CallRPC(ctx1, client, req)
 }
 
-func (c *rpcClient) getCopStreamResponse(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request, timeout time.Duration, connArray *connArray) (*tikvrpc.Response, error) {
+func (c *RPCClient) getCopStreamResponse(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request, timeout time.Duration, connArray *connArray) (*tikvrpc.Response, error) {
 	// Coprocessor streaming request.
 	// Use context to support timeout for grpc streaming client.
 	ctx1, cancel := context.WithCancel(ctx)
@@ -434,7 +444,7 @@ func (c *rpcClient) getCopStreamResponse(ctx context.Context, client tikvpb.Tikv
 
 }
 
-func (c *rpcClient) getBatchCopStreamResponse(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request, timeout time.Duration, connArray *connArray) (*tikvrpc.Response, error) {
+func (c *RPCClient) getBatchCopStreamResponse(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request, timeout time.Duration, connArray *connArray) (*tikvrpc.Response, error) {
 	// Coprocessor streaming request.
 	// Use context to support timeout for grpc streaming client.
 	ctx1, cancel := context.WithCancel(ctx)
@@ -468,7 +478,7 @@ func (c *rpcClient) getBatchCopStreamResponse(ctx context.Context, client tikvpb
 	return resp, nil
 }
 
-func (c *rpcClient) getMPPStreamResponse(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request, timeout time.Duration, connArray *connArray) (*tikvrpc.Response, error) {
+func (c *RPCClient) getMPPStreamResponse(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request, timeout time.Duration, connArray *connArray) (*tikvrpc.Response, error) {
 	// MPP streaming request.
 	// Use context to support timeout for grpc streaming client.
 	ctx1, cancel := context.WithCancel(ctx)
@@ -501,7 +511,8 @@ func (c *rpcClient) getMPPStreamResponse(ctx context.Context, client tikvpb.Tikv
 	return resp, nil
 }
 
-func (c *rpcClient) Close() error {
+// Close closes all connections.
+func (c *RPCClient) Close() error {
 	// TODO: add a unit test for SendRequest After Closed
 	c.closeConns()
 	return nil

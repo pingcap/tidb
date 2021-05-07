@@ -126,14 +126,13 @@ func (s *testPartitionPruningSuite) TestPruneUseBinarySearch(c *C) {
 }
 
 type testCtx struct {
-	c        *C
-	sctx     sessionctx.Context
-	schema   *expression.Schema
-	columns  []*expression.Column
-	names    types.NameSlice
-	lessThan lessThanDataInt
-	col      *expression.Column
-	fn       *expression.ScalarFunction
+	c       *C
+	sctx    sessionctx.Context
+	schema  *expression.Schema
+	columns []*expression.Column
+	names   types.NameSlice
+	col     *expression.Column
+	fn      *expression.ScalarFunction
 }
 
 func prepareTestCtx(c *C, createTable string, partitionExpr string) *testCtx {

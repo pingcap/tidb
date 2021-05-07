@@ -399,6 +399,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrViewNoInsertFieldList:                    mysql.Message("Can not insert into join view '%-.192s.%-.192s' without fields list", nil),
 	ErrViewDeleteMergeView:                      mysql.Message("Can not delete from join view '%-.192s.%-.192s'", nil),
 	ErrCannotUser:                               mysql.Message("Operation %s failed for %.256s", nil),
+	ErrGrantRole:                                mysql.Message("Unknown authorization ID %.256s", nil),
 	ErrXaerNota:                                 mysql.Message("XAERNOTA: Unknown XID", nil),
 	ErrXaerInval:                                mysql.Message("XAERINVAL: Invalid arguments (or unsupported command)", nil),
 	ErrXaerRmfail:                               mysql.Message("XAERRMFAIL: The command cannot be executed when global transaction is in the  %.64s state", nil),
@@ -899,6 +900,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFunctionalIndexDataIsTooLong:                          mysql.Message("Data too long for expression index '%s'", nil),
 	ErrFunctionalIndexNotApplicable:                          mysql.Message("Cannot use expression index '%s' due to type or collation conversion", nil),
 	ErrUnsupportedConstraintCheck:                            mysql.Message("%s is not supported", nil),
+	ErrDynamicPrivilegeNotRegistered:                         mysql.Message("Dynamic privilege '%s' is not registered with the server.", nil),
+	ErrIllegalPrivilegeLevel:                                 mysql.Message("Illegal privilege level specified for %s", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),
@@ -965,7 +968,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnknownTypeLength:          mysql.Message("Unknown length for type %d", nil),
 	ErrUnknownFractionLength:      mysql.Message("Unknown length for type %d and fraction %d", nil),
 	ErrInvalidDDLJobVersion:       mysql.Message("Version %d of DDL job is greater than current one: %d", nil),
-	ErrInvalidSplitRegionRanges:   mysql.Message("Failed to split region ranges", nil),
+	ErrInvalidSplitRegionRanges:   mysql.Message("Failed to split region ranges: %s", nil),
 	ErrReorgPanic:                 mysql.Message("Reorg worker panic", nil),
 	ErrInvalidDDLState:            mysql.Message("Invalid %s state: %v", nil),
 	ErrCancelledDDLJob:            mysql.Message("Cancelled DDL job", nil),
@@ -1032,7 +1035,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 
-	ErrJSONObjectKeyTooLong: mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+	ErrJSONObjectKeyTooLong:  mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+	ErrPartitionStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
+	ErrNotSupportedWithSem:   mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
 	ErrInvalidPlacementSpec:   mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck:   mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),

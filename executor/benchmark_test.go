@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/core"
@@ -170,7 +172,9 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	switch typ.Tp {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
-	case mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeFloat:
+		return rand.Float32()
+	case mysql.TypeDouble:
 		return rand.Float64()
 	case mysql.TypeNewDecimal:
 		var d types.MyDecimal
@@ -224,7 +228,9 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 			switch retTypes[colIdx].Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				m.genData[idx].AppendInt64(colIdx, colData[colIdx][i].(int64))
-			case mysql.TypeDouble, mysql.TypeFloat:
+			case mysql.TypeFloat:
+				m.genData[idx].AppendFloat32(colIdx, colData[colIdx][i].(float32))
+			case mysql.TypeDouble:
 				m.genData[idx].AppendFloat64(colIdx, colData[colIdx][i].(float64))
 			case mysql.TypeNewDecimal:
 				m.genData[idx].AppendMyDecimal(colIdx, colData[colIdx][i].(*types.MyDecimal))
@@ -1526,10 +1532,8 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, 
 		innerJoinKeys = append(innerJoinKeys, innerCols[keyIdx])
 	}
 	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
-	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	for i := range outerJoinKeys {
 		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
-		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
 	defaultValues := make([]types.Datum, len(innerCols))
@@ -1613,10 +1617,6 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, 
 	}
 
 	return e
-}
-
-func defaultMergeJoinTestCase() *mergeJoinTestCase {
-	return &mergeJoinTestCase{*defaultIndexJoinTestCase(), nil}
 }
 
 func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource) {
@@ -2014,5 +2014,51 @@ func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
 		if n != len(hugeLine) {
 			b.Fatalf("len %v, expected: %v", n, len(hugeLine))
 		}
+	}
+}
+
+func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
+	b.ReportAllocs()
+	type testCase struct {
+		rowNum int
+	}
+	cases := []testCase{
+		{
+			rowNum: 0,
+		},
+		{
+			rowNum: 100,
+		},
+		{
+			rowNum: 10000,
+		},
+		{
+			rowNum: 1000000,
+		},
+		{
+			rowNum: 851968, // 6.5 * (1 << 17)
+		},
+		{
+			rowNum: 851969, // 6.5 * (1 << 17) + 1
+		},
+		{
+			rowNum: 425984, // 6.5 * (1 << 16)
+		},
+		{
+			rowNum: 425985, // 6.5 * (1 << 16) + 1
+		},
+	}
+
+	for _, c := range cases {
+		b.Run(fmt.Sprintf("MapRows %v", c.rowNum), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				aggMap := make(aggPartialResultMapper)
+				tempSlice := make([]aggfuncs.PartialResult, 10)
+				for num := 0; num < c.rowNum; num++ {
+					aggMap[strconv.Itoa(num)] = tempSlice
+				}
+			}
+		})
 	}
 }

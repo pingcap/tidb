@@ -81,7 +81,8 @@ func (s *Server) listenStatusHTTPServer() error {
 	}
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
-	tlsConfig, err := s.cfg.Security.ToTLSConfig()
+	clusterSecurity := s.cfg.Security.ClusterSecurity()
+	tlsConfig, err := clusterSecurity.ToTLSConfig()
 	if err != nil {
 		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
 		return errors.Trace(err)
@@ -115,10 +116,10 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
-	router.Handle("/settings", settingsHandler{}).Name("Settings")
+	tikvHandlerTool := s.newTikvHandlerTool()
+	router.Handle("/settings", settingsHandler{tikvHandlerTool}).Name("Settings")
 	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
 
-	tikvHandlerTool := s.newTikvHandlerTool()
 	router.Handle("/schema", schemaHandler{tikvHandlerTool}).Name("Schema")
 	router.Handle("/schema/{db}", schemaHandler{tikvHandlerTool})
 	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
@@ -152,6 +153,7 @@ func (s *Server) startHTTPServer() {
 	}
 
 	// HTTP path for get MVCC info
+	router.Handle("/mvcc/key/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByClusteredKey})
 	router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
 	router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
 	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
@@ -298,6 +300,9 @@ func (s *Server) startHTTPServer() {
 
 		router.Handle("/test/{mod}/{op}", &testHandler{tikvHandlerTool, 0})
 	})
+
+	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
+	router.Handle("/test/ddl/hook", &ddlHookHandler{tikvHandlerTool.Store.(kv.Storage)})
 
 	var (
 		httpRouterPage bytes.Buffer

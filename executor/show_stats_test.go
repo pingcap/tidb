@@ -175,7 +175,7 @@ func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {
 
 func (s *testShowStatsSuite) TestShowPartitionStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+	testkit.WithPruneMode(tk, variable.Static, func() {
 		tk.MustExec("set @@session.tidb_enable_table_partition=1")
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -225,7 +225,8 @@ func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[0][3], Equals, "analyze columns")
 	c.Assert(result.Rows()[0][4], Equals, "2")
 	c.Assert(result.Rows()[0][5], NotNil)
-	c.Assert(result.Rows()[0][6], Equals, "finished")
+	c.Assert(result.Rows()[0][6], NotNil)
+	c.Assert(result.Rows()[0][7], Equals, "finished")
 
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[1][0], Equals, "test")
@@ -234,7 +235,8 @@ func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][3], Equals, "analyze index idx")
 	c.Assert(result.Rows()[1][4], Equals, "2")
 	c.Assert(result.Rows()[1][5], NotNil)
-	c.Assert(result.Rows()[1][6], Equals, "finished")
+	c.Assert(result.Rows()[1][6], NotNil)
+	c.Assert(result.Rows()[1][7], Equals, "finished")
 }
 
 func (s *testShowStatsSuite) TestShowStatusSnapshot(c *C) {
@@ -260,4 +262,54 @@ func (s *testShowStatsSuite) TestShowStatusSnapshot(c *C) {
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
 	result := tk.MustQuery("show table status;")
 	c.Check(result.Rows()[0][0], Matches, "t")
+}
+
+func (s *testShowStatsSuite) TestShowStatsExtended(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.domain.StatsHandle().Clear()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values(1,1,3),(2,2,2),(3,3,1)")
+
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustExec("alter table t add stats_extended s2 correlation(a,c)")
+	tk.MustQuery("select name, status from mysql.stats_extended where name like 's%'").Sort().Check(testkit.Rows(
+		"s1 0",
+		"s2 0",
+	))
+	result := tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 0)
+
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select name, status from mysql.stats_extended where name like 's%'").Sort().Check(testkit.Rows(
+		"s1 1",
+		"s2 1",
+	))
+	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[0][0], Equals, "test")
+	c.Assert(result.Rows()[0][1], Equals, "t")
+	c.Assert(result.Rows()[0][2], Equals, "s1")
+	c.Assert(result.Rows()[0][3], Equals, "[a,b]")
+	c.Assert(result.Rows()[0][4], Equals, "correlation")
+	c.Assert(result.Rows()[0][5], Equals, "1.000000")
+	c.Assert(result.Rows()[1][0], Equals, "test")
+	c.Assert(result.Rows()[1][1], Equals, "t")
+	c.Assert(result.Rows()[1][2], Equals, "s2")
+	c.Assert(result.Rows()[1][3], Equals, "[a,c]")
+	c.Assert(result.Rows()[1][4], Equals, "correlation")
+	c.Assert(result.Rows()[1][5], Equals, "-1.000000")
+	c.Assert(result.Rows()[1][6], Equals, result.Rows()[0][6])
+
+	tk.MustExec("alter table t drop stats_extended s1")
+	tk.MustExec("alter table t drop stats_extended s2")
+	tk.MustQuery("select name, status from mysql.stats_extended where name like 's%'").Sort().Check(testkit.Rows(
+		"s1 2",
+		"s2 2",
+	))
+	s.domain.StatsHandle().Update(s.domain.InfoSchema())
+	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 0)
 }

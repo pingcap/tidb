@@ -129,7 +129,10 @@ func NormalizePlan(p Plan) (normalized, digest string) {
 	defer digesterPool.Put(d)
 	d.normalizePlanTree(selectPlan)
 	normalized = d.buf.String()
-	d.hasher.Write(d.buf.Bytes())
+	_, err := d.hasher.Write(d.buf.Bytes())
+	if err != nil {
+		panic(err)
+	}
 	d.buf.Reset()
 	digest = fmt.Sprintf("%x", d.hasher.Sum(nil))
 	d.hasher.Reset()
@@ -184,6 +187,8 @@ func getSelectPlan(p Plan) PhysicalPlan {
 			selectPlan = x.SelectPlan
 		case *Insert:
 			selectPlan = x.SelectPlan
+		case *Explain:
+			selectPlan = getSelectPlan(x.TargetPlan)
 		}
 	}
 	return selectPlan

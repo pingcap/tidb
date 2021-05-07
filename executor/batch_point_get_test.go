@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -177,7 +178,7 @@ func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 
 		errCh <- tk1.ExecToErr("use test")
 		errCh <- tk2.ExecToErr("use test")
-		errCh <- tk1.ExecToErr("set session tidb_enable_clustered_index = 0")
+		tk1.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 		errCh <- tk1.ExecToErr(fmt.Sprintf("drop table if exists %s", tableName))
 		errCh <- tk1.ExecToErr(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))

@@ -593,10 +593,6 @@ func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*me
 	aggSchema := old.Children[0].Prop.Schema
 	var pushedExprs []expression.Expression
 	var remainedExprs []expression.Expression
-	exprsOriginal := make([]expression.Expression, 0, len(agg.AggFuncs))
-	for _, aggFunc := range agg.AggFuncs {
-		exprsOriginal = append(exprsOriginal, aggFunc.Args[0])
-	}
 	groupByColumns := expression.NewSchema(agg.GetGroupByCols()...)
 	for _, cond := range sel.Conditions {
 		switch cond.(type) {

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -66,7 +65,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 
 	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
-	idxUsageSyncLease := time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
+	idxUsageSyncLease := GetIndexUsageSyncLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
@@ -160,6 +159,11 @@ func SetStatsLease(lease time.Duration) {
 // SetIndexUsageSyncLease changes the default index usage sync lease time for loading info.
 func SetIndexUsageSyncLease(lease time.Duration) {
 	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
+}
+
+// GetIndexUsageSyncLease returns the index usage sync lease time.
+func GetIndexUsageSyncLease() time.Duration {
+	return time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
 }
 
 // DisableStats4Test disables the stats for tests.
@@ -275,7 +279,7 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 		// The last history could not be "commit"/"rollback" statement.
 		// It means it is impossible to start a new transaction at the end of the transaction.
 		// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
-		sessVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+		sessVars.SetInTxn(true)
 	}
 	return err
 }

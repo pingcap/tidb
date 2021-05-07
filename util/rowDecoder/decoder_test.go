@@ -171,7 +171,7 @@ func (s *testDecoderSuite) TestClusterIndexRowDecoder(c *C) {
 
 	cols := []*model.ColumnInfo{c1, c2, c3}
 
-	tblInfo := &model.TableInfo{ID: 1, Columns: cols, Indices: []*model.IndexInfo{pk}, IsCommonHandle: true}
+	tblInfo := &model.TableInfo{ID: 1, Columns: cols, Indices: []*model.IndexInfo{pk}, IsCommonHandle: true, CommonHandleVersion: 1}
 	tbl := tables.MockTableFromMeta(tblInfo)
 
 	ctx := mock.NewContext()

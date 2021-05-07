@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -53,6 +55,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+	if tbInfo.Partition != nil && (tbInfo.TempTableType == model.TempTableGlobal || tbInfo.TempTableType == model.TempTableLocal) {
+		// unsupported ddl, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(ErrPartitionNoTemporary)
 	}
 
 	tbInfo.State = model.StateNone
@@ -327,7 +334,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
 			if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
-				kv.MockCommitErrorEnable()
+				tikv.MockCommitErrorEnable()
 			}
 		})
 
@@ -508,7 +515,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 			job.CtxVars = []interface{}{oldIDs, newIDs}
 		}
 
-		err = infosync.PutRuleBundles(nil, bundles)
+		err = infosync.PutRuleBundles(context.TODO(), bundles)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")

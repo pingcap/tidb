@@ -61,7 +61,12 @@ func TestSingle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer clus.Terminate(t)
@@ -77,7 +82,9 @@ func TestSingle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DDL start failed %v", err)
 	}
-	defer d.Stop()
+	defer func() {
+		_ = d.Stop()
+	}()
 
 	isOwner := checkOwner(d, true)
 	if !isOwner {
@@ -125,7 +132,12 @@ func TestCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 4})
 	defer clus.Terminate(t)
 
@@ -170,7 +182,10 @@ func TestCluster(t *testing.T) {
 	if isOwner {
 		t.Fatalf("expect false, got isOwner:%v", isOwner)
 	}
-	d.Stop()
+	err = d.Stop()
+	if err != nil {
+		t.Fatal(err, IsNil)
+	}
 
 	// d3 (not owner) stop
 	cli3 := clus.Client(3)
@@ -184,15 +199,26 @@ func TestCluster(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DDL start failed %v", err)
 	}
-	defer d3.Stop()
+	defer func() {
+		err = d3.Stop()
+		if err != nil {
+			t.Fatal(err, IsNil)
+		}
+	}()
 	isOwner = checkOwner(d3, false)
 	if isOwner {
 		t.Fatalf("expect false, got isOwner:%v", isOwner)
 	}
-	d3.Stop()
+	err = d3.Stop()
+	if err != nil {
+		t.Fatal(err, IsNil)
+	}
 
 	// Cancel the owner context, there is no owner.
-	d1.Stop()
+	err = d1.Stop()
+	if err != nil {
+		t.Fatal(err, IsNil)
+	}
 	time.Sleep(time.Duration(tmpTTL+1) * time.Second)
 	session, err := concurrency.NewSession(cliRW)
 	if err != nil {

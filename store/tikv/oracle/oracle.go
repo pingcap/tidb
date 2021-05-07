@@ -18,7 +18,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
 
@@ -44,10 +45,57 @@ type Future interface {
 	Wait() (uint64, error)
 }
 
+// TxnScope indicates the used txnScope for oracle
+type TxnScope struct {
+	// varValue indicates the value of @@txn_scope, which can only be `global` or `local`
+	varValue string
+	// txnScope indicates the value which the tidb-server holds to request tso to pd
+	txnScope string
+}
+
+// GetTxnScope gets oracle.TxnScope from config
+func GetTxnScope() TxnScope {
+	isGlobal, location := config.GetTxnScopeFromConfig()
+	if isGlobal {
+		return NewGlobalTxnScope()
+	}
+	return NewLocalTxnScope(location)
+}
+
+// NewGlobalTxnScope creates a Global TxnScope
+func NewGlobalTxnScope() TxnScope {
+	return newTxnScope(GlobalTxnScope, GlobalTxnScope)
+}
+
+// NewLocalTxnScope creates a Local TxnScope with given real txnScope value.
+func NewLocalTxnScope(txnScope string) TxnScope {
+	return newTxnScope(LocalTxnScope, txnScope)
+}
+
+// GetVarValue returns the value of @@txn_scope which can only be `global` or `local`
+func (t TxnScope) GetVarValue() string {
+	return t.varValue
+}
+
+// GetTxnScope returns the value of the tidb-server holds to request tso to pd.
+func (t TxnScope) GetTxnScope() string {
+	return t.txnScope
+}
+
+func newTxnScope(varValue string, txnScope string) TxnScope {
+	return TxnScope{
+		varValue: varValue,
+		txnScope: txnScope,
+	}
+}
+
 const (
 	physicalShiftBits = 18
+	logicalBits       = (1 << physicalShiftBits) - 1
 	// GlobalTxnScope is the default transaction scope for a Oracle service.
 	GlobalTxnScope = "global"
+	// LocalTxnScope indicates the local txn scope for a Oracle service.
+	LocalTxnScope = "local"
 )
 
 // ComposeTS creates a ts from physical and logical parts.
@@ -73,6 +121,11 @@ func ExtractPhysical(ts uint64) int64 {
 	return int64(ts >> physicalShiftBits)
 }
 
+// ExtractLogical return a ts's logical part.
+func ExtractLogical(ts uint64) int64 {
+	return int64(ts & logicalBits)
+}
+
 // GetPhysical returns physical from an instant time with millisecond precision.
 func GetPhysical(t time.Time) int64 {
 	return t.UnixNano() / int64(time.Millisecond)
@@ -87,4 +140,35 @@ func EncodeTSO(ts int64) uint64 {
 func GetTimeFromTS(ts uint64) time.Time {
 	ms := ExtractPhysical(ts)
 	return time.Unix(ms/1e3, (ms%1e3)*1e6)
+}
+
+// GoTimeToTS converts a Go time to uint64 timestamp.
+func GoTimeToTS(t time.Time) uint64 {
+	ts := (t.UnixNano() / int64(time.Millisecond)) << physicalShiftBits
+	return uint64(ts)
+}
+
+// CompareTS is used to compare two timestamps.
+// If tsoOne > tsoTwo, returns 1.
+// If tsoOne = tsoTwo, returns 0.
+// If tsoOne < tsoTwo, returns -1.
+func CompareTS(tsoOne, tsoTwo uint64) int {
+	tsOnePhy := ExtractPhysical(tsoOne)
+	tsOneLog := ExtractLogical(tsoOne)
+	tsTwoPhy := ExtractPhysical(tsoTwo)
+	tsTwoLog := ExtractLogical(tsoTwo)
+
+	if tsOnePhy > tsTwoPhy || (tsOnePhy == tsTwoPhy && tsOneLog > tsTwoLog) {
+		return 1
+	}
+	if tsOnePhy == tsTwoPhy && tsOneLog == tsTwoLog {
+		return 0
+	}
+	return -1
+}
+
+// GoTimeToLowerLimitStartTS returns the min start_ts of the uncommitted transaction.
+// maxTxnTimeUse means the max time a Txn May use (in ms) from its begin to commit.
+func GoTimeToLowerLimitStartTS(now time.Time, maxTxnTimeUse int64) uint64 {
+	return GoTimeToTS(now.Add(-time.Duration(maxTxnTimeUse) * time.Millisecond))
 }

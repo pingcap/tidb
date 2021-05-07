@@ -58,7 +58,12 @@ func TestSyncerSimple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer clus.Terminate(t)
@@ -74,7 +79,12 @@ func TestSyncerSimple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DDL start failed %v", err)
 	}
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	// for init function
 	if err = d.SchemaSyncer().Init(ctx); err != nil {
@@ -110,7 +120,12 @@ func TestSyncerSimple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DDL start failed %v", err)
 	}
-	defer d1.Stop()
+	defer func() {
+		err := d.Stop()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 	if err = d1.SchemaSyncer().Init(ctx); err != nil {
 		t.Fatalf("schema version syncer init failed %v", err)
 	}

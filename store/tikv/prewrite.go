@@ -23,10 +23,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -34,15 +35,13 @@ import (
 type actionPrewrite struct{}
 
 var _ twoPhaseCommitAction = actionPrewrite{}
-var tiKVTxnRegionsNumHistogramPrewrite = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("prewrite"))
-var tikvOnePCTxnCounterFallback = metrics.TiKVOnePCTxnCounter.WithLabelValues("fallback")
 
 func (actionPrewrite) String() string {
 	return "prewrite"
 }
 
 func (actionPrewrite) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramPrewrite
+	return metrics.TxnRegionsNumHistogramPrewrite
 }
 
 func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize uint64) *tikvrpc.Request {
@@ -75,7 +74,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 
 	ttl := c.lockTTL
 
-	if c.connID > 0 {
+	if c.sessionID > 0 {
 		failpoint.Inject("twoPCShortLockTTL", func() {
 			ttl = 1
 			keys := make([]string, 0, len(mutations))
@@ -126,14 +125,26 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
 	// checked there.
 
-	if c.connID > 0 {
-		failpoint.Inject("prewritePrimaryFail", func() {
-			if batch.isPrimary {
+	if c.sessionID > 0 {
+		if batch.isPrimary {
+			failpoint.Inject("prewritePrimaryFail", func() {
+				// Delay to avoid cancelling other normally ongoing prewrite requests.
+				time.Sleep(time.Millisecond * 50)
 				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting primary batch",
 					zap.Uint64("txnStartTS", c.startTS))
 				failpoint.Return(errors.New("injected error on prewriting primary batch"))
-			}
-		})
+			})
+			failpoint.Inject("prewritePrimary", nil) // for other failures like sleep or pause
+		} else {
+			failpoint.Inject("prewriteSecondaryFail", func() {
+				// Delay to avoid cancelling other normally ongoing prewrite requests.
+				time.Sleep(time.Millisecond * 50)
+				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting secondary batch",
+					zap.Uint64("txnStartTS", c.startTS))
+				failpoint.Return(errors.New("injected error on prewriting secondary batch"))
+			})
+			failpoint.Inject("prewriteSecondary", nil) // for other failures like sleep or pause
+		}
 	}
 
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
@@ -146,7 +157,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
 		sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
-		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutShort)
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
 		// transaction has been successfully committed.
@@ -172,7 +183,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
@@ -194,7 +205,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					}
 					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
 						zap.Uint64("startTS", c.startTS))
-					tikvOnePCTxnCounterFallback.Inc()
+					metrics.OnePCTxnCounterFallback.Inc()
 					c.setOnePC(false)
 					c.setAsyncCommit(false)
 				} else {
@@ -236,8 +247,8 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		for _, keyErr := range keyErrs {
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
-				key := alreadyExist.GetKey()
-				return c.extractKeyExistsErr(key)
+				e := &tikverr.ErrKeyExist{AlreadyExist: alreadyExist}
+				return c.extractKeyExistsErr(e)
 			}
 
 			// Extract lock from key error
@@ -246,7 +257,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				return errors.Trace(err1)
 			}
 			logutil.BgLogger().Info("prewrite encounters lock",
-				zap.Uint64("conn", c.connID),
+				zap.Uint64("session", c.sessionID),
 				zap.Stringer("lock", lock))
 			locks = append(locks, lock)
 		}

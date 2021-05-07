@@ -16,9 +16,10 @@ package mockstore
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/store/tikv/util"
 )
 
 func newUnistore(opts *mockOptions) (kv.Storage, error) {
@@ -27,9 +28,13 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 	opts.clusterInspector(cluster)
-	pdClient = execdetails.InterceptedPDClient{
+	pdClient = util.InterceptedPDClient{
 		Client: pdClient,
 	}
 
-	return tikv.NewTestTiKVStore(client, pdClient, opts.clientHijacker, opts.pdClientHijacker, opts.txnLocalLatches)
+	kvstore, err := tikv.NewTestTiKVStore(client, pdClient, opts.clientHijacker, opts.pdClientHijacker, opts.txnLocalLatches)
+	if err != nil {
+		return nil, err
+	}
+	return mockstorage.NewMockStorage(kvstore)
 }

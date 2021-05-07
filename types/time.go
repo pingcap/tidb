@@ -1260,18 +1260,6 @@ func AdjustYear(y int64, adjustZero bool) (int64, error) {
 	return y, nil
 }
 
-func adjustYearForFloat(y float64, shouldAdjust bool) float64 {
-	if y == 0 && !shouldAdjust {
-		return y
-	}
-	if y >= 0 && y <= 69 {
-		y = 2000 + y
-	} else if y >= 70 && y <= 99 {
-		y = 1900 + y
-	}
-	return y
-}
-
 // NewDuration construct duration with time.
 func NewDuration(hour, minute, second, microsecond int, fsp int8) Duration {
 	return Duration{
@@ -2248,7 +2236,7 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		} else {
-			if dv, err = strconv.ParseInt(dvPre[:]+"000000"[:6-dvPreLen], 10, 64); err != nil {
+			if dv, err = strconv.ParseInt(dvPre+"000000"[:6-dvPreLen], 10, 64); err != nil {
 				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		}
@@ -2896,6 +2884,9 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%S": secondsNumeric,        // Seconds (00..59)
 	"%T": time24Hour,            // Time, 24-hour (hh:mm:ss)
 	"%Y": yearNumericFourDigits, // Year, numeric, four digits
+	"%#": skipAllNums,           // Skip all numbers
+	"%.": skipAllPunct,          // Skip all punctation characters
+	"%@": skipAllAlpha,          // Skip all alpha characters
 	// Deprecated since MySQL 5.7.5
 	"%y": yearNumericTwoDigits, // Year, numeric (two digits)
 	// TODO: Add the following...
@@ -3275,4 +3266,40 @@ func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 
 	inRange := (t.After(b) || t.Equal(b)) && (t.Before(e) || t.Equal(e))
 	return !inRange, nil
+}
+
+func skipAllNums(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	retIdx := 0
+	for i, ch := range input {
+		if unicode.IsNumber(ch) {
+			retIdx = i + 1
+		} else {
+			break
+		}
+	}
+	return input[retIdx:], true
+}
+
+func skipAllPunct(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	retIdx := 0
+	for i, ch := range input {
+		if unicode.IsPunct(ch) {
+			retIdx = i + 1
+		} else {
+			break
+		}
+	}
+	return input[retIdx:], true
+}
+
+func skipAllAlpha(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	retIdx := 0
+	for i, ch := range input {
+		if unicode.IsLetter(ch) {
+			retIdx = i + 1
+		} else {
+			break
+		}
+	}
+	return input[retIdx:], true
 }

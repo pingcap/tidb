@@ -289,6 +289,9 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 		return errors.New("mock commit one task error")
 	})
 	e.Ctx.StmtCommit()
+	// Make sure process stream routine never use invalid txn
+	e.txnInUse.Lock()
+	defer e.txnInUse.Unlock()
 	// Make sure that there are no retries when committing.
 	if err = e.Ctx.RefreshTxnCtx(ctx); err != nil {
 		logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
@@ -401,46 +404,96 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 	return nil, curData
 }
 
+func (e *LoadDataInfo) isInQuoter(bs []byte) bool {
+	inQuoter := false
+	for i := 0; i < len(bs); i++ {
+		switch bs[i] {
+		case e.FieldsInfo.Enclosed:
+			inQuoter = !inQuoter
+		case e.FieldsInfo.Escaped:
+			i++
+		default:
+		}
+	}
+	return inQuoter
+}
+
 // indexOfTerminator return index of terminator, if not, return -1.
 // normally, the field terminator and line terminator is short, so we just use brute force algorithm.
-func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
+func (e *LoadDataInfo) indexOfTerminator(bs []byte, isInQuoter bool) int {
 	fieldTerm := []byte(e.FieldsInfo.Terminated)
 	fieldTermLen := len(fieldTerm)
 	lineTerm := []byte(e.LinesInfo.Terminated)
 	lineTermLen := len(lineTerm)
-	length := len(bs)
+	type termType int
+	const (
+		notTerm termType = iota
+		fieldTermType
+		lineTermType
+	)
+	// likely, fieldTermLen should equal to lineTermLen, compare fieldTerm first can avoid useless lineTerm comparison.
+	cmpTerm := func(restLen int, bs []byte) (typ termType) {
+		if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
+			typ = fieldTermType
+			return
+		}
+		if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
+			typ = lineTermType
+			return
+		}
+		return
+	}
+	if lineTermLen > fieldTermLen && bytes.HasPrefix(lineTerm, fieldTerm) {
+		// unlikely, fieldTerm is prefix of lineTerm, we should compare lineTerm first.
+		cmpTerm = func(restLen int, bs []byte) (typ termType) {
+			if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
+				typ = lineTermType
+				return
+			}
+			if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
+				typ = fieldTermType
+				return
+			}
+			return
+		}
+	}
 	atFieldStart := true
 	inQuoter := false
-	for i := 0; i < length; i++ {
+loop:
+	for i := 0; i < len(bs); i++ {
 		if atFieldStart && bs[i] == e.FieldsInfo.Enclosed {
-			inQuoter = true
+			if !isInQuoter {
+				inQuoter = true
+			}
 			atFieldStart = false
 			continue
 		}
-		restLen := length - i - 1
+		restLen := len(bs) - i - 1
 		if inQuoter && bs[i] == e.FieldsInfo.Enclosed {
-			// look ahead to see if it is end of field. if the next is field terminator, then it is.
-			if restLen >= fieldTermLen && bytes.Equal(bs[i+1:i+fieldTermLen+1], fieldTerm) {
+			// look ahead to see if it is end of line or field.
+			switch cmpTerm(restLen, bs[i+1:]) {
+			case lineTermType:
+				return i + 1
+			case fieldTermType:
 				i += fieldTermLen
 				inQuoter = false
 				atFieldStart = true
-				continue
-			}
-			// look ahead to see if it is end of line. if the next is line terminator, then return.
-			if restLen >= lineTermLen && bytes.Equal(bs[i+1:i+lineTermLen+1], lineTerm) {
-				return i + 1
+				continue loop
+			default:
 			}
 		}
-		// look ahead to see if it is end of field. if the next is field terminator, then it is.
-		if !inQuoter && restLen >= fieldTermLen-1 && bytes.Equal(bs[i:i+fieldTermLen], fieldTerm) {
-			i += fieldTermLen - 1
-			inQuoter = false
-			atFieldStart = true
-			continue
-		}
-		// look ahead to see if it is end of line. if the next is line terminator, then return.
-		if !inQuoter && restLen >= lineTermLen-1 && bytes.Equal(bs[i:i+lineTermLen], lineTerm) {
-			return i
+		if !inQuoter {
+			// look ahead to see if it is end of line or field.
+			switch cmpTerm(restLen+1, bs[i:]) {
+			case lineTermType:
+				return i
+			case fieldTermType:
+				i += fieldTermLen - 1
+				inQuoter = false
+				atFieldStart = true
+				continue loop
+			default:
+			}
 		}
 		// if it is escaped char, skip next char.
 		if bs[i] == e.FieldsInfo.Escaped {
@@ -459,7 +512,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if prevData == nil && len(curData) < startingLen {
 		return nil, curData, false
 	}
-
+	inquotor := e.isInQuoter(prevData)
 	prevLen := len(prevData)
 	terminatedLen := len(e.LinesInfo.Terminated)
 	curStartIdx := 0
@@ -471,7 +524,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		if ignore {
 			endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
 		} else {
-			endIdx = e.indexOfTerminator(curData[curStartIdx:])
+			endIdx = e.indexOfTerminator(curData[curStartIdx:], inquotor)
 		}
 	}
 	if endIdx == -1 {
@@ -485,7 +538,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		if ignore {
 			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
 		} else {
-			endIdx = e.indexOfTerminator(curData[startingLen:])
+			endIdx = e.indexOfTerminator(curData[startingLen:], inquotor)
 		}
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
@@ -506,7 +559,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if ignore {
 		endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
 	} else {
-		endIdx = e.indexOfTerminator(prevData[startingLen:])
+		endIdx = e.indexOfTerminator(prevData[startingLen:], inquotor)
 	}
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true

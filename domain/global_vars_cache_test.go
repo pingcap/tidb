@@ -41,7 +41,10 @@ func (gvcSuite *testGVCSuite) TestSimple(c *C) {
 
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	ddlLease := 50 * time.Millisecond
 	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	err = dom.Init(ddlLease, sysMockFactory)
@@ -175,7 +178,10 @@ func (gvcSuite *testGVCSuite) TestCheckEnableStmtSummary(c *C) {
 
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	ddlLease := 50 * time.Millisecond
 	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	err = dom.Init(ddlLease, sysMockFactory)
@@ -197,7 +203,8 @@ func (gvcSuite *testGVCSuite) TestCheckEnableStmtSummary(c *C) {
 		Collate: charset.CollationBin,
 	}
 
-	stmtsummary.StmtSummaryByDigestMap.SetEnabled("0", false)
+	err = stmtsummary.StmtSummaryByDigestMap.SetEnabled("0", false)
+	c.Assert(err, IsNil)
 	ck := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft1}, 1024)
 	ck.AppendString(0, variable.TiDBEnableStmtSummary)
 	ck.AppendString(1, "1")

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/vitess"
 )
 
 func (b *builtinInetNtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -615,5 +616,40 @@ func (b *builtinReleaseLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	for i := range i64s {
 		i64s[i] = 1
 	}
+	return nil
+}
+
+func (b *builtinVitessHashSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinVitessHashSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	column, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(column)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, column); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	r64s := result.Uint64s()
+	result.MergeNulls(column)
+
+	for i := 0; i < n; i++ {
+		if column.IsNull(i) {
+			continue
+		}
+		var uintKey = column.GetUint64(i)
+		var hash uint64
+		if hash, err = vitess.HashUint64(uintKey); err != nil {
+			return err
+		}
+		r64s[i] = hash
+	}
+
 	return nil
 }

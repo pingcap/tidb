@@ -175,7 +175,7 @@ Write privilege: These tables are read-only. You can use FLUSH SCHEMA_INDEX_USAG
 		- end_monitoring
 - Oracle can set whether to monitor an index.
 
-## Compatibility and Mirgration Plan
+## Compatibility and Migration Plan
 
 MySQL supports `SCHEMA_UNUSED_INDEXES`. We are considering compatibility and also support this view.
 

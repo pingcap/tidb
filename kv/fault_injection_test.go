@@ -35,7 +35,7 @@ func (s testFaultInjectionSuite) TestFaultInjectionBasic(c *C) {
 	storage := NewInjectedStore(newMockStorage(), &cfg)
 	txn, err := storage.Begin()
 	c.Assert(err, IsNil)
-	_, err = storage.BeginWithStartTS(oracle.GlobalTxnScope, 0)
+	_, err = storage.BeginWithOption(TransactionOption{}.SetTxnScope(oracle.GlobalTxnScope).SetStartTs(0))
 	c.Assert(err, IsNil)
 	ver := Version{Ver: 1}
 	snap := storage.GetSnapshot(ver)

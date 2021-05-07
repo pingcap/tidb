@@ -153,6 +153,12 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 				"nest1": "n-value1",
 				"nest2": "n-value2",
 			},
+			// We need hide the follow config
+			// TODO: we need remove it when index usage is GA.
+			"performance": map[string]string{
+				"index-usage-sync-lease": "0s",
+				"INDEX-USAGE-SYNC-LEASE": "0s",
+			},
 		}
 		return configuration, nil
 	}
@@ -208,6 +214,15 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(len(warnings), Equals, 0, Commentf("unexpected warnigns: %+v", warnings))
 	c.Assert(requestCounter, Equals, int32(9))
+
+	// TODO: we need remove it when index usage is GA.
+	rs := tk.MustQuery("show config").Rows()
+	for _, r := range rs {
+		s, ok := r[2].(string)
+		c.Assert(ok, IsTrue)
+		c.Assert(strings.Contains(s, "index-usage-sync-lease"), IsFalse)
+		c.Assert(strings.Contains(s, "INDEX-USAGE-SYNC-LEASE"), IsFalse)
+	}
 
 	// type => server index => row
 	rows := map[string][][]string{}
@@ -864,7 +879,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 	}
 
-	var servers []string
+	var servers = make([]string, 0, len(testServers))
 	for _, s := range testServers {
 		servers = append(servers, strings.Join([]string{s.typ, s.address, s.address}, ","))
 	}
@@ -909,6 +924,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`")
+	c.Assert(rs.Close(), IsNil)
 
 	// Test without end time error.
 	rs, err = tk.Exec("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011'")
@@ -916,6 +932,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`")
+	c.Assert(rs.Close(), IsNil)
 
 	// Test without specified message error.
 	rs, err = tk.Exec("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011' and time<'2019/08/26 16:18:13.011'")
@@ -923,4 +940,5 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
+	c.Assert(rs.Close(), IsNil)
 }

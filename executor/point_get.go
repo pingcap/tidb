@@ -19,9 +19,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -29,6 +31,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -141,20 +144,30 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.snapshot.SetOption(tikvstore.CollectRuntimeStats, snapshotStats)
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		e.snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
 	}
-	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	e.snapshot.SetOption(tikvstore.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
+	e.snapshot.SetOption(tikvstore.IsStalenessReadOnly, isStaleness)
+	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != oracle.GlobalTxnScope {
+		e.snapshot.SetOption(tikvstore.MatchStoreLabels, []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
+			},
+		})
+	}
 	return nil
 }
 
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(kv.CollectRuntimeStats)
+		e.snapshot.DelOption(tikvstore.CollectRuntimeStats)
 	}
 	if e.idxInfo != nil && e.tblInfo != nil {
 		actRows := int64(0)
@@ -189,6 +202,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
 			handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals)
 			if err != nil {
+				if kv.ErrNotExist.Equal(err) {
+					return nil
+				}
 				return err
 			}
 			e.handle, err = kv.NewCommonHandle(handleBytes)
@@ -300,11 +316,14 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
+	if len(key) == 0 {
+		return nil
+	}
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, e.lockWaitTime)
 		lockCtx.ReturnValues = true
-		lockCtx.Values = map[string]kv.ReturnedValue{}
+		lockCtx.Values = map[string]tikvstore.ReturnedValue{}
 		err := doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
 			return err
@@ -372,7 +391,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	txnScope := e.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+	txnScope := e.txn.GetOption(tikvstore.TxnScope).(string)
 	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
 		return nil
 	}
@@ -424,8 +443,11 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
 		} else {
+			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
+			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.
 			idxVals[i], err = table.CastValue(ctx, idxVals[i], colInfo, true, false)
-			if types.ErrOverflow.Equal(err) {
+			if types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) ||
+				types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
 				return nil, kv.ErrNotExist
 			}
 		}
@@ -453,6 +475,7 @@ func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tbl
 func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo, handle kv.Handle,
 	rowVal []byte, chk *chunk.Chunk) error {
 	pkCols := tables.TryGetCommonPkColumnIds(tblInfo)
+	prefixColIDs := tables.PrimaryPrefixColumnIDs(tblInfo)
 	colID2CutPos := make(map[int64]int, schema.Len())
 	for _, col := range schema.Columns {
 		if _, ok := colID2CutPos[col.ID]; !ok {
@@ -473,7 +496,7 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 			chk.AppendNull(i)
 			continue
 		}
-		ok, err := tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder, pkCols)
+		ok, err := tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder, pkCols, prefixColIDs)
 		if err != nil {
 			return err
 		}
@@ -498,7 +521,8 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
+func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk,
+	decoder *codec.Decoder, pkCols []int64, prefixColIDs []int64) (bool, error) {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
@@ -510,7 +534,7 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {
 		for i, hid := range pkCols {
-			if col.ID == hid {
+			if col.ID == hid && notPKPrefixCol(hid, prefixColIDs) {
 				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)
 				if err != nil {
 					return false, errors.Trace(err)
@@ -520,6 +544,15 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 		}
 	}
 	return false, nil
+}
+
+func notPKPrefixCol(colID int64, prefixColIDs []int64) bool {
+	for _, pCol := range prefixColIDs {
+		if pCol == colID {
+			return false
+		}
+	}
+	return true
 }
 
 func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
@@ -547,7 +580,7 @@ func (e *runtimeStatsWithSnapshot) Clone() execdetails.RuntimeStats {
 	newRs := &runtimeStatsWithSnapshot{}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+		newRs.SnapshotRuntimeStats = snapshotStats
 	}
 	return newRs
 }
@@ -561,7 +594,7 @@ func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
 	if tmp.SnapshotRuntimeStats != nil {
 		if e.SnapshotRuntimeStats == nil {
 			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			e.SnapshotRuntimeStats = snapshotStats
 			return
 		}
 		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)

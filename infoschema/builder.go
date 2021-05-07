@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -82,6 +83,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
 			return nil, errors.Trace(err)
 		}
+	case model.ActionExchangeTablePartition:
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
 	b.copySortedTables(oldTableID, newTableID)
@@ -142,7 +147,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				// While session 1 performs the DML operation associated with partition 1,
 				// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 				tblIDs = append(tblIDs, opt.OldTableID)
-
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
 				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
 				if err != nil {
@@ -196,20 +200,16 @@ func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoi
 	switch diff.Type {
 	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
 		// Only drop auto-increment allocator.
-		for _, alloc := range oldAllocs {
-			if alloc.GetType() == autoid.RowIDAllocType || alloc.GetType() == autoid.AutoIncrementType {
-				continue
-			}
-			newAllocs = append(newAllocs, alloc)
-		}
+		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
+			tp := a.GetType()
+			return tp != autoid.RowIDAllocType && tp != autoid.AutoIncrementType
+		})
 	case model.ActionRebaseAutoRandomBase:
 		// Only drop auto-random allocator.
-		for _, alloc := range oldAllocs {
-			if alloc.GetType() == autoid.AutoRandomType {
-				continue
-			}
-			newAllocs = append(newAllocs, alloc)
-		}
+		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
+			tp := a.GetType()
+			return tp != autoid.AutoRandomType
+		})
 	default:
 		// Keep all allocators.
 		newAllocs = oldAllocs
@@ -361,6 +361,16 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		case model.ActionRebaseAutoRandomBase:
 			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
 			allocs = append(allocs, newAlloc)
+		case model.ActionModifyColumn:
+			// Change column attribute from auto_increment to auto_random.
+			if tblInfo.ContainsAutoRandomBits() && allocs.Get(autoid.AutoRandomType) == nil {
+				// Remove auto_increment allocator.
+				allocs = allocs.Filter(func(a autoid.Allocator) bool {
+					return a.GetType() != autoid.AutoIncrementType && a.GetType() != autoid.RowIDAllocType
+				})
+				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
+				allocs = append(allocs, newAlloc)
+			}
 		}
 	}
 	tbl, err := tables.TableFromMeta(allocs, tblInfo)
@@ -447,13 +457,15 @@ func (b *Builder) applyPlacementDelete(id string) {
 }
 
 func (b *Builder) applyPlacementUpdate(id string) error {
-	bundle, err := infosync.GetRuleBundle(nil, id)
+	bundle, err := infosync.GetRuleBundle(context.TODO(), id)
 	if err != nil {
 		return err
 	}
 
 	if !bundle.IsEmpty() {
 		b.is.SetBundle(bundle)
+	} else {
+		b.applyPlacementDelete(id)
 	}
 	return nil
 }

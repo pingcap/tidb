@@ -45,7 +45,10 @@ func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
 
 func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
 	store := testCreateStore(c, "test_stat")
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	d := testNewDDLAndStart(
 		context.Background(),
@@ -53,7 +56,10 @@ func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)

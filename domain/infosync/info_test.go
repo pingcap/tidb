@@ -87,8 +87,16 @@ func TestTopology(t *testing.T) {
 
 	cli := clus.RandClient()
 
-	failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockServerInfo", "return(true)")
-	defer failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockServerInfo")
+	err := failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockServerInfo", "return(true)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockServerInfo")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, cli, false)
 	if err != nil {

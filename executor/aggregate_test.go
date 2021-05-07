@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -24,9 +25,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -637,6 +642,23 @@ func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 
 	// issue #9920
 	tk.MustQuery("select group_concat(123, null)").Check(testkit.Rows("<nil>"))
+
+	// issue #23129
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(cid int, sname varchar(100));")
+	tk.MustExec("insert into t1 values(1, 'Bob'), (1, 'Alice');")
+	tk.MustExec("insert into t1 values(3, 'Ace');")
+	tk.MustExec("set @@group_concat_max_len=5;")
+	rows := tk.MustQuery("select group_concat(sname order by sname) from t1 group by cid;")
+	rows.Check(testkit.Rows("Alice", "Ace"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(10));")
+	tk.MustExec("insert into t1 values('0123456789');")
+	tk.MustExec("insert into t1 values('12345');")
+	tk.MustExec("set @@group_concat_max_len=8;")
+	rows = tk.MustQuery("select group_concat(c1 order by c1) from t1 group by c1;")
+	rows.Check(testkit.Rows("01234567", "12345"))
 }
 
 func (s *testSuiteAgg) TestSelectDistinct(c *C) {
@@ -748,7 +770,7 @@ func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select max(a+b) from t")
 	tk.MustQuery("select avg(a)+1 from t")
 	tk.MustQuery("select count(c), 5 from t")
-	// test functinal depend on primary key
+	// test functional depend on primary key
 	tk.MustQuery("select * from t group by a")
 	// test functional depend on unique not null columns
 	tk.MustQuery("select * from t group by b,d")
@@ -898,7 +920,7 @@ func (s *testSuiteAgg) TestAggEliminator(c *C) {
 func (s *testSuiteAgg) TestClusterIndexMaxMinEliminator(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	for i := 0; i < 10+1; i++ {
 		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
@@ -1214,10 +1236,18 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
+	tk.MustExec("set tidb_init_chunk_size=1;")
+	tk.MustExec("set tidb_max_chunk_size=32;")
 
-	for i := 0; i < 10000; i++ {
-		tk.MustExec("insert into t values(?, ?);", rand.Intn(100), rand.Intn(100))
+	var insertSQL string
+	for i := 0; i < 1000; i++ {
+		if i == 0 {
+			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
+		} else {
+			insertSQL += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
+		}
 	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
 
 	sql := "select /*+ stream_agg() */ group_concat(a, b) from t group by b;"
 	concurrencies := []int{1, 2, 4, 8}
@@ -1227,7 +1257,7 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 		if con == 1 {
 			expected = reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
 		} else {
-			er := tk.MustQuery("explain " + sql).Rows()
+			er := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 			ok := false
 			for _, l := range er {
 				str := fmt.Sprintf("%v", l)
@@ -1261,9 +1291,17 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
-	for i := 0; i < 10000; i++ {
-		tk.MustExec("insert into t values (?, ?);", rand.Intn(100), rand.Intn(100))
+	tk.MustExec("set tidb_init_chunk_size=1;")
+	tk.MustExec("set tidb_max_chunk_size=32;")
+	var insertSQL string
+	for i := 0; i < 1000; i++ {
+		if i == 0 {
+			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
+		} else {
+			insertSQL += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
+		}
 	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
 
 	concurrencies := []int{1, 2, 4, 8}
 	for _, sql := range sqls {
@@ -1273,7 +1311,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 			if con == 1 {
 				expected = tk.MustQuery(sql).Sort().Rows()
 			} else {
-				er := tk.MustQuery("explain " + sql).Rows()
+				er := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 				ok := false
 				for _, l := range er {
 					str := fmt.Sprintf("%v", l)
@@ -1296,4 +1334,101 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 			}
 		}
 	}
+}
+
+func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_max_chunk_size=32")
+	tk.MustExec("set @@tidb_init_chunk_size=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i <= 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v),(%v),(%v)", i, i, i))
+	}
+
+	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
+	c.Assert(failpoint.Enable(fpName, "5%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]\")"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+
+	// Test 10 times panic for each AggExec.
+	var res sqlexec.RecordSet
+	for i := 1; i <= 10; i++ {
+		var err error
+		for err == nil {
+			// Test paralleled hash agg.
+			res, err = tk.Exec("select /*+ HASH_AGG() */ count(a) from t group by a")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+				c.Assert(res.Close(), IsNil)
+			}
+		}
+		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+
+		err = nil
+		for err == nil {
+			// Test unparalleled hash agg.
+			res, err = tk.Exec("select /*+ HASH_AGG() */ count(distinct a) from t")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+				c.Assert(res.Close(), IsNil)
+			}
+		}
+		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+
+		err = nil
+		for err == nil {
+			// Test stream agg.
+			res, err = tk.Exec("select /*+ STREAM_AGG() */ count(a) from t")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Se, res)
+				c.Assert(res.Close(), IsNil)
+			}
+		}
+		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+	}
+}
+
+func (s *testSuiteAgg) TestIssue23277(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustExec("create table t(a tinyint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a smallint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a mediumint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a int(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a bigint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+}
+
+// https://github.com/pingcap/tidb/issues/23314
+func (s *testSuiteAgg) TestIssue23314(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(col1 time(2) NOT NULL)")
+	tk.MustExec("insert into t1 values(\"16:40:20.01\")")
+	res := tk.MustQuery("select col1 from t1 group by col1")
+	res.Check(testkit.Rows("16:40:20.01"))
 }

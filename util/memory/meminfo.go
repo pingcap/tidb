@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/parser/terror"
 	"github.com/shirou/gopsutil/mem"
 )
 
@@ -131,11 +132,9 @@ func init() {
 		RWMutex: &sync.RWMutex{},
 	}
 	_, err := MemTotal()
-	if err != nil {
-	}
+	terror.MustNil(err)
 	_, err = MemUsed()
-	if err != nil {
-	}
+	terror.MustNil(err)
 }
 
 func inContainer() bool {

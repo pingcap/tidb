@@ -37,10 +37,12 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
@@ -81,9 +83,6 @@ const (
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
 var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusAddrIsNotSet)
-
-// errPlacementRulesDisabled is exported for internal usage, indicating PD rejected the request due to disabled placement feature.
-var errPlacementRulesDisabled = errors.New("placement rules feature is disabled")
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
@@ -254,7 +253,9 @@ func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress flo
 		return nil
 	}
 	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
-	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, strconv.FormatFloat(progress, 'f', 2, 64))
+	// truncate progress with 2 decimal digits so that it will not be rounded to 1 when the progress is 0.995
+	progressString := types.TruncateFloatToString(progress, 2)
+	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, progressString)
 }
 
 // DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
@@ -317,11 +318,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			url = fmt.Sprintf("%s://%s%s", util2.InternalHTTPSchema(), addr, route)
 		}
 
-		if ctx != nil {
-			req, err = http.NewRequestWithContext(ctx, method, url, body)
-		} else {
-			req, err = http.NewRequest(method, url, body)
-		}
+		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
 			return nil, err
 		}
@@ -563,9 +560,9 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	now := time.Unix(0, oracle.ExtractPhysical(currentVer.Ver)*1e6)
-	startTSLowerLimit := variable.GoTimeToTS(now.Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond))
+	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
 
-	minStartTS := variable.GoTimeToTS(now)
+	minStartTS := oracle.GoTimeToTS(now)
 	for _, info := range pl {
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
@@ -794,6 +791,8 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
+
+	metrics.ServerInfo.WithLabelValues(mysql.TiDBReleaseVersion, info.GitHash).Set(float64(info.StartTimestamp))
 
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {

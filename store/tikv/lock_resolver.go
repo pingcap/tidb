@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"container/list"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"sync"
@@ -25,13 +26,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -42,26 +43,9 @@ const ResolvedCacheSize = 2048
 // bigTxnThreshold : transaction involves keys exceed this threshold can be treated as `big transaction`.
 const bigTxnThreshold = 16
 
-var (
-	tikvLockResolverCountWithBatchResolve             = metrics.TiKVLockResolverCounter.WithLabelValues("batch_resolve")
-	tikvLockResolverCountWithExpired                  = metrics.TiKVLockResolverCounter.WithLabelValues("expired")
-	tikvLockResolverCountWithNotExpired               = metrics.TiKVLockResolverCounter.WithLabelValues("not_expired")
-	tikvLockResolverCountWithWaitExpired              = metrics.TiKVLockResolverCounter.WithLabelValues("wait_expired")
-	tikvLockResolverCountWithResolve                  = metrics.TiKVLockResolverCounter.WithLabelValues("resolve")
-	tikvLockResolverCountWithResolveForWrite          = metrics.TiKVLockResolverCounter.WithLabelValues("resolve_for_write")
-	tikvLockResolverCountWithResolveAsync             = metrics.TiKVLockResolverCounter.WithLabelValues("resolve_async_commit")
-	tikvLockResolverCountWithWriteConflict            = metrics.TiKVLockResolverCounter.WithLabelValues("write_conflict")
-	tikvLockResolverCountWithQueryTxnStatus           = metrics.TiKVLockResolverCounter.WithLabelValues("query_txn_status")
-	tikvLockResolverCountWithQueryTxnStatusCommitted  = metrics.TiKVLockResolverCounter.WithLabelValues("query_txn_status_committed")
-	tikvLockResolverCountWithQueryTxnStatusRolledBack = metrics.TiKVLockResolverCounter.WithLabelValues("query_txn_status_rolled_back")
-	tikvLockResolverCountWithQueryCheckSecondaryLocks = metrics.TiKVLockResolverCounter.WithLabelValues("query_check_secondary_locks")
-	tikvLockResolverCountWithResolveLocks             = metrics.TiKVLockResolverCounter.WithLabelValues("query_resolve_locks")
-	tikvLockResolverCountWithResolveLockLite          = metrics.TiKVLockResolverCounter.WithLabelValues("query_resolve_lock_lite")
-)
-
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
-	store Storage
+	store *KVStore
 	mu    struct {
 		sync.RWMutex
 		// resolved caches resolved txns (FIFO, txn id -> txnStatus).
@@ -73,7 +57,7 @@ type LockResolver struct {
 	}
 }
 
-func newLockResolver(store Storage) *LockResolver {
+func newLockResolver(store *KVStore) *LockResolver {
 	r := &LockResolver{
 		store: store,
 	}
@@ -97,7 +81,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.Cl
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
+	pdCli = util.InterceptedPDClient{Client: pdCli}
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
 
 	tlsConfig, err := security.ToTLSConfig()
@@ -110,7 +94,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.Cl
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), false, nil)
+	s, err := NewKVStore(uuid, &CodecPDClient{pdCli}, spkv, NewRPCClient(security))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -185,10 +169,11 @@ type Lock struct {
 func (l *Lock) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	buf.WriteString("key: ")
-	prettyWriteKey(buf, l.Key)
+	buf.WriteString(hex.EncodeToString(l.Key))
 	buf.WriteString(", primary: ")
-	prettyWriteKey(buf, l.Primary)
-	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, minCommitTs:%d, ttl: %d, type: %s", buf.String(), l.TxnID, l.LockForUpdateTS, l.MinCommitTS, l.TTL, l.LockType)
+	buf.WriteString(hex.EncodeToString(l.Primary))
+	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, minCommitTs:%d, ttl: %d, type: %s, UseAsyncCommit: %t",
+		buf.String(), l.TxnID, l.LockForUpdateTS, l.MinCommitTS, l.TTL, l.LockType, l.UseAsyncCommit)
 }
 
 // NewLock creates a new *Lock.
@@ -237,7 +222,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return true, nil
 	}
 
-	tikvLockResolverCountWithBatchResolve.Inc()
+	metrics.LockResolverCountWithBatchResolve.Inc()
 
 	// The GCWorker kill all ongoing transactions, because it must make sure all
 	// locks have been cleaned before GC.
@@ -254,7 +239,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		if _, ok := txnInfos[l.TxnID]; ok {
 			continue
 		}
-		tikvLockResolverCountWithExpired.Inc()
+		metrics.LockResolverCountWithExpired.Inc()
 
 		// Use currentTS = math.MaxUint64 means rollback the txn, no matter the lock is expired or not!
 		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true, false, l)
@@ -301,7 +286,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, &kvrpcpb.ResolveLockRequest{TxnInfos: listTxnInfos})
 	startTime = time.Now()
-	resp, err := lr.store.SendReq(bo, req, loc, readTimeoutShort)
+	resp, err := lr.store.SendReq(bo, req, loc, ReadTimeoutShort)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -320,7 +305,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 	}
 
 	if resp.Resp == nil {
-		return false, errors.Trace(ErrBodyMissing)
+		return false, errors.Trace(tikverr.ErrBodyMissing)
 	}
 	cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
 	if keyErr := cmdResp.GetError(); keyErr != nil {
@@ -346,7 +331,8 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	return lr.resolveLocks(bo, callerStartTS, locks, false, false)
 }
 
-func (lr *LockResolver) resolveLocksLite(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, []uint64 /*pushed*/, error) {
+// ResolveLocksLite resolves locks while preventing scan whole region.
+func (lr *LockResolver) ResolveLocksLite(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, []uint64 /*pushed*/, error) {
 	return lr.resolveLocks(bo, callerStartTS, locks, false, true)
 }
 
@@ -360,9 +346,9 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	}
 
 	if forWrite {
-		tikvLockResolverCountWithResolveForWrite.Inc()
+		metrics.LockResolverCountWithResolveForWrite.Inc()
 	} else {
-		tikvLockResolverCountWithResolve.Inc()
+		metrics.LockResolverCountWithResolve.Inc()
 	}
 
 	var pushFail bool
@@ -383,7 +369,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 		}
 
 		if status.ttl == 0 {
-			tikvLockResolverCountWithExpired.Inc()
+			metrics.LockResolverCountWithExpired.Inc()
 			// If the lock is committed or rollbacked, resolve lock.
 			cleanRegions, exists := cleanTxns[l.TxnID]
 			if !exists {
@@ -405,7 +391,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				return err
 			}
 		} else {
-			tikvLockResolverCountWithNotExpired.Inc()
+			metrics.LockResolverCountWithNotExpired.Inc()
 			// If the lock is valid, the txn may be a pessimistic transaction.
 			// Update the txn expire time.
 			msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, status.ttl, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
@@ -416,8 +402,8 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				// abort current transaction.
 				// This could avoids the deadlock scene of two large transaction.
 				if l.LockType != kvrpcpb.Op_PessimisticLock && l.TxnID > callerStartTS {
-					tikvLockResolverCountWithWriteConflict.Inc()
-					return kv.ErrWriteConflict.GenWithStackByArgs(callerStartTS, l.TxnID, status.commitTS, l.Key)
+					metrics.LockResolverCountWithWriteConflict.Inc()
+					return tikverr.NewErrWriteConfictWithArgs(callerStartTS, l.TxnID, status.commitTS, l.Key)
 				}
 			} else {
 				if status.action != kvrpcpb.Action_MinCommitTSPushed {
@@ -445,7 +431,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 
 	if msBeforeTxnExpired.value() > 0 && len(pushed) == 0 {
 		// If len(pushed) > 0, the caller will not block on the locks, it push the minCommitTS instead.
-		tikvLockResolverCountWithWaitExpired.Inc()
+		metrics.LockResolverCountWithWaitExpired.Inc()
 	}
 	return msBeforeTxnExpired.value(), pushed, nil
 }
@@ -499,12 +485,8 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	var currentTS uint64
 	var err error
 	var status TxnStatus
-	if l.UseAsyncCommit && !forceSyncCommit {
-		// Async commit doesn't need the current ts since it uses the minCommitTS.
-		currentTS = 0
-		// Set to 0 so as not to push forward min commit ts.
-		callerStartTS = 0
-	} else if l.TTL == 0 {
+
+	if l.TTL == 0 {
 		// NOTE: l.TTL = 0 is a special protocol!!!
 		// When the pessimistic txn prewrite meets locks of a txn, it should resolve the lock **unconditionally**.
 		// In this case, TiKV use lock TTL = 0 to notify TiDB, and TiDB should resolve the lock!
@@ -581,7 +563,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		return s, nil
 	}
 
-	tikvLockResolverCountWithQueryTxnStatus.Inc()
+	metrics.LockResolverCountWithQueryTxnStatus.Inc()
 
 	// CheckTxnStatus may meet the following cases:
 	// 1. LOCK
@@ -608,7 +590,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		if err != nil {
 			return status, errors.Trace(err)
 		}
-		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := lr.store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 		if err != nil {
 			return status, errors.Trace(err)
 		}
@@ -624,7 +606,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			continue
 		}
 		if resp.Resp == nil {
-			return status, errors.Trace(ErrBodyMissing)
+			return status, errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdResp := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
@@ -640,7 +622,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		status.action = cmdResp.Action
 		status.primaryLock = cmdResp.LockInfo
 
-		if status.primaryLock != nil && status.primaryLock.UseAsyncCommit {
+		if status.primaryLock != nil && status.primaryLock.UseAsyncCommit && !forceSyncCommit {
 			if !lr.store.GetOracle().IsExpired(txnID, cmdResp.LockTtl, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) {
 				status.ttl = cmdResp.LockTtl
 			}
@@ -648,9 +630,9 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			status.ttl = cmdResp.LockTtl
 		} else {
 			if cmdResp.CommitVersion == 0 {
-				tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
+				metrics.LockResolverCountWithQueryTxnStatusRolledBack.Inc()
 			} else {
-				tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()
+				metrics.LockResolverCountWithQueryTxnStatusCommitted.Inc()
 			}
 
 			status.commitTS = cmdResp.CommitVersion
@@ -743,8 +725,8 @@ func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys []
 		StartVersion: txnID,
 	}
 	req := tikvrpc.NewRequest(tikvrpc.CmdCheckSecondaryLocks, checkReq)
-	tikvLockResolverCountWithQueryCheckSecondaryLocks.Inc()
-	resp, err := lr.store.SendReq(bo, req, curRegionID, readTimeoutShort)
+	metrics.LockResolverCountWithQueryCheckSecondaryLocks.Inc()
+	resp, err := lr.store.SendReq(bo, req, curRegionID, ReadTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -775,7 +757,7 @@ func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys []
 		return nil
 	}
 	if resp.Resp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return errors.Trace(tikverr.ErrBodyMissing)
 	}
 
 	checkResp := resp.Resp.(*kvrpcpb.CheckSecondaryLocksResponse)
@@ -784,7 +766,7 @@ func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys []
 
 // resolveLockAsync resolves l assuming it was locked using the async commit protocol.
 func (lr *LockResolver) resolveLockAsync(bo *Backoffer, l *Lock, status TxnStatus) error {
-	tikvLockResolverCountWithResolveAsync.Inc()
+	metrics.LockResolverCountWithResolveAsync.Inc()
 
 	resolveData, err := lr.checkAllSecondaries(bo, l, &status)
 	if err != nil {
@@ -874,7 +856,7 @@ func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region Region
 	lreq.Keys = keys
 	req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
 
-	resp, err := lr.store.SendReq(bo, req, region, readTimeoutShort)
+	resp, err := lr.store.SendReq(bo, req, region, ReadTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -905,7 +887,7 @@ func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region Region
 		return nil
 	}
 	if resp.Resp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return errors.Trace(tikverr.ErrBodyMissing)
 	}
 	cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
 	if keyErr := cmdResp.GetError(); keyErr != nil {
@@ -917,7 +899,7 @@ func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region Region
 }
 
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, lite bool, cleanRegions map[RegionVerID]struct{}) error {
-	tikvLockResolverCountWithResolveLocks.Inc()
+	metrics.LockResolverCountWithResolveLocks.Inc()
 	resolveLite := lite || l.TxnSize < bigTxnThreshold
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
@@ -939,11 +921,11 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 		if resolveLite {
 			// Only resolve specified keys when it is a small transaction,
 			// prevent from scanning the whole region in this case.
-			tikvLockResolverCountWithResolveLockLite.Inc()
+			metrics.LockResolverCountWithResolveLockLite.Inc()
 			lreq.Keys = [][]byte{l.Key}
 		}
 		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
-		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := lr.store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -959,7 +941,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 			continue
 		}
 		if resp.Resp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
@@ -975,7 +957,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 }
 
 func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegions map[RegionVerID]struct{}) error {
-	tikvLockResolverCountWithResolveLocks.Inc()
+	metrics.LockResolverCountWithResolveLocks.Inc()
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
 		if err != nil {
@@ -994,7 +976,7 @@ func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegi
 			Keys:         [][]byte{l.Key},
 		}
 		req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticRollback, pessimisticRollbackReq)
-		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := lr.store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1010,7 +992,7 @@ func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegi
 			continue
 		}
 		if resp.Resp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdResp := resp.Resp.(*kvrpcpb.PessimisticRollbackResponse)
 		if keyErr := cmdResp.GetErrors(); len(keyErr) > 0 {
