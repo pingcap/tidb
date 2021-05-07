@@ -410,10 +410,13 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *tikv.Backoffer, response *
 		return errors.Trace(err)
 	}
 
-	for _, retry := range response.RetryRegions {
-		id := tikv.NewRegionVerID(retry.Id, retry.RegionEpoch.ConfVer, retry.RegionEpoch.Version)
-		logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
-		b.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+	if len(response.RetryRegions) > 0 {
+		for _, retry := range response.RetryRegions {
+			id := tikv.NewRegionVerID(retry.Id, retry.RegionEpoch.ConfVer, retry.RegionEpoch.Version)
+			logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
+			b.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+		}
+		return
 	}
 
 	resp := batchCopResponse{
