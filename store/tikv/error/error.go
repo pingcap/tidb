@@ -46,6 +46,10 @@ var (
 	ErrLockWaitTimeout = errors.New("lock wait timeout")
 	// ErrTiKVServerBusy is the error when tikv server is busy.
 	ErrTiKVServerBusy = errors.New("tikv server busy")
+	// ErrTiFlashServerBusy is the error that tiflash server is busy.
+	ErrTiFlashServerBusy = errors.New("tiflash server busy")
+	// ErrRegionUnavailable is the error when region is not available.
+	ErrRegionUnavailable = errors.New("region unavailable")
 )
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
@@ -54,8 +58,6 @@ const MismatchClusterID = "mismatch cluster id"
 // error instances.
 var (
 	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
-	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(CodeRegionUnavailable)
-	ErrTiFlashServerBusy           = dbterror.ClassTiKV.NewStd(CodeTiFlashServerBusy)
 	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(CodeLockAcquireFailAndNoWaitSet)
 	ErrTokenLimit                  = dbterror.ClassTiKV.NewStd(CodeTiKVStoreLimit)

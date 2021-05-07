@@ -51,8 +51,12 @@ var (
 	ErrLockWaitTimeout = dbterror.ClassTiKV.NewStd(errno.ErrLockWaitTimeout)
 	// ErrTiKVServerBusy is the error when tikv server is busy.
 	ErrTiKVServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerBusy)
+	// ErrTiFlashServerBusy is the error that tiflash server is busy.
+	ErrTiFlashServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiFlashServerBusy)
 	// ErrPDServerTimeout is the error when pd server is timeout.
 	ErrPDServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrPDServerTimeout)
+	// ErrRegionUnavailable is the error when region is not available.
+	ErrRegionUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrRegionUnavailable)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -215,6 +219,10 @@ func ToTiDBErr(err error) error {
 		return ErrTiKVServerBusy
 	}
 
+	if errors.ErrorEqual(err, tikverr.ErrTiFlashServerBusy) {
+		return ErrTiFlashServerBusy
+	}
+
 	if e, ok := err.(*tikverr.ErrGCTooEarly); ok {
 		return ErrGCTooEarly.GenWithStackByArgs(e.TxnStartTS, e.GCSafePoint)
 	}
@@ -233,6 +241,10 @@ func ToTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrLockWaitTimeout) {
 		return ErrLockWaitTimeout
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrRegionUnavailable) {
+		return ErrRegionUnavailable
 	}
 
 	return errors.Trace(originErr)
