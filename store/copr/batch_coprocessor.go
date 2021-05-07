@@ -265,7 +265,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 			}
 			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store)
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
-				batchCop.regionInfos = append(batchCop.regionInfos, tikv.RegionInfo{task.region, rpcCtx.Meta, task.ranges, allStores})
+				batchCop.regionInfos = append(batchCop.regionInfos, tikv.RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores})
 			} else {
 				batchTask := &batchCopTask{
 					storeAddr:   rpcCtx.Addr,
