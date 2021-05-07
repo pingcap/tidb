@@ -96,11 +96,16 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 	return rs.respTime
 }
 
+// balanceBatchCopTask balance the regions between available stores, the basic rule is
+// 1. the first region of each original batch cop task belongs to its original store
+// 2. for the remaining regions:
+//    if there is only 1 available store, then put the region to the related store
+//    otherwise, use a greedy algorithm to put it into the store with highest weight
 func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 	storeTaskMap := make(map[uint64]*batchCopTask)
 	storeCandidateTaskMap := make(map[uint64]map[string]tikv.RegionInfo)
-	totalCandidateStoreNum := 0
-	totalCandidateCopTaskNum := 0
+	totalTaskCandidateNum := 0
+	totalRemainingTaskNum := 0
 	for _, task := range originalTasks {
 		batchTask := &batchCopTask{
 			storeAddr:   task.storeAddr,
@@ -132,8 +137,8 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 			} else {
 				// if more than one store is valid, put the cop task
 				// to store candidate map
-				totalCandidateStoreNum += validStoreNum
-				totalCandidateCopTaskNum += 1
+				totalTaskCandidateNum += validStoreNum
+				totalRemainingTaskNum += 1
 				/// put this cop task to candidate task map
 				taskKey := ri.Region.String()
 				for _, storeID := range ri.AllStores {
@@ -153,52 +158,55 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 		}
 	}
 
-	avgStorePerTask := float64(totalCandidateStoreNum) / float64(totalCandidateCopTaskNum)
-	findNextStore := func() (uint64, float64) {
+	avgStorePerTask := float64(totalTaskCandidateNum) / float64(totalRemainingTaskNum)
+	findNextStore := func() uint64 {
 		store := uint64(math.MaxUint64)
-		possibleTaskNum := float64(0)
+		weightedTaskNum := float64(0)
 		for storeID := range storeTaskMap {
 			if store == uint64(math.MaxUint64) && len(storeCandidateTaskMap[storeID]) > 0 {
 				store = storeID
-				possibleTaskNum = float64(len(storeCandidateTaskMap[storeID]))/avgStorePerTask + float64(len(storeTaskMap[storeID].regionInfos))
+				weightedTaskNum = float64(len(storeCandidateTaskMap[storeID]))/avgStorePerTask + float64(len(storeTaskMap[storeID].regionInfos))
 			} else {
 				num := float64(len(storeCandidateTaskMap[storeID])) / avgStorePerTask
 				if num == 0 {
 					continue
 				}
 				num += float64(len(storeTaskMap[storeID].regionInfos))
-				if num < possibleTaskNum {
+				if num < weightedTaskNum {
 					store = storeID
-					possibleTaskNum = num
+					weightedTaskNum = num
 				}
 			}
 		}
-		return store, possibleTaskNum
+		return store
 	}
-	if totalCandidateStoreNum == 0 {
+	if totalTaskCandidateNum == 0 {
 		return originalTasks
 	}
-	store, possibleTaskNum := findNextStore()
-	for totalCandidateStoreNum > 0 {
+	store := findNextStore()
+	for totalTaskCandidateNum > 0 {
 		if len(storeCandidateTaskMap[store]) == 0 {
-			store, possibleTaskNum = findNextStore()
+			store = findNextStore()
 		}
 		for key, ri := range storeCandidateTaskMap[store] {
 			storeTaskMap[store].regionInfos = append(storeTaskMap[store].regionInfos, ri)
-			totalCandidateCopTaskNum--
+			totalRemainingTaskNum--
 			for _, id := range ri.AllStores {
 				if _, ok := storeCandidateTaskMap[id]; ok {
 					delete(storeCandidateTaskMap[id], key)
-					totalCandidateStoreNum--
+					totalTaskCandidateNum--
 				}
 			}
-			if totalCandidateCopTaskNum > 0 {
-				possibleTaskNum = float64(len(storeCandidateTaskMap[store]))/avgStorePerTask + float64(len(storeTaskMap[store].regionInfos))
-				avgStorePerTask = float64(totalCandidateStoreNum) / float64(totalCandidateCopTaskNum)
+			if totalRemainingTaskNum > 0 {
+				weightedTaskNum := float64(len(storeCandidateTaskMap[store]))/avgStorePerTask + float64(len(storeTaskMap[store].regionInfos))
+				avgStorePerTask = float64(totalTaskCandidateNum) / float64(totalRemainingTaskNum)
 				for _, id := range ri.AllStores {
-					if id != store && len(storeCandidateTaskMap[id]) > 0 && float64(len(storeCandidateTaskMap[id]))/avgStorePerTask+float64(len(storeTaskMap[id].regionInfos)) <= possibleTaskNum {
+					// it is not optimal because we only check the stores that affected by this region, in fact in order
+					// to find out the store with the lowest weightedTaskNum, all stores should be checked, but I think
+					// check only the affected stores is more simple and will get a good enough result
+					if id != store && len(storeCandidateTaskMap[id]) > 0 && float64(len(storeCandidateTaskMap[id]))/avgStorePerTask+float64(len(storeTaskMap[id].regionInfos)) <= weightedTaskNum {
 						store = id
-						possibleTaskNum = float64(len(storeCandidateTaskMap[id]))/avgStorePerTask + float64(len(storeTaskMap[id].regionInfos))
+						weightedTaskNum = float64(len(storeCandidateTaskMap[id]))/avgStorePerTask + float64(len(storeTaskMap[id].regionInfos))
 					}
 				}
 			}
