@@ -217,6 +217,8 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) error {
 	parentUsedCols = append(parentUsedCols, p.handleCol)
+	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
+	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
