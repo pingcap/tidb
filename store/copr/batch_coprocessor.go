@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"math"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -285,7 +286,17 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 		for _, task := range storeTaskMap {
 			batchTasks = append(batchTasks, task)
 		}
+		msg := "before task balance"
+		for _, task := range batchTasks {
+			msg += " store " + task.storeAddr + " : " + strconv.Itoa(len(task.regionInfos)) + " regions, "
+		}
+		logutil.BgLogger().Info(msg)
 		batchTasks = balanceBatchCopTask(batchTasks)
+		msg = "after task balance"
+		for _, task := range batchTasks {
+			msg += " store " + task.storeAddr + " : " + strconv.Itoa(len(task.regionInfos)) + " regions, "
+		}
+		logutil.BgLogger().Info(msg)
 
 		if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
 			logutil.BgLogger().Warn("buildBatchCopTasks takes too much time",
