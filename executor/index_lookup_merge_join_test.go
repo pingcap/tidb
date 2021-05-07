@@ -8,16 +8,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-<<<<<<< HEAD
 // TODO: reopen the index merge join in future.
-=======
-func (s *testSuiteJoin2) TestIndexLookupMergeJoinHang(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM", `return(true)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM"), IsNil)
-	}()
->>>>>>> 51bf61905... planner: fix set not null flag for outer join (#23727)
-
 //func (s *testSuite9) TestIndexLookupMergeJoinHang(c *C) {
 //	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM", `return(true)`), IsNil)
 //	defer func() {
