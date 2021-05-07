@@ -113,43 +113,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		}
 		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 	}
-	keys := make([]int, 0, len(rd.colMap))
-	ids := make(map[int]int, len(rd.colMap))
-	for k, col := range rd.colMap {
-		keys = append(keys, col.Col.Offset)
-		ids[col.Col.Offset] = int(k)
-	}
-	sort.Ints(keys)
-	for _, id := range keys {
-		col := rd.colMap[int64(ids[id])]
-		if col.GenExpr == nil {
-			continue
-		}
-		// Eval the column value
-		val, err := col.GenExpr.Eval(rd.mutRow.ToRow())
-		if err != nil {
-			return nil, err
-		}
-		val, err = table.CastValue(ctx, val, col.Col.ColumnInfo, false, true)
-		if err != nil {
-			return nil, err
-		}
-
-		if val.Kind() == types.KindMysqlTime && sysLoc != time.UTC {
-			t := val.GetMysqlTime()
-			if t.Type() == mysql.TypeTimestamp {
-				err := t.ConvertTimeZone(sysLoc, time.UTC)
-				if err != nil {
-					return nil, err
-				}
-				val.SetMysqlTime(t)
-			}
-		}
-		rd.mutRow.SetValue(col.Col.Offset, val.GetValue())
-
-		row[int64(ids[id])] = val
-	}
-	return row, nil
+	return rd.EvalRemainedExprColumnMap(ctx, sysLoc, row)
 }
 
 // BuildFullDecodeColMap builds a map that contains [columnID -> struct{*table.Column, expression.Expression}] from all columns.
