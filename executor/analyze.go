@@ -539,7 +539,10 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 			Count:    count,
 			IsIndex:  1,
 		}
-		// discard stats of _tidb_rowid
+		// Discard stats of _tidb_rowid.
+		// Because the process of analyzing will keep the order of results be the same as the colsInfo in the analyze task,
+		// and in `buildAnalyzeFullSamplingTask` we always place the _tidb_rowid at the last of colsInfo, so if there are
+		// stats for _tidb_rowid, it must be at the end of the column stats.
 		if hists[cLen-1].ID == -1 {
 			cLen -= 1
 		}

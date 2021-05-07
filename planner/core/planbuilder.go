@@ -1669,6 +1669,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		if newTask.HandleCols == nil {
 			extraCol := model.NewExtraHandleColInfo()
+			// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
 			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
 			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
 		}
