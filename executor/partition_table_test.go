@@ -259,7 +259,7 @@ func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
 		queryPartition := fmt.Sprintf("select * from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select * from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
 		c.Assert(tk.HasPlan(queryPartition, "IndexLookUp"), IsTrue) // check if IndexLookUp is used
-		tk.MustQuery(queryPartition).Check(tk.MustQuery(queryRegular).Rows())
+		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	}
 }
 
