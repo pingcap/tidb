@@ -96,5 +96,12 @@
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b"
     ]
+  },
+  {
+    "name": "TestLimitIndexLookUpKeepOrder",
+    "cases": [
+      "desc select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10",
+      "desc select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b desc, c desc limit 10"
+    ]
   }
 ]
