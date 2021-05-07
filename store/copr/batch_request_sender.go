@@ -78,7 +78,12 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *tikv.Backoffer, ctxs []copTas
 	for _, failedCtx := range ctxs {
 		ctx := failedCtx.ctx
 		if ctx.Meta != nil {
-			ss.GetRegionCache().OnSendFail(bo, ctx, ss.NeedReloadRegion(ctx), err)
+			// The reload region param is always true. Because that every time we try, we must
+			// re-build the range then re-create the batch sender. As a result, the len of "failStores"
+			// will change. If tiflash's replica is more than two, the "reload region" will always be false.
+			// Now that the batch cop and mpp has a relative low qps, it's reasonable to reload every time
+			// when meeting io error.
+			ss.GetRegionCache().OnSendFail(bo, ctx, true, err)
 		}
 	}
 
