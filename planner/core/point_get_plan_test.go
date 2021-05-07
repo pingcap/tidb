@@ -535,8 +535,8 @@ func (s *testPointGetSuite) TestIssue23511(c *C) {
 	tk.MustQuery("select * from t2 where col1 = 0x39;").Check(testkit.Rows("\x009"))
 	tk.MustQuery("select * from t1 where col1 = 0x00;").Check(testkit.Rows("\x00\x00"))
 	tk.MustQuery("select * from t1 where col1 = 0x0000;").Check(testkit.Rows("\x00\x00"))
-	tk.MustQuery("explain format = 'brief' select * from t1 where col1 = 0x39;").
-		Check(testkit.Rows("Point_Get 1.00 root table:t1, index:PRIMARY(COL1) "))
+	tk.MustQuery("explain select * from t1 where col1 = 0x39;").
+		Check(testkit.Rows("Point_Get_1 1.00 root table:t1, index:PRIMARY(COL1) "))
 	tk.MustQuery("select * from t1 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
 	tk.MustQuery("select * from t2 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
 	tk.MustQuery("select * from t1 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
