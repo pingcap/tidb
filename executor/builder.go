@@ -3792,6 +3792,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 				}
 				p.orderByCols = orderByCols
 				p.expectedCmpResult = cmpResult
+				p.isRangeFrame = true
 			}
 		}
 

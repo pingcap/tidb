@@ -276,7 +276,7 @@ func (p *processor) getStart(ctx sessionctx.Context) (uint64, error) {
 			var res int64
 			var err error
 			for i := range p.orderByCols {
-				res, _, err = p.end.CmpFuncs[i](ctx, p.end.CalcFuncs[i], p.orderByCols[i], p.getRow(start), p.getRow(p.curRowIdx))
+				res, _, err = p.start.CmpFuncs[i](ctx, p.orderByCols[i], p.start.CalcFuncs[i], p.getRow(start), p.getRow(p.curRowIdx))
 				if err != nil {
 					return 0, err
 				}
@@ -299,7 +299,7 @@ func (p *processor) getStart(ctx sessionctx.Context) (uint64, error) {
 		}
 		return 0, nil
 	case ast.Following:
-		return p.curRowIdx + p.end.Num, nil
+		return p.curRowIdx + p.start.Num, nil
 	default: // ast.CurrentRow
 		return p.curRowIdx, nil
 	}
@@ -356,6 +356,7 @@ func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained i
 	)
 	for remained > 0 && p.moreToProduce(ctx) {
 		start, err = p.getStart(ctx)
+		fmt.Printf("produce->p.getStart %d\n", start)
 		if err != nil {
 			return
 		}
@@ -377,31 +378,44 @@ func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained i
 			start = p.rowCnt
 		}
 		// TODO(zhifeng): if start >= end, we should return a default value
-		for i, wf := range p.windowFuncs {
-			slidingWindowAggFunc := p.slidingWindowFuncs[i]
-			if p.curStartRow != start || p.curEndRow != end {
+		if start >= end {
+			for i, wf := range p.windowFuncs {
+				slidingWindowAggFunc := p.slidingWindowFuncs[i]
 				if slidingWindowAggFunc != nil && p.initializedSlidingWindow {
-					// TODO(zhifeng): modify slide to allow rows to be started at p.curStartRow
-					// TODO(zhifeng); rename curStart to prevStart
-					err = slidingWindowAggFunc.Slide(ctx, p.rows, p.curStartRow, p.curEndRow, start-p.curStartRow, end-p.curEndRow, p.partialResults[i])
+					err = slidingWindowAggFunc.Slide(ctx, p.getRow, p.curStartRow, p.curEndRow, start-p.curStartRow, end-p.curEndRow, p.partialResults[i])
+					if err != nil {
+						return
+					}
 				} else {
-					// TODO(zhifeng): track memory usage here
-					// TODO(optimization, zhifeng): if last range is the same as the current range, we then don't need to updatePartialResult
-					_, err = wf.UpdatePartialResult(ctx, p.getRows(start, end), p.partialResults[i])
+					wf.ResetPartialResult(p.partialResults[i])
+				}
+				err = wf.AppendFinalResult2Chunk(ctx, p.partialResults[i], chk)
+				if err != nil {
+					return
 				}
 			}
-			if err != nil {
-				return
-			}
-			err = wf.AppendFinalResult2Chunk(ctx, p.partialResults[i], chk)
-			if err != nil {
-				return
-			}
-			if slidingWindowAggFunc == nil {
-				wf.ResetPartialResult(p.partialResults[i])
-			}
-			if !p.initializedSlidingWindow {
-				p.initializedSlidingWindow = true
+		} else {
+			for i, wf := range p.windowFuncs {
+				slidingWindowAggFunc := p.slidingWindowFuncs[i]
+				if p.curStartRow != start || p.curEndRow != end {
+					if slidingWindowAggFunc != nil && p.initializedSlidingWindow {
+						err = slidingWindowAggFunc.Slide(ctx, p.getRow, p.curStartRow, p.curEndRow, start-p.curStartRow, end-p.curEndRow, p.partialResults[i])
+					} else {
+						// TODO(zhifeng): track memory usage here
+						wf.ResetPartialResult(p.partialResults[i])
+						_, err = wf.UpdatePartialResult(ctx, p.getRows(start, end), p.partialResults[i])
+					}
+				}
+				if err != nil {
+					return
+				}
+				err = wf.AppendFinalResult2Chunk(ctx, p.partialResults[i], chk)
+				if err != nil {
+					return
+				}
+				if !p.initializedSlidingWindow {
+					p.initializedSlidingWindow = true
+				}
 			}
 		}
 		produced++
@@ -414,11 +428,15 @@ func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained i
 }
 
 func (p *processor) moreToProduce(ctx sessionctx.Context) bool {
+	cursor, err := p.getStart(ctx)
 	end, err := p.getEnd(ctx)
+	if end > cursor {
+		cursor = end
+	}
 	fmt.Printf("moreToProduce->p.getEnd %d rowCnt %d whole %t curRowIdx %d\n", end, p.rowCnt, p.whole, p.curRowIdx)
 	_ = err
 	// TODO(Zhifeng): handle the error here
-	return (end <= p.rowCnt || p.whole) && p.curRowIdx < p.rowCnt
+	return (cursor <= p.rowCnt || p.whole) && p.curRowIdx < p.rowCnt
 }
 
 // reset resets the processor

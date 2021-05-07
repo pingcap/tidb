@@ -111,10 +111,6 @@ func doTestWindowFunctions(tk *testkit.TestKit, opt testWindowFunctionsOpts) {
 		result = tk.MustQuery("select a, b, sum(a) over(order by b desc range between interval 1 day preceding and interval 2 day following) from t")
 		result.Check(testkit.Rows("5 2019-02-05 8", "3 2019-02-03 6", "2 2019-02-02 6", "1 2019-02-01 3", "<nil> <nil> <nil>"))
 
-
-	}
-	if !opt.disableRest {
-
 		tk.MustExec("drop table t")
 		tk.MustExec("CREATE TABLE t (id INTEGER, sex CHAR(1))")
 		tk.MustExec("insert into t values (1, 'M'), (2, 'F'), (3, 'F'), (4, 'F'), (5, 'M'), (10, NULL), (11, NULL)")
@@ -233,6 +229,8 @@ func doTestWindowFunctions(tk *testkit.TestKit, opt testWindowFunctionsOpts) {
 		result = tk.MustQuery("select a, row_number() over (partition by a) from t").Sort()
 		result.Check(testkit.Rows("1 1", "1 2", "2 1", "2 2"))
 	}
+	if !opt.disableRest {
+	}
 }
 
 func (s *testSuite7) TestWindowFunctionsDataReference(c *C) {
@@ -304,11 +302,11 @@ func (s *testSuite7) TestPipelinedSlidingWindowFunctions(c *C) {
 			tk.MustExec(fmt.Sprintf("CREATE TABLE t (id %s, sex CHAR(1));", idType))
 			tk.MustExec(fmt.Sprintf("SET SESSION windowing_use_high_precision = %s;", useHighPrecision))
 			baseTestSlidingWindowFunctions(tk, testSlidingWindowFunctionsOpts{
-				disablePrepare:     true,
-				disableCountRows:   true,
-				disableCountRange:  true,
-				disableSumRows:     true,
-				disableSumRange:    true,
+				disablePrepare:     false,
+				disableCountRows:   false,
+				disableCountRange:  false,
+				disableSumRows:     false,
+				disableSumRange:    false,
 				disableAvgRows:     true,
 				disableAvgRange:    true,
 				disableBitXorRows:  true,

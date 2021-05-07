@@ -5508,7 +5508,7 @@ func appendIfAbsentWindowSpec(specs []*ast.WindowSpec, ns *ast.WindowSpec) []*as
 // TODO: We can group the window function by the definition of window specification.
 func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, []*ast.WindowSpec, error) {
 	// updatedSpecMap is used to handle the specifications that have frame clause changed.
-	updatedSpecMap := make(map[string]*ast.WindowSpec)
+	updatedSpecMap := make(map[string][]*ast.WindowSpec)
 	groupedWindow := make(map[*ast.WindowSpec][]*ast.WindowFuncExpr)
 	orderedSpec := make([]*ast.WindowSpec, 0, len(windowFuncs))
 	for _, windowFunc := range windowFuncs {
@@ -5540,10 +5540,22 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
 			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
 		} else {
+			var updatedSpec *ast.WindowSpec
 			if _, ok := updatedSpecMap[name]; !ok {
-				updatedSpecMap[name] = newSpec
+				updatedSpecMap[name] = []*ast.WindowSpec{newSpec}
+				updatedSpec = newSpec
+			} else {
+				for _, spec := range updatedSpecMap[name] {
+					if *spec == *newSpec {
+						updatedSpec = spec
+						break
+					}
+				}
+				if updatedSpec == nil {
+					updatedSpec = newSpec
+					updatedSpecMap[name] = append(updatedSpecMap[name], newSpec)
+				}
 			}
-			updatedSpec := updatedSpecMap[name]
 			groupedWindow[updatedSpec] = append(groupedWindow[updatedSpec], windowFunc)
 			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, updatedSpec)
 		}
