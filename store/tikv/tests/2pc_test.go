@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	drivertxn "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -307,7 +306,8 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	err = txn2.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(tidbkv.ErrWriteConflictInTiDB.Equal(err), IsTrue, Commentf("err: %s", err))
+	_, ok := err.(*tikverr.ErrWriteConflictInLatch)
+	c.Assert(ok, IsTrue, Commentf("err: %s", err))
 }
 
 func (s *testCommitterSuite) TestContextCancelCausingUndetermined(c *C) {
