@@ -529,7 +529,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 			return []analyzeResult{{Err: err, job: colExec.job}}
 		}
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
-		idxResult := analyzeResult{
+		colGroupResult := analyzeResult{
 			TableID:  colExec.tableID,
 			Hist:     hists[cLen:],
 			TopNs:    topns[cLen:],
@@ -554,7 +554,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 			Count:    count,
 		}
 
-		return []analyzeResult{colResult, idxResult}
+		return []analyzeResult{colResult, colGroupResult}
 	}
 	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, collExtStats)
 	if err != nil {
