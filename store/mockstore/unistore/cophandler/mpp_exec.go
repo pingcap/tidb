@@ -345,6 +345,25 @@ type joinExec struct {
 	inited       bool
 }
 
+func (e *joinExec) getHashKey(keyCol types.Datum, fieldType *types.FieldType) (str string, err error) {
+	decType := types.NewFieldType(mysql.TypeNewDecimal)
+	decType.Flen = 65
+	decType.Decimal = 30
+	// convert numerical type to the max decimal type
+	if !keyCol.IsNull() && (fieldType.Tp == mysql.TypeNewDecimal || fieldType.Tp == mysql.TypeTiny || fieldType.Tp == mysql.TypeDouble ||
+		fieldType.Tp == mysql.TypeFloat || fieldType.Tp == mysql.TypeShort || fieldType.Tp == mysql.TypeLong || fieldType.Tp == mysql.TypeLonglong) {
+		keyCol, err = keyCol.ConvertTo(e.sc, decType)
+		if err != nil {
+			return str, errors.Trace(err)
+		}
+	}
+	str, err = keyCol.ToString()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return str, nil
+}
+
 func (e *joinExec) buildHashTable() error {
 	for {
 		chk, err := e.buildChild.next()
@@ -357,8 +376,9 @@ func (e *joinExec) buildHashTable() error {
 		rows := chk.NumRows()
 		for i := 0; i < rows; i++ {
 			row := chk.GetRow(i)
-			keyCol := row.GetDatum(e.buildKey.Index, e.buildChild.getFieldTypes()[e.buildKey.Index])
-			key, err := keyCol.ToString()
+			fieldType := e.buildChild.getFieldTypes()[e.buildKey.Index]
+			keyCol := row.GetDatum(e.buildKey.Index, fieldType)
+			key, err := e.getHashKey(keyCol, fieldType)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -385,8 +405,9 @@ func (e *joinExec) fetchRows() (bool, error) {
 	chkSize := chk.NumRows()
 	for i := 0; i < chkSize; i++ {
 		row := chk.GetRow(i)
-		keyCol := row.GetDatum(e.probeKey.Index, e.probeChild.getFieldTypes()[e.probeKey.Index])
-		key, err := keyCol.ToString()
+		fieldType := e.probeChild.getFieldTypes()[e.probeKey.Index]
+		keyCol := row.GetDatum(e.probeKey.Index, fieldType)
+		key, err := e.getHashKey(keyCol, fieldType)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
