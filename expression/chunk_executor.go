@@ -265,6 +265,14 @@ func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.Fiel
 		output.AppendBytes(colID, types.NewBinaryLiteralFromUint(uint64(res), -1))
 		return nil
 	}
+	if fieldType.Tp == mysql.TypeEnum {
+		e, err := types.ParseEnumValue(fieldType.Elems, uint64(res))
+		if err != nil {
+			return err
+		}
+		output.AppendEnum(colID, e)
+		return nil
+	}
 	if mysql.HasUnsignedFlag(fieldType.Flag) {
 		output.AppendUint64(colID, uint64(res))
 		return nil

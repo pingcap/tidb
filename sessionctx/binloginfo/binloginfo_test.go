@@ -269,25 +269,6 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 		binlog.MutationType_Insert,
 	})
 
-	// Cannot create common clustered index table when binlog client exists.
-	errMsg := "[ddl:8200]Cannot create clustered index table when the binlog is ON"
-	tk.MustGetErrMsg("create table local_clustered_index (c1 varchar(255) primary key clustered);", errMsg)
-	// Create int clustered index table when binlog client exists.
-	tk.MustExec("create table local_clustered_index (c1 bigint primary key clustered);")
-	tk.MustQuery("select tidb_pk_type from information_schema.tables where table_name = 'local_clustered_index' and table_schema = 'test';").
-		Check(testkit.Rows("CLUSTERED"))
-	tk.MustExec("drop table if exists local_clustered_index;")
-	// Test common clustered index tables will not write binlog.
-	tk.Se.GetSessionVars().BinlogClient = nil
-	tk.MustExec("create table local_clustered_index (c1 varchar(255) primary key clustered);")
-	tk.MustQuery("select tidb_pk_type from information_schema.tables where table_name = 'local_clustered_index' and table_schema = 'test';").
-		Check(testkit.Rows("CLUSTERED"))
-	tk.Se.GetSessionVars().BinlogClient = s.client
-	// This statement should not write binlog.
-	tk.MustExec(`insert into local_clustered_index values ("aaaaaa")`)
-	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
-	c.Assert(len(prewriteVal.Mutations), Equals, 0)
-
 	checkBinlogCount(c, pump)
 
 	pump.mu.Lock()
@@ -538,6 +519,19 @@ func (s *testBinlogSuite) TestPartitionedTable(c *C) {
 	for i := 1; i < 10; i++ {
 		c.Assert(tids[i], Equals, tids[0])
 	}
+}
+
+func (s *testBinlogSuite) TestPessimisticLockThenCommit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t select 1, 1")
+	tk.MustExec("commit")
+	prewriteVal := getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 1)
 }
 
 func (s *testBinlogSuite) TestDeleteSchema(c *C) {

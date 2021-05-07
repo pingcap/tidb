@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/coprocessor_v2"
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -57,19 +58,6 @@ func NewServer(rm RegionManager, store *MVCCStore, innerServer InnerServer) *Ser
 		regionManager: rm,
 		innerServer:   innerServer,
 	}
-}
-
-const requestMaxSize = 6 * 1024 * 1024
-
-func (svr *Server) checkRequestSize(size int) *errorpb.Error {
-	// TiKV has a limitation on raft log size.
-	// mocktikv has no raft inside, so we check the request's size instead.
-	if size >= requestMaxSize {
-		return &errorpb.Error{
-			RaftEntryTooLarge: &errorpb.RaftEntryTooLarge{},
-		}
-	}
-	return nil
 }
 
 // Stop stops the server.
@@ -629,28 +617,6 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 	return nil
 }
 
-func (mrm *MockRegionManager) getMPPTaskHandler(rpcClient client.Client, meta *mpp.TaskMeta, createdIfNotExist bool, storeID uint64) (*cophandler.MPPTaskHandler, bool, error) {
-	set := mrm.getMPPTaskSet(storeID)
-	if set == nil {
-		return nil, false, errors.New("cannot find mpp task set for store")
-	}
-	set.mu.Lock()
-	defer set.mu.Unlock()
-	if handler, ok := set.taskHandlers[meta.TaskId]; ok {
-		return handler, false, nil
-	}
-	if createdIfNotExist {
-		handler := &cophandler.MPPTaskHandler{
-			TunnelSet: make(map[int64]*cophandler.ExchangerTunnel),
-			Meta:      meta,
-			RPCClient: rpcClient,
-		}
-		set.taskHandlers[meta.TaskId] = handler
-		return handler, true, nil
-	}
-	return nil, false, nil
-}
-
 func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64) error {
 	set := mrm.getMPPTaskSet(storeID)
 	if set == nil {
@@ -985,39 +951,24 @@ func (svr *Server) RemoveLockObserver(context.Context, *kvrpcpb.RemoveLockObserv
 	return &kvrpcpb.RemoveLockObserverResponse{}, nil
 }
 
-// VerGet implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerGet(context.Context, *kvrpcpb.VerGetRequest) (*kvrpcpb.VerGetResponse, error) {
-	panic("unimplemented")
-}
-
-// VerBatchGet implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerBatchGet(context.Context, *kvrpcpb.VerBatchGetRequest) (*kvrpcpb.VerBatchGetResponse, error) {
-	panic("unimplemented")
-}
-
-// VerMut implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerMut(context.Context, *kvrpcpb.VerMutRequest) (*kvrpcpb.VerMutResponse, error) {
-	panic("unimplemented")
-}
-
-// VerBatchMut implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerBatchMut(context.Context, *kvrpcpb.VerBatchMutRequest) (*kvrpcpb.VerBatchMutResponse, error) {
-	panic("unimplemented")
-}
-
-// VerScan implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerScan(context.Context, *kvrpcpb.VerScanRequest) (*kvrpcpb.VerScanResponse, error) {
-	panic("unimplemented")
-}
-
-// VerDeleteRange implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerDeleteRange(context.Context, *kvrpcpb.VerDeleteRangeRequest) (*kvrpcpb.VerDeleteRangeResponse, error) {
-	panic("unimplemented")
-}
-
 // CheckLeader implements implements the tikvpb.TikvServer interface.
 func (svr *Server) CheckLeader(context.Context, *kvrpcpb.CheckLeaderRequest) (*kvrpcpb.CheckLeaderResponse, error) {
 	panic("unimplemented")
+}
+
+// RawCompareAndSwap implements the tikvpb.TikvServer interface.
+func (svr *Server) RawCompareAndSwap(context.Context, *kvrpcpb.RawCASRequest) (*kvrpcpb.RawCASResponse, error) {
+	panic("implement me")
+}
+
+// CoprocessorV2 implements the tikvpb.TikvServer interface.
+func (svr *Server) CoprocessorV2(context.Context, *coprocessor_v2.RawCoprocessorRequest) (*coprocessor_v2.RawCoprocessorResponse, error) {
+	panic("implement me")
+}
+
+// GetStoreSafeTS implements the tikvpb.TikvServer interface.
+func (svr *Server) GetStoreSafeTS(context.Context, *kvrpcpb.StoreSafeTSRequest) (*kvrpcpb.StoreSafeTSResponse, error) {
+	return &kvrpcpb.StoreSafeTSResponse{}, nil
 }
 
 func convertToKeyError(err error) *kvrpcpb.KeyError {
