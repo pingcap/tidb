@@ -981,7 +981,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
 		LockExpired:           &seVars.TxnCtx.LockExpire,
-		ResourceGroupTag:      encodeResourceGroupTag(sqlDigest),
+		ResourceGroupTag:      EncodeResourceGroupTag(sqlDigest),
 	}
 }
 

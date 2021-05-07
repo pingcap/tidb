@@ -56,7 +56,7 @@ const (
 	resourceGroupTagPrefixSQLDigest = byte(1)
 )
 
-func encodeResourceGroupTag(sqlDigest string) []byte {
+func EncodeResourceGroupTag(sqlDigest string) []byte {
 	if len(sqlDigest) == 0 {
 		return nil
 	}
@@ -66,7 +66,8 @@ func encodeResourceGroupTag(sqlDigest string) []byte {
 	}
 
 	res := make([]byte, 3+len(sqlDigest)/2)
-	res[0] = 1
+	const encodingVersion = 1
+	res[0] = encodingVersion
 	res[1] = resourceGroupTagPrefixSQLDigest
 	res[2] = byte(len(sqlDigest) / 2)
 	_, err := hex.Decode(res[3:], []byte(sqlDigest))
@@ -78,12 +79,13 @@ func encodeResourceGroupTag(sqlDigest string) []byte {
 	return res
 }
 
-func decodeResourceGroupTag(data []byte) (sqlDigest string, err error) {
+func DecodeResourceGroupTag(data []byte) (sqlDigest string, err error) {
 	if len(data) == 0 {
 		return "", nil
 	}
 
-	if data[0] != 1 {
+	encodingVersion := data[0]
+	if encodingVersion != 1 {
 		return "", errors.Errorf("unsupported resource group tag version %v", data[0])
 	}
 	rem := data[1:]
@@ -91,10 +93,12 @@ func decodeResourceGroupTag(data []byte) (sqlDigest string, err error) {
 	for len(rem) > 0 {
 		switch rem[0] {
 		case resourceGroupTagPrefixSQLDigest:
-			fieldLen := rem[1]
-			if len(rem)-2 < int(fieldLen) {
+			// There must be one more byte at rem[1] to represent the content's length, and the remaining bytes should
+			// not be shorter than the length specified by rem[1].
+			if len(rem) < 2 || len(rem)-2 < int(rem[1]) {
 				return "", errors.Errorf("cannot parse resource group tag: field length mismatch, tag: %v", hex.EncodeToString(data))
 			}
+			fieldLen := int(rem[1])
 			sqlDigest = hex.EncodeToString(rem[2 : 2+fieldLen])
 			rem = rem[2+fieldLen:]
 		default:
