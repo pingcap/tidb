@@ -251,7 +251,7 @@ func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
 	tk.MustExec("insert into tregular values " + strings.Join(vals, ","))
 
 	// generate some random querys
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 100; i++ {
 		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(10)
