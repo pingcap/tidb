@@ -61,13 +61,6 @@ var (
 	ErrUnknown                     = dbterror.ClassTiKV.NewStd(CodeUnknown)
 )
 
-// Registers error returned from TiKV.
-var (
-	_ = dbterror.ClassTiKV.NewStd(CodeDataOutOfRange)
-	_ = dbterror.ClassTiKV.NewStd(CodeTruncatedWrongValue)
-	_ = dbterror.ClassTiKV.NewStd(CodeDivisionByZero)
-)
-
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
 	return errors.ErrorEqual(err, ErrNotExist)
