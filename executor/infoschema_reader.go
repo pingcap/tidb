@@ -149,9 +149,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
-		case infoschema.TableTiDBTrx,
-			infoschema.ClusterTableTiDBTrx:
+		case infoschema.TableTiDBTrx:
 			e.setDataForTiDBTrx(sctx)
+		case infoschema.ClusterTableTiDBTrx:
+			err = e.setDataForClusterTiDBTrx(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2036,6 +2037,16 @@ func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) {
 		}
 		e.rows = append(e.rows, info.ToDatum())
 	}
+}
+
+func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) error {
+	e.setDataForTiDBTrx(ctx)
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
 }
 
 type hugeMemTableRetriever struct {

@@ -35,6 +35,7 @@ const (
 	TxnRollingBack
 )
 
+// TxnRunningStateStrs is the names of the TxnRunningStates
 var TxnRunningStateStrs = []string{
 	"Normal", "LockWaiting", "Committing", "RollingBack",
 }
@@ -73,7 +74,10 @@ func (info TxnInfo) ToDatum() []types.Datum {
 	} else {
 		blockStartTime = types.NewTime(types.FromGoTime(*info.BlockStartTime), mysql.TypeTimestamp, 0)
 	}
-	e, _ := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
+	e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
+	if err != nil {
+		panic("this should never happen")
+	}
 	state := types.NewMysqlEnumDatum(e)
 	datums := types.MakeDatums(
 		info.StartTS,
