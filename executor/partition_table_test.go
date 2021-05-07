@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -227,6 +228,10 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
 }
 
 func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database test_orderby_limit")
 	tk.MustExec("use test_orderby_limit")
