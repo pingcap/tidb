@@ -111,11 +111,11 @@ func int32ToBoolStr(i int32) string {
 }
 
 func checkCollation(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-	if coll, err := collate.GetCollationByName(normalizedValue); err != nil {
+	coll, err := collate.GetCollationByName(normalizedValue)
+	if err != nil {
 		return normalizedValue, errors.Trace(err)
-	} else {
-		return coll.Name, nil
 	}
+	return coll.Name, nil
 }
 
 func checkCharacterSet(normalizedValue string, argName string) (string, error) {
@@ -146,6 +146,17 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 		if scope == ScopeGlobal && !TiDBOptOn(val) {
 			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
 		}
+	}
+	return normalizedValue, nil
+}
+
+func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
+		returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
+		if !TiDBOptOn(vars.systems[TiDBSkipIsolationLevelCheck]) {
+			return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
+		}
+		vars.StmtCtx.AppendWarning(returnErr)
 	}
 	return normalizedValue, nil
 }
@@ -285,7 +296,6 @@ func SetSessionSystemVar(vars *SessionVars, name string, value string) error {
 	if err != nil {
 		return err
 	}
-	CheckDeprecationSetSystemVar(vars, name)
 	return vars.SetSystemVar(name, sVal)
 }
 
@@ -300,7 +310,6 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	if err != nil {
 		return err
 	}
-	CheckDeprecationSetSystemVar(vars, name)
 	return vars.SetStmtVar(name, sVal)
 }
 
@@ -330,18 +339,9 @@ const (
 	maxChunkSizeLowerBound = 32
 )
 
-// CheckDeprecationSetSystemVar checks if the system variable is deprecated.
-func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
-	switch name {
-	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
-		TiDBHashJoinConcurrency, TiDBHashAggPartialConcurrency, TiDBHashAggFinalConcurrency,
-		TiDBProjectionConcurrency, TiDBWindowConcurrency, TiDBMergeJoinConcurrency, TiDBStreamAggConcurrency:
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
-	case TIDBMemQuotaHashJoin, TIDBMemQuotaMergeJoin,
-		TIDBMemQuotaSort, TIDBMemQuotaTopn,
-		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin:
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
-	}
+// appendDeprecationWarning adds a warning that the item is deprecated.
+func appendDeprecationWarning(s *SessionVars, name, replacement string) {
+	s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, replacement))
 }
 
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
