@@ -46,7 +46,6 @@ func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatch
 
 // SendReqToAddr sends a request to tikv/tiflash server.
 func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *RPCContext, regionInfos []RegionInfo, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
-	// use the first ctx to send request, because every ctx has same address.
 	cancel = func() {}
 	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, cancel, errors.Trace(e)
@@ -81,8 +80,11 @@ func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx
 		return ErrTiDBShuttingDown
 	}
 
-	ss.GetRegionCache().OnSendFailForBatchRegions(bo, ctx.Store, regionInfos, ss.NeedReloadRegion(ctx), err)
+	// always reload region because
+	// 1. for batch request sender, there is no easy way to tracker failedStoreID for all the regions
+	// 2. io error should be very rare, so the cost of reload region is acceptable
+	ss.GetRegionCache().OnSendFailForBatchRegions(bo, ctx.Store, regionInfos, true, err)
 
-	err = bo.Backoff(BoTiFlashRPC, errors.Errorf("send tikv request error: %v, ctx: %v, regionInfos: %v, try next peer later", err, ctx, regionInfos))
+	err = bo.Backoff(BoTiFlashRPC, errors.Errorf("send request error: %v, ctx: %v, regionInfos: %v", err, ctx, regionInfos))
 	return errors.Trace(err)
 }

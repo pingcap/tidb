@@ -708,7 +708,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, regionInfos []RegionInfo, scheduleReload bool, err error) {
 	metrics.RegionCacheCounterWithSendFail.Inc()
 	if store.storeType != TiFlash {
-		logutil.Logger(bo.ctx).Warn("OnSendFailForBatchRegions only support TiFlash")
+		logutil.Logger(bo.ctx).Info("Should not reach here, OnSendFailForBatchRegions only support TiFlash")
 		return
 	}
 	for _, ri := range regionInfos {
@@ -720,7 +720,7 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, reg
 			peersNum := len(r.meta.Peers)
 			if len(ri.Meta.Peers) != peersNum {
 				logutil.Logger(bo.ctx).Info("retry and refresh current region after send request fail and up/down stores length changed",
-					zap.Stringer("current", &ri.Region),
+					zap.Stringer("region", &ri.Region),
 					zap.Bool("needReload", scheduleReload),
 					zap.Reflect("oldPeers", ri.Meta.Peers),
 					zap.Reflect("newPeers", r.meta.Peers),
@@ -733,16 +733,11 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, reg
 			accessMode := TiFlashOnly
 			accessIdx := rs.getAccessIndex(accessMode, store)
 			if accessIdx == -1 {
-				logutil.Logger(bo.ctx).Warn("OnSendFailForBatchRegions can not get access index for region " + ri.Region.String())
+				logutil.Logger(bo.ctx).Warn("can not get access index for region " + ri.Region.String())
 				continue
 			}
 			if err != nil {
 				storeIdx, s := rs.accessStore(accessMode, accessIdx)
-				//  Mark the store as failure if it's not a redirection request because we
-				//  can't know the status of the proxy store by it.
-				// send fail but store is reachable, keep retry current peer for replica leader request.
-				// but we still need switch peer for follower-read or learner-read(i.e. tiflash)
-				// invalidate regions in store.
 				epoch := rs.storeEpochs[storeIdx]
 				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
 					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
@@ -752,10 +747,10 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, reg
 				s.markNeedCheck(c.notifyCheckCh)
 			}
 
-			// try next peer to found new leader.
+			// try next peer
 			rs.switchNextFlashPeer(r, accessIdx)
 			logutil.Logger(bo.ctx).Info("switch region tiflash peer to next due to send request fail",
-				zap.Stringer("current", &ri.Region),
+				zap.Stringer("region", &ri.Region),
 				zap.Bool("needReload", scheduleReload),
 				zap.Error(err))
 
