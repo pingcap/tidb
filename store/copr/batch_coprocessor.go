@@ -107,6 +107,7 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 		batchTask := &batchCopTask{
 			storeAddr:   task.storeAddr,
 			cmdType:     task.cmdType,
+			ctx:         task.ctx,
 			regionInfos: []tikv.RegionInfo{task.regionInfos[0]},
 		}
 		storeTaskMap[task.regionInfos[0].AllStores[0]] = batchTask
@@ -154,6 +155,9 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 			}
 		}
 	}
+	if totalRemainingTaskNum == 0 {
+		return originalTasks
+	}
 
 	avgStorePerTask := float64(totalTaskCandidateNum) / float64(totalRemainingTaskNum)
 	findNextStore := func() uint64 {
@@ -177,13 +181,13 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 		}
 		return store
 	}
-	if totalTaskCandidateNum == 0 {
-		return originalTasks
-	}
 	store := findNextStore()
-	for totalTaskCandidateNum > 0 {
+	for totalRemainingTaskNum > 0 {
 		if len(storeCandidateTaskMap[store]) == 0 {
 			store = findNextStore()
+		}
+		if store == uint64(math.MaxUint64) {
+			break
 		}
 		for key, ri := range storeCandidateTaskMap[store] {
 			storeTaskMap[store].regionInfos = append(storeTaskMap[store].regionInfos, ri)
