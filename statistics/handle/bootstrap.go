@@ -138,7 +138,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 					terror.Log(err)
 				}
 			}
-			logutil.BgLogger().Warn("init cols", zap.Int64("ndv", ndv), zap.Int64("topn count", topnCount), zap.Int64("nulls", nullCount))
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
 			col := &statistics.Column{
