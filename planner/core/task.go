@@ -1284,7 +1284,6 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 	}
 	p.SetChildren(childPlans...)
 	t.cst = childMaxCost
-	p.cost = t.cost()
 	return t
 }
 
