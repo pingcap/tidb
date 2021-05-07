@@ -28,6 +28,4 @@ const (
 	CodeRegionUnavailable = 9005
 
 	CodeTiKVStoreLimit = 9008
-
-	CodeTiFlashServerBusy = 9013
 )
