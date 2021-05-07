@@ -15,14 +15,15 @@ package executor_test
 
 import (
 	"fmt"
+	"math/rand"
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
-	"math/rand"
-	"strings"
 )
 
 func (s *partitionTableSuite) TestFourReader(c *C) {
