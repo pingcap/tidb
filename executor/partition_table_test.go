@@ -256,7 +256,7 @@ func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 	vals := make([]string, 0, 1000)
 	listVals := make([]string, 0, 1000)
 	for i := 0; i < 1000; i++ {
-		if rand.Intn(100) < 1 {
+		if i < 10 {
 			// for hash and range partition, 1% of records are in [0, 100)
 			vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(100), rand.Intn(100)))
 			// for list partition, 1% of records are equal to 0
