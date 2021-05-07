@@ -1784,7 +1784,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version3 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idxName := range as.IndexNames {
@@ -1849,7 +1849,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version3 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idx := range tblInfo.Indices {
@@ -2321,13 +2321,19 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
-	if dbName == "" {
+	// This supports a local revoke SELECT on tablename, but does
+	// not add dbName to the visitInfo of a *.* grant.
+	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
-	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
-
+	var nonDynamicPrivilege bool
 	var allPrivs []mysql.PrivilegeType
 	for _, item := range stmt.Privs {
+		if item.Priv == mysql.ExtendedPriv {
+			vi = appendDynamicVisitInfo(vi, strings.ToUpper(item.Name), true, nil) // verified in MySQL: requires the dynamic grant option to revoke.
+			continue
+		}
+		nonDynamicPrivilege = true
 		if item.Priv == mysql.AllPriv {
 			switch stmt.Level.Level {
 			case ast.GrantLevelGlobal:
@@ -2345,7 +2351,11 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 	for _, priv := range allPrivs {
 		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
 	}
-
+	if nonDynamicPrivilege {
+		// Dynamic privileges use their own GRANT OPTION. If there were any non-dynamic privilege requests,
+		// we need to attach the "GLOBAL" version of the GRANT OPTION.
+		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
+	}
 	return vi
 }
 
@@ -2354,7 +2364,9 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
-	if dbName == "" {
+	// This supports a local revoke SELECT on tablename, but does
+	// not add dbName to the visitInfo of a *.* grant.
+	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
 	var nonDynamicPrivilege bool

@@ -295,9 +295,9 @@
     ]
   },
   {
-    "name": "TestIssue23887",
-    "cases": [
-      "select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t"
-    ]
+      "name": "TestIssue23887",
+      "cases": [
+          "select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t"
+      ]
   }
 ]

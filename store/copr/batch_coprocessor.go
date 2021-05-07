@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -170,7 +171,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 	}
 }
 
-func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.Variables) kv.Response {
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
@@ -182,12 +183,12 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 		return copErrorResponse{err}
 	}
 	it := &batchCopIterator{
-		store:        c.store.KVStore,
+		store:        c.store.kvStore,
 		req:          req,
 		finishCh:     make(chan struct{}),
 		vars:         vars,
 		memTracker:   req.MemTracker,
-		ClientHelper: tikv.NewClientHelper(c.store.KVStore, util.NewTSSet(5)),
+		ClientHelper: tikv.NewClientHelper(c.store.kvStore.store, util.NewTSSet(5)),
 		rpcCancel:    tikv.NewRPCanceller(),
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
@@ -200,7 +201,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 type batchCopIterator struct {
 	*tikv.ClientHelper
 
-	store    *tikv.KVStore
+	store    *kvStore
 	req      *kv.Request
 	finishCh chan struct{}
 
@@ -209,7 +210,7 @@ type batchCopIterator struct {
 	// Batch results are stored in respChan.
 	respChan chan *batchCopResponse
 
-	vars *kv.Variables
+	vars *tikv.Variables
 
 	memTracker *memory.Tracker
 
@@ -268,7 +269,7 @@ func (b *batchCopIterator) recvFromRespCh(ctx context.Context) (resp *batchCopRe
 			return
 		case <-ticker.C:
 			if atomic.LoadUint32(b.vars.Killed) == 1 {
-				resp = &batchCopResponse{err: tikvstore.ErrQueryInterrupted}
+				resp = &batchCopResponse{err: tikverr.ErrQueryInterrupted}
 				ok = true
 				return
 			}
@@ -344,8 +345,8 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffe
 	}
 
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
-		IsolationLevel: tikv.IsolationLevelToPB(b.req.IsolationLevel),
-		Priority:       tikv.PriorityToPB(b.req.Priority),
+		IsolationLevel: isolationLevelToPB(b.req.IsolationLevel),
+		Priority:       priorityToPB(b.req.Priority),
 		NotFillCache:   b.req.NotFillCache,
 		RecordTimeStat: true,
 		RecordScanStat: true,
@@ -394,7 +395,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return tikvstore.ErrTiFlashServerTimeout
+			return tikverr.ErrTiFlashServerTimeout
 		}
 	}
 }

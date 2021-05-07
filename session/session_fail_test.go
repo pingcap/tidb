@@ -19,7 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -84,7 +84,7 @@ func (s *testSessionSerialSuite) TestKillFlagInBackoff(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table kill_backoff (id int)")
 	var killValue uint32
-	tk.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {
+	tk.Se.GetSessionVars().KVVars.Hook = func(name string, vars *tikv.Variables) {
 		killValue = atomic.LoadUint32(vars.Killed)
 	}
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("callBackofferHook")`), IsNil)

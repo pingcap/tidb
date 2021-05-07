@@ -1599,17 +1599,17 @@ func doDMLWorks(s Session) {
 				}
 			}
 			if v.Name == variable.TiDBEnableChangeMultiSchema {
-				vVal = variable.BoolOff
+				vVal = variable.Off
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
 					// enable change multi schema in test case for compatibility with old cases.
-					vVal = variable.BoolOn
+					vVal = variable.On
 				}
 			}
 			if v.Name == variable.TiDBEnableAsyncCommit && config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.BoolOn
+				vVal = variable.On
 			}
 			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.BoolOn
+				vVal = variable.On
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)

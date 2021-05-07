@@ -722,19 +722,14 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 		subCollector := &statistics.RowSampleCollector{
 			MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
 		}
-		e.job.Update(subCollector.Count)
 		subCollector.FromProto(colResp.RowCollector)
+		e.job.Update(subCollector.Count)
 		rootRowCollector.MergeCollector(subCollector)
 	}
 	for _, sample := range rootRowCollector.Samples {
 		for i := range sample.Columns {
-			// logutil.BgLogger().Warn("new analyze", zap.String("raw col", fmt.Sprintf("%v", sample.Columns[i].GetBytes())))
 			sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
 			if err != nil {
-				logutil.BgLogger().Warn("wrong encoded value",
-					zap.String("bytes value", fmt.Sprintf("%v", sample.Columns[i].GetBytes())),
-					zap.Int("kind", int(e.colsInfo[i].FieldType.Tp)),
-				)
 				return 0, nil, nil, nil, nil, err
 			}
 			if sample.Columns[i].Kind() == types.KindBytes {
@@ -758,6 +753,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 	for i, col := range e.colsInfo {
 		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
 		for j, row := range rootRowCollector.Samples {
+			if row.Columns[i].IsNull() {
+				continue
+			}
 			sampleItems = append(sampleItems, &statistics.SampleItem{
 				Value:   row.Columns[i],
 				Ordinal: j,
@@ -766,7 +764,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 		collector := &statistics.SampleCollector{
 			Samples:   sampleItems,
 			NullCount: rootRowCollector.NullCount[i],
-			Count:     rootRowCollector.Count,
+			Count:     rootRowCollector.Count - rootRowCollector.NullCount[i],
 			FMSketch:  rootRowCollector.FMSketches[i],
 			TotalSize: rootRowCollector.TotalSizes[i],
 		}
@@ -783,6 +781,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 	for i, idx := range e.indexes {
 		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
 		for _, row := range rootRowCollector.Samples {
+			if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
+				continue
+			}
 			b := make([]byte, 0, 8)
 			for _, col := range idx.Columns {
 				b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
@@ -797,7 +798,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 		collector := &statistics.SampleCollector{
 			Samples:   sampleItems,
 			NullCount: rootRowCollector.NullCount[colLen+i],
-			Count:     rootRowCollector.Count,
+			Count:     rootRowCollector.Count - rootRowCollector.NullCount[colLen+i],
 			FMSketch:  rootRowCollector.FMSketches[colLen+i],
 			TotalSize: rootRowCollector.TotalSizes[colLen+i],
 		}
@@ -1145,8 +1146,8 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 			return nil, errors.Trace(err)
 		}
 	}
-	txn.SetOption(tikvstore.Priority, tikvstore.PriorityLow)
-	txn.SetOption(tikvstore.IsolationLevel, tikvstore.RC)
+	txn.SetOption(tikvstore.Priority, kv.PriorityLow)
+	txn.SetOption(tikvstore.IsolationLevel, kv.RC)
 	txn.SetOption(tikvstore.NotFillCache, true)
 	return rollbackFn, nil
 }
@@ -1366,8 +1367,8 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	defer e.wg.Done()
 	snapshot := e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
 	snapshot.SetOption(tikvstore.NotFillCache, true)
-	snapshot.SetOption(tikvstore.IsolationLevel, tikvstore.RC)
-	snapshot.SetOption(tikvstore.Priority, tikvstore.PriorityLow)
+	snapshot.SetOption(tikvstore.IsolationLevel, kv.RC)
+	snapshot.SetOption(tikvstore.Priority, kv.PriorityLow)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
 	}

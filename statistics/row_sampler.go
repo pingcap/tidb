@@ -291,6 +291,10 @@ func RowSamplesToProto(samples WeightedRowSampleHeap) []*tipb.RowSample {
 			Weight: sample.Weight,
 		}
 		for _, c := range sample.Columns {
+			if c.IsNull() {
+				pbRow.Row = append(pbRow.Row, []byte{codec.NilFlag})
+				continue
+			}
 			pbRow.Row = append(pbRow.Row, c.GetBytes())
 		}
 		rows = append(rows, pbRow)

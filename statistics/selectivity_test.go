@@ -557,8 +557,12 @@ func BenchmarkSelectivity(b *testing.B) {
 
 	file, err := os.Create("cpu.profile")
 	c.Assert(err, IsNil)
-	defer file.Close()
-	pprof.StartCPUProfile(file)
+	defer func() {
+		err := file.Close()
+		c.Assert(err, IsNil)
+	}()
+	err = pprof.StartCPUProfile(file)
+	c.Assert(err, IsNil)
 
 	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()

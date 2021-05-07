@@ -912,10 +912,8 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		if types.ErrTruncatedWrongVal.Equal(err) {
 			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-			// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
-			if res == types.ZeroDuration {
-				return res, true, err
-			}
+			// ErrTruncatedWrongVal needs to be considered NULL.
+			return res, true, err
 		}
 	}
 	return res, false, err
@@ -1077,10 +1075,8 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types
 	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), int8(b.tp.Decimal))
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
-		if res == types.ZeroDuration {
-			return res, true, err
-		}
+		// ErrTruncatedWrongVal needs to be considered NULL.
+		return res, true, err
 	}
 	return res, false, err
 }
@@ -1844,6 +1840,14 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type of expr is not
 // type int, otherwise, returns `expr` directly.
 func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
+	if expr.GetType().Tp == mysql.TypeEnum {
+		if col, ok := expr.(*Column); ok {
+			col = col.Clone().(*Column)
+			col.RetType = col.RetType.Clone()
+			expr = col
+		}
+		expr.GetType().Flag |= mysql.EnumSetAsIntFlag
+	}
 	if expr.GetType().EvalType() == types.ETInt {
 		return expr
 	}
@@ -1906,7 +1910,11 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		argLen = -1
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset, tp.Collate = expr.CharsetAndCollation(ctx)
+	if expr.Coercibility() == CoercibilityExplicit {
+		tp.Charset, tp.Collate = expr.CharsetAndCollation(ctx)
+	} else {
+		tp.Charset, tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	}
 	tp.Flen, tp.Decimal = argLen, types.UnspecifiedLength
 	return BuildCastFunction(ctx, expr, tp)
 }

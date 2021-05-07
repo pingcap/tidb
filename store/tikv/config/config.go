@@ -36,6 +36,11 @@ const (
 	DefStoresRefreshInterval = 60
 )
 
+func init() {
+	conf := DefaultConfig()
+	StoreGlobalConfig(&conf)
+}
+
 // Config contains configuration options.
 type Config struct {
 	CommitterConcurrency int

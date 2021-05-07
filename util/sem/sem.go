@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 const (
@@ -56,6 +57,7 @@ const (
 	tidbProfileMemory     = "tidb_profile_memory"
 	tidbProfileMutex      = "tidb_profile_mutex"
 	tikvProfileCPU        = "tikv_profile_cpu"
+	tidbGCLeaderDesc      = "tidb_gc_leader_desc"
 	restrictedPriv        = "RESTRICTED_"
 )
 
@@ -67,14 +69,16 @@ var (
 // Dynamic configuration by users may be a security risk.
 func Enable() {
 	atomic.StoreInt32(&semEnabled, 1)
-	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.BoolOn)
+	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.On)
+	// write to log so users understand why some operations are weird.
+	logutil.BgLogger().Info("tidb-server is operating with security enhanced mode (SEM) enabled")
 }
 
 // Disable disables SEM. This is intended to be used by the test-suite.
 // Dynamic configuration by users may be a security risk.
 func Disable() {
 	atomic.StoreInt32(&semEnabled, 0)
-	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.BoolOff)
+	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.Off)
 }
 
 // IsEnabled checks if Security Enhanced Mode (SEM) is enabled
@@ -114,6 +118,11 @@ func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
 		return true
 	}
 	return false
+}
+
+// IsInvisibleStatusVar returns true if the status var needs to be hidden
+func IsInvisibleStatusVar(varName string) bool {
+	return varName == tidbGCLeaderDesc
 }
 
 // IsRestrictedPrivilege returns true if the privilege shuld not be satisfied by SUPER
