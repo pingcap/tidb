@@ -15,6 +15,7 @@ package variable
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -167,4 +168,94 @@ func (*testSysVarSuite) TestEnumValidation(c *C) {
 	val, err = sv.Validate(vars, "2", ScopeSession)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "AUTO")
+}
+
+func (*testSysVarSuite) TestBuiltInCase(c *C) {
+	// All Sysvars should have lower case names.
+	// This tests builtins.
+	for name := range GetSysVars() {
+		c.Assert(name, Equals, strings.ToLower(name))
+	}
+}
+
+func (*testSysVarSuite) TestSQLSelectLimit(c *C) {
+	sv := GetSysVar(SQLSelectLimit)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	c.Assert(err, IsNil) // it has autoconvert out of range.
+	c.Assert(val, Equals, "0")
+
+	val, err = sv.Validate(vars, "9999", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "9999")
+
+	c.Assert(sv.SetSessionFromHook(vars, "9999"), IsNil) // sets
+	c.Assert(vars.SelectLimit, Equals, uint64(9999))
+}
+
+func (*testSysVarSuite) TestSQLModeVar(c *C) {
+	sv := GetSysVar(SQLModeVar)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "strict_trans_tabLES  ", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "STRICT_TRANS_TABLES")
+
+	_, err = sv.Validate(vars, "strict_trans_tabLES,nonsense_option", ScopeSession)
+	c.Assert(err.Error(), Equals, "ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'NONSENSE_OPTION'")
+
+	val, err = sv.Validate(vars, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION")
+
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil) // sets to strict from above
+	c.Assert(vars.StrictSQLMode, IsTrue)
+
+	sqlMode, err := mysql.GetSQLMode(val)
+	c.Assert(err, IsNil)
+	c.Assert(vars.SQLMode, Equals, sqlMode)
+
+	// Set it to non strict.
+	val, err = sv.Validate(vars, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION")
+
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil) // sets to non-strict from above
+	c.Assert(vars.StrictSQLMode, IsFalse)
+	sqlMode, err = mysql.GetSQLMode(val)
+	c.Assert(err, IsNil)
+	c.Assert(vars.SQLMode, Equals, sqlMode)
+}
+
+func (*testSysVarSuite) TestMaxExecutionTime(c *C) {
+	sv := GetSysVar(MaxExecutionTime)
+	vars := NewSessionVars()
+
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	c.Assert(err, IsNil) // it has autoconvert out of range.
+	c.Assert(val, Equals, "0")
+
+	val, err = sv.Validate(vars, "99999", ScopeSession)
+	c.Assert(err, IsNil) // it has autoconvert out of range.
+	c.Assert(val, Equals, "99999")
+
+	c.Assert(sv.SetSessionFromHook(vars, "99999"), IsNil) // sets
+	c.Assert(vars.MaxExecutionTime, Equals, uint64(99999))
+}
+
+func (*testSysVarSuite) TestCollationServer(c *C) {
+	sv := GetSysVar(CollationServer)
+	vars := NewSessionVars()
+
+	val, err := sv.Validate(vars, "LATIN1_bin", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "latin1_bin") // test normalization
+
+	_, err = sv.Validate(vars, "BOGUSCOLLation", ScopeSession)
+	c.Assert(err.Error(), Equals, "[ddl:1273]Unknown collation: 'BOGUSCOLLation'")
+
+	c.Assert(sv.SetSessionFromHook(vars, "latin1_bin"), IsNil)
+	c.Assert(vars.systems[CharacterSetServer], Equals, "latin1") // check it also changes charset.
+
+	c.Assert(sv.SetSessionFromHook(vars, "utf8mb4_bin"), IsNil)
+	c.Assert(vars.systems[CharacterSetServer], Equals, "utf8mb4") // check it also changes charset.
 }
