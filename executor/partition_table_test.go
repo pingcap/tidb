@@ -14,6 +14,10 @@
 package executor_test
 
 import (
+	"fmt"
+	"math/rand"
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
@@ -220,6 +224,43 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
 		"└─TableFullScan_4 10000.00 cop[tikv] table:t_info_null keep order:false, stats:pseudo"))
 	// No panic.
 	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
+}
+
+func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_orderby_limit")
+	tk.MustExec("use test_orderby_limit")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// range partition table
+	tk.MustExec(`create table trange(a int, b int, index idx_a(a)) partition by range(a) (
+		partition p0 values less than(3), 
+		partition p1 values less than (5), 
+		partition p2 values less than(11));`)
+
+	// regular table
+	tk.MustExec("create table tregular(a int, b int, index idx_a(a))")
+
+	// generate some random data to be inserted
+	vals := make([]string, 0, 100)
+	for i := 0; i < 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(11), rand.Intn(20)))
+	}
+
+	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular values " + strings.Join(vals, ","))
+
+	// generate some random querys
+	for i := 0; i < 10; i++ {
+		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
+		// select * from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
+		y := rand.Intn(20)
+		x := rand.Intn(100)
+		queryPartition := fmt.Sprintf("select * from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
+		queryRegular := fmt.Sprintf("select * from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
+		c.Assert(tk.HasPlan(queryPartition, "IndexLookUp"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition).Check(tk.MustQuery(queryRegular).Rows())
+	}
 }
 
 func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
