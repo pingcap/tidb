@@ -2654,7 +2654,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		// `collation_server` is related to `character_set_server`, set `character_set_server` will also set `collation_server`.
 		// We have to make sure we set the `collation_server` with right value.
 		if _, ok := vars.GetSystemVar(varName); !ok || varName == variable.CollationServer {
-			err = vars.SetSystemVar(varName, varVal)
+			err = vars.SetSystemVarWithLooseValidation(varName, varVal)
 			if err != nil {
 				return err
 			}

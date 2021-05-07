@@ -185,7 +185,7 @@ func (sv *SysVar) HasGlobalScope() bool {
 func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// Normalize the value and apply validation based on type.
 	// i.e. TypeBool converts 1/on/ON to ON.
-	normalizedValue, err := sv.validateFromType(vars, value, scope)
+	normalizedValue, err := sv.validateFromType(vars, value, scope, false)
 	if err != nil {
 		return normalizedValue, err
 	}
@@ -197,18 +197,19 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 }
 
 // validateFromType provides automatic validation based on the SysVar's type
-func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
+func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeFlag, skipScopeValidation bool) (string, error) {
 	// Check that the scope is correct and return the appropriate error message.
-	if sv.ReadOnly || sv.Scope == ScopeNone {
-		return value, ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
+	if !skipScopeValidation {
+		if sv.ReadOnly || sv.Scope == ScopeNone {
+			return value, ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
+		}
+		if scope == ScopeGlobal && !sv.HasGlobalScope() {
+			return value, errLocalVariable.FastGenByArgs(sv.Name)
+		}
+		if scope == ScopeSession && !sv.HasSessionScope() {
+			return value, errGlobalVariable.FastGenByArgs(sv.Name)
+		}
 	}
-	if scope == ScopeGlobal && !sv.HasGlobalScope() {
-		return value, errLocalVariable.FastGenByArgs(sv.Name)
-	}
-	if scope == ScopeSession && !sv.HasSessionScope() {
-		return value, errGlobalVariable.FastGenByArgs(sv.Name)
-	}
-
 	// The string "DEFAULT" is a special keyword in MySQL, which restores
 	// the compiled sysvar value. In which case we can skip further validation.
 	if strings.EqualFold(value, "DEFAULT") {
@@ -238,6 +239,26 @@ func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeF
 		return sv.checkDurationSystemVar(value, vars)
 	}
 	return value, nil // typeString
+}
+
+// ValidateLoose normalizes values but can not return errors.
+// It is used when reading values applied from other servers which are assumed to be safe.
+// If there is an error it would cause an upgrade problem
+func (sv *SysVar) ValidateLoose(vars *SessionVars, value string, scope ScopeFlag) string {
+	// Normalize the value and apply validation based on type.
+	// i.e. TypeBool converts 1/on/ON to ON.
+	normalizedValue, err := sv.validateFromType(vars, value, scope, true)
+	if err != nil {
+		return normalizedValue
+	}
+	// If type validation was successful, call the (optional) validation function
+	if sv.Validation != nil {
+		normalizedValue, err = sv.Validation(vars, normalizedValue, value, scope)
+		if err != nil {
+			return normalizedValue
+		}
+	}
+	return normalizedValue
 }
 
 const (

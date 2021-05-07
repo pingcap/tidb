@@ -1380,6 +1380,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	return sv.SetSessionFromHook(s, val)
 }
 
+// SetSystemVarWithLooseValidation sets the value of a system variable for session scope.
+// Validation functions are called, but scope validation is skipped.
+func (s *SessionVars) SetSystemVarWithLooseValidation(name string, val string) error {
+	sv := GetSysVar(name)
+	val = sv.ValidateLoose(s, val, ScopeSession)
+	return sv.SetSessionFromHook(s, val)
+}
+
 // GetReadableTxnMode returns the session variable TxnMode but rewrites it to "OPTIMISTIC" when it's empty.
 func (s *SessionVars) GetReadableTxnMode() string {
 	txnMode := s.TxnMode
