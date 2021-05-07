@@ -172,6 +172,8 @@ type TransactionContext struct {
 
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
+
+	GlobalTemporaryTables map[int64]struct{}
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.

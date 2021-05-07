@@ -322,6 +322,10 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
+	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
+		addTemporaryTableID(sctx, meta.ID)
+	}
+
 	var colIDs, binlogColIDs []int64
 	var row, binlogOldRow, binlogNewRow []types.Datum
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
@@ -584,6 +588,14 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
+func addTemporaryTableID(sctx sessionctx.Context, id int64) {
+	txnCtx := sctx.GetSessionVars().TxnCtx
+	if txnCtx.GlobalTemporaryTables == nil {
+		txnCtx.GlobalTemporaryTables = make(map[int64]struct{})
+	}
+	txnCtx.GlobalTemporaryTables[id] = struct{}{}
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	txn, err := sctx.Txn(true)
@@ -594,6 +606,10 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	var opt table.AddRecordOpt
 	for _, fn := range opts {
 		fn.ApplyOn(&opt)
+	}
+
+	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
+		addTemporaryTableID(sctx, meta.ID)
 	}
 
 	var ctx context.Context
@@ -992,6 +1008,11 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	if err != nil {
 		return err
 	}
+
+	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
+		addTemporaryTableID(ctx, meta.ID)
+	}
+
 	// The table has non-public column and this column is doing the operation of "modify/change column".
 	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
 		r = append(r, r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset])

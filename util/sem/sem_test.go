@@ -67,3 +67,10 @@ func (s *testSecurity) TestIsRestrictedPrivilege(c *C) {
 	c.Assert(IsRestrictedPrivilege("BACKUP_ADMIN"), IsFalse)
 	c.Assert(IsRestrictedPrivilege("aa"), IsFalse)
 }
+
+func (s *testSecurity) TestIsInvisibleStatusVar(c *C) {
+	c.Assert(IsInvisibleStatusVar(tidbGCLeaderDesc), IsTrue)
+	c.Assert(IsInvisibleStatusVar("server_id"), IsFalse)
+	c.Assert(IsInvisibleStatusVar("ddl_schema_version"), IsFalse)
+	c.Assert(IsInvisibleStatusVar("Ssl_version"), IsFalse)
+}

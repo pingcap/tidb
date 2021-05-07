@@ -821,8 +821,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 // checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
 func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 	// Disable async commit in local transactions
-	txnScopeOption := c.txn.us.GetOption(kv.TxnScope)
-	if txnScopeOption == nil || txnScopeOption.(string) != oracle.GlobalTxnScope {
+	if c.txn.GetScope() != oracle.GlobalTxnScope {
 		return false
 	}
 
@@ -849,13 +848,11 @@ func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 // checkOnePC checks if 1PC protocol is available for current transaction.
 func (c *twoPhaseCommitter) checkOnePC() bool {
 	// Disable 1PC in local transactions
-	txnScopeOption := c.txn.us.GetOption(kv.TxnScope)
-	if txnScopeOption == nil || txnScopeOption.(string) != oracle.GlobalTxnScope {
+	if c.txn.GetScope() != oracle.GlobalTxnScope {
 		return false
 	}
 
-	enable1PCOption := c.txn.us.GetOption(kv.Enable1PC)
-	return c.sessionID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
+	return c.sessionID > 0 && !c.shouldWriteBinlog() && c.txn.enable1PC
 }
 
 func (c *twoPhaseCommitter) needLinearizability() bool {
@@ -1099,7 +1096,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	} else {
 		start = time.Now()
 		logutil.Event(ctx, "start get commit ts")
-		commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
+		commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetScope())
 		if err != nil {
 			logutil.Logger(ctx).Warn("2PC get commitTS failed",
 				zap.Error(err),
@@ -1114,12 +1111,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	if !c.isAsyncCommit() {
 		tryAmend := c.isPessimistic && c.sessionID > 0 && c.txn.schemaAmender != nil
 		if !tryAmend {
-			_, _, err = c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, false)
+			_, _, err = c.checkSchemaValid(ctx, commitTS, c.txn.schemaVer, false)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		} else {
-			relatedSchemaChange, memAmended, err := c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, true)
+			relatedSchemaChange, memAmended, err := c.checkSchemaValid(ctx, commitTS, c.txn.schemaVer, true)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1368,7 +1365,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *util.CommitDetails) (uint64, error) {
 	start := time.Now()
 	logutil.Event(ctx, "start get commit ts")
-	commitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
+	commitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetScope())
 	if err != nil {
 		logutil.Logger(ctx).Warn("2PC get commitTS failed",
 			zap.Error(err),
@@ -1431,7 +1428,7 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 	// Amend txn with current time first, then we can make sure we have another SafeWindow time to commit
 	currentTS := oracle.EncodeTSO(int64(time.Since(c.txn.startTime)/time.Millisecond)) + c.startTS
-	_, _, err := c.checkSchemaValid(ctx, currentTS, c.txn.txnInfoSchema, true)
+	_, _, err := c.checkSchemaValid(ctx, currentTS, c.txn.schemaVer, true)
 	if err != nil {
 		logutil.Logger(ctx).Info("Schema changed for async commit txn",
 			zap.Error(err),
