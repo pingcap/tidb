@@ -14,6 +14,7 @@
 package core
 
 import (
+	"fmt"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -1367,9 +1368,19 @@ func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt
 type PhysicalCTE struct {
 	physicalSchemaProducer
 
-	SeedPlan  PhysicalPlan
-	RecurPlan PhysicalPlan
-	CTE       *CTEClass
+	SeedPlan        PhysicalPlan
+	RecurPlan       PhysicalPlan
+	CTE             *CTEClass
+	tblAsName       model.CIStr
+	tblOriginalName model.CIStr
+}
+
+func (p *PhysicalCTE) AccessObject(normalized bool) string {
+	return fmt.Sprintf("cte:%s", p.tblAsName.L)
+}
+
+func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
+	return fmt.Sprintf("data:%s", p.tblOriginalName.L)
 }
 
 // PhysicalCTETable is for CTE table.

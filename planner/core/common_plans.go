@@ -961,6 +961,8 @@ type Explain struct {
 	Rows           [][]string
 	ExplainRows    [][]string
 	explainedPlans map[int]bool
+
+	ctes []*PhysicalCTE
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -1020,6 +1022,10 @@ func (e *Explain) RenderResult() error {
 			if err != nil {
 				return err
 			}
+			err = e.explainPlanInRowFormatCTE()
+			if err != nil {
+				return err
+			}
 		}
 	case ast.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
@@ -1033,6 +1039,27 @@ func (e *Explain) RenderResult() error {
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
 	return nil
+}
+
+func (e *Explain) explainPlanInRowFormatCTE() (err error) {
+	explainedCTEPlan := make(map[int]struct{})
+	for i := 0; i < len(e.ctes); i++ {
+		x := e.ctes[i]
+		if _, ok := explainedCTEPlan[x.CTE.IdForStorage]; ok {
+			continue
+		}
+		e.prepareOperatorInfo(x, "root", "", "", true)
+		childIndent := texttree.Indent4Child("", true)
+		if x.SeedPlan != nil {
+			err = e.explainPlanInRowFormat(x.SeedPlan, "root", "", childIndent, x.RecurPlan == nil)
+		}
+		if x.RecurPlan != nil {
+			err = e.explainPlanInRowFormat(x.RecurPlan, "root", "", childIndent, true)
+		}
+		explainedCTEPlan[x.CTE.IdForStorage] = struct{}{}
+	}
+
+	return
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
@@ -1138,6 +1165,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		if x.Plan != nil {
 			err = e.explainPlanInRowFormat(x.Plan, "root", "", indent, true)
 		}
+	case *PhysicalCTE:
+		e.ctes = append(e.ctes, x)
 	}
 	return
 }
