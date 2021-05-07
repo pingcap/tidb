@@ -750,11 +750,11 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		return nil
 	}
 	var tbl *statistics.Table
-	if table.Meta().GetPartitionInfo() == nil || h.CurrentPruneMode() == variable.Dynamic {
-		tbl = h.GetTableStats(table.Meta())
-	} else {
-		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
+	// feedback for partition is not ready
+	if table.Meta().GetPartitionInfo() != nil {
+		return nil
 	}
+	tbl = h.GetTableStats(table.Meta())
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
 	var topN *statistics.TopN
@@ -822,7 +822,8 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0)
+	// feedback for partition is not ready.
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }

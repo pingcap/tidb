@@ -2802,3 +2802,33 @@ func (s *testSerialStatsSuite) TestIssues24349(c *C) {
 		"test t global b 0 1 10 1 4 4 0",
 	))
 }
+
+func (s *testStatsSuite) TestIssues24401(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+
+	// normal table with static prune mode
+	testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testKit.MustExec("create table t(a int, index(a))")
+	testKit.MustExec("insert into t values (1), (2), (3)")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+
+	// partition table with static prune mode
+	testKit.MustExec("create table tp(a int, index(a)) partition by hash(a) partitions 3")
+	testKit.MustExec("insert into tp values (1), (2), (3)")
+	testKit.MustExec("analyze table tp")
+	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+
+	// normal table with dynamic prune mode
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+
+	// partition table with dynamic prune mode
+	testKit.MustExec("analyze table tp")
+	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	c.Assert(len(rows), Greater, 0)
+}
