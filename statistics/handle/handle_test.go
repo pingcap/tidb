@@ -2332,16 +2332,16 @@ func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("create table t(a int, b int, c int) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1, 1, 1)")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("9"))
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("9"))
 
-	tk.MustExec("alter table t drop column a")
+	tk.MustExec("alter table t drop column b")
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), time.Duration(0)), IsNil)
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
 }
 
 func (s *testStatsSuite) TestIndexFMSketch(c *C) {
@@ -2349,24 +2349,24 @@ func (s *testStatsSuite) TestIndexFMSketch(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c))")
+	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c)) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1, 1, 1)")
 	tk.MustExec("analyze table t index ia")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
 	tk.MustExec("analyze table t index ibc")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("5"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("15"))
 	tk.MustExec("drop table if exists t")
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
 
 	// clustered index
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_enable_clustered_index=ON")
-	tk.MustExec("create table t (a datetime, b datetime, primary key (a))")
+	tk.MustExec("create table t (a datetime, b datetime, primary key (a)) partition by hash(year(a)) partitions 3")
 	tk.MustExec("insert into t values ('2000-01-01', '2000-01-01')")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
 	tk.MustExec("drop table if exists t")
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
 
@@ -2375,33 +2375,33 @@ func (s *testStatsSuite) TestIndexFMSketch(c *C) {
 		tk.MustExec("analyze table t")
 		rs := tk.MustQuery(fmt.Sprintf("select value from mysql.stats_fm_sketch")).Rows()
 		c.Assert(len(rs), Equals, rows)
+		totNDV := int64(0)
 		for i := range rs {
 			fm, err := statistics.DecodeFMSketch([]byte(rs[i][0].(string)))
 			c.Assert(err, IsNil)
+			totNDV += int64(ndv)
 			c.Assert(fm.NDV(), Equals, int64(ndv))
 		}
 	}
 
 	tk.MustExec("set @@tidb_enable_clustered_index=OFF")
-	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("create table t(a int, key(a)) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1), (2), (2), (3)")
-	checkNDV(2, 3)
-	tk.MustExec("insert into t values (4), (5)")
-	checkNDV(2, 5)
+	checkNDV(6, 1)
+	tk.MustExec("insert into t values (4), (5), (6)")
+	checkNDV(6, 2)
 	tk.MustExec("insert into t values (2), (5)")
-	checkNDV(2, 5)
+	checkNDV(6, 2)
 	tk.MustExec("drop table if exists t")
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
 
 	// clustered index
 	tk.MustExec("set @@tidb_enable_clustered_index=ON")
-	tk.MustExec("create table t (a datetime, b datetime, primary key (a))")
-	tk.MustExec("insert into t values ('2000-01-01', '2000-01-01')")
-	checkNDV(2, 1)
-	tk.MustExec("insert into t values ('2020-01-01', '2020-01-01')")
-	checkNDV(2, 2)
-	tk.MustExec("insert into t values ('1999-01-01', '1999-01-01'), ('1999-01-02', '1999-01-02'), ('1999-01-03', '1999-01-03')")
-	checkNDV(2, 5)
+	tk.MustExec("create table t (a datetime, b datetime, primary key (a)) partition by hash(year(a)) partitions 3")
+	tk.MustExec("insert into t values ('2000-01-01', '2001-01-01'), ('2001-01-01', '2001-01-01'), ('2002-01-01', '2001-01-01')")
+	checkNDV(6, 1)
+	tk.MustExec("insert into t values ('1999-01-01', '1998-01-01'), ('1997-01-02', '1999-01-02'), ('1998-01-03', '1999-01-03')")
+	checkNDV(6, 2)
 }
 
 func (s *testStatsSuite) TestShowExtendedStats4DropColumn(c *C) {
