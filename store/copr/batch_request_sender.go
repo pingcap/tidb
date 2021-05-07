@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -72,7 +72,7 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *tikv.Backoffer, ctxs []copTas
 	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
 	} else if atomic.LoadUint32(&tikv.ShuttingDown) > 0 {
-		return kv.ErrTiDBShuttingDown
+		return tikverr.ErrTiDBShuttingDown
 	}
 
 	for _, failedCtx := range ctxs {

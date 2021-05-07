@@ -176,7 +176,7 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
 		}
 		// The nil case has been considered in (*TopN).Equal() so we don't need to consider it here.
-		c.Assert(a.Columns[i].TopN.Equal(b.Columns[i].TopN), IsTrue)
+		c.Assert(a.Columns[i].TopN.Equal(b.Columns[i].TopN), IsTrue, Commentf("%v, %v", a.Columns[i].TopN, b.Columns[i].TopN))
 	}
 	c.Assert(len(a.Indices), Equals, len(b.Indices))
 	for i := range a.Indices {
@@ -2783,4 +2783,22 @@ func (s *testStatsSuite) TestStatsCacheUpdateSkip(c *C) {
 	h.Update(is)
 	statsTbl2 := h.GetTableStats(tableInfo)
 	c.Assert(statsTbl1, Equals, statsTbl2)
+}
+
+func (s *testSerialStatsSuite) TestIssues24349(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	defer testKit.MustExec("set @@tidb_analyze_version=1")
+	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testKit.MustExec("create table t (a int, b int) partition by hash(a) partitions 3")
+	testKit.MustExec("insert into t values (0, 3), (0, 3), (0, 3), (0, 2), (1, 1), (1, 2), (1, 2), (1, 2), (1, 3), (1, 4), (2, 1), (2, 1)")
+	testKit.MustExec("analyze table t with 1 topn, 3 buckets")
+	testKit.MustQuery("show stats_buckets where partition_name='global'").Check(testkit.Rows(
+		"test t global a 0 0 2 2 0 2 0",
+		"test t global b 0 0 3 1 1 2 0",
+		"test t global b 0 1 10 1 4 4 0",
+	))
 }

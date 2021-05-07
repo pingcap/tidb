@@ -1470,3 +1470,28 @@ func (ts *HTTPHandlerTestSuite) TestTestHandler(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 }
+
+func (ts *HTTPHandlerTestSuite) TestDDLHookHandler(c *C) {
+	defer ts.stopServer(c)
+
+	ts.startServer(c)
+	resp, err := ts.fetchStatus("/test/ddl/hook")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=ctc_hook`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "\"success!\"")
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=default_hook`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err = ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "\"success!\"")
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+}

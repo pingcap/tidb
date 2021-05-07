@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
@@ -36,7 +36,7 @@ import (
 
 // MPPClient servers MPP requests.
 type MPPClient struct {
-	store *tikv.KVStore
+	store *kvStore
 }
 
 // GetAddress returns the network address.
@@ -117,7 +117,7 @@ func (m *mppResponse) RespTime() time.Duration {
 }
 
 type mppIterator struct {
-	store *tikv.KVStore
+	store *kvStore
 
 	tasks    []*kv.MPPDispatchRequest
 	finishCh chan struct{}
@@ -225,7 +225,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		if sender.GetRPCError() != nil {
 			logutil.BgLogger().Error("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()))
 			// we return timeout to trigger tikv's fallback
-			m.sendError(tikvstore.ErrTiFlashServerTimeout)
+			m.sendError(tikverr.ErrTiFlashServerTimeout)
 			return
 		}
 	} else {
@@ -235,7 +235,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	if err != nil {
 		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()))
 		// we return timeout to trigger tikv's fallback
-		m.sendError(tikvstore.ErrTiFlashServerTimeout)
+		m.sendError(tikverr.ErrTiFlashServerTimeout)
 		return
 	}
 
@@ -245,10 +245,17 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		m.sendError(errors.New(realResp.Error.Msg))
 		return
 	}
+	if len(realResp.RetryRegions) > 0 {
+		for _, retry := range realResp.RetryRegions {
+			id := tikv.NewRegionVerID(retry.Id, retry.RegionEpoch.ConfVer, retry.RegionEpoch.Version)
+			logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
+			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+		}
+	}
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
-			m.sendError(tikvstore.ErrTiFlashServerTimeout)
+			m.sendError(tikverr.ErrTiFlashServerTimeout)
 			return
 		}
 	})
@@ -311,7 +318,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	if err != nil {
 		logutil.BgLogger().Error("establish mpp connection meet error", zap.String("error", err.Error()))
 		// we return timeout to trigger tikv's fallback
-		m.sendError(tikvstore.ErrTiFlashServerTimeout)
+		m.sendError(tikverr.ErrTiFlashServerTimeout)
 		return
 	}
 
@@ -343,7 +350,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 				}
 			}
-			m.sendError(tikvstore.ErrTiFlashServerTimeout)
+			m.sendError(tikverr.ErrTiFlashServerTimeout)
 			return
 		}
 	}
@@ -398,7 +405,7 @@ func (m *mppIterator) nextImpl(ctx context.Context) (resp *mppResponse, ok bool,
 			return
 		case <-ticker.C:
 			if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
-				err = tikvstore.ErrQueryInterrupted
+				err = tikverr.ErrQueryInterrupted
 				exit = true
 				return
 			}

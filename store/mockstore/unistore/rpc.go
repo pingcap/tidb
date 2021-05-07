@@ -257,6 +257,9 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdDebugGetRegionProperties:
 		resp.Resp, err = c.handleDebugGetRegionProperties(ctx, req.DebugGetRegionProperties())
 		return resp, err
+	case tikvrpc.CmdStoreSafeTS:
+		resp.Resp, err = c.usSvr.GetStoreSafeTS(ctx, req.StoreSafeTS())
+		return resp, err
 	default:
 		err = errors.Errorf("not support this request type %v", req.Type)
 	}
