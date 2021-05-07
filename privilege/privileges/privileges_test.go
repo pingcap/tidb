@@ -1394,8 +1394,9 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
 	}, nil, nil)
 }
 
-func (s *testPrivilegeSuite) TestIssue24414(c *C) {
-	// Default roles should be correctly applied in the algorithm definer
+// TestViewDefiner tests that default roles are correctly applied in the algorithm definer
+// See: https://github.com/pingcap/tidb/issues/24414
+func (s *testPrivilegeSuite) TestViewDefiner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE DATABASE issue24414")
 	tk.MustExec("USE issue24414")
