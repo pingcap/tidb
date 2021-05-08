@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -67,8 +66,8 @@ type KVTxn struct {
 
 	valid bool
 
-	// txnInfoSchema is the infoSchema fetched at startTS.
-	txnInfoSchema SchemaVer
+	// schemaVer is the infoSchema fetched at startTS.
+	schemaVer SchemaVer
 	// SchemaAmender is used amend pessimistic txn commit mutations for schema change
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
@@ -76,8 +75,11 @@ type KVTxn struct {
 
 	binlog             BinlogExecutor
 	schemaLeaseChecker SchemaLeaseChecker
+	syncLog            bool
 	priority           Priority
 	isPessimistic      bool
+	enable1PC          bool
+	scope              string
 	kvFilter           KVFilter
 }
 
@@ -93,7 +95,7 @@ func newTiKVTxn(store *KVStore, txnScope string) (*KVTxn, error) {
 // newTiKVTxnWithStartTS creates a txn with startTS.
 func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*KVTxn, error) {
 	snapshot := newTiKVSnapshot(store, startTS, replicaReadSeed)
-	newTiKVTxn := &KVTxn{
+	return &KVTxn{
 		snapshot:  snapshot,
 		us:        unionstore.NewUnionStore(snapshot),
 		store:     store,
@@ -101,9 +103,8 @@ func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, repl
 		startTime: time.Now(),
 		valid:     true,
 		vars:      kv.DefaultVars,
-	}
-	newTiKVTxn.SetOption(kv.TxnScope, txnScope)
-	return newTiKVTxn, nil
+		scope:     txnScope,
+	}, nil
 }
 
 func newTiKVTxnWithExactStaleness(store *KVStore, txnScope string, prevSec uint64) (*KVTxn, error) {
@@ -183,12 +184,8 @@ func (txn *KVTxn) SetOption(opt int, val interface{}) {
 	txn.us.SetOption(opt, val)
 	txn.snapshot.SetOption(opt, val)
 	switch opt {
-	case kv.InfoSchema:
-		txn.txnInfoSchema = val.(SchemaVer)
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
-	case kv.CommitHook:
-		txn.commitCallback = val.(func(info string, err error))
 	}
 }
 
@@ -207,15 +204,41 @@ func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
 	txn.schemaLeaseChecker = checker
 }
 
+// EnableForceSyncLog indicates tikv to always sync log for the transaction.
+func (txn *KVTxn) EnableForceSyncLog() {
+	txn.syncLog = true
+}
+
 // SetPessimistic indicates if the transaction should use pessimictic lock.
 func (txn *KVTxn) SetPessimistic(b bool) {
 	txn.isPessimistic = b
+}
+
+// SetSchemaVer updates schema version to validate transaction.
+func (txn *KVTxn) SetSchemaVer(schemaVer SchemaVer) {
+	txn.schemaVer = schemaVer
 }
 
 // SetPriority sets the priority for both write and read.
 func (txn *KVTxn) SetPriority(pri Priority) {
 	txn.priority = pri
 	txn.GetSnapshot().SetPriority(pri)
+}
+
+// SetCommitCallback sets up a function that will be called when the transaction
+// is finished.
+func (txn *KVTxn) SetCommitCallback(f func(string, error)) {
+	txn.commitCallback = f
+}
+
+// SetEnable1PC indicates if the transaction will try to use 1 phase commit.
+func (txn *KVTxn) SetEnable1PC(b bool) {
+	txn.enable1PC = b
+}
+
+// SetScope sets the geographical scope of the transaction.
+func (txn *KVTxn) SetScope(scope string) {
+	txn.scope = scope
 }
 
 // SetKVFilter sets the filter to ignore key-values in memory buffer.
@@ -226,6 +249,11 @@ func (txn *KVTxn) SetKVFilter(filter KVFilter) {
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
 	return txn.isPessimistic
+}
+
+// GetScope returns the geographical scope of the transaction.
+func (txn *KVTxn) GetScope() string {
+	return txn.scope
 }
 
 // Commit commits the transaction operations to KV store.
@@ -314,7 +342,7 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		return tidbkv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
+		return &tikverr.ErrWriteConflictInLatch{StartTS: txn.startTS}
 	}
 	err = committer.execute(ctx)
 	if val == nil || sessionID > 0 {
@@ -397,7 +425,7 @@ func (txn *KVTxn) onCommitted(err error) {
 		}
 
 		info := TxnInfo{
-			TxnScope:            txn.GetUnionStore().GetOption(kv.TxnScope).(string),
+			TxnScope:            txn.GetScope(),
 			StartTS:             txn.startTS,
 			CommitTS:            txn.commitTS,
 			TxnCommitMode:       commitMode,
