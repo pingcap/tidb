@@ -3707,6 +3707,27 @@ func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestDuplicateAliasCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists db1")
+	tk.MustExec("create database db1")
+	tk.MustExec("create table db1.t(a int)")
+	tk.MustExec("insert into db1.t values(1)")
+	tk.MustExec("drop database if exists db2")
+	tk.MustExec("create database db2")
+	tk.MustExec("create table db2.t(a int)")
+	tk.MustExec("insert into db2.t values(2)")
+	tk.MustExec("use db1")
+	err := tk.ExecToErr("select * from t, db1.t as t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1066]Not unique table/alias: 't'")
+
+	tk.MustQuery("select * from t, db2.t as t").Check(testkit.Rows("1 2"))
+	err = tk.ExecToErr("select * from t, db2.t as t where t.a = t.a")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1052]Column 'a' in field list is ambiguous")
+}
+
 func (s *testIntegrationSerialSuite) TestEnforceMPP(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 

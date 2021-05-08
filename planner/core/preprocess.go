@@ -83,7 +83,7 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 
 // Preprocess resolves table names of the node, and checks some statements validation.
 func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
-	v := preprocessor{is: is, ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0)}
+	v := preprocessor{is: is, ctx: ctx, tableAliasInJoin: make([]map[string]string, 0)}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
 	}
@@ -120,7 +120,7 @@ type preprocessor struct {
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
-	tableAliasInJoin []map[string]interface{}
+	tableAliasInJoin []map[string]string
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -720,16 +720,16 @@ func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
 
 func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 	if p.flag&parentIsJoin == 0 {
-		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
+		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]string))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
 	isOracleMode := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
 	if !isOracleMode {
-		if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+		if err := isTableAliasDuplicate(p.ctx, stmt.Left, tableAliases); err != nil {
 			p.err = err
 			return
 		}
-		if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+		if err := isTableAliasDuplicate(p.ctx, stmt.Right, tableAliases); err != nil {
 			p.err = err
 			return
 		}
@@ -737,23 +737,27 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 	p.flag |= parentIsJoin
 }
 
-func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
+func isTableAliasDuplicate(ctx sessionctx.Context, node ast.ResultSetNode, tableAliases map[string]string) error {
 	if ts, ok := node.(*ast.TableSource); ok {
-		tabName := ts.AsName
-		if tabName.L == "" {
-			if tableNode, ok := ts.Source.(*ast.TableName); ok {
-				if tableNode.Schema.L != "" {
-					tabName = model.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
-				} else {
-					tabName = tableNode.Name
-				}
+		var fullName string
+		tabName := ts.AsName.L
+		dbName := strings.ToLower(ctx.GetSessionVars().CurrentDB)
+		if tableNode, ok := ts.Source.(*ast.TableName); ok {
+			if tableNode.Schema.L != "" {
+				dbName = tableNode.Schema.L
 			}
+			if tabName == "" {
+				tabName = tableNode.Name.L
+			}
+			fullName = fmt.Sprintf("%s.%s", dbName, tabName)
+		} else if tabName != "" {
+			fullName = fmt.Sprintf("%s.%s", dbName, tabName)
 		}
-		_, exists := tableAliases[tabName.L]
-		if len(tabName.L) != 0 && exists {
-			return ErrNonUniqTable.GenWithStackByArgs(tabName)
+		existsName, exists := tableAliases[fullName]
+		if len(fullName) != 0 && exists {
+			return ErrNonUniqTable.GenWithStackByArgs(existsName)
 		}
-		tableAliases[tabName.L] = nil
+		tableAliases[fullName] = tabName
 	}
 	return nil
 }
