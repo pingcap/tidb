@@ -265,16 +265,10 @@ type RegionCache struct {
 	pdClient pd.Client
 
 	mu struct {
-<<<<<<< HEAD
-		sync.RWMutex                         // mutex protect cached region
-		regions      map[RegionVerID]*Region // cached regions be organized as regionVerID to region ref mapping
-		sorted       *btree.BTree            // cache regions be organized as sorted key to region ref mapping
-=======
 		sync.RWMutex                           // mutex protect cached region
 		regions        map[RegionVerID]*Region // cached regions are organized as regionVerID to region ref mapping
 		latestVersions map[uint64]RegionVerID  // cache the map from regionID to its latest RegionVerID
 		sorted         *btree.BTree            // cache regions are organized as sorted key to region ref mapping
->>>>>>> b0dd4dae2... tikv: add id to version map to accelerate get region by id (#24403)
 	}
 	storeMu struct {
 		sync.RWMutex
@@ -867,13 +861,9 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 	if old != nil {
 		// Don't refresh TiFlash work idx for region. Otherwise, it will always goto a invalid store which
 		// is under transferring regions.
-<<<<<<< HEAD
 		atomic.StoreInt32(&cachedRegion.getStore().workTiFlashIdx, atomic.LoadInt32(&old.(*btreeItem).cachedRegion.getStore().workTiFlashIdx))
 		delete(c.mu.regions, old.(*btreeItem).cachedRegion.VerID())
-=======
-		store.workTiFlashIdx = atomic.LoadInt32(&oldRegionStore.workTiFlashIdx)
-		c.removeVersionFromCache(oldRegion.VerID(), cachedRegion.VerID().id)
->>>>>>> b0dd4dae2... tikv: add id to version map to accelerate get region by id (#24403)
+		c.removeVersionFromCache(old.(*btreeItem).cachedRegion.VerID(), cachedRegion.VerID().id)
 	}
 	c.mu.regions[cachedRegion.VerID()] = cachedRegion
 	newVer := cachedRegion.VerID()
@@ -1343,8 +1333,6 @@ func (r *RegionVerID) GetConfVer() uint64 {
 	return r.confVer
 }
 
-<<<<<<< HEAD
-=======
 // String formats the RegionVerID to string
 func (r *RegionVerID) String() string {
 	return fmt.Sprintf("{ region id: %v, ver: %v, confVer: %v }", r.id, r.ver, r.confVer)
@@ -1355,7 +1343,6 @@ func (r *RegionVerID) Equals(another RegionVerID) bool {
 	return r.id == another.id && r.confVer == another.confVer && r.ver == another.ver
 }
 
->>>>>>> b0dd4dae2... tikv: add id to version map to accelerate get region by id (#24403)
 // VerID returns the Region's RegionVerID.
 func (r *Region) VerID() RegionVerID {
 	return RegionVerID{
