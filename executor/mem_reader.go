@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -241,7 +243,12 @@ func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte) ([]types.
 	ds := make([]types.Datum, 0, len(m.columns))
 	for _, col := range m.columns {
 		offset := m.colIDs[col.ID]
-		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().TimeZone)
+		loc := m.ctx.GetSessionVars().TimeZone
+		if loc == nil {
+			// TODO: Warn and fix in upper layer, due to ctx not set correctly?
+			loc = time.UTC
+		}
+		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, loc)
 		if err != nil {
 			return nil, err
 		}
