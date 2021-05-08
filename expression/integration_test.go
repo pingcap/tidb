@@ -8008,7 +8008,6 @@ func (s *testSuite2) TestIssue12205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
-<<<<<<< HEAD
 	tk.MustExec("drop table if exists t12205;")
 	tk.MustExec("create table t12205(\n    `col_varchar_64` varchar(64) DEFAULT NULL,\n    `col_varchar_64_key` varchar(64) DEFAULT NULL\n);")
 	tk.MustExec("insert into t12205 values('-1038024704','-527892480');")
@@ -8016,23 +8015,6 @@ func (s *testSuite2) TestIssue12205(c *C) {
 		testkit.Rows("838:59:59 18446744072635875328"))
 	tk.MustQuery("show warnings;").Check(
 		testkit.Rows("Warning 1292 Truncated incorrect time value: '18446744072635875000'"))
-}
-=======
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`create table t(
-					 	a enum('a','','c'),
-						b enum('0','1','2'),
-						c set('a','','c'),
-						d set('0','1','2')
-					 )`)
-	tk.MustExec("insert into t values(1,1,1,1),(2,2,2,2),(3,3,3,3)")
-	tk.MustExec("set @@sql_mode = ''")
-	tk.MustExec("insert into t values('','','','')")
-	tk.MustQuery("select * from t").Check(testkit.Rows("a 0 a 0", " 1  1", "c 2 a, 0,1", "   "))
-	tk.MustQuery("select a from t where a").Check(testkit.Rows("a", "", "c", ""))
-	tk.MustQuery("select b from t where b").Check(testkit.Rows("0", "1", "2"))
-	tk.MustQuery("select c from t where c").Check(testkit.Rows("a", "", "a,", ""))
-	tk.MustQuery("select d from t where d").Check(testkit.Rows("0", "1", "0,1"))
 }
 
 func (s *testIntegrationSuite) Test23262(c *C) {
@@ -8044,16 +8026,6 @@ func (s *testIntegrationSuite) Test23262(c *C) {
 	tk.MustQuery("select * from t where a=2").Check(testkit.Rows("2002"))
 	tk.MustQuery("select * from t where a='2'").Check(testkit.Rows("2002"))
 }
-
-func (s *testIntegrationSerialSuite) TestPartitionPruningRelaxOP(c *C) {
-	// Discovered while looking at issue 19941 (not completely related)
-	// relaxOP relax the op > to >= and < to <=
-	// Sometime we need to relax the condition, for example:
-	// col < const => f(col) <= const
-	// datetime < 2020-02-11 16:18:42 => to_days(datetime) <= to_days(2020-02-11)
-	// We can't say:
-	// datetime < 2020-02-11 16:18:42 => to_days(datetime) < to_days(2020-02-11)
->>>>>>> 7a9b07e92... expression: fix unexpected constant fold when year compare string (#23281)
 
 func (s *testIntegrationSuite) TestIssue11333(c *C) {
 	defer s.cleanEnv(c)
