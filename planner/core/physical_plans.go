@@ -15,6 +15,8 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/stringutil"
+	"strconv"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -1371,16 +1373,25 @@ type PhysicalCTE struct {
 	SeedPlan        PhysicalPlan
 	RecurPlan       PhysicalPlan
 	CTE             *CTEClass
-	tblAsName       model.CIStr
-	tblOriginalName model.CIStr
+	cteAsName       model.CIStr
 }
 
 func (p *PhysicalCTE) AccessObject(normalized bool) string {
-	return fmt.Sprintf("cte:%s", p.tblAsName.L)
+	return fmt.Sprintf("CTE:%s", p.cteAsName.L)
 }
 
 func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
-	return fmt.Sprintf("data:%s", p.tblOriginalName.L)
+	return fmt.Sprintf("data:%s", (*CTEDefinition)(p).ExplainID())
+}
+
+// ExplainID overrides the ExplainID.
+func (p *PhysicalCTE) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.TP() + "FullScan"
+		}
+		return p.TP() + "FullScan_" + strconv.Itoa(p.id)
+	})
 }
 
 // PhysicalCTETable is for CTE table.
@@ -1388,4 +1399,22 @@ type PhysicalCTETable struct {
 	physicalSchemaProducer
 
 	IdForStorage int
+}
+
+// CTEDefinition is CTE definition for explain.
+type CTEDefinition PhysicalCTE
+
+// ExplainInfo overrides the ExplainInfo
+func (p *CTEDefinition) ExplainInfo() string {
+	if p.RecurPlan != nil {
+		return "Recursive CTE"
+	}
+	return "None Recursive CTE"
+}
+
+// ExplainID overrides the ExplainID.
+func (p *CTEDefinition) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		return "CTE_" + strconv.Itoa(p.CTE.IdForStorage)
+	})
 }

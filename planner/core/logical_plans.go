@@ -1190,7 +1190,6 @@ type LogicalCTE struct {
 
 	cte             *CTEClass
 	cteAsName       model.CIStr
-	cteOriginalName model.CIStr
 }
 
 // LogicalCTETable is for CTE table

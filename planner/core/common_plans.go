@@ -1044,17 +1044,17 @@ func (e *Explain) RenderResult() error {
 func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 	explainedCTEPlan := make(map[int]struct{})
 	for i := 0; i < len(e.ctes); i++ {
-		x := e.ctes[i]
+		x := (*CTEDefinition)(e.ctes[i])
 		if _, ok := explainedCTEPlan[x.CTE.IdForStorage]; ok {
 			continue
 		}
 		e.prepareOperatorInfo(x, "root", "", "", true)
 		childIndent := texttree.Indent4Child("", true)
 		if x.SeedPlan != nil {
-			err = e.explainPlanInRowFormat(x.SeedPlan, "root", "", childIndent, x.RecurPlan == nil)
+			err = e.explainPlanInRowFormat(x.SeedPlan, "root", "(Seed Part)", childIndent, x.RecurPlan == nil)
 		}
 		if x.RecurPlan != nil {
-			err = e.explainPlanInRowFormat(x.RecurPlan, "root", "", childIndent, true)
+			err = e.explainPlanInRowFormat(x.RecurPlan, "root", "(Recursive Part)", childIndent, true)
 		}
 		explainedCTEPlan[x.CTE.IdForStorage] = struct{}{}
 	}
