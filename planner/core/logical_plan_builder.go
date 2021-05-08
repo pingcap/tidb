@@ -3311,7 +3311,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.popTableHints()
 	}()
 	if b.buildingRecursivePartForCTE {
-		if sel.Distinct || sel.OrderBy != nil {
+		if sel.Distinct || sel.OrderBy != nil || sel.Limit != nil {
 			return nil, ErrNotSupportedYet.GenWithStackByArgs("ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression")
 		}
 		if sel.GroupBy != nil {
