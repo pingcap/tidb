@@ -1401,6 +1401,11 @@ type PhysicalCTETable struct {
 	IdForStorage int
 }
 
+// ExplainInfo overrides the ExplainInfo
+func (p *PhysicalCTETable) ExplainInfo() string {
+	return "Scan on CTE_" + strconv.Itoa(p.IdForStorage)
+}
+
 // CTEDefinition is CTE definition for explain.
 type CTEDefinition PhysicalCTE
 
