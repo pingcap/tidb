@@ -411,15 +411,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeTiny,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-<<<<<<< HEAD
-		//mysql.TypeBit          <16>-<244>
-		mysql.TypeVarchar,
-		//mysql.TypeJSON
-=======
 		// mysql.TypeBit          <16>-<244>
 		mysql.TypeLonglong,
 		// mysql.TypeJSON
->>>>>>> a9a579575... types: fix type merge about bit type (#23857)
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -450,15 +444,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeShort,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-<<<<<<< HEAD
-		//mysql.TypeBit          <16>-<244>
-		mysql.TypeVarchar,
-		//mysql.TypeJSON
-=======
 		// mysql.TypeBit          <16>-<244>
 		mysql.TypeLonglong,
 		// mysql.TypeJSON
->>>>>>> a9a579575... types: fix type merge about bit type (#23857)
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -489,15 +477,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeLong,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-<<<<<<< HEAD
-		//mysql.TypeBit          <16>-<244>
-		mysql.TypeVarchar,
-		//mysql.TypeJSON
-=======
 		// mysql.TypeBit          <16>-<244>
 		mysql.TypeLonglong,
 		// mysql.TypeJSON
->>>>>>> a9a579575... types: fix type merge about bit type (#23857)
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -528,15 +510,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeFloat,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-<<<<<<< HEAD
-		//mysql.TypeBit          <16>-<244>
-		mysql.TypeVarchar,
-		//mysql.TypeJSON
-=======
 		// mysql.TypeBit          <16>-<244>
 		mysql.TypeDouble,
 		// mysql.TypeJSON
->>>>>>> a9a579575... types: fix type merge about bit type (#23857)
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeDouble, mysql.TypeVarchar,
@@ -567,15 +543,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeDouble,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-<<<<<<< HEAD
-		//mysql.TypeBit          <16>-<244>
-		mysql.TypeVarchar,
-		//mysql.TypeJSON
-=======
 		// mysql.TypeBit          <16>-<244>
 		mysql.TypeDouble,
 		// mysql.TypeJSON
->>>>>>> a9a579575... types: fix type merge about bit type (#23857)
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeDouble, mysql.TypeVarchar,
@@ -672,15 +642,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeLonglong,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-<<<<<<< HEAD
-		//mysql.TypeBit          <16>-<244>
-		mysql.TypeVarchar,
-		//mysql.TypeJSON
-=======
 		// mysql.TypeBit          <16>-<244>
 		mysql.TypeLonglong,
 		// mysql.TypeJSON
->>>>>>> a9a579575... types: fix type merge about bit type (#23857)
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -711,15 +675,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeInt24,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-<<<<<<< HEAD
-		//mysql.TypeBit          <16>-<244>
-		mysql.TypeVarchar,
-		//mysql.TypeJSON
-=======
 		// mysql.TypeBit          <16>-<244>
 		mysql.TypeLonglong,
 		// mysql.TypeJSON
->>>>>>> a9a579575... types: fix type merge about bit type (#23857)
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal    mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -849,15 +807,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeYear,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-<<<<<<< HEAD
-		//mysql.TypeBit          <16>-<244>
-		mysql.TypeVarchar,
-		//mysql.TypeJSON
-=======
 		// mysql.TypeBit          <16>-<244>
 		mysql.TypeLonglong,
 		// mysql.TypeJSON
->>>>>>> a9a579575... types: fix type merge about bit type (#23857)
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -938,23 +890,6 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 	},
 	/* mysql.TypeBit -> */
 	{
-<<<<<<< HEAD
-		//mysql.TypeDecimal      mysql.TypeTiny
-		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
-		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
-		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
-		mysql.TypeBit, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
-		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
-		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
-		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
-=======
 		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeLonglong,
 		// mysql.TypeShort        mysql.TypeLong
@@ -970,21 +905,14 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeLonglong,
 		// mysql.TypeNewDate      mysql.TypeVarchar
->>>>>>> a9a579575... types: fix type merge about bit type (#23857)
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeBit          <16>-<244>
 		mysql.TypeBit,
 		//mysql.TypeJSON
 		mysql.TypeVarchar,
-<<<<<<< HEAD
-		//mysql.TypeNewDecimal   mysql.TypeEnum
-		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
-=======
 		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
 		// mysql.TypeSet          mysql.TypeTinyBlob
->>>>>>> a9a579575... types: fix type merge about bit type (#23857)
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
 		//mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
@@ -1044,15 +972,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeNewDecimal,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-<<<<<<< HEAD
-		//mysql.TypeBit          <16>-<244>
-		mysql.TypeVarchar,
-		//mysql.TypeJSON
-=======
 		// mysql.TypeBit          <16>-<244>
 		mysql.TypeNewDecimal,
 		// mysql.TypeJSON
->>>>>>> a9a579575... types: fix type merge about bit type (#23857)
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
