@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -476,9 +475,7 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 	}
 	for _, v := range mysql.AllGlobalPrivs {
 		if v == priv.Priv {
-			ErrWrongUsage := dbterror.ClassOptimizer.NewStd(mysql.ErrWrongUsage)
-			err := ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
-			return err
+			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
 		}
 	}
 	dbName := e.Level.DBName
