@@ -4293,25 +4293,7 @@ func (s *testTxnStateSuite) TestBasic(c *C) {
 	c.Assert(info, IsNil)
 }
 
-func (s *testTxnStateSuite) TestBlocked(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("insert into t(a) values (1);")
-	tk.MustExec("begin pessimistic;")
-	tk.MustExec("select * from t where a = 1 for update;")
-	go func() {
-		tk2.MustExec("begin pessimistic")
-		tk2.MustExec("select * from t where a = 1 for update;")
-		tk2.MustExec("commit;")
-	}()
-	time.Sleep(200 * time.Millisecond)
-	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnLockWaiting)
-	c.Assert(tk2.Se.TxnInfo().BlockStartTime, NotNil)
-	tk.MustExec("commit;")
-}
-
-func (s *testTxnStateSuite) TestLenAndSize(c *C) {
+func (s *testTxnStateSuite) TestEntriesCountAndSize(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("begin pessimistic;")
@@ -4324,4 +4306,55 @@ func (s *testTxnStateSuite) TestLenAndSize(c *C) {
 	c.Assert(info.EntriesCount, Equals, int64(2))
 	c.Assert(info.EntriesSize, Equals, int64(58))
 	tk.MustExec("commit;")
+}
+
+func (s *testTxnStateSuite) TestBlocked(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1);")
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("select * from t where a = 1 for update;")
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("select * from t where a = 1 for update;")
+		tk2.MustExec("commit;")
+	}()
+	time.Sleep(100 * time.Millisecond)
+	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnLockWaiting)
+	c.Assert(tk2.Se.TxnInfo().BlockStartTime, NotNil)
+	tk.MustExec("commit;")
+}
+
+func (s *testTxnStateSuite) TestCommitting(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1), (2);")
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("select * from t where a = 1 for update;")
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		c.Assert(tk2.Se.TxnInfo(), NotNil)
+		tk2.MustExec("select * from t where a = 2 for update;")
+		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)")
+		tk2.MustExec("commit;")
+	}()
+	time.Sleep(100 * time.Millisecond)
+	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnCommitting)
+	tk.MustExec("commit;")
+}
+
+func (s *testTxnStateSuite) TestRollbacking(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1), (2);")
+	go func() {
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into t(a) values (3);")
+		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "sleep(200)")
+		tk.MustExec("rollback;")
+	}()
+	time.Sleep(100 * time.Millisecond)
+	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
 }

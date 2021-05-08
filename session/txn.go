@@ -255,6 +255,8 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 
 	atomic.StoreInt32(&txn.State, txninfo.TxnCommitting)
 
+	failpoint.Inject("mockSlowCommit", func(_ failpoint.Value) {})
+
 	// mockCommitError8942 is used for PR #8942.
 	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
 		if val.(bool) {
@@ -284,6 +286,8 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 func (txn *LazyTxn) Rollback() error {
 	defer txn.reset()
 	txn.State = txninfo.TxnRollingBack
+	// mockSlowRollback is used to mock a rollback which takes a long time
+	failpoint.Inject("mockSlowRollback", func(_ failpoint.Value) {})
 	return txn.Transaction.Rollback()
 }
 
