@@ -34,9 +34,9 @@ explain with recursive cte_40 (col_173,col_174,col_175,col_176,col_177) AS ( sel
 explain with recursive cte_42 (col_180,col_181,col_182) AS ( select 1, cast("2" as char(20)),3 from tbl_0 UNION DISTINCT select col_180 + 1,col_181 + 1,concat(col_182, 1) from cte_42 where col_180 < 5 ) select * from cte_42 as cte_as_44 order by cte_as_44.col_180,cte_as_44.col_182,cte_as_44.col_181 ;
 explain with recursive cte_43 (col_183,col_184,col_185,col_186,col_187) AS ( select 1, 2,cast("3" as char(20)),cast("4" as char(20)),col_4 from tbl_0 UNION DISTINCT select col_183 + 1,concat(col_184, 1),col_185 + 1,col_186 + 1,col_187 + 1 from cte_43 where col_183 < 5 ) select * from cte_43 as cte_as_45 order by cte_as_45.col_183,cte_as_45.col_186,cte_as_45.col_184,cte_as_45.col_185,cte_as_45.col_187 ;
 explain with recursive cte1 (c1) as (with recursive cte2 (b) as (select 1 union select b + 1 from cte2 where b < 100) select * from cte2 union select c1 + 1 from cte1 where c1 < 10) select * from cte1 where c1 < 10;
-explain with cte (a) as (select 1) select * from cte
-explain with recursive cte (a) as (select 1 union select a + 1 from cte where a < 10) select * from cte
-explain with recursive cte (a) as (select 1 union select a + 1 from cte where a < 10) select * from cte t1, cte t2
+explain with cte (a) as (select 1) select * from cte;
+explain with recursive cte (a) as (select 1 union select a + 1 from cte where a < 10) select * from cte;
+explain with recursive cte (a) as (select 1 union select a + 1 from cte where a < 10) select * from cte t1, cte t2;
 explain with recursive cte1 (c1) as (select 1 union select c1 + 1 from cte1 where c1 < 10), cte2 (c2) as (select 1 union select c2 + 1 from cte2 where c2 < 10) select * from cte2, cte1;
 explain with recursive cte1 (c1) as (with recursive cte2 (a) as (select 1 union select a + 1 from cte2 where a < 5) select * from cte2 union select c1 + 1 from cte1 where c1 < 10) select * from cte1;
 explain with recursive cte (c1) as (select 1 union select c1 + 1 from cte where c1 < 10) select * from cte t1, cte t2;
