@@ -752,6 +752,10 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		return invalidTask
 	}
 	if p.mppShuffleJoin {
+		// protection check is case of some bugs
+		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
+			return invalidTask
+		}
 		lTask, rTask = p.convertPartitionKeysIfNeed(lTask, rTask)
 	}
 	p.SetChildren(lTask.plan(), rTask.plan())
