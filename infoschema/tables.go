@@ -161,6 +161,8 @@ const (
 	TableClientErrorsSummaryByUser = "CLIENT_ERRORS_SUMMARY_BY_USER"
 	// TableClientErrorsSummaryByHost is the string constant of client errors table.
 	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
+	// TableDeadLock is the string constatnt of deadlock table.
+	TableDeadLock = "DEAD_LOCK"
 )
 
 var tableIDMap = map[string]int64{
@@ -233,6 +235,8 @@ var tableIDMap = map[string]int64{
 	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
 	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
 	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
+	TableDeadLock:                           autoid.InformationSchemaDBID + 72,
+	ClusterTableDeadLock:                    autoid.InformationSchemaDBID + 73,
 }
 
 type columnInfo struct {
@@ -1332,6 +1336,16 @@ var tableClientErrorsSummaryByHostCols = []columnInfo{
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
 }
 
+var tableDeadLockCols = []columnInfo{
+	{name: "DEADLOCK_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "OCCUR_TIME", tp: mysql.TypeTimestamp, size: 26},
+	{name: "TRY_LOCK_TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "CURRENT_SQL_DIGEST", tp: mysql.TypeVarchar, size: 64},
+	{name: "KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+	{name: "SQLS", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+	{name: "TRX_HOLDING_LOCK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1701,6 +1715,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
+	TableDeadLock:                           tableDeadLockCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

@@ -551,8 +551,13 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput .
 			keyMayBeLocked := !(tikverr.IsErrWriteConflict(err) || tikverr.IsErrKeyExist(err))
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
+				dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock)
+				if ok && lockCtx.OnDeadlock != nil {
+					// Call OnDeadlock before pessimistic rollback.
+					lockCtx.OnDeadlock(dl)
+				}
 				wg := txn.asyncPessimisticRollback(ctx, keys)
-				if dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
+				if ok {
 					logutil.Logger(ctx).Debug("deadlock error received", zap.Uint64("startTS", txn.startTS), zap.Stringer("deadlockInfo", dl))
 					if hashInKeys(dl.DeadlockKeyHash, keys) {
 						dl.IsRetryable = true

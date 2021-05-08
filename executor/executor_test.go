@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -8133,5 +8134,40 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 	c.Assert(err.Error(), Equals, "mock SelectionExec.baseExecutor.Open returned error")
 	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError")
 	c.Assert(err, IsNil)
+}
 
+func (s *testSerialSuite) TestDeadlockTable(c *C) {
+	deadlockhistory.GlobalDeadlockHistory.Clear()
+	defer deadlockhistory.GlobalDeadlockHistory.Clear()
+
+	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 0, time.UTC)
+	rec := &deadlockhistory.DeadlockRecord{
+		OccurTime: occurTime,
+		WaitChain: []deadlockhistory.WaitChainItem{
+			{
+				TryLockTxn:     101,
+				SQLDigest:      "aabbccdd",
+				Key:            []byte("k1"),
+				SQLs:           nil,
+				TxnHoldingLock: 102,
+			},
+			{
+				TryLockTxn:     102,
+				SQLDigest:      "ddccbbaa",
+				Key:            []byte("k2"),
+				SQLs:           nil,
+				TxnHoldingLock: 101,
+			},
+		},
+	}
+	deadlockhistory.GlobalDeadlockHistory.Push(rec)
+	// `Push` sets the record's ID
+	//id := strconv.FormatUint(rec.ID, 10)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from information_schema.dead_lock").Check(
+		testutil.RowsWithSep("/",
+			"1/2021-05-10 01:02:03/101/aabbccdd/6B31/<nil>/102",
+			"1/2021-05-10 01:02:03/102/ddccbbaa/6B32/<nil>/101",
+		))
 }
