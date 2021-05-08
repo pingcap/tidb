@@ -1248,7 +1248,7 @@ func CheckUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, 
 		return err
 	}
 	shouldSkipIgnoreCheck := func(idx table.Index) bool {
-		if idx.Meta().State == model.StateDeleteOnly || idx.Meta().State == model.StateDeleteReorganization || !idx.Meta().Unique {
+		if !IsIndexWritable(idx) || !idx.Meta().Unique {
 			return true
 		}
 		for _, c := range idx.Meta().Columns {
