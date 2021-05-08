@@ -89,6 +89,10 @@ func (s *testSuite3) TestGrantDBScope(c *C) {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.DB WHERE User=\"testDB1\" and host=\"localhost\" and db=\"test\";", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
 	}
+
+	// Grant in wrong scope.
+	_, err := tk.Exec(` grant create user on test.* to 'testDB1'@'localhost';`)
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongUsage), IsTrue)
 }
 
 func (s *testSuite3) TestWithGrantOption(c *C) {
