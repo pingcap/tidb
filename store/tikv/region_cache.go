@@ -984,9 +984,13 @@ func (c *RegionCache) removeVersionFromCache(oldVer RegionVerID, regionID uint64
 	delete(c.mu.regions, oldVer)
 	for i, ver := range c.mu.versions[regionID] {
 		if ver.Equals(oldVer) {
-			c.mu.versions[regionID] = append(
-				c.mu.versions[regionID][:i],
-				c.mu.versions[regionID][i+1:]...)
+			if len(c.mu.versions[regionID]) == 1 {
+				delete(c.mu.versions, regionID)
+			} else {
+				c.mu.versions[regionID] = append(
+					c.mu.versions[regionID][:i],
+					c.mu.versions[regionID][i+1:]...)
+			}
 			break
 		}
 	}
