@@ -69,23 +69,21 @@ func (s *testRegionCacheSuite) storeAddr(id uint64) string {
 func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	ts := time.Now().Unix()
 	c.Assert(validRegions(s.cache.mu.regions, ts), Equals, len)
-	c.Assert(validRegionsSearchedByVersions(s.cache.mu.versions, s.cache.mu.regions, ts), Equals, len)
+	c.Assert(validRegionsSearchedByVersions(s.cache.mu.latestVersions, s.cache.mu.regions, ts), Equals, len)
 	c.Assert(validRegionsInBtree(s.cache.mu.sorted, ts), Equals, len)
 }
 
 func validRegionsSearchedByVersions(
-	versions map[uint64][]RegionVerID,
+	versions map[uint64]RegionVerID,
 	regions map[RegionVerID]*Region,
 	ts int64,
 ) (count int) {
-	for _, vers := range versions {
-		for _, ver := range vers {
-			region, ok := regions[ver]
-			if !ok || !region.checkRegionCacheTTL(ts) {
-				continue
-			}
-			count++
+	for _, ver := range versions {
+		region, ok := regions[ver]
+		if !ok || !region.checkRegionCacheTTL(ts) {
+			continue
 		}
+		count++
 	}
 	return
 }

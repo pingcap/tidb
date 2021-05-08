@@ -275,10 +275,10 @@ type RegionCache struct {
 	enableForwarding bool
 
 	mu struct {
-		sync.RWMutex                          // mutex protect cached region
-		regions      map[RegionVerID]*Region  // cached regions are organized as regionVerID to region ref mapping
-		versions     map[uint64][]RegionVerID // cache regionID to RegionVerID mapping
-		sorted       *btree.BTree             // cache regions are organized as sorted key to region ref mapping
+		sync.RWMutex                           // mutex protect cached region
+		regions        map[RegionVerID]*Region // cached regions are organized as regionVerID to region ref mapping
+		latestVersions map[uint64]RegionVerID  // cache the map from regionID to its latest RegionVerID
+		sorted         *btree.BTree            // cache regions are organized as sorted key to region ref mapping
 	}
 	storeMu struct {
 		sync.RWMutex
@@ -300,7 +300,7 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 		pdClient: pdClient,
 	}
 	c.mu.regions = make(map[RegionVerID]*Region)
-	c.mu.versions = make(map[uint64][]RegionVerID)
+	c.mu.latestVersions = make(map[uint64]RegionVerID)
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
@@ -982,17 +982,8 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 // both c.mu.regions and c.mu.versions. Note this function is not thread-safe.
 func (c *RegionCache) removeVersionFromCache(oldVer RegionVerID, regionID uint64) {
 	delete(c.mu.regions, oldVer)
-	for i, ver := range c.mu.versions[regionID] {
-		if ver.Equals(oldVer) {
-			if len(c.mu.versions[regionID]) == 1 {
-				delete(c.mu.versions, regionID)
-			} else {
-				c.mu.versions[regionID] = append(
-					c.mu.versions[regionID][:i],
-					c.mu.versions[regionID][i+1:]...)
-			}
-			break
-		}
+	if ver, ok := c.mu.latestVersions[regionID]; ok && ver.Equals(oldVer) {
+		delete(c.mu.latestVersions, regionID)
 	}
 }
 
@@ -1018,7 +1009,11 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 		c.removeVersionFromCache(oldRegion.VerID(), cachedRegion.VerID().id)
 	}
 	c.mu.regions[cachedRegion.VerID()] = cachedRegion
-	c.mu.versions[cachedRegion.VerID().id] = append(c.mu.versions[cachedRegion.VerID().id], cachedRegion.VerID())
+	newVer := cachedRegion.VerID()
+	latest, ok := c.mu.latestVersions[cachedRegion.VerID().id]
+	if !ok || latest.GetVer() < newVer.GetVer() || latest.GetConfVer() < newVer.GetConfVer() {
+		c.mu.latestVersions[cachedRegion.VerID().id] = newVer
+	}
 }
 
 // searchCachedRegion finds a region from cache by key. Like `getCachedRegion`,
@@ -1053,41 +1048,26 @@ func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 // `getCachedRegion`, it should be called with c.mu.RLock(), and the returned
 // Region should not be used after c.mu is RUnlock().
 func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
-	var newestRegion *Region
 	ts := time.Now().Unix()
-	for _, v := range c.mu.versions[regionID] {
-		r, ok := c.mu.regions[v]
-		if !ok {
-			// should not happen
-			logutil.BgLogger().Warn("region version not found",
-				zap.Uint64("regionID", regionID), zap.Stringer("version", &v))
-			continue
-		}
-		if v.id == regionID {
-			lastAccess := atomic.LoadInt64(&r.lastAccess)
-			if ts-lastAccess > RegionCacheTTLSec {
-				continue
-			}
-			if newestRegion == nil {
-				newestRegion = r
-				continue
-			}
-			nv := newestRegion.VerID()
-			cv := r.VerID()
-			if nv.GetConfVer() < cv.GetConfVer() {
-				newestRegion = r
-				continue
-			}
-			if nv.GetVer() < cv.GetVer() {
-				newestRegion = r
-				continue
-			}
-		}
+	ver, ok := c.mu.latestVersions[regionID]
+	if !ok {
+		return nil
 	}
-	if newestRegion != nil {
-		atomic.CompareAndSwapInt64(&newestRegion.lastAccess, atomic.LoadInt64(&newestRegion.lastAccess), ts)
+	latestRegion, ok := c.mu.regions[ver]
+	if !ok {
+		// should not happen
+		logutil.BgLogger().Warn("region version not found",
+			zap.Uint64("regionID", regionID), zap.Stringer("version", &ver))
+		return nil
 	}
-	return newestRegion
+	lastAccess := atomic.LoadInt64(&latestRegion.lastAccess)
+	if ts-lastAccess > RegionCacheTTLSec {
+		return nil
+	}
+	if latestRegion != nil {
+		atomic.CompareAndSwapInt64(&latestRegion.lastAccess, atomic.LoadInt64(&latestRegion.lastAccess), ts)
+	}
+	return latestRegion
 }
 
 // TODO: revise it by get store by closure.
