@@ -39,7 +39,8 @@ import (
 // tikv error instance
 var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
-	ErrTiKVServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	ErrTiKVServerTimeout    = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	ErrTiFlashServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiFlashServerTimeout)
 	// ErrGCTooEarly is the error that GC life time is shorter than transaction duration
 	ErrGCTooEarly = dbterror.ClassTiKV.NewStd(errno.ErrGCTooEarly)
 	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
@@ -211,6 +212,10 @@ func ToTiDBErr(err error) error {
 			return ErrPDServerTimeout
 		}
 		return ErrPDServerTimeout.GenWithStackByArgs(e.Error())
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrTiFlashServerTimeout) {
+		return ErrTiFlashServerTimeout
 	}
 
 	if errors.ErrorEqual(err, tikverr.ErrTiKVServerBusy) {
