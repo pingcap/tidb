@@ -42,6 +42,8 @@ var (
 	ErrTiKVStaleCommand = errors.New("tikv stale command")
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
 	ErrTiKVMaxTimestampNotSynced = errors.New("tikv max timestamp not synced")
+	// ErrLockAcquireFailAndNoWaitSet is the error that acquire the lock failed while no wait is setted.
+	ErrLockAcquireFailAndNoWaitSet = errors.New("lock acquired failed and no wait is setted")
 	// ErrResolveLockTimeout is the error that resolve lock timeout.
 	ErrResolveLockTimeout = errors.New("resolve lock timeout")
 	// ErrTiKVServerBusy is the error when tikv server is busy.
@@ -57,11 +59,10 @@ const MismatchClusterID = "mismatch cluster id"
 
 // error instances.
 var (
-	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
-	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(CodeLockAcquireFailAndNoWaitSet)
-	ErrLockWaitTimeout             = dbterror.ClassTiKV.NewStd(CodeLockWaitTimeout)
-	ErrTokenLimit                  = dbterror.ClassTiKV.NewStd(CodeTiKVStoreLimit)
-	ErrUnknown                     = dbterror.ClassTiKV.NewStd(CodeUnknown)
+	ErrQueryInterrupted = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
+	ErrLockWaitTimeout  = dbterror.ClassTiKV.NewStd(CodeLockWaitTimeout)
+	ErrTokenLimit       = dbterror.ClassTiKV.NewStd(CodeTiKVStoreLimit)
+	ErrUnknown          = dbterror.ClassTiKV.NewStd(CodeUnknown)
 )
 
 // Registers error returned from TiKV.
