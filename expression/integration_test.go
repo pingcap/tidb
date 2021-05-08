@@ -3733,6 +3733,17 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows("0"))
 }
 
+// #23157: make sure if Nullif expr is correct combined with IsNull expr.
+func (s *testIntegrationSuite) TestNullifWithIsNull(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null);")
+	tk.MustExec("insert into t values(1),(2);")
+	rows := tk.MustQuery("select * from t where nullif(a,a) is null;")
+	rows.Check(testkit.Rows("1", "2"))
+}
+
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -6086,6 +6097,15 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustQuery("select * from t_ci where a='A'").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from t_ci where a='a   '").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from t_ci where a='a                    '").Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c set('A', 'B') collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t values('a');")
+	tk.MustExec("insert into t values('B');")
+	tk.MustQuery("select c from t where c = 'a';").Check(testkit.Rows("A"))
+	tk.MustQuery("select c from t where c = 'A';").Check(testkit.Rows("A"))
+	tk.MustQuery("select c from t where c = 'b';").Check(testkit.Rows("B"))
+	tk.MustQuery("select c from t where c = 'B';").Check(testkit.Rows("B"))
 }
 
 func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
@@ -8049,6 +8069,7 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustQuery("select collation(concat(1 collate `binary`));").Check(testkit.Rows("binary"))
 	tk.MustQuery("select coercibility(concat(1 collate `binary`));").Check(testkit.Rows("0"))
@@ -8059,4 +8080,33 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	tk.MustQuery("select collation(1);").Check(testkit.Rows("binary"))
 	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
 	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime)")
+	tk.MustExec("insert into t values ('2020-02-02')")
+	tk.MustQuery("select collation(concat(unix_timestamp(a))) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select coercibility(concat(unix_timestamp(a))) from t;").Check(testkit.Rows("4"))
+}
+
+func (s *testIntegrationSuite) TestApproximatePercentile(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bit(10))")
+	tk.MustExec("insert into t values(b'1111')")
+	tk.MustQuery("select approx_percentile(a, 10) from t").Check(testkit.Rows("<nil>"))
+}
+
+func (s *testIntegrationSuite) TestIssue23889(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_decimal,test_t;")
+	tk.MustExec("create table test_decimal(col_decimal decimal(10,0));")
+	tk.MustExec("insert into test_decimal values(null),(8);")
+	tk.MustExec("create table test_t(a int(11), b decimal(32,0));")
+	tk.MustExec("insert into test_t values(1,4),(2,4),(5,4),(7,4),(9,4);")
+
+	tk.MustQuery("SELECT ( test_decimal . `col_decimal` , test_decimal . `col_decimal` )  IN ( select * from test_t ) as field1 FROM  test_decimal;").Check(
+		testkit.Rows("<nil>", "0"))
 }
