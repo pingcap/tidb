@@ -15,6 +15,7 @@ package variable
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -167,4 +168,153 @@ func (*testSysVarSuite) TestEnumValidation(c *C) {
 	val, err = sv.Validate(vars, "2", ScopeSession)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "AUTO")
+}
+
+func (*testSysVarSuite) TestSynonyms(c *C) {
+	sysVar := GetSysVar(TxnIsolation)
+	c.Assert(sysVar, NotNil)
+
+	vars := NewSessionVars()
+
+	// It does not permit SERIALIZABLE by default.
+	_, err := sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+
+	// Enable Skip isolation check
+	c.Assert(GetSysVar(TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"), IsNil)
+
+	// Serializable is now permitted.
+	_, err = sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
+	c.Assert(err, IsNil)
+
+	// Currently TiDB returns a warning because of SERIALIZABLE, but in future
+	// it may also return a warning because TxnIsolation is deprecated.
+
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	c.Assert(warn.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+
+	c.Assert(sysVar.SetSessionFromHook(vars, "SERIALIZABLE"), IsNil)
+
+	// When we set TxnIsolation, it also updates TransactionIsolation.
+	c.Assert(vars.systems[TxnIsolation], Equals, "SERIALIZABLE")
+	c.Assert(vars.systems[TransactionIsolation], Equals, vars.systems[TxnIsolation])
+}
+
+func (*testSysVarSuite) TestDeprecation(c *C) {
+	sysVar := GetSysVar(TiDBIndexLookupConcurrency)
+	c.Assert(sysVar, NotNil)
+
+	vars := NewSessionVars()
+
+	_, err := sysVar.Validate(vars, "1234", ScopeSession)
+	c.Assert(err, IsNil)
+
+	// There was no error but there is a deprecation warning.
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	c.Assert(warn.Error(), Equals, "[variable:1287]'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead")
+}
+
+func (*testSysVarSuite) TestScope(c *C) {
+	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsTrue)
+	c.Assert(sv.HasGlobalScope(), IsTrue)
+
+	sv = SysVar{Scope: ScopeGlobal, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsFalse)
+	c.Assert(sv.HasGlobalScope(), IsTrue)
+
+	sv = SysVar{Scope: ScopeNone, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsFalse)
+	c.Assert(sv.HasGlobalScope(), IsFalse)
+}
+
+func (*testSysVarSuite) TestBuiltInCase(c *C) {
+	// All Sysvars should have lower case names.
+	// This tests builtins.
+	for name := range GetSysVars() {
+		c.Assert(name, Equals, strings.ToLower(name))
+	}
+}
+
+func (*testSysVarSuite) TestSQLSelectLimit(c *C) {
+	sv := GetSysVar(SQLSelectLimit)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	c.Assert(err, IsNil) // it has autoconvert out of range.
+	c.Assert(val, Equals, "0")
+
+	val, err = sv.Validate(vars, "9999", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "9999")
+
+	c.Assert(sv.SetSessionFromHook(vars, "9999"), IsNil) // sets
+	c.Assert(vars.SelectLimit, Equals, uint64(9999))
+}
+
+func (*testSysVarSuite) TestSQLModeVar(c *C) {
+	sv := GetSysVar(SQLModeVar)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "strict_trans_tabLES  ", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "STRICT_TRANS_TABLES")
+
+	_, err = sv.Validate(vars, "strict_trans_tabLES,nonsense_option", ScopeSession)
+	c.Assert(err.Error(), Equals, "ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'NONSENSE_OPTION'")
+
+	val, err = sv.Validate(vars, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION")
+
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil) // sets to strict from above
+	c.Assert(vars.StrictSQLMode, IsTrue)
+
+	sqlMode, err := mysql.GetSQLMode(val)
+	c.Assert(err, IsNil)
+	c.Assert(vars.SQLMode, Equals, sqlMode)
+
+	// Set it to non strict.
+	val, err = sv.Validate(vars, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION")
+
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil) // sets to non-strict from above
+	c.Assert(vars.StrictSQLMode, IsFalse)
+	sqlMode, err = mysql.GetSQLMode(val)
+	c.Assert(err, IsNil)
+	c.Assert(vars.SQLMode, Equals, sqlMode)
+}
+
+func (*testSysVarSuite) TestMaxExecutionTime(c *C) {
+	sv := GetSysVar(MaxExecutionTime)
+	vars := NewSessionVars()
+
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	c.Assert(err, IsNil) // it has autoconvert out of range.
+	c.Assert(val, Equals, "0")
+
+	val, err = sv.Validate(vars, "99999", ScopeSession)
+	c.Assert(err, IsNil) // it has autoconvert out of range.
+	c.Assert(val, Equals, "99999")
+
+	c.Assert(sv.SetSessionFromHook(vars, "99999"), IsNil) // sets
+	c.Assert(vars.MaxExecutionTime, Equals, uint64(99999))
+}
+
+func (*testSysVarSuite) TestCollationServer(c *C) {
+	sv := GetSysVar(CollationServer)
+	vars := NewSessionVars()
+
+	val, err := sv.Validate(vars, "LATIN1_bin", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "latin1_bin") // test normalization
+
+	_, err = sv.Validate(vars, "BOGUSCOLLation", ScopeSession)
+	c.Assert(err.Error(), Equals, "[ddl:1273]Unknown collation: 'BOGUSCOLLation'")
+
+	c.Assert(sv.SetSessionFromHook(vars, "latin1_bin"), IsNil)
+	c.Assert(vars.systems[CharacterSetServer], Equals, "latin1") // check it also changes charset.
+
+	c.Assert(sv.SetSessionFromHook(vars, "utf8mb4_bin"), IsNil)
+	c.Assert(vars.systems[CharacterSetServer], Equals, "utf8mb4") // check it also changes charset.
 }
