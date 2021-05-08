@@ -260,7 +260,7 @@ func (s *testPointGetSuite) TestIssue21447(c *C) {
 	tk1.MustExec("commit")
 }
 
-func (s *testSuite11) TestIssue23553(c *C) {
+func (s *testPointGetSuite) TestIssue23553(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists tt`)
