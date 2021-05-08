@@ -92,7 +92,7 @@ func (s *testSuite3) TestGrantDBScope(c *C) {
 
 	// Grant in wrong scope.
 	_, err := tk.Exec(` grant create user on test.* to 'testDB1'@'localhost';`)
-	c.Assert(terror.ErrorEqual(err, executor.ErrWrongUsage), IsTrue)
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")), IsTrue)
 }
 
 func (s *testSuite3) TestWithGrantOption(c *C) {
