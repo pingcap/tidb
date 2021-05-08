@@ -34,26 +34,19 @@ func (s *testConfigSuite) TestParsePath(c *C) {
 }
 
 func (s *testConfigSuite) TestTxnScopeValue(c *C) {
-	var err error
-	err = failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
-	c.Assert(err, IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`), IsNil)
 	isGlobal, v := GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsFalse)
 	c.Assert(v, Equals, "bj")
-	err = failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
-	c.Assert(err, IsNil)
-	err = failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("")`)
-	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("")`), IsNil)
 	isGlobal, v = GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsTrue)
 	c.Assert(v, Equals, "global")
-	err = failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
-	c.Assert(err, IsNil)
-	err = failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("global")`)
-	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("global")`), IsNil)
 	isGlobal, v = GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsFalse)
 	c.Assert(v, Equals, "global")
-	err = failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
-	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope"), IsNil)
 }
