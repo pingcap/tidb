@@ -30,7 +30,7 @@ import (
 )
 
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
-	if ctx.GetSessionVars().AllowMPPExecution == 0 {
+	if ctx.GetSessionVars().AllowMPPExecution == "OFF" {
 		return false
 	}
 	_, ok := tr.GetTablePlan().(*plannercore.PhysicalExchangeSender)
