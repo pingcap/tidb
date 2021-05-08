@@ -3652,7 +3652,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				if len(asName.String()) > 0 {
 					p.cteAsName = *asName
 					var on types.NameSlice
-					for _, name := range p.OutputNames() {
+					for i, name := range p.OutputNames() {
 						cpOn := *name
 						on = append(on, &cpOn)
 						on[i].TblName = *asName
