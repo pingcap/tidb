@@ -38,6 +38,8 @@ import (
 
 // tikv error instance
 var (
+	// ErrTokenLimit is the error that token is up to the limit.
+	ErrTokenLimit = dbterror.ClassTiKV.NewStd(errno.ErrTiKVStoreLimit)
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout    = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
 	ErrTiFlashServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiFlashServerTimeout)
@@ -244,6 +246,10 @@ func ToTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrRegionUnavailable) {
 		return ErrRegionUnavailable
+	}
+
+	if e, ok := err.(*tikverr.ErrTokenLimit); ok {
+		return ErrTokenLimit.GenWithStackByArgs(e.StoreID)
 	}
 
 	return errors.Trace(originErr)

@@ -23,7 +23,4 @@ const (
 	CodeDivisionByZero              = 1365
 	CodeDataOutOfRange              = 1690
 	CodeLockAcquireFailAndNoWaitSet = 3572
-
-	// TiKV/PD/TiFlash errors.
-	CodeTiKVStoreLimit = 9008
 )
