@@ -324,6 +324,84 @@ func (s *partitionTableSuite) TestBatchGetandPointGet(c *C) {
 		tk.MustQuery(queryList).Check(testkit.Rows(fmt.Sprintf("%v", strings.Join(points, ","))))
 	}
 }
+  
+func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+  
+  tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_global_stats")
+	tk.MustExec("use test_global_stats")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// hash and range and list partition
+	tk.MustExec("create table thash(a int, b int, key(a)) partition by hash(a) partitions 4")
+	tk.MustExec(`create table trange(a int, b int, key(a)) partition by range(a) (
+		partition p0 values less than (200),
+		partition p1 values less than (400),
+		partition p2 values less than (600),
+		partition p3 values less than (800),
+		partition p4 values less than (1001))`)
+	tk.MustExec(`create table tlist(a int, b int, key(a)) partition by list (a) (
+		partition p0 values in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
+		partition p0 values in (10, 11, 12, 13, 14, 15, 16, 17, 18, 19),
+		partition p0 values in (20, 21, 22, 23, 24, 25, 26, 27, 28, 29),
+		partition p0 values in (30, 31, 32, 33, 34, 35, 36, 37, 38, 39),
+		partition p0 values in (40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50))`)
+
+	// construct some special data distribution
+	vals := make([]string, 0, 1000)
+	listVals := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		if i < 10 {
+			// for hash and range partition, 1% of records are in [0, 100)
+			vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(100), rand.Intn(100)))
+			// for list partition, 1% of records are equal to 0
+			listVals = append(listVals, "(0, 0)")
+		} else {
+			vals = append(vals, fmt.Sprintf("(%v, %v)", 100+rand.Intn(900), 100+rand.Intn(900)))
+			listVals = append(listVals, fmt.Sprintf("(%v, %v)", 1+rand.Intn(50), 1+rand.Intn(50)))
+		}
+	}
+	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
+
+	// before analyzing, the planner will choose TableScan to access the 1% of records
+	c.Assert(tk.HasPlan("select * from thash where a<100", "TableFullScan"), IsTrue)
+	c.Assert(tk.HasPlan("select * from trange where a<100", "TableFullScan"), IsTrue)
+	c.Assert(tk.HasPlan("select * from tlist where a<1", "TableFullScan"), IsTrue)
+
+	tk.MustExec("analyze table thash")
+	tk.MustExec("analyze table trange")
+	tk.MustExec("analyze table tlist")
+
+	// after analyzing, the planner will use the Index(a)
+	tk.MustIndexLookup("select * from thash where a<100")
+	tk.MustIndexLookup("select * from trange where a<100")
+	tk.MustIndexLookup("select * from tlist where a<1")
+
+	// create SQL bindings
+	tk.MustExec("create session binding for select * from thash where a<100 using select * from thash ignore index(a) where a<100")
+	tk.MustExec("create session binding for select * from trange where a<100 using select * from trange ignore index(a) where a<100")
+	tk.MustExec("create session binding for select * from tlist where a<100 using select * from tlist ignore index(a) where a<100")
+
+	// use TableScan again since the Index(a) is ignored
+	c.Assert(tk.HasPlan("select * from thash where a<100", "TableFullScan"), IsTrue)
+	c.Assert(tk.HasPlan("select * from trange where a<100", "TableFullScan"), IsTrue)
+	c.Assert(tk.HasPlan("select * from tlist where a<1", "TableFullScan"), IsTrue)
+
+	// drop SQL bindings
+	tk.MustExec("drop session binding for select * from thash where a<100")
+	tk.MustExec("drop session binding for select * from trange where a<100")
+	tk.MustExec("drop session binding for select * from tlist where a<100")
+
+	// use Index(a) again
+	tk.MustIndexLookup("select * from thash where a<100")
+	tk.MustIndexLookup("select * from trange where a<100")
+	tk.MustIndexLookup("select * from tlist where a<1")
+}
 
 func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
