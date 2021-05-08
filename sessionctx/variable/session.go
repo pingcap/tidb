@@ -491,11 +491,12 @@ type SessionVars struct {
 	AllowWriteRowID bool
 
 	// AllowBatchCop means if we should send batch coprocessor to TiFlash. Default value is 1, means to use batch cop in case of aggregation and join.
-	// If value is set to 2 , which means to force to send batch cop for any query. Value is set to 0 means never use batch cop.
+	// Value set to 2 means to force to send batch cop for any query. Value set to 0 means never use batch cop.
 	AllowBatchCop int
 
-	// AllowMPPExecution will prefer using mpp way to execute a query.
-	AllowMPPExecution bool
+	// AllowMPPExecution means if we should use mpp way to execute query. Default value is 1, means to be determined by the optimizer.
+	// Value set to 2 which means to use mpp whenever possible. Value set to 0 means never use mpp.
+	AllowMPPExecution int
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool

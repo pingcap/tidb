@@ -614,7 +614,7 @@ const (
 	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
-	DefTiDBAllowMPPExecution           = true
+	DefTiDBAllowMPPExecution           = 1
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
