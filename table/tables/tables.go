@@ -409,7 +409,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	}
 	memBuffer.Release(sh)
 	if shouldWriteBinlog(sctx, t.meta) {
-		if !t.meta.PKIsHandle {
+		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
 			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h.IntValue()))
 			binlogNewRow = append(binlogNewRow, types.NewIntDatum(h.IntValue()))
@@ -978,15 +978,16 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 }
 
 // GetChangingColVal gets the changing column value when executing "modify/change column" statement.
+// For statement like update-where, it will fetch the old row out and insert it into kv again.
+// Since update statement can see the writable columns, it is responsible for the casting relative column / get the fault value here.
+// old row : a-b-[nil]
+// new row : a-b-[a'/default]
+// Thus the writable new row is corresponding to Write-Only constraints.
 func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.Column, rowMap map[int64]types.Datum, defaultVals []types.Datum) (_ types.Datum, isDefaultVal bool, err error) {
 	relativeCol := cols[col.ChangeStateInfo.DependencyColumnOffset]
 	idxColumnVal, ok := rowMap[relativeCol.ID]
 	if ok {
-		// It needs cast values here when filling back column or index values in "modify/change column" statement.
-		if ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
-			return idxColumnVal, false, nil
-		}
-		idxColumnVal, err := table.CastValue(ctx, rowMap[relativeCol.ID], col.ColumnInfo, false, false)
+		idxColumnVal, err = table.CastValue(ctx, idxColumnVal, col.ColumnInfo, false, false)
 		// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
 		if err != nil {
 			return idxColumnVal, false, errors.Trace(err)
@@ -1029,7 +1030,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 			colIDs = append(colIDs, col.ID)
 		}
 		var binlogRow []types.Datum
-		if !t.meta.PKIsHandle {
+		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
 			colIDs = append(colIDs, model.ExtraHandleID)
 			binlogRow = make([]types.Datum, 0, len(r)+1)
 			binlogRow = append(binlogRow, r...)
@@ -1407,7 +1408,7 @@ func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
 	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}
-	return !ctx.GetSessionVars().InRestrictedSQL && !tblInfo.IsCommonHandle
+	return !ctx.GetSessionVars().InRestrictedSQL
 }
 
 func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
