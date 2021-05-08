@@ -1427,6 +1427,10 @@ func (d *Datum) convertToMysqlFloatYear(sc *stmtctx.StatementContext, target *Fi
 		y = float64(d.GetMysqlTime().Year())
 	case KindMysqlDuration:
 		y = float64(time.Now().Year())
+	case KindNull:
+		// if datum is NULL, we should keep it as it is, instead of setting it to zero or any other value.
+		ret = *d
+		return ret, nil
 	default:
 		ret, err = d.convertToFloat(sc, NewFieldType(mysql.TypeDouble))
 		if err != nil {
