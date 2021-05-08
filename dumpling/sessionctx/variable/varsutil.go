@@ -111,10 +111,11 @@ func int32ToBoolStr(i int32) string {
 }
 
 func checkCollation(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-	if _, err := collate.GetCollationByName(normalizedValue); err != nil {
+	coll, err := collate.GetCollationByName(normalizedValue)
+	if err != nil {
 		return normalizedValue, errors.Trace(err)
 	}
-	return normalizedValue, nil
+	return coll.Name, nil
 }
 
 func checkCharacterSet(normalizedValue string, argName string) (string, error) {
