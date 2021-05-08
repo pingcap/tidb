@@ -36,6 +36,8 @@ var (
 	ErrInvalidTxn = errors.New("invalid transaction")
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout = errors.New("tikv server timeout")
+	// ErrTiFlashServerTimeout is the error when tiflash server is timeout.
+	ErrTiFlashServerTimeout = errors.New("tiflash server timeout")
 	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
 	ErrTiKVStaleCommand = errors.New("tikv stale command")
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
@@ -55,7 +57,6 @@ const MismatchClusterID = "mismatch cluster id"
 
 // error instances.
 var (
-	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
 	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(CodeLockAcquireFailAndNoWaitSet)
 	ErrLockWaitTimeout             = dbterror.ClassTiKV.NewStd(CodeLockWaitTimeout)
