@@ -251,7 +251,7 @@ func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
 
 	// generate some random data to be inserted
 	vals := make([]string, 0, 2000)
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 2000; i++ {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1100), rand.Intn(2000)))
 	}
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
