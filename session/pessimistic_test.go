@@ -31,6 +31,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	txndriver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -611,7 +612,7 @@ func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
 	_, err := tk2.Exec("update test_kill set c = c + 1 where id = 1")
 	wg.Done()
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, tikverr.ErrQueryInterrupted), IsTrue)
+	c.Assert(terror.ErrorEqual(err, txndriver.ErrQueryInterrupted), IsTrue)
 	tk.MustExec("rollback")
 }
 
