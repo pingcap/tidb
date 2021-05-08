@@ -305,6 +305,150 @@ func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 	tk.MustIndexLookup("select * from tlist where a<1")
 }
 
+func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_dr_agg")
+	tk.MustExec("use test_dr_agg")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// list partition table
+	tk.MustExec(`create table tlist(a int, b int, index idx_a(a), index idx_b(b)) partition by list(a)( 
+		partition p0 values in (1, 2, 3, 4),
+		partition p1 values in (5, 6, 7, 8),
+		partition p2 values in (9, 10, 11, 12));`)
+
+	// range partition table
+	tk.MustExec(`create table trange(a int, b int, index idx_a(a), index idx_b(b)) partition by range(a) (
+		partition p0 values less than(300), 
+		partition p1 values less than (500), 
+		partition p2 values less than(1100));`)
+
+	// hash partition table
+	tk.MustExec(`create table thash(a int, b int) partition by hash(a) partitions 4;`)
+
+	// regular table
+	tk.MustExec("create table tregular1(a int, b int, index idx_a(a))")
+	tk.MustExec("create table tregular2(a int, b int, index idx_a(a))")
+
+	// generate some random data to be inserted
+	vals := make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1100), rand.Intn(2000)))
+	}
+
+	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular1 values " + strings.Join(vals, ","))
+
+	vals = make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(12)+1, rand.Intn(20)))
+	}
+
+	tk.MustExec("insert into tlist values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular2 values " + strings.Join(vals, ","))
+
+	// test range partition
+	for i := 0; i < 2000; i++ {
+		// select /*+ stream_agg() */ a from t where a > ? group by a;
+		// select /*+ hash_agg() */ a from t where a > ? group by a;
+		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
+		// select /*+ hash_agg() */ a from t where a in (?, ?, ?) group by a;
+		x := rand.Intn(1099)
+
+		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ a from trange where a > %v group by a;", x)
+		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular1 where a > %v group by a;", x)
+		c.Assert(tk.HasPlan(queryPartition1, "StreamAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
+
+		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ a from trange where a > %v group by a;", x)
+		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular1 where a > %v group by a;", x)
+		c.Assert(tk.HasPlan(queryPartition2, "HashAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
+
+		y := rand.Intn(1099)
+		z := rand.Intn(1099)
+
+		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ a from trange where a in(%v, %v, %v) group by a;", x, y, z)
+		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular1 where a in(%v, %v, %v) group by a;", x, y, z)
+		c.Assert(tk.HasPlan(queryPartition3, "StreamAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition3).Sort().Check(tk.MustQuery(queryRegular3).Sort().Rows())
+
+		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ a from trange where a in (%v, %v, %v) group by a;", x, y, z)
+		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular1 where a in (%v, %v, %v) group by a;", x, y, z)
+		c.Assert(tk.HasPlan(queryPartition4, "HashAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition4).Sort().Check(tk.MustQuery(queryRegular4).Sort().Rows())
+	}
+
+	// test hash partition
+	for i := 0; i < 2000; i++ {
+		// select /*+ stream_agg() */ a from t where a > ? group by a;
+		// select /*+ hash_agg() */ a from t where a > ? group by a;
+		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
+		// select /*+ hash_agg() */ a from t where a in (?, ?, ?) group by a;
+		x := rand.Intn(1099)
+
+		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ a from thash where a > %v group by a;", x)
+		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular1 where a > %v group by a;", x)
+		c.Assert(tk.HasPlan(queryPartition1, "StreamAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
+
+		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ a from thash where a > %v group by a;", x)
+		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular1 where a > %v group by a;", x)
+		c.Assert(tk.HasPlan(queryPartition2, "HashAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
+
+		y := rand.Intn(1099)
+		z := rand.Intn(1099)
+
+		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ a from thash where a in(%v, %v, %v) group by a;", x, y, z)
+		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular1 where a in(%v, %v, %v) group by a;", x, y, z)
+		c.Assert(tk.HasPlan(queryPartition3, "StreamAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition3).Sort().Check(tk.MustQuery(queryRegular3).Sort().Rows())
+
+		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ a from thash where a in (%v, %v, %v) group by a;", x, y, z)
+		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular1 where a in (%v, %v, %v) group by a;", x, y, z)
+		c.Assert(tk.HasPlan(queryPartition4, "HashAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition4).Sort().Check(tk.MustQuery(queryRegular4).Sort().Rows())
+	}
+
+	// test list partition
+	for i := 0; i < 2000; i++ {
+		// select /*+ stream_agg() */ a from t where a > ? group by a;
+		// select /*+ hash_agg() */ a from t where a > ? group by a;
+		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
+		// select /*+ hash_agg() */ a from t where a in (?, ?, ?) group by a;
+		x := rand.Intn(12) + 1
+
+		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ a from tlist where a > %v group by a;", x)
+		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular2 where a > %v group by a;", x)
+		c.Assert(tk.HasPlan(queryPartition1, "StreamAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
+
+		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ a from tlist where a > %v group by a;", x)
+		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular2 where a > %v group by a;", x)
+		c.Assert(tk.HasPlan(queryPartition2, "HashAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
+
+		y := rand.Intn(12) + 1
+		z := rand.Intn(12) + 1
+
+		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ a from tlist where a in(%v, %v, %v) group by a;", x, y, z)
+		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular2 where a in(%v, %v, %v) group by a;", x, y, z)
+		c.Assert(tk.HasPlan(queryPartition3, "StreamAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition3).Sort().Check(tk.MustQuery(queryRegular3).Sort().Rows())
+
+		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ a from tlist where a in (%v, %v, %v) group by a;", x, y, z)
+		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular2 where a in (%v, %v, %v) group by a;", x, y, z)
+		c.Assert(tk.HasPlan(queryPartition4, "HashAgg"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition4).Sort().Check(tk.MustQuery(queryRegular4).Sort().Rows())
+	}
+}
+
 func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists p")
