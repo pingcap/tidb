@@ -1009,7 +1009,6 @@ func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) 
 }
 
 func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64) (int64, int64, error) {
-	logutil.Logger(context.TODO()).Error("a", zap.Int64("n", int64(n)), zap.Int64("inc", increment), zap.Int64("off", offset), zap.Int64("base", alloc.base))
 	// Check offset rebase if necessary.
 	if uint64(offset)-1 > uint64(alloc.base) {
 		alloc.base = int64(uint64(offset) - 1)
@@ -1023,11 +1022,9 @@ func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64
 		return 0, 0, ErrAutoincReadFailed
 	}
 
-	logutil.Logger(context.TODO()).Error("b", zap.Int64("n1", int64(n1)), zap.Int64("base", alloc.base))
 	min := alloc.base
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
-	logutil.Logger(context.TODO()).Error("c", zap.Int64("min", min), zap.Int64("base", alloc.base))
 	return min, alloc.base, nil
 }
 
