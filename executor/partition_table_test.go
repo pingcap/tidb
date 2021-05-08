@@ -305,6 +305,82 @@ func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 	tk.MustIndexLookup("select * from tlist where a<1")
 }
 
+func (s *partitionTableSuite) TestDirectReadingwithJoin(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_dr_join")
+	tk.MustExec("use test_dr_join")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// hash and range partition
+	tk.MustExec("create table thash (a int, b int, key(a)) partition by hash(a) partitions 4;")
+	tk.MustExec(`create table trange (a int, b int, key(a)) partition by range(a) (
+		  partition p0 values less than(1000),
+		  partition p1 values less than(2000),
+		  partition p2 values less than(3000),
+		  partition p3 values less than(4000));`)
+
+	// regualr table
+	tk.MustExec(`create table tnormal (a int, b int, key(a));`)
+	tk.MustExec(`create table touter (a int, b int);`)
+
+	// generate some random data to be inserted
+	vals := make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(4000), rand.Intn(4000)))
+	}
+	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tnormal values " + strings.Join(vals, ","))
+	tk.MustExec("insert into touter values " + strings.Join(vals, ","))
+
+	// test indexLookUp + hash
+	// explain select /*+ INL_JOIN(touter, tinner) */ * from touter join tinner use index(a) on touter.a = tinner.a;
+	queryPartition := fmt.Sprintf("select /*+ INL_JOIN(touter, thash) */ * from touter join thash use index(a) on touter.a = thash.a")
+	queryRegular := fmt.Sprintf("select /*+ INL_JOIN(touter, tnormal) */ * from touter join tnormal use index(a) on touter.a = tnormal.a")
+	c.Assert(tk.HasPlan(queryPartition, "IndexLookUp"), IsTrue) // check if IndexLookUp is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test tableReader + hash
+	// explain select * from touter join tinner on touter.b = tinner.b;
+	queryPartition = fmt.Sprintf("select * from touter join thash on touter.b = thash.b")
+	queryRegular = fmt.Sprintf("select * from touter join tnormal on touter.b = tnormal.b")
+	c.Assert(tk.HasPlan(queryPartition, "TableReader"), IsTrue) // check if tableReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test indexReader + hash
+	// explain select /*+ INL_JOIN(touter, tinner) */ * from touter join tinner use index(a) on touter.a = tinner.a;
+	queryPartition = fmt.Sprintf("select /*+ INL_JOIN(touter, thash) */ thash.a from touter join thash on touter.a = thash.a;")
+	queryRegular = fmt.Sprintf("select /*+ INL_JOIN(touter, tnormal) */ tnormal.a from touter join tnormal on touter.a = tnormal.a;")
+	c.Assert(tk.HasPlan(queryPartition, "IndexReader"), IsTrue) // check if indexReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test indexLookUp + range
+	// explain select /*+ INL_JOIN(touter, tinner) */ * from touter join tinner use index(a) on touter.a = tinner.a;
+	queryPartition = fmt.Sprintf("select /*+ INL_JOIN(touter, trange) */ * from touter join trange use index(a) on touter.a = trange.a;")
+	queryRegular = fmt.Sprintf("select /*+ INL_JOIN(touter, tnormal) */ * from touter join tnormal use index(a) on touter.a = tnormal.a;")
+	c.Assert(tk.HasPlan(queryPartition, "IndexLookUp"), IsTrue) // check if IndexLookUp is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test tableReader + range
+	// explain select * from touter join tinner use index(a) on touter.a = tinner.a;
+	queryPartition = fmt.Sprintf("select * from touter join trange on touter.b = trange.b;")
+	queryRegular = fmt.Sprintf("select * from touter join tnormal on touter.b = tnormal.b;")
+	c.Assert(tk.HasPlan(queryPartition, "TableReader"), IsTrue) // check if tableReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test indexReader + range
+	// explain select /*+ INL_JOIN(touter, tinner) */ tinner.a from touter join tinner on touter.a = tinner.a;
+	queryPartition = fmt.Sprintf("select /*+ INL_JOIN(touter, trange) */ trange.a from touter join trange on touter.a = trange.a;")
+	queryRegular = fmt.Sprintf("select /*+ INL_JOIN(touter, tnormal) */ tnormal.a from touter join tnormal on touter.a = tnormal.a;")
+	c.Assert(tk.HasPlan(queryPartition, "IndexReader"), IsTrue) // check if indexReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+}
+
 func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists p")
