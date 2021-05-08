@@ -206,6 +206,7 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 		}
 		e.probeKey = probeExpr.(*expression.Column)
 	}
+	e.comKeyTp = types.AggFieldType([]*types.FieldType{e.probeKey.RetType, e.buildKey.RetType})
 	return e, nil
 }
 

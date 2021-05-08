@@ -343,19 +343,14 @@ type joinExec struct {
 
 	defaultInner chunk.Row
 	inited       bool
+	// align the types of join keys and build keys
+	comKeyTp *types.FieldType
 }
 
-func (e *joinExec) getHashKey(keyCol types.Datum, fieldType *types.FieldType) (str string, err error) {
-	decType := types.NewFieldType(mysql.TypeNewDecimal)
-	decType.Flen = 65
-	decType.Decimal = 30
-	// convert numerical type to the max decimal type
-	if !keyCol.IsNull() && (fieldType.Tp == mysql.TypeNewDecimal || fieldType.Tp == mysql.TypeTiny || fieldType.Tp == mysql.TypeDouble ||
-		fieldType.Tp == mysql.TypeFloat || fieldType.Tp == mysql.TypeShort || fieldType.Tp == mysql.TypeLong || fieldType.Tp == mysql.TypeLonglong) {
-		keyCol, err = keyCol.ConvertTo(e.sc, decType)
-		if err != nil {
-			return str, errors.Trace(err)
-		}
+func (e *joinExec) getHashKey(keyCol types.Datum) (str string, err error) {
+	keyCol, err = keyCol.ConvertTo(e.sc, e.comKeyTp)
+	if err != nil {
+		return str, errors.Trace(err)
 	}
 	str, err = keyCol.ToString()
 	if err != nil {
@@ -376,9 +371,8 @@ func (e *joinExec) buildHashTable() error {
 		rows := chk.NumRows()
 		for i := 0; i < rows; i++ {
 			row := chk.GetRow(i)
-			fieldType := e.buildChild.getFieldTypes()[e.buildKey.Index]
-			keyCol := row.GetDatum(e.buildKey.Index, fieldType)
-			key, err := e.getHashKey(keyCol, fieldType)
+			keyCol := row.GetDatum(e.buildKey.Index, e.buildChild.getFieldTypes()[e.buildKey.Index])
+			key, err := e.getHashKey(keyCol)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -405,9 +399,8 @@ func (e *joinExec) fetchRows() (bool, error) {
 	chkSize := chk.NumRows()
 	for i := 0; i < chkSize; i++ {
 		row := chk.GetRow(i)
-		fieldType := e.probeChild.getFieldTypes()[e.probeKey.Index]
-		keyCol := row.GetDatum(e.probeKey.Index, fieldType)
-		key, err := e.getHashKey(keyCol, fieldType)
+		keyCol := row.GetDatum(e.probeKey.Index, e.probeChild.getFieldTypes()[e.probeKey.Index])
+		key, err := e.getHashKey(keyCol)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
