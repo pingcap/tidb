@@ -1339,12 +1339,15 @@ func userExistsInternal(sqlExecutor sqlexec.SQLExecutor, name string, host strin
 	}
 	req := recordSet.NewChunk()
 	err = recordSet.Next(context.TODO(), req)
-	if err != nil {
-		return false, err
+	var rows int = 0
+	if err == nil {
+		rows = req.NumRows()
 	}
-	rows := req.NumRows()
-	recordSet.Close()
-	return rows > 0, nil
+	errClose := recordSet.Close()
+	if errClose != nil {
+		return false, errClose
+	}
+	return rows > 0, err
 }
 
 func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
