@@ -150,10 +150,11 @@ func (s *testPrivilegeSuite) TestRenameUser(c *C) {
 	c.Assert(err.Error(), Matches, "\\[executor:1396\\]Operation RENAME USER failed for ru3@%.*")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru4 TO ru5@localhost")
 	c.Assert(err.Error(), Matches, "\\[executor:1396\\]Operation RENAME USER failed for ru4@%.*")
-	// TODO: Why does this panic (and now 2021-05-06 23:51 CEST ?!? it did work before...
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru3")
 	c.Assert(err.Error(), Matches, "\\[executor:1396\\]Operation RENAME USER failed for ru3@%.*")
-	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru4, 'ru3_tmp' to ru6@localhost")
+	// Needed to avoid panic due to loc == nil in Time.ConvertTimeZone
+	se1.GetSessionVars().TimeZone = time.UTC
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")
 	c.Assert(err, IsNil)
 	mustExec(c, rootSe, "DROP USER ru6@localhost")
 	mustExec(c, rootSe, "DROP USER ru3")
