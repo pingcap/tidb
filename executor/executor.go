@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"go.uber.org/zap"
 )
 
@@ -981,7 +982,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
 		LockExpired:           &seVars.TxnCtx.LockExpire,
-		ResourceGroupTag:      EncodeResourceGroupTag(sqlDigest),
+		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest),
 	}
 }
 

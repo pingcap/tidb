@@ -11,87 +11,93 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package resourcegrouptag
 
 import (
 	"math/rand"
+	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/executor"
 )
 
 type testUtilsSuite struct{}
 
+var _ = Suite(&testUtilsSuite{})
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
 func (s *testUtilsSuite) TestResourceGroupTagEncoding(c *C) {
 	sqlDigest := ""
-	tag := executor.EncodeResourceGroupTag(sqlDigest)
+	tag := EncodeResourceGroupTag(sqlDigest)
 	c.Assert(len(tag), Equals, 0)
-	decodedSqlDigest, err := executor.DecodeResourceGroupTag(tag)
+	decodedSQLDigest, err := DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(len(decodedSqlDigest), Equals, 0)
+	c.Assert(len(decodedSQLDigest), Equals, 0)
 
 	sqlDigest = "aa"
-	tag = executor.EncodeResourceGroupTag(sqlDigest)
+	tag = EncodeResourceGroupTag(sqlDigest)
 	// version(1) + prefix(1) + length(1) + content(2hex -> 1byte)
 	c.Assert(len(tag), Equals, 4)
-	decodedSqlDigest, err = executor.DecodeResourceGroupTag(tag)
+	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(decodedSqlDigest, Equals, sqlDigest)
+	c.Assert(decodedSQLDigest, Equals, sqlDigest)
 
 	sqlDigest = genRandHex(64)
-	tag = executor.EncodeResourceGroupTag(sqlDigest)
-	decodedSqlDigest, err = executor.DecodeResourceGroupTag(tag)
+	tag = EncodeResourceGroupTag(sqlDigest)
+	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(decodedSqlDigest, Equals, sqlDigest)
+	c.Assert(decodedSQLDigest, Equals, sqlDigest)
 
 	sqlDigest = genRandHex(510)
-	tag = executor.EncodeResourceGroupTag(sqlDigest)
-	decodedSqlDigest, err = executor.DecodeResourceGroupTag(tag)
+	tag = EncodeResourceGroupTag(sqlDigest)
+	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(decodedSqlDigest, Equals, sqlDigest)
+	c.Assert(decodedSQLDigest, Equals, sqlDigest)
 
 	// The max supported length is 255 bytes (510 hex digits).
 	sqlDigest = genRandHex(512)
-	tag = executor.EncodeResourceGroupTag(sqlDigest)
+	tag = EncodeResourceGroupTag(sqlDigest)
 	c.Assert(len(tag), Equals, 0)
 
 	// A hex string can't have odd length.
 	sqlDigest = genRandHex(15)
-	tag = executor.EncodeResourceGroupTag(sqlDigest)
+	tag = EncodeResourceGroupTag(sqlDigest)
 	c.Assert(len(tag), Equals, 0)
 
 	// Non-hexadecimal character is invalid
 	sqlDigest = "aabbccddgg"
-	tag = executor.EncodeResourceGroupTag(sqlDigest)
+	tag = EncodeResourceGroupTag(sqlDigest)
 	c.Assert(len(tag), Equals, 0)
 
 	// A tag should start with a supported version
 	tag = []byte("\x00")
-	_, err = executor.DecodeResourceGroupTag(tag)
+	_, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, NotNil)
 
 	// The fields should have format like `[prefix, length, content...]`, otherwise decoding it should returns error.
 	tag = []byte("\x01\x01")
-	_, err = executor.DecodeResourceGroupTag(tag)
+	_, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, NotNil)
 
 	tag = []byte("\x01\x01\x02")
-	_, err = executor.DecodeResourceGroupTag(tag)
+	_, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, NotNil)
 
 	tag = []byte("\x01\x01\x02AB")
-	decodedSqlDigest, err = executor.DecodeResourceGroupTag(tag)
+	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(decodedSqlDigest, Equals, "4142")
+	c.Assert(decodedSQLDigest, Equals, "4142")
 
 	tag = []byte("\x01\x01\x00")
-	decodedSqlDigest, err = executor.DecodeResourceGroupTag(tag)
+	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(len(decodedSqlDigest), Equals, 0)
+	c.Assert(len(decodedSQLDigest), Equals, 0)
 
 	// Unsupported field
 	tag = []byte("\x01\x99")
-	decodedSqlDigest, err = executor.DecodeResourceGroupTag(tag)
+	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, NotNil)
 }
 
