@@ -50,6 +50,8 @@ var (
 	ErrTiFlashServerBusy = errors.New("tiflash server busy")
 	// ErrRegionUnavailable is the error when region is not available.
 	ErrRegionUnavailable = errors.New("region unavailable")
+	// ErrUnknown is the unknow error.
+	ErrUnknown = errors.New("unknow")
 )
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
@@ -61,7 +63,6 @@ var (
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(CodeLockAcquireFailAndNoWaitSet)
 	ErrLockWaitTimeout             = dbterror.ClassTiKV.NewStd(CodeLockWaitTimeout)
 	ErrTokenLimit                  = dbterror.ClassTiKV.NewStd(CodeTiKVStoreLimit)
-	ErrUnknown                     = dbterror.ClassTiKV.NewStd(CodeUnknown)
 )
 
 // Registers error returned from TiKV.
