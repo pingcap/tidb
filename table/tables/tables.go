@@ -1234,7 +1234,7 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 
 // CheckUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore check whether recordID key or unique index key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
-func CheckUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID int64, data []types.Datum) error {
+func CheckUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID int64, data []types.Datum, modified []bool) error {
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
 		pid, err := pt.locatePartition(sctx, info, data)
@@ -1247,11 +1247,19 @@ func CheckUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	for _, idx := range t.Indices() {
-		if idx.Meta().State == model.StateDeleteOnly || idx.Meta().State == model.StateDeleteReorganization {
-			continue
+	shouldSkipIgnoreCheck := func(idx table.Index) bool {
+		if idx.Meta().State == model.StateDeleteOnly || idx.Meta().State == model.StateDeleteReorganization || !idx.Meta().Unique {
+			return true
 		}
-		if !idx.Meta().Unique {
+		for _, c := range idx.Meta().Columns {
+			if modified[c.Offset] {
+				return false
+			}
+		}
+		return true
+	}
+	for _, idx := range t.Indices() {
+		if shouldSkipIgnoreCheck(idx) {
 			continue
 		}
 		vals, err := idx.FetchValues(data, nil)

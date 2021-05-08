@@ -186,7 +186,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 				}
 				return false, handleChanged, newHandle, err
 			}
-			err = tables.CheckUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx, sctx, t, newHandle, newData)
+			err = tables.CheckUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx, sctx, t, newHandle, newData, modified)
 			if err != nil {
 				if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
 					//return false, nil
