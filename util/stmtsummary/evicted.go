@@ -2,6 +2,7 @@ package stmtsummary
 
 import (
 	"container/list"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -12,13 +13,13 @@ import (
 type stmtSummaryByDigestEvicted struct {
 	// record evicted data in intervals
 	// latest history data is Back()
-	history list.List
+	history *list.List
 }
 
 // element being stored in stmtSummaryByDigestEvicted
 type stmtSummaryByDigestEvictedElement struct {
 	// *Kinds* of digest being evicted
-	digestKeyMap map[*stmtSummaryByDigestKey]struct{}
+	digestKeyMap map[string]struct{}
 
 	// summary of digest being evicted
 	sum *stmtSummaryByDigestElement
@@ -26,10 +27,8 @@ type stmtSummaryByDigestEvictedElement struct {
 
 // spawn a new pointer to stmtSummaryByDigestEvicted
 func newStmtSummaryByDigestEvicted() *stmtSummaryByDigestEvicted {
-	var lst list.List
-	lst.Init()
 	return &stmtSummaryByDigestEvicted{
-		history: lst,
+		history: list.New(),
 	}
 }
 
@@ -39,7 +38,7 @@ func newStmtSummaryByDigestEvictedElement(beginTimeForCurrentInterval int64, int
 	ssElement.beginTime = beginTimeForCurrentInterval
 	ssElement.endTime = beginTimeForCurrentInterval + intervalSeconds
 	return &stmtSummaryByDigestEvictedElement{
-		digestKeyMap: make(map[*stmtSummaryByDigestKey]struct{}),
+		digestKeyMap: make(map[string]struct{}),
 		sum:          ssElement,
 	}
 }
@@ -47,7 +46,11 @@ func newStmtSummaryByDigestEvictedElement(beginTimeForCurrentInterval int64, int
 // AddEvicted is used add an evicted record to stmtSummaryByDigestEvicted
 func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDigestKey, evictedValue *stmtSummaryByDigest, historySize int) {
 
+	fmt.Println("Adding Evicted")
 	// *need to get optimized*!!
+
+	evictedValue.Lock()
+	defer evictedValue.Unlock()
 	for e := evictedValue.history.Back(); e != nil; e = e.Prev() {
 		eBeginTime := e.Value.(*stmtSummaryByDigestElement).beginTime
 		eEndTime := e.Value.(*stmtSummaryByDigestElement).endTime
@@ -58,18 +61,33 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 		}
 
 		// look for match history interval
+		fmt.Println("Insertion start!")
+
+		// no record in history
+		if ssbde.history.Len() == 0 && historySize > 0 {
+			fmt.Println("No History, create one and direct insert")
+			beginTime := eBeginTime
+			intervalSeconds := eEndTime - eBeginTime
+			record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
+			record.addEvicted(evictedKey, e.Value.(*stmtSummaryByDigestElement))
+			ssbde.history.PushBack(record)
+			continue
+		}
+
 		for h := ssbde.history.Back(); h != nil; h = h.Prev() {
 			sBeginTime := h.Value.(*stmtSummaryByDigestEvictedElement).sum.beginTime
 			sEndTime := h.Value.(*stmtSummaryByDigestEvictedElement).sum.endTime
 
 			if sBeginTime <= eBeginTime &&
 				sEndTime >= eEndTime {
+				fmt.Println("Find match, adding")
 				// is in this history interval
 				h.Value.(*stmtSummaryByDigestEvictedElement).addEvicted(evictedKey, e.Value.(*stmtSummaryByDigestElement))
 				break
 			}
 
 			if sEndTime <= eBeginTime {
+				fmt.Println("Digest too young, inserting")
 				// digest is young, insert into new interval after this history interval
 				beginTime := eBeginTime
 				intervalSeconds := eEndTime - eBeginTime
@@ -83,13 +101,16 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 				// digestElement is old
 				if h != ssbde.history.Front() {
 					// check older history digestEvictedElement
+					fmt.Println("Digest is old, find older evict")
 					continue
 				} else if ssbde.history.Len() >= historySize {
+					fmt.Println("Digest too old, abandon")
 					// out of history size, abandon
 					break
 				} else {
 					// is oldest digest
 					// creat a digestEvictedElement and PushFront!
+					fmt.Println("oldest, pushing")
 					beginTime := eBeginTime
 					intervalSeconds := eEndTime - eBeginTime
 					record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
@@ -99,6 +120,7 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 				}
 			}
 		}
+		fmt.Println("Finish insertion")
 	}
 }
 
@@ -109,7 +131,9 @@ func (ssbde *stmtSummaryByDigestEvicted) Clear() {
 
 // add an evicted record to stmtSummaryByDigestEvictedElement
 func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) {
-	seElement.digestKeyMap[digestKey] = struct{}{}
+	if digestKey != nil {
+		seElement.digestKeyMap[string(digestKey.Hash())] = struct{}{}
+	}
 	sumEvicted(seElement.sum, digestValue)
 }
 
@@ -155,11 +179,13 @@ func (seElement *stmtSummaryByDigestEvictedElement) toOtherDatum(ssbd *stmtSumma
 
 // toEvictedCountDatum converts evicted record to `EvictedCount` record's datum
 func (seElement *stmtSummaryByDigestEvictedElement) toEvictedCountDatum() []types.Datum {
-	return types.MakeDatums(
+	datum := types.MakeDatums(
 		types.NewTime(types.FromGoTime(time.Unix(seElement.sum.beginTime, 0)), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(time.Unix(seElement.sum.endTime, 0)), mysql.TypeTimestamp, 0),
-		len(seElement.digestKeyMap),
+		int64(len(seElement.digestKeyMap)),
 	)
+	fmt.Println(datum)
+	return datum
 }
 
 func (ssMap *stmtSummaryByDigestMap) ToEvictedCountDatum() [][]types.Datum {

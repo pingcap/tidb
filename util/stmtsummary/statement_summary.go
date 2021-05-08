@@ -246,17 +246,18 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	ssbde := newStmtSummaryByDigestEvicted()
 
 	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
-	ssMap := kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0)
 	newSsMap := &stmtSummaryByDigestMap{
-		summaryMap:              ssMap,
+		summaryMap:              kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 		beginTimeForCurInterval: beginTimeForCurrentInterval,
 		sysVars:                 sysVars,
 		other:                   ssbde,
 	}
-	ssMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+		fmt.Println("Evict!!!")
 		historySize := newSsMap.historySize()
 		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
+	fmt.Println("OnEvict Set!")
 	return newSsMap
 }
 
@@ -294,8 +295,8 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
 			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
 			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
-			// update ssMap.other
-			ssMap.other.AddEvicted(new(stmtSummaryByDigestKey), new(stmtSummaryByDigest), ssMap.historySize())
+			// refresh ssMap.other
+			ssMap.other.AddEvicted(nil, newInduceSsbd(ssMap.beginTimeForCurInterval, ssMap.beginTimeForCurInterval+intervalSeconds), ssMap.historySize())
 		}
 
 		beginTime := ssMap.beginTimeForCurInterval
@@ -1042,4 +1043,20 @@ func convertEmptyToNil(str string) interface{} {
 		return nil
 	}
 	return str
+}
+
+func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
+	newSsbd := &stmtSummaryByDigest{
+		history: list.New(),
+	}
+	newSsbd.history.PushBack(newInduceSsbde(beginTime, endTime))
+	return newSsbd
+}
+func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement {
+	newSsbde := &stmtSummaryByDigestElement{
+		beginTime:  beginTime,
+		endTime:    endTime,
+		minLatency: time.Duration.Round(1<<63-1, time.Nanosecond),
+	}
+	return newSsbde
 }

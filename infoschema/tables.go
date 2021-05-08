@@ -235,7 +235,7 @@ var tableIDMap = map[string]int64{
 	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
 	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
 	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
-	TableStatementsSummaryEvicted:			 autoid.InformationSchemaDBID + 70,
+	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 70,
 }
 
 type columnInfo struct {
@@ -1336,9 +1336,9 @@ var tableClientErrorsSummaryByHostCols = []columnInfo{
 }
 
 var tableStatementsSummaryEvictedCols = []columnInfo{
-	{name: "BEGIN_TIME", tp: mysql.TypeTimestamp, size:26},
-	{name: "END_TIME", tp: mysql.TypeTimestamp, size:26},
-	{name: "EVICTED_COUNT", tp: mysql.TypeLonglong, size:64, flag: mysql.NotNullFlag},
+	{name: "BEGIN_TIME", tp: mysql.TypeTimestamp, size: 26},
+	{name: "END_TIME", tp: mysql.TypeTimestamp, size: 26},
+	{name: "EVICTED_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1710,7 +1710,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
-	TableStatementsSummaryEvicted: 			 tableStatementsSummaryEvictedCols,
+	TableStatementsSummaryEvicted:           tableStatementsSummaryEvictedCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
