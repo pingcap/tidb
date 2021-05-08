@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/dbterror"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -472,6 +473,13 @@ func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	if priv.Priv == mysql.UsagePriv {
 		return nil
+	}
+	for _, v := range mysql.AllGlobalPrivs {
+		if v == priv.Priv {
+			ErrWrongUsage := dbterror.ClassOptimizer.NewStd(mysql.ErrWrongUsage)
+			err := ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
+			return err
+		}
 	}
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
