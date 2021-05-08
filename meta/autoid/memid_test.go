@@ -87,7 +87,7 @@ func (*testSuite) TestInMemoryAlloc(c *C) {
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(math.MaxInt64-1))
-	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
+	_, _, err = alloc.Alloc(ctx, 1, 1, 1, 1)
 	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
 
 	// test unsigned
@@ -101,6 +101,6 @@ func (*testSuite) TestInMemoryAlloc(c *C) {
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(n+1))
-	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
+	_, _, err = alloc.Alloc(ctx, 1, 1, 1, 1)
 	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
 }
