@@ -1188,8 +1188,8 @@ type CTEClass struct {
 type LogicalCTE struct {
 	logicalSchemaProducer
 
-	cte             *CTEClass
-	cteAsName       model.CIStr
+	cte     *CTEClass
+	cteName model.CIStr
 }
 
 // LogicalCTETable is for CTE table
