@@ -264,7 +264,7 @@ func (s *partitionTableSuite) TestBatchGetandPointGet(c *C) {
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
 	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
 
-	// test pointGet
+	// test PointGet
 	for i := 0; i < 100; i++ {
 		// explain select a from t where a = {x}; // x >= 1 and x <= 100 Check if PointGet is used
 		// select a from t where a={x}; // the result is {x}
@@ -281,6 +281,47 @@ func (s *partitionTableSuite) TestBatchGetandPointGet(c *C) {
 		queryList := fmt.Sprintf("select a from tlist where a=%v", y)
 		c.Assert(tk.HasPlan(queryList, "Point_Get"), IsTrue) // check if PointGet is used
 		tk.MustQuery(queryList).Check(testkit.Rows(fmt.Sprintf("%v", y)))
+	}
+
+	// test empty PointGet
+	queryHash := fmt.Sprintf("select a from thash where a=200")
+	c.Assert(tk.HasPlan(queryHash, "Point_Get"), IsTrue) // check if PointGet is used
+	tk.MustQuery(queryHash).Check(testkit.Rows())
+
+	queryRange := fmt.Sprintf("select a from trange where a=200")
+	c.Assert(tk.HasPlan(queryRange, "Point_Get"), IsTrue) // check if PointGet is used
+	tk.MustQuery(queryRange).Check(testkit.Rows())
+
+	queryList := fmt.Sprintf("select a from tlist where a=200")
+	c.Assert(tk.HasPlan(queryList, "Point_Get"), IsTrue) // check if PointGet is used
+	tk.MustQuery(queryList).Check(testkit.Rows())
+
+	// test BatchGet
+	for i := 0; i < 100; i++ {
+		// explain select a from t where a in ({x1}, {x2}, ... {x10}); // BatchGet is used
+		// select a from t where where a in ({x1}, {x2}, ... {x10});
+		points := make([]string, 0, 10)
+		for i := 0; i < 10; i++ {
+			x := rand.Intn(100) + 1
+			points = append(points, fmt.Sprintf("%v", x))
+		}
+
+		queryHash := fmt.Sprintf("select a from thash where a in (%v)", strings.Join(points, ","))
+		c.Assert(tk.HasPlan(queryHash, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryHash).Check(testkit.Rows(fmt.Sprintf("%v", strings.Join(points, ","))))
+
+		queryRange := fmt.Sprintf("select a from trange where a in (%v)", strings.Join(points, ","))
+		c.Assert(tk.HasPlan(queryRange, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryRange).Check(testkit.Rows(fmt.Sprintf("%v", strings.Join(points, ","))))
+
+		points = make([]string, 0, 10)
+		for i := 0; i < 10; i++ {
+			x := rand.Intn(12) + 1
+			points = append(points, fmt.Sprintf("%v", x))
+		}
+		queryList := fmt.Sprintf("select a from tlist where a in (%v)", strings.Join(points, ","))
+		c.Assert(tk.HasPlan(queryList, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryList).Check(testkit.Rows(fmt.Sprintf("%v", strings.Join(points, ","))))
 	}
 }
 
