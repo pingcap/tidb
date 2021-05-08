@@ -227,17 +227,12 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
 	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
 }
 
-<<<<<<< HEAD
 func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
-=======
-func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
->>>>>>> 82ea46d652970bb564a43d3effc04334f3bf9d0b
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
-<<<<<<< HEAD
 	tk.MustExec("create database test_orderby_limit")
 	tk.MustExec("use test_orderby_limit")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -309,7 +304,14 @@ func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 		c.Assert(tk.HasPlan(queryPartition, "IndexMerge"), IsTrue) // check if indexMerge is used
 		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	}
-=======
+}
+
+func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database test_global_stats")
 	tk.MustExec("use test_global_stats")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -380,7 +382,6 @@ func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 	tk.MustIndexLookup("select * from thash where a<100")
 	tk.MustIndexLookup("select * from trange where a<100")
 	tk.MustIndexLookup("select * from tlist where a<1")
->>>>>>> 82ea46d652970bb564a43d3effc04334f3bf9d0b
 }
 
 func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
