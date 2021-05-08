@@ -735,6 +735,10 @@ func (e *CheckTableExec) handlePanic(r interface{}) {
 
 // Next implements the Executor Next interface.
 func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	tempTableType := e.table.Meta().TempTableType
+	if tempTableType == model.TempTableGlobal || tempTableType == model.TempTableLocal {
+		return errors.Trace(ErrAdminCheckTable)
+	}
 	if e.done || len(e.srcs) == 0 {
 		return nil
 	}
