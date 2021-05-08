@@ -77,6 +77,7 @@ var _ = Suite(&testDBSuite5{&testDBSuite{}})
 var _ = Suite(&testDBSuite6{&testDBSuite{}})
 var _ = Suite(&testDBSuite7{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
+var _ = Suite(&testDBSuite8{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 const defaultReorgBatchSize = 256
@@ -145,6 +146,7 @@ type testDBSuite5 struct{ *testDBSuite }
 type testDBSuite6 struct{ *testDBSuite }
 type testDBSuite7 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
+type testDBSuite8 struct{ *testDBSuite }
 
 func testAddIndexWithPK(tk *testkit.TestKit) {
 	tk.MustExec("drop table if exists test_add_index_with_pk")
@@ -6942,6 +6944,26 @@ func (s *testSerialSuite) TestTruncateAllPartitions(c *C) {
 	tk1.MustQuery("select count(*) from partition_table;").Check(testkit.Rows("0"))
 }
 
+func (s *testSerialSuite) TestIssue23872(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists test_create_table;")
+	defer tk.MustExec("drop table if exists test_create_table;")
+	tk.MustExec("create table test_create_table(id smallint,id1 int, primary key (id));")
+	rs, err := tk.Exec("select * from test_create_table;")
+	c.Assert(err, IsNil)
+	cols := rs.Fields()
+	expectFlag := uint16(mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag)
+	c.Assert(cols[0].Column.Flag, Equals, uint(expectFlag))
+	tk.MustExec("create table t(a int default 1, primary key(a));")
+	defer tk.MustExec("drop table if exists t;")
+	rs1, err := tk.Exec("select * from t;")
+	c.Assert(err, IsNil)
+	cols1 := rs1.Fields()
+	expectFlag1 := uint16(mysql.NotNullFlag | mysql.PriKeyFlag)
+	c.Assert(cols1[0].Column.Flag, Equals, uint(expectFlag1))
+}
+
 // Close issue #23321.
 // See https://github.com/pingcap/tidb/issues/23321
 func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) {
@@ -6958,4 +6980,33 @@ func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) 
 
 	_, err := tk.Exec("alter table test_add_index_after_add_col add unique index cc(c);")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '0' for key 'cc'")
+}
+
+// For Close issue #24288
+// see https://github.com/pingcap/tidb/issues/24288
+func (s *testDBSuite8) TestDdlMaxLimitOfIdentifier(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// create/drop database test
+	longDbName := strings.Repeat("库", mysql.MaxDatabaseNameLength-1)
+	tk.MustExec(fmt.Sprintf("create database %s", longDbName))
+	defer func() {
+		tk.MustExec(fmt.Sprintf("drop database %s", longDbName))
+	}()
+	tk.MustExec(fmt.Sprintf("use %s", longDbName))
+
+	// create/drop table,index test
+	longTblName := strings.Repeat("表", mysql.MaxTableNameLength-1)
+	longColName := strings.Repeat("三", mysql.MaxColumnNameLength-1)
+	longIdxName := strings.Repeat("索", mysql.MaxIndexIdentifierLen-1)
+	tk.MustExec(fmt.Sprintf("create table %s(f1 int primary key,f2 int, %s varchar(50))", longTblName, longColName))
+	tk.MustExec(fmt.Sprintf("create index %s on %s(%s)", longIdxName, longTblName, longColName))
+	defer func() {
+		tk.MustExec(fmt.Sprintf("drop index %s on %s", longIdxName, longTblName))
+		tk.MustExec(fmt.Sprintf("drop table %s", longTblName))
+	}()
+
+	// alter table
+	tk.MustExec(fmt.Sprintf("alter table %s change f2 %s int", longTblName, strings.Repeat("二", mysql.MaxColumnNameLength-1)))
+
 }

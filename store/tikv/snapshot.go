@@ -26,17 +26,16 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
 )
 
@@ -46,16 +45,45 @@ const (
 	maxTimestamp  = math.MaxUint64
 )
 
+// Priority is the priority for tikv to execute a command.
+type Priority kvrpcpb.CommandPri
+
+// Priority value for transaction priority.
+const (
+	PriorityNormal = Priority(kvrpcpb.CommandPri_Normal)
+	PriorityLow    = Priority(kvrpcpb.CommandPri_Low)
+	PriorityHigh   = Priority(kvrpcpb.CommandPri_High)
+)
+
+// ToPB converts priority to wire type.
+func (p Priority) ToPB() kvrpcpb.CommandPri {
+	return kvrpcpb.CommandPri(p)
+}
+
+// IsoLevel is the transaction's isolation level.
+type IsoLevel kvrpcpb.IsolationLevel
+
+const (
+	// SI stands for 'snapshot isolation'.
+	SI IsoLevel = IsoLevel(kvrpcpb.IsolationLevel_SI)
+	// RC stands for 'read committed'.
+	RC IsoLevel = IsoLevel(kvrpcpb.IsolationLevel_RC)
+)
+
+// ToPB converts isolation level to wire type.
+func (l IsoLevel) ToPB() kvrpcpb.IsolationLevel {
+	return kvrpcpb.IsolationLevel(l)
+}
+
 // KVSnapshot implements the tidbkv.Snapshot interface.
 type KVSnapshot struct {
 	store           *KVStore
 	version         uint64
-	isolationLevel  kv.IsoLevel
-	priority        pb.CommandPri
+	isolationLevel  IsoLevel
+	priority        Priority
 	notFillCache    bool
-	syncLog         bool
 	keyOnly         bool
-	vars            *tidbkv.Variables
+	vars            *kv.Variables
 	replicaReadSeed uint32
 	resolvedLocks   *util.TSSet
 
@@ -79,7 +107,6 @@ type KVSnapshot struct {
 		matchStoreLabels []*metapb.StoreLabel
 	}
 	sampleStep uint32
-	txnScope   string
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -92,14 +119,15 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 	return &KVSnapshot{
 		store:           store,
 		version:         ts,
-		priority:        pb.CommandPri_Normal,
-		vars:            tidbkv.DefaultVars,
+		priority:        PriorityNormal,
+		vars:            kv.DefaultVars,
 		replicaReadSeed: replicaReadSeed,
 		resolvedLocks:   util.NewTSSet(5),
 	}
 }
 
-func (s *KVSnapshot) setSnapshotTS(ts uint64) {
+// SetSnapshotTS resets the timestamp for reads.
+func (s *KVSnapshot) SetSnapshotTS(ts uint64) {
 	// Sanity check for snapshot version.
 	if ts >= math.MaxInt64 && ts != math.MaxUint64 {
 		err := errors.Errorf("try to get snapshot with a large ts %d", ts)
@@ -279,7 +307,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			Keys:    pending,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority,
+			Priority:     s.priority.ToPB(),
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
@@ -311,7 +339,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
-			return errors.Trace(kv.ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		batchGetResp := resp.Resp.(*pb.BatchGetResponse)
 		var (
@@ -386,7 +414,7 @@ func (s *KVSnapshot) Get(ctx context.Context, k []byte) ([]byte, error) {
 	}
 
 	if len(val) == 0 {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	return val, nil
 }
@@ -415,14 +443,6 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 
 	cli := NewClientHelper(s.store, s.resolvedLocks)
 
-	// Secondary locks or async commit locks cannot be ignored when getting using the max version.
-	// So we concurrently get a TS from PD and use it in retries to avoid unnecessary blocking.
-	var tsFuture oracle.Future
-	if s.version == maxTimestamp {
-		tsFuture = s.store.oracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.txnScope})
-	}
-	failpoint.Inject("snapshotGetTSAsync", nil)
-
 	isStaleness := false
 	var matchStoreLabels []*metapb.StoreLabel
 	s.mu.RLock()
@@ -437,7 +457,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			Key:     k,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority,
+			Priority:     s.priority.ToPB(),
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
@@ -451,7 +471,10 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 	if len(matchStoreLabels) > 0 {
 		ops = append(ops, WithMatchLabels(matchStoreLabels))
 	}
+
+	var firstLock *Lock
 	for {
+		failpoint.Inject("beforeSendPointGet", nil)
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -472,7 +495,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			continue
 		}
 		if resp.Resp == nil {
-			return nil, errors.Trace(kv.ErrBodyMissing)
+			return nil, errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		if cmdGetResp.ExecDetailsV2 != nil {
@@ -484,25 +507,17 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-
-			snapVer := s.version
-			if s.version == maxTimestamp {
-				newTS, err := tsFuture.Wait()
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				s.version = newTS
-				req.Req.(*pb.GetRequest).Version = newTS
-				// skip lock resolving and backoff if the lock does not block the read
-				if newTS < lock.TxnID || newTS < lock.MinCommitTS {
-					continue
-				}
+			if firstLock == nil {
+				firstLock = lock
+			} else if s.version == maxTimestamp && firstLock.TxnID != lock.TxnID {
+				// If it is an autocommit point get, it needs to be blocked only
+				// by the first lock it meets. During retries, if the encountered
+				// lock is different from the first one, we can omit it.
+				cli.resolvedLocks.Put(lock.TxnID)
+				continue
 			}
 
-			// Use the original snapshot version to resolve locks so we can use MaxUint64
-			// as the callerStartTS if it's an auto-commit point get. This could save us
-			// one write at TiKV by not pushing forward the minCommitTS.
-			msBeforeExpired, err := cli.ResolveLocks(bo, snapVer, []*Lock{lock})
+			msBeforeExpired, err := cli.ResolveLocks(bo, s.version, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -525,10 +540,10 @@ func (s *KVSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
 		return
 	}
 	if s.mu.stats.scanDetail == nil {
-		s.mu.stats.scanDetail = &execdetails.ScanDetail{}
+		s.mu.stats.scanDetail = &util.ScanDetail{}
 	}
 	if s.mu.stats.timeDetail == nil {
-		s.mu.stats.timeDetail = &execdetails.TimeDetail{}
+		s.mu.stats.timeDetail = &util.TimeDetail{}
 	}
 	s.mu.stats.scanDetail.MergeFromScanDetailV2(detail.ScanDetailV2)
 	s.mu.stats.timeDetail.MergeFromTimeDetail(detail.TimeDetail)
@@ -550,18 +565,6 @@ func (s *KVSnapshot) IterReverse(k []byte) (unionstore.Iterator, error) {
 // value of this option. Only ReplicaRead is supported for snapshot
 func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case kv.IsolationLevel:
-		s.isolationLevel = val.(kv.IsoLevel)
-	case kv.Priority:
-		s.priority = PriorityToPB(val.(int))
-	case kv.NotFillCache:
-		s.notFillCache = val.(bool)
-	case kv.SyncLog:
-		s.syncLog = val.(bool)
-	case kv.KeyOnly:
-		s.keyOnly = val.(bool)
-	case kv.SnapshotTS:
-		s.setSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
 		s.mu.Lock()
 		s.mu.replicaRead = val.(kv.ReplicaReadType)
@@ -584,8 +587,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 		s.mu.Lock()
 		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
 		s.mu.Unlock()
-	case kv.TxnScope:
-		s.txnScope = val.(string)
 	}
 }
 
@@ -601,6 +602,27 @@ func (s *KVSnapshot) DelOption(opt int) {
 		s.mu.stats = nil
 		s.mu.Unlock()
 	}
+}
+
+// SetNotFillCache indicates whether tikv should skip filling cache when
+// loading data.
+func (s *KVSnapshot) SetNotFillCache(b bool) {
+	s.notFillCache = b
+}
+
+// SetKeyOnly indicates if tikv can return only keys.
+func (s *KVSnapshot) SetKeyOnly(b bool) {
+	s.keyOnly = b
+}
+
+// SetIsolationLevel sets the isolation level used to scan data from tikv.
+func (s *KVSnapshot) SetIsolationLevel(level IsoLevel) {
+	s.isolationLevel = level
+}
+
+// SetPriority sets the priority for tikv to execute commands.
+func (s *KVSnapshot) SetPriority(pri Priority) {
+	s.priority = pri
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.
@@ -631,11 +653,11 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	}
 
 	if keyErr.Conflict != nil {
-		return &kv.ErrWriteConflict{WriteConflict: keyErr.GetConflict()}
+		return &tikverr.ErrWriteConflict{WriteConflict: keyErr.GetConflict()}
 	}
 
 	if keyErr.Retryable != "" {
-		return &kv.ErrRetryable{Retryable: keyErr.Retryable}
+		return &tikverr.ErrRetryable{Retryable: keyErr.Retryable}
 	}
 
 	if keyErr.Abort != "" {
@@ -706,17 +728,12 @@ type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
 	backoffSleepMS map[BackoffType]int
 	backoffTimes   map[BackoffType]int
-	scanDetail     *execdetails.ScanDetail
-	timeDetail     *execdetails.TimeDetail
-}
-
-// Tp implements the RuntimeStats interface.
-func (rs *SnapshotRuntimeStats) Tp() int {
-	return execdetails.TpSnapshotRuntimeStats
+	scanDetail     *util.ScanDetail
+	timeDetail     *util.TimeDetail
 }
 
 // Clone implements the RuntimeStats interface.
-func (rs *SnapshotRuntimeStats) Clone() execdetails.RuntimeStats {
+func (rs *SnapshotRuntimeStats) Clone() *SnapshotRuntimeStats {
 	newRs := SnapshotRuntimeStats{rpcStats: NewRegionRequestRuntimeStats()}
 	if rs.rpcStats.Stats != nil {
 		for k, v := range rs.rpcStats.Stats {
@@ -737,28 +754,24 @@ func (rs *SnapshotRuntimeStats) Clone() execdetails.RuntimeStats {
 }
 
 // Merge implements the RuntimeStats interface.
-func (rs *SnapshotRuntimeStats) Merge(other execdetails.RuntimeStats) {
-	tmp, ok := other.(*SnapshotRuntimeStats)
-	if !ok {
-		return
-	}
-	if tmp.rpcStats.Stats != nil {
+func (rs *SnapshotRuntimeStats) Merge(other *SnapshotRuntimeStats) {
+	if other.rpcStats.Stats != nil {
 		if rs.rpcStats.Stats == nil {
-			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats, len(tmp.rpcStats.Stats))
+			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats, len(other.rpcStats.Stats))
 		}
-		rs.rpcStats.Merge(tmp.rpcStats)
+		rs.rpcStats.Merge(other.rpcStats)
 	}
-	if len(tmp.backoffSleepMS) > 0 {
+	if len(other.backoffSleepMS) > 0 {
 		if rs.backoffSleepMS == nil {
 			rs.backoffSleepMS = make(map[BackoffType]int)
 		}
 		if rs.backoffTimes == nil {
 			rs.backoffTimes = make(map[BackoffType]int)
 		}
-		for k, v := range tmp.backoffSleepMS {
+		for k, v := range other.backoffSleepMS {
 			rs.backoffSleepMS[k] += v
 		}
-		for k, v := range tmp.backoffTimes {
+		for k, v := range other.backoffTimes {
 			rs.backoffTimes[k] += v
 		}
 	}

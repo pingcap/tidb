@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cznic/mathutil"
 	"github.com/go-yaml/yaml"
@@ -225,21 +226,21 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 }
 
 func checkTooLongSchema(schema model.CIStr) error {
-	if len(schema.L) > mysql.MaxDatabaseNameLength {
+	if utf8.RuneCountInString(schema.L) > mysql.MaxDatabaseNameLength {
 		return ErrTooLongIdent.GenWithStackByArgs(schema)
 	}
 	return nil
 }
 
 func checkTooLongTable(table model.CIStr) error {
-	if len(table.L) > mysql.MaxTableNameLength {
+	if utf8.RuneCountInString(table.L) > mysql.MaxTableNameLength {
 		return ErrTooLongIdent.GenWithStackByArgs(table)
 	}
 	return nil
 }
 
 func checkTooLongIndex(index model.CIStr) error {
-	if len(index.L) > mysql.MaxIndexIdentifierLen {
+	if utf8.RuneCountInString(index.L) > mysql.MaxIndexIdentifierLen {
 		return ErrTooLongIdent.GenWithStackByArgs(index)
 	}
 	return nil
@@ -259,6 +260,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 			c.Flag |= mysql.PriKeyFlag
 			// Primary key can not be NULL.
 			c.Flag |= mysql.NotNullFlag
+			setNoDefaultValueFlag(c, c.DefaultValue != nil)
 		}
 	case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 		for i, key := range v.Keys {
@@ -688,24 +690,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		}
 	}
 
-	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-
-	processColumnFlags(col)
-
-	err = checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	err = checkColumnValueConstraint(col, col.Collate)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	err = checkDefaultValue(ctx, col, hasDefaultValue)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	err = checkColumnFieldLength(col)
-	if err != nil {
+	if err = processAndCheckDefaultValueAndColumn(ctx, col, outPriKeyConstraint, hasDefaultValue, setOnUpdateNow, hasNullFlag); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	return col, constraints, nil
@@ -1106,7 +1091,7 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 func checkTooLongColumn(cols []*model.ColumnInfo) error {
 	for _, col := range cols {
 		colName := col.Name.O
-		if len(colName) > mysql.MaxColumnNameLength {
+		if utf8.RuneCountInString(colName) > mysql.MaxColumnNameLength {
 			return ErrTooLongIdent.GenWithStackByArgs(colName)
 		}
 	}
@@ -1438,11 +1423,6 @@ func buildTableInfo(
 				if isSingleIntPK {
 					tbInfo.PKIsHandle = true
 				} else {
-					hasBinlog := ctx.GetSessionVars().BinlogClient != nil
-					if hasBinlog {
-						msg := mysql.Message("Cannot create clustered index table when the binlog is ON", nil)
-						return nil, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
-					}
 					tbInfo.IsCommonHandle = true
 					tbInfo.CommonHandleVersion = 1
 				}
@@ -1749,6 +1729,14 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	tbInfo, err = buildTableInfo(ctx, s.Table.Name, cols, newConstraints, tableCharset, tableCollate)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	switch s.TemporaryKeyword {
+	case ast.TemporaryGlobal:
+		tbInfo.TempTableType = model.TempTableGlobal
+	case ast.TemporaryLocal:
+		tbInfo.TempTableType = model.TempTableLocal
+	case ast.TemporaryNone:
+		tbInfo.TempTableType = model.TempTableNone
 	}
 
 	if err = setTableAutoRandomBits(ctx, tbInfo, colDefs); err != nil {
@@ -2713,7 +2701,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(colName) > mysql.MaxColumnNameLength {
+	if utf8.RuneCountInString(colName) > mysql.MaxColumnNameLength {
 		return nil, ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
@@ -3682,6 +3670,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 
 	var hasDefaultValue, setOnUpdateNow bool
 	var err error
+	var hasNullFlag bool
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
@@ -3697,6 +3686,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionNotNull:
 			col.Flag |= mysql.NotNullFlag
 		case ast.ColumnOptionNull:
+			hasNullFlag = true
 			col.Flag &= ^mysql.NotNullFlag
 		case ast.ColumnOptionAutoIncrement:
 			col.Flag |= mysql.AutoIncrementFlag
@@ -3741,14 +3731,30 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		}
 	}
 
-	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-
-	processColumnFlags(col)
-
-	if hasDefaultValue {
-		return errors.Trace(checkDefaultValue(ctx, col, true))
+	if err = processAndCheckDefaultValueAndColumn(ctx, col, nil, hasDefaultValue, setOnUpdateNow, hasNullFlag); err != nil {
+		return errors.Trace(err)
 	}
 
+	return nil
+}
+
+func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column, outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
+	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+	processColumnFlags(col)
+
+	err := checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkColumnValueConstraint(col, col.Collate); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkDefaultValue(ctx, col, hasDefaultValue); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkColumnFieldLength(col); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -3861,10 +3867,6 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkColumnValueConstraint(newCol, newCol.Collate); err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	if err = checkModifyTypes(ctx, &col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		if strings.Contains(err.Error(), "Unsupported modifying collation") {
 			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
@@ -3873,11 +3875,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 	if ctx.GetSessionVars().EnableChangeColumnType && needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo) {
-		if newCol.IsGenerated() || col.IsGenerated() {
-			// TODO: Make it compatible with MySQL error.
-			msg := fmt.Sprintf("tidb_enable_change_column_type is true, newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
-			return nil, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		} else if t.Meta().Partition != nil {
+		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if t.Meta().Partition != nil {
 			return nil, errUnsupportedModifyColumn.GenWithStackByArgs("tidb_enable_change_column_type is true, table is partition table")
 		}
 	}
@@ -3899,10 +3900,6 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
 		modifyColumnTp = mysql.TypeNull
-	}
-
-	if err = checkColumnFieldLength(newCol); err != nil {
-		return nil, err
 	}
 
 	if err = checkColumnWithIndexConstraint(t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
@@ -4991,7 +4988,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		}
 		idxPart.Length = types.UnspecifiedLength
 		// The index part is an expression, prepare a hidden column for it.
-		if len(idxPart.Column.Name.L) > mysql.MaxColumnNameLength {
+		if utf8.RuneCountInString(idxPart.Column.Name.L) > mysql.MaxColumnNameLength {
 			// TODO: Refine the error message.
 			return nil, ErrTooLongIdent.GenWithStackByArgs("hidden column")
 		}
@@ -5371,14 +5368,10 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 }
 
 func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
-	// Check whether there are other columns depend on this column or not.
-	for _, col := range tblInfo.Columns {
-		for dep := range col.Dependences {
-			if dep == colName.L {
-				return errDependentByGeneratedColumn.GenWithStackByArgs(dep)
-			}
-		}
+	if ok, dep := hasDependentByGeneratedColumn(tblInfo, colName); ok {
+		return errDependentByGeneratedColumn.GenWithStackByArgs(dep)
 	}
+
 	if len(tblInfo.Columns) == 1 {
 		return ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
 			colName, tblInfo.Name)
@@ -5481,7 +5474,7 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 			}
 		case mysql.TypeString, mysql.TypeVarString:
 			switch vkind {
-			case types.KindString, types.KindBytes, types.KindNull:
+			case types.KindString, types.KindBytes, types.KindNull, types.KindBinaryLiteral:
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
@@ -5905,7 +5898,7 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
 		}
 
-		labelConstraints, err := placement.CheckLabelConstraints(constraints1)
+		labelConstraints, err := placement.NewConstraints(constraints1)
 		if err != nil {
 			return rules, err
 		}
@@ -5935,7 +5928,7 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 				}
 			}
 
-			labelConstraints, err := placement.CheckLabelConstraints(strings.Split(strings.TrimSpace(labels), ","))
+			labelConstraints, err := placement.NewConstraints(strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
 				return rules, err
 			}
@@ -6074,11 +6067,13 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		// refer to tidb#22065.
 		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
 		// placement rules in SQL is not compatible with `set tiflash replica` yet
-		rule.LabelConstraints = append(rule.LabelConstraints, placement.Constraint{
+		if err := rule.LabelConstraints.Add(placement.Constraint{
 			Op:     placement.NotIn,
 			Key:    placement.EngineLabelKey,
 			Values: []string{placement.EngineLabelTiFlash},
-		})
+		}); err != nil {
+			return errors.Trace(err)
+		}
 		rule.GroupID = bundle.ID
 		rule.ID = strconv.Itoa(i)
 		rule.StartKeyHex = startKey

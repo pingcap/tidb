@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -427,7 +426,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 		SetConcurrency(1).SetDesc(true)
 
 	builder.Request.NotFillCache = true
-	builder.Request.Priority = tikvstore.PriorityLow
+	builder.Request.Priority = kv.PriorityLow
 
 	kvReq, err := builder.Build()
 	if err != nil {

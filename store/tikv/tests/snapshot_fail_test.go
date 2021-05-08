@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -84,7 +85,7 @@ func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	res, err := txn.BatchGet(context.Background(), [][]byte{[]byte("k1"), []byte("k2")})
+	res, err := toTiDBTxn(&txn).BatchGet(context.Background(), toTiDBKeys([][]byte{[]byte("k1"), []byte("k2")}))
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, map[string][]byte{"k1": []byte("v1"), "k2": []byte("v2")})
 }
@@ -140,38 +141,65 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult"), IsNil)
 }
 
-func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
+func (s *testSnapshotFailSuite) TestRetryMaxTsPointGetSkipLock(c *C) {
 	defer s.cleanup(c)
 
-	snapshot := s.store.GetSnapshot(math.MaxUint64)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshotGetTSAsync", `pause`), IsNil)
-	ch := make(chan error)
-	go func() {
-		_, err := snapshot.Get(context.Background(), []byte("k4"))
-		ch <- err
-	}()
-
+	// Prewrite k1 and k2 with async commit but don't commit them
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = txn.Set([]byte("k4"), []byte("v4"))
+	err = txn.Set([]byte("k1"), []byte("v1"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("k2"), []byte("v2"))
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
-	txn.SetOption(kv.Enable1PC, false)
-	txn.SetOption(kv.GuaranteeLinearizability, false)
-	// Prewrite an async-commit lock and do not commit it.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", `return`), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/twoPCShortLockTTL", "return"), IsNil)
 	committer, err := txn.NewCommitter(1)
 	c.Assert(err, IsNil)
-	// Sets its minCommitTS to one second later, so the lock will be ignored by point get.
-	committer.SetMinCommitTS(committer.GetStartTS() + (1000 << 18))
 	err = committer.Execute(context.Background())
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshotGetTSAsync"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/twoPCShortLockTTL"), IsNil)
 
-	err = <-ch
-	c.Assert(err, ErrorMatches, ".*key not exist")
+	snapshot := s.store.GetSnapshot(math.MaxUint64)
+	getCh := make(chan []byte)
+	go func() {
+		// Sleep a while to make the TTL of the first txn expire, then we make sure we resolve lock by this get
+		time.Sleep(200 * time.Millisecond)
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeSendPointGet", "1*off->pause"), IsNil)
+		res, err := snapshot.Get(context.Background(), []byte("k2"))
+		c.Assert(err, IsNil)
+		getCh <- res
+	}()
+	// The get should be blocked by the failpoint. But the lock should have been resolved.
+	select {
+	case res := <-getCh:
+		c.Errorf("too early %s", string(res))
+	case <-time.After(1 * time.Second):
+	}
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
+	// Prewrite k1 and k2 again without committing them
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.SetOption(kv.EnableAsyncCommit, true)
+	err = txn.Set([]byte("k1"), []byte("v3"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("k2"), []byte("v4"))
+	c.Assert(err, IsNil)
+	committer, err = txn.NewCommitter(1)
+	c.Assert(err, IsNil)
+	err = committer.Execute(context.Background())
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeSendPointGet"), IsNil)
+
+	// After disabling the failpoint, the get request should bypass the new locks and read the old result
+	select {
+	case res := <-getCh:
+		c.Assert(res, DeepEquals, []byte("v2"))
+	case <-time.After(1 * time.Second):
+		c.Errorf("get timeout")
+	}
 }
 
 func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
@@ -179,11 +207,11 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = txn.Set([]byte("k1"), []byte("v1"))
+	c.Assert(txn.Set([]byte("k1"), []byte("v1")), IsNil)
 	err = txn.Set([]byte("k2"), []byte("v2"))
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, false)
-	txn.SetOption(kv.Enable1PC, false)
+	txn.SetEnable1PC(false)
 	txn.SetOption(kv.GuaranteeLinearizability, false)
 
 	// Prewrite the lock without committing it
@@ -203,7 +231,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	// Should get nothing with max version, and **not pushing forward minCommitTS** of the primary lock
 	snapshot := s.store.GetSnapshot(math.MaxUint64)
 	_, err = snapshot.Get(context.Background(), []byte("k2"))
-	c.Assert(err, ErrorMatches, ".*key not exist")
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
 	initialCommitTS := committer.GetCommitTS()
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeCommit"), IsNil)

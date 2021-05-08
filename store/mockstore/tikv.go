@@ -18,8 +18,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 )
 
 // newMockTikvStore creates a mocked tikv store, the path is the file path to store the data.
@@ -35,5 +35,5 @@ func newMockTikvStore(opt *mockOptions) (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mockstorage.NewMockStorage(kvstore), nil
+	return mockstorage.NewMockStorage(kvstore)
 }

@@ -59,11 +59,10 @@ const (
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
-	// KVFilter filters out the key-value pairs in the memBuf that is unnecessary to be committed
-	KVFilter
 )
 
 // Priority value for transaction priority.
+// TODO: remove after BR update.
 const (
 	PriorityNormal = iota
 	PriorityLow

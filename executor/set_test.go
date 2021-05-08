@@ -158,6 +158,9 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustGetErrMsg("set @@global.collation_database='non_exist_collation'", expectErrMsg)
 	tk.MustGetErrMsg("set @@global.collation_connection='non_exist_collation'", expectErrMsg)
 
+	expectErrMsg = "[parser:1115]Unknown character set: 'boguscharsetname'"
+	tk.MustGetErrMsg("set names boguscharsetname", expectErrMsg)
+
 	tk.MustExec("set character_set_results = NULL")
 	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
 
@@ -396,6 +399,14 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err, ErrorMatches, ".*Variable 'tidb_metric_query_range_duration' can't be set to the value of '9'")
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
+
+	tk.MustExec("set @@cte_max_recursion_depth=100")
+	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("100"))
+	tk.MustExec("set @@global.cte_max_recursion_depth=100")
+	tk.MustQuery("select @@global.cte_max_recursion_depth").Check(testkit.Rows("100"))
+	tk.MustExec("set @@cte_max_recursion_depth=-1")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect cte_max_recursion_depth value: '-1'"))
+	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("0"))
 
 	// test for tidb_slow_log_masking
 	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mocktikv_test
+package mockstore
 
 import (
 	"bytes"
@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -75,7 +75,8 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	c.Assert(err, IsNil)
 
 	// Split Table into 10 regions.
-	cluster.SplitTable(tblID, 10)
+	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
 
 	// 10 table regions and first region and last region.
 	regions := cluster.GetAllRegions()
@@ -99,7 +100,8 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	}
 	c.Assert(allKeysMap, HasLen, 1000)
 
-	cluster.SplitIndex(tblID, idxID, 10)
+	indexStart := tablecodec.EncodeTableIndexPrefix(tblID, idxID)
+	cluster.SplitKeys(indexStart, indexStart.PrefixNext(), 10)
 
 	allIndexMap := make(map[string]bool)
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tblID, idxID)
