@@ -186,13 +186,8 @@
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.a))->Projection",
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.b))->Projection",
       "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(Column#16, decimal(24,4) BINARY))->Column#17 over(partition by Column#15))->Projection",
-<<<<<<< HEAD
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(order by test.t.a asc, test.t.b desc range between unbounded preceding and current row))->Projection",
-      "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.a))->Projection",
-=======
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(order by test.t.a, test.t.b desc range between unbounded preceding and current row))->Projection",
+      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(order by test.t.a asc, test.t.b desc range between unbounded preceding and current row))->Projection",
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.a))->Projection",
->>>>>>> f30108d88... executor, expression: fix the incorrect result of AVG function (#23285)
       "[planner:1054]Unknown column 'z' in 'field list'",
       "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#14 over())->Sort->Projection",
       "IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg->Window(sum(Column#13)->Column#15 over())->Projection",
@@ -261,19 +256,11 @@
   {
     "Name": "TestWindowParallelFunction",
     "Cases": [
-<<<<<<< HEAD
-      "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.a))->Projection",
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection",
+      "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.a))->Projection",
+      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection",
       "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(Column#16, decimal(24,4) BINARY))->Column#17 over(partition by Column#15))->Partition(execution info: concurrency:4, data source:Projection_8)->Projection",
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(order by test.t.a asc, test.t.b desc range between unbounded preceding and current row))->Projection",
-      "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.a))->Projection",
-=======
+      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(order by test.t.a asc, test.t.b desc range between unbounded preceding and current row))->Projection",
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.a))->Projection",
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection",
-      "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(Column#16, decimal(24,4) BINARY))->Column#17 over(partition by Column#15))->Partition(execution info: concurrency:4, data sources:[Projection_8])->Projection",
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(order by test.t.a, test.t.b desc range between unbounded preceding and current row))->Projection",
-      "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.a))->Projection",
->>>>>>> f30108d88... executor, expression: fix the incorrect result of AVG function (#23285)
       "[planner:1054]Unknown column 'z' in 'field list'",
       "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#14 over())->Sort->Projection",
       "IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg->Window(sum(Column#13)->Column#15 over())->Projection",
@@ -313,11 +300,7 @@
       "[planner:1210]Incorrect arguments to nth_value",
       "[planner:1210]Incorrect arguments to ntile",
       "IndexReader(Index(t.f)[[NULL,+inf]])->Window(ntile(<nil>)->Column#14 over())->Projection",
-<<<<<<< HEAD
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection",
-=======
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection",
->>>>>>> f30108d88... executor, expression: fix the incorrect result of AVG function (#23285)
+      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection",
       "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1)->Column#14 over())->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#15, sum(cast(test.t.c, decimal(65,0) BINARY))->Column#16 over(order by test.t.a asc range between unbounded preceding and current row))->Projection",
       "[planner:3593]You cannot use the window function 'sum' in this context.'",
