@@ -780,18 +780,17 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row chunk.Row) (int64, bool, 
 }
 
 func (s *builtinArithmeticIntDivideIntSig) evalIntWithCtx(sctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	b, isNull, err := s.args[1].EvalInt(sctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	b, bIsNull, err := s.args[1].EvalInt(sctx, row)
+	if bIsNull || err != nil {
+		return 0, bIsNull, err
+	}
+	a, aIsNull, err := s.args[0].EvalInt(sctx, row)
+	if aIsNull || err != nil {
+		return 0, aIsNull, err
 	}
 
 	if b == 0 {
 		return 0, true, handleDivisionByZeroError(sctx)
-	}
-
-	a, isNull, err := s.args[0].EvalInt(sctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
 	}
 
 	var (

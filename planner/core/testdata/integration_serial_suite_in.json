@@ -9,6 +9,27 @@
     ]
   },
   {
+    "name": "TestVerboseExplain",
+    "cases": [
+      "explain format = 'verbose' select count(*) from t3",
+      "explain format = 'verbose' select count(*) from t2",
+      "explain format = 'verbose' select * from t3 order by a",
+      "explain format = 'verbose' select * from t3 order by b",
+      "explain format = 'verbose' select * from t3 order by a limit 1",
+      "explain format = 'verbose' select * from t3 order by b limit 1",
+      "explain format = 'verbose' select count(*) from t2 group by a",
+      "explain format = 'verbose' select count(*) from t3 where b = 0",
+      "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
+      "explain format = 'verbose' select count(*) from t2 where a = 0",
+      "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
+      "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
+      "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
+      "explain format = 'verbose' select (2) in (select count(*) from t1) from (select t.b < (select t.b from t2 limit 1 )  from t3 t) t",
+      "explain format = 'verbose' select /*+ merge_join(t1) */ count(*) from t1 join t2 on t1.a = t2.a"
+    ]
+
+  },
+  {
     "name": "TestPushDownToTiFlashWithKeepOrder",
     "cases": [
       "explain format = 'brief' select max(a) from t",
@@ -243,7 +264,7 @@
     ]
   },
   {
-    "name": "TestMppAggWithJoin",
+    "name": "TestMppAggTopNWithJoin",
     "cases": [
       "desc format = 'brief' select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
       "desc format = 'brief' select * from t join ( select count(*)+id as v from t group by id) as A on A.v = t.id",
@@ -251,7 +272,32 @@
       "desc format = 'brief' select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
       "desc format = 'brief' select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
       "desc format = 'brief' select * from (select id from t group by id) C join (select sum(value),id from t group by id)B on C.id=B.id",
-      "desc format = 'brief' select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id"
+      "desc format = 'brief' select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id",
+      "desc format = 'brief' select * from t join t t1 on t.id = t1.id order by t.value limit 1",
+      "desc format = 'brief' select * from t join t t1 on t.id = t1.id order by t.value % 100 limit 1",
+      "desc format = 'brief' select count(*) from (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 20) v group by v.v1"
     ]
+  },
+  {
+    "name": "TestIndexMerge",
+    "cases": [
+      "desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and b+2>1)",
+      "desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1)",
+      "desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)",
+      "desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(b)=1) or (b=1 and length(a)=1)"
+    ]
+  },
+  {
+    "name": "TestLimitIndexLookUpKeepOrder",
+    "cases": [
+      "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10",
+      "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b desc, c desc limit 10"
+    ]
+  },
+  {
+      "name": "TestIssue23887",
+      "cases": [
+          "select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t"
+      ]
   }
 ]

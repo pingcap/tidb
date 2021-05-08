@@ -15,12 +15,12 @@ package unionstore
 
 import (
 	"bytes"
+	"math"
 	"reflect"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 
-	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -72,25 +72,25 @@ func newMemDB() *MemDB {
 	db.allocator.init()
 	db.root = nullAddr
 	db.stages = make([]memdbCheckpoint, 0, 2)
-	db.entrySizeLimit = atomic.LoadUint64(&tidbkv.TxnEntrySizeLimit)
-	db.bufferSizeLimit = atomic.LoadUint64(&tidbkv.TxnTotalSizeLimit)
+	db.entrySizeLimit = math.MaxUint64
+	db.bufferSizeLimit = math.MaxUint64
 	return db
 }
 
 // Staging create a new staging buffer inside the MemBuffer.
 // Subsequent writes will be temporarily stored in this new staging buffer.
 // When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
-func (db *MemDB) Staging() tidbkv.StagingHandle {
+func (db *MemDB) Staging() int {
 	db.Lock()
 	defer db.Unlock()
 
 	db.stages = append(db.stages, db.vlog.checkpoint())
-	return tidbkv.StagingHandle(len(db.stages))
+	return len(db.stages)
 }
 
 // Release publish all modifications in the latest staging buffer to upper level.
-func (db *MemDB) Release(h tidbkv.StagingHandle) {
-	if int(h) != len(db.stages) {
+func (db *MemDB) Release(h int) {
+	if h != len(db.stages) {
 		// This should never happens in production environment.
 		// Use panic to make debug easier.
 		panic("cannot release staging buffer")
@@ -98,22 +98,22 @@ func (db *MemDB) Release(h tidbkv.StagingHandle) {
 
 	db.Lock()
 	defer db.Unlock()
-	if int(h) == 1 {
+	if h == 1 {
 		tail := db.vlog.checkpoint()
 		if !db.stages[0].isSamePosition(&tail) {
 			db.dirty = true
 		}
 	}
-	db.stages = db.stages[:int(h)-1]
+	db.stages = db.stages[:h-1]
 }
 
 // Cleanup cleanup the resources referenced by the StagingHandle.
 // If the changes are not published by `Release`, they will be discarded.
-func (db *MemDB) Cleanup(h tidbkv.StagingHandle) {
-	if int(h) > len(db.stages) {
+func (db *MemDB) Cleanup(h int) {
+	if h > len(db.stages) {
 		return
 	}
-	if int(h) < len(db.stages) {
+	if h < len(db.stages) {
 		// This should never happens in production environment.
 		// Use panic to make debug easier.
 		panic("cannot cleanup staging buffer")
@@ -121,7 +121,7 @@ func (db *MemDB) Cleanup(h tidbkv.StagingHandle) {
 
 	db.Lock()
 	defer db.Unlock()
-	cp := &db.stages[int(h)-1]
+	cp := &db.stages[h-1]
 	if !db.vlogInvalid {
 		curr := db.vlog.checkpoint()
 		if !curr.isSamePosition(cp) {
@@ -129,7 +129,7 @@ func (db *MemDB) Cleanup(h tidbkv.StagingHandle) {
 			db.vlog.truncate(cp)
 		}
 	}
-	db.stages = db.stages[:int(h)-1]
+	db.stages = db.stages[:h-1]
 }
 
 // Reset resets the MemBuffer to initial states.
@@ -169,11 +169,11 @@ func (db *MemDB) Get(key []byte) ([]byte, error) {
 
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	return db.vlog.getValue(x.vptr), nil
 }
@@ -182,11 +182,11 @@ func (db *MemDB) Get(key []byte) ([]byte, error) {
 func (db *MemDB) SelectValueHistory(key []byte, predicate func(value []byte) bool) ([]byte, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	result := db.vlog.selectValueHistory(x.vptr, func(addr memdbArenaAddr) bool {
 		return predicate(db.vlog.getValue(addr))
@@ -201,7 +201,7 @@ func (db *MemDB) SelectValueHistory(key []byte, predicate func(value []byte) boo
 func (db *MemDB) GetFlags(key []byte) (kv.KeyFlags, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
-		return 0, tidbkv.ErrNotExist
+		return 0, tikverr.ErrNotExist
 	}
 	return x.getKeyFlags(), nil
 }
@@ -216,7 +216,7 @@ func (db *MemDB) UpdateFlags(key []byte, ops ...kv.FlagsOp) {
 // v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
 func (db *MemDB) Set(key []byte, value []byte) error {
 	if len(value) == 0 {
-		return tidbkv.ErrCannotSetNilValue
+		return tikverr.ErrCannotSetNilValue
 	}
 	return db.set(key, value)
 }
@@ -224,7 +224,7 @@ func (db *MemDB) Set(key []byte, value []byte) error {
 // SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
 func (db *MemDB) SetWithFlags(key []byte, value []byte, ops ...kv.FlagsOp) error {
 	if len(value) == 0 {
-		return tidbkv.ErrCannotSetNilValue
+		return tikverr.ErrCannotSetNilValue
 	}
 	return db.set(key, value, ops...)
 }
@@ -280,7 +280,10 @@ func (db *MemDB) set(key []byte, value []byte, ops ...kv.FlagsOp) error {
 
 	if value != nil {
 		if size := uint64(len(key) + len(value)); size > db.entrySizeLimit {
-			return tidbkv.ErrEntryTooLarge.GenWithStackByArgs(db.entrySizeLimit, size)
+			return &tikverr.ErrEntryTooLarge{
+				Limit: db.entrySizeLimit,
+				Size:  size,
+			}
 		}
 	}
 
@@ -306,7 +309,7 @@ func (db *MemDB) set(key []byte, value []byte, ops ...kv.FlagsOp) error {
 
 	db.setValue(x, value)
 	if uint64(db.Size()) > db.bufferSizeLimit {
-		return tidbkv.ErrTxnTooLarge.GenWithStackByArgs(db.Size())
+		return &tikverr.ErrTxnTooLarge{Size: db.Size()}
 	}
 	return nil
 }

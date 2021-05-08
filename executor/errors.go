@@ -33,6 +33,7 @@ var (
 	ErrCantCreateUserWithGrant       = dbterror.ClassExecutor.NewStd(mysql.ErrCantCreateUserWithGrant)
 	ErrPasswordNoMatch               = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordNoMatch)
 	ErrCannotUser                    = dbterror.ClassExecutor.NewStd(mysql.ErrCannotUser)
+	ErrGrantRole                     = dbterror.ClassExecutor.NewStd(mysql.ErrGrantRole)
 	ErrPasswordFormat                = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordFormat)
 	ErrCantChangeTxCharacteristics   = dbterror.ClassExecutor.NewStd(mysql.ErrCantChangeTxCharacteristics)
 	ErrPsManyParam                   = dbterror.ClassExecutor.NewStd(mysql.ErrPsManyParam)

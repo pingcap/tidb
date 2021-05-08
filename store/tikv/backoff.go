@@ -25,11 +25,11 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -134,7 +134,7 @@ const (
 	boMaxTsNotSynced
 )
 
-func (t BackoffType) createFn(vars *tidbkv.Variables) func(context.Context, int) int {
+func (t BackoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
 	if vars.Hook != nil {
 		vars.Hook(t.String(), vars)
 	}
@@ -194,25 +194,25 @@ func (t BackoffType) String() string {
 func (t BackoffType) TError() error {
 	switch t {
 	case BoTiKVRPC:
-		return kv.ErrTiKVServerTimeout
+		return tikverr.ErrTiKVServerTimeout
 	case BoTiFlashRPC:
-		return kv.ErrTiFlashServerTimeout
+		return tikverr.ErrTiFlashServerTimeout
 	case BoTxnLock, BoTxnLockFast, boTxnNotFound:
-		return kv.ErrResolveLockTimeout
+		return tikverr.ErrResolveLockTimeout
 	case BoPDRPC:
-		return kv.ErrPDServerTimeout
+		return tikverr.NewErrPDServerTimeout("")
 	case BoRegionMiss:
-		return kv.ErrRegionUnavailable
+		return tikverr.ErrRegionUnavailable
 	case boTiKVServerBusy:
-		return kv.ErrTiKVServerBusy
+		return tikverr.ErrTiKVServerBusy
 	case boTiFlashServerBusy:
-		return kv.ErrTiFlashServerBusy
+		return tikverr.ErrTiFlashServerBusy
 	case boStaleCmd:
-		return kv.ErrTiKVStaleCommand
+		return tikverr.ErrTiKVStaleCommand
 	case boMaxTsNotSynced:
-		return kv.ErrTiKVMaxTimestampNotSynced
+		return tikverr.ErrTiKVMaxTimestampNotSynced
 	}
-	return kv.ErrUnknown
+	return tikverr.ErrUnknown
 }
 
 // Maximum total sleep time(in ms) for kv/cop commands.
@@ -252,7 +252,7 @@ type Backoffer struct {
 	totalSleep int
 	errors     []error
 	types      []fmt.Stringer
-	vars       *tidbkv.Variables
+	vars       *kv.Variables
 	noop       bool
 
 	backoffSleepMS map[BackoffType]int
@@ -269,12 +269,12 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
 		ctx:      ctx,
 		maxSleep: maxSleep,
-		vars:     tidbkv.DefaultVars,
+		vars:     kv.DefaultVars,
 	}
 }
 
-// NewBackofferWithVars creates a Backoffer with maximum sleep time(in ms) and tidbkv.Variables.
-func NewBackofferWithVars(ctx context.Context, maxSleep int, vars *tidbkv.Variables) *Backoffer {
+// NewBackofferWithVars creates a Backoffer with maximum sleep time(in ms) and kv.Variables.
+func NewBackofferWithVars(ctx context.Context, maxSleep int, vars *kv.Variables) *Backoffer {
 	return NewBackoffer(ctx, maxSleep).withVars(vars)
 }
 
@@ -283,8 +283,8 @@ func NewNoopBackoff(ctx context.Context) *Backoffer {
 	return &Backoffer{ctx: ctx, noop: true}
 }
 
-// withVars sets the tidbkv.Variables to the Backoffer and return it.
-func (b *Backoffer) withVars(vars *tidbkv.Variables) *Backoffer {
+// withVars sets the kv.Variables to the Backoffer and return it.
+func (b *Backoffer) withVars(vars *kv.Variables) *Backoffer {
 	if vars != nil {
 		b.vars = vars
 	}
@@ -310,7 +310,7 @@ func (b *Backoffer) Backoff(typ BackoffType, err error) error {
 // BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
 // and never sleep more than maxSleepMs for each sleep.
 func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err error) error {
-	if strings.Contains(err.Error(), kv.MismatchClusterID) {
+	if strings.Contains(err.Error(), tikverr.MismatchClusterID) {
 		logutil.BgLogger().Fatal("critical error", zap.Error(err))
 	}
 	select {
@@ -356,16 +356,16 @@ func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err err
 	}
 	b.backoffTimes[typ]++
 
-	stmtExec := b.ctx.Value(execdetails.StmtExecDetailKey)
+	stmtExec := b.ctx.Value(util.ExecDetailsKey)
 	if stmtExec != nil {
-		detail := stmtExec.(*execdetails.StmtExecDetails)
+		detail := stmtExec.(*util.ExecDetails)
 		atomic.AddInt64(&detail.BackoffDuration, int64(realSleep)*int64(time.Millisecond))
 		atomic.AddInt64(&detail.BackoffCount, 1)
 	}
 
 	if b.vars != nil && b.vars.Killed != nil {
 		if atomic.LoadUint32(b.vars.Killed) == 1 {
-			return kv.ErrQueryInterrupted
+			return tikverr.ErrQueryInterrupted
 		}
 	}
 
@@ -415,7 +415,7 @@ func (b *Backoffer) Fork() (*Backoffer, context.CancelFunc) {
 }
 
 // GetVars returns the binded vars.
-func (b *Backoffer) GetVars() *tidbkv.Variables {
+func (b *Backoffer) GetVars() *kv.Variables {
 	return b.vars
 }
 

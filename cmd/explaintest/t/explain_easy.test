@@ -71,7 +71,7 @@ explain format = 'brief' select t.c in (select count(*) from t s left join t t1 
 explain format = 'brief' select t.c in (select count(*) from t s right join t t1 on s.a = t1.a where 3 = t.a and t1.b = 3) from t;
 
 drop table if exists t;
-create table t(a int unsigned);
+create table t(a int unsigned not null);
 explain format = 'brief' select t.a = '123455' from t;
 explain format = 'brief' select t.a > '123455' from t;
 explain format = 'brief' select t.a != '123455' from t;

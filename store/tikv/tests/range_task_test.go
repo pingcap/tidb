@@ -20,10 +20,11 @@ import (
 	"sort"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 )
 
 type testRangeTaskSuite struct {
@@ -61,7 +62,7 @@ func (s *testRangeTaskSuite) SetUpTest(c *C) {
 	}
 	allRegionRanges = append(allRegionRanges, makeRange("z", ""))
 
-	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("", mockcopr.NewCoprRPCHandler())
 	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithMultiRegions(cluster, splitKeys...)
 	s.cluster = cluster

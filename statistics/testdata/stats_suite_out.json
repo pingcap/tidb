@@ -401,8 +401,8 @@
         "└─TableRangeScan_5 4.00 cop[tikv] table:ct1 range:[\"1\",\"4\"], keep order:false"
       ],
       [
-        "TableReader_6 2.00 root  data:TableRangeScan_5",
-        "└─TableRangeScan_5 2.00 cop[tikv] table:ct1 range:[\"4\",\"6\"], keep order:false"
+        "TableReader_6 3.75 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 3.75 cop[tikv] table:ct1 range:[\"4\",\"6\"], keep order:false"
       ],
       [
         "TableReader_6 3.00 root  data:TableRangeScan_5",
