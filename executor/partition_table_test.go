@@ -324,13 +324,13 @@ func (s *partitionTableSuite) TestBatchGetandPointGet(c *C) {
 		tk.MustQuery(queryList).Check(testkit.Rows(fmt.Sprintf("%v", strings.Join(points, ","))))
 	}
 }
-  
+
 func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
-  
-  tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database test_global_stats")
 	tk.MustExec("use test_global_stats")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
