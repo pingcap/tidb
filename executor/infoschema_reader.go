@@ -1675,7 +1675,7 @@ func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error 
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.GetSysVars() {
 		var value string
-		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
+		value, err = v.GetSessionFromHook(sessionVars)
 		if err != nil {
 			return err
 		}
@@ -1726,7 +1726,7 @@ func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) {
 
 // setDataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
 func (e *memtableRetriever) setDataForPseudoProfiling(sctx sessionctx.Context) {
-	if v, ok := sctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
+	if v, err := sctx.GetSessionVars().GetSystemVar("profiling"); err == nil && variable.TiDBOptOn(v) {
 		row := types.MakeDatums(
 			0,                      // QUERY_ID
 			0,                      // SEQ

@@ -2647,7 +2647,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		varVal := row.GetString(1)
 		// `collation_server` is related to `character_set_server`, set `character_set_server` will also set `collation_server`.
 		// We have to make sure we set the `collation_server` with right value.
-		if _, ok := vars.GetSystemVar(varName); !ok || varName == variable.CollationServer {
+		if _, err := vars.GetSystemVar(varName); err != nil || varName == variable.CollationServer {
 			err = vars.SetSystemVar(varName, varVal)
 			if err != nil {
 				return err
@@ -2657,7 +2657,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 
 	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
 	if vars.ClientCapability&mysql.ClientInteractive > 0 {
-		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
+		if varVal, err := vars.GetSystemVar(variable.InteractiveTimeout); err == nil {
 			if err := vars.SetSystemVar(variable.WaitTimeout, varVal); err != nil {
 				return err
 			}

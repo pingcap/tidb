@@ -186,7 +186,9 @@ func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 		for _, row := range rows {
 			varName := row.GetString(0)
 			varValue := row.GetString(1)
-			variable.SetLocalSystemVar(varName, varValue)
+			// call setSession as the init function for the variable.
+			sv := variable.GetSysVar(varName)
+			sv.SetSessionFromHook(ctx.GetSessionVars(), varValue)
 		}
 	}
 	return nil

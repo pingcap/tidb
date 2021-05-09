@@ -1551,8 +1551,8 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	ds := buf.Times()
 
 	mode := 0
-	modeStr, ok := b.ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
-	if ok && modeStr != "" {
+	modeStr, err := b.ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
+	if err == nil && modeStr != "" {
 		mode, err = strconv.Atoi(modeStr)
 		if err != nil {
 			return handleInvalidTimeError(b.ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))

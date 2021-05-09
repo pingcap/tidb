@@ -1996,10 +1996,10 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 
 	tblCharset := ""
 	tblCollate := ""
-	if v, ok := ctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection); ok {
+	if v, err := ctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection); err == nil {
 		tblCharset = v
 	}
-	if v, ok := ctx.GetSessionVars().GetSystemVar(variable.CollationConnection); ok {
+	if v, err := ctx.GetSessionVars().GetSystemVar(variable.CollationConnection); err == nil {
 		tblCollate = v
 	}
 

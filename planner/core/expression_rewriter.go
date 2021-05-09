@@ -1214,31 +1214,36 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.ctxStackAppend(f, types.EmptyName)
 		return
 	}
-	var val string
-	var err error
-	if v.ExplicitScope {
-		err = variable.ValidateGetSystemVar(name, v.IsGlobal)
-		if err != nil {
-			er.err = err
-			return
-		}
-	}
-	sysVar := variable.GetSysVar(name)
-	if sysVar == nil {
+	sv := variable.GetSysVar(name)
+	if sv == nil {
 		er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 		return
 	}
-	// Variable is @@gobal.variable_name or variable is only global scope variable.
-	if v.IsGlobal || sysVar.Scope == variable.ScopeGlobal {
-		val, err = variable.GetGlobalSystemVar(sessionVars, name)
-	} else {
-		val, err = variable.GetSessionSystemVar(sessionVars, name)
+	if v.ExplicitScope {
+		if v.IsGlobal && !(sv.HasGlobalScope() || sv.HasNoneScope()) {
+			er.err = errors.New("wrong scope")
+			return
+		}
+		if !v.IsGlobal && !sv.HasSessionScope() {
+			er.err = errors.New("wrong scope")
+			return
+		}
+	}
+	var val string
+	var err error
+	switch {
+	case sv.HasNoneScope():
+		val = sv.Value
+	case v.IsGlobal || !sv.HasSessionScope():
+		val, err = sv.GetGlobalFromHook(sessionVars)
+	default:
+		val, err = sv.GetSessionFromHook(sessionVars)
 	}
 	if err != nil {
 		er.err = err
 		return
 	}
-	nativeVal, nativeType, nativeFlag := sysVar.GetNativeValType(val)
+	nativeVal, nativeType, nativeFlag := sv.GetNativeValType(val)
 	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
 	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)

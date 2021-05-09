@@ -373,8 +373,8 @@ func (cc *clientConn) writePacket(data []byte) error {
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
 func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
-	valStr, exists := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
-	if !exists {
+	valStr, err := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	if err != nil {
 		return variable.DefWaitTimeout
 	}
 	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
