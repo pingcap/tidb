@@ -678,7 +678,7 @@ func (s *testChecksumSuite) TestChecksumWriter(c *check.C) {
 		buf.WriteString(testData)
 	}
 
-	// write 1000 bytes and flush
+	// Write 1000 bytes and flush.
 	w := NewWriter(f)
 	n, err := w.Write(buf.Bytes())
 	c.Assert(err, check.IsNil)
@@ -688,7 +688,7 @@ func (s *testChecksumSuite) TestChecksumWriter(c *check.C) {
 	c.Assert(err, check.IsNil)
 	checkFlushedData(c, f, 0, 1000, 1000, nil, buf.Bytes())
 
-	// all data flushed, so no data in cache.
+	// All data flushed, so no data in cache.
 	cacheOff := w.GetCacheDataOffset()
 	c.Assert(cacheOff, check.Equals, int64(1000))
 }
@@ -715,7 +715,7 @@ func (s *testChecksumSuite) TestChecksumWriterAutoFlush(c *check.C) {
 	c.Assert(err, check.IsNil)
 	c.Assert(n, check.Equals, len(buf.Bytes()))
 
-	// this write will trigger flush
+	// This write will trigger flush.
 	n, err = w.Write([]byte("0"))
 	c.Assert(err, check.IsNil)
 	c.Assert(n, check.Equals, 1)
