@@ -410,7 +410,7 @@ func (r *ReaderWithCache) ReadAt(p []byte, off int64) (readCnt int, err error) {
 		// readCnt == 0 means all user requested data resides in r.cache
 		beg := off - r.cacheOff
 		if beg < 0 {
-			panic("off must be greater than r.cacheOff when readCnt is 0")
+			errors2.Trace(errors2.New("off must be greater than r.cacheOff when readCnt is 0"))
 		}
 		end := int(beg) + len(p)
 		if end > len(r.cache) {

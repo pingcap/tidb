@@ -662,7 +662,7 @@ var checkFlushedData = func(c *check.C, f io.ReaderAt, off int64, readBufLen int
 }
 
 func (s *testChecksumSuite) TestChecksumWriter(c *check.C) {
-	path := "checksum"
+	path := "checksum_TestChecksumWriter"
 	f, err := os.Create(path)
 	c.Assert(err, check.IsNil)
 	defer func() {
@@ -694,7 +694,7 @@ func (s *testChecksumSuite) TestChecksumWriter(c *check.C) {
 }
 
 func (s *testChecksumSuite) TestChecksumWriterAutoFlush(c *check.C) {
-	path := "checksum"
+	path := "checksum_TestChecksumWriterAutoFlush"
 	f, err := os.Create(path)
 	c.Assert(err, check.IsNil)
 	defer func() {
