@@ -219,14 +219,22 @@ func (*testSysVarSuite) TestScope(c *C) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	c.Assert(sv.HasSessionScope(), IsTrue)
 	c.Assert(sv.HasGlobalScope(), IsTrue)
+	c.Assert(sv.HasNoneScope(), IsFalse)
 
 	sv = SysVar{Scope: ScopeGlobal, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	c.Assert(sv.HasSessionScope(), IsFalse)
 	c.Assert(sv.HasGlobalScope(), IsTrue)
+	c.Assert(sv.HasNoneScope(), IsFalse)
+
+	sv = SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsTrue)
+	c.Assert(sv.HasGlobalScope(), IsFalse)
+	c.Assert(sv.HasNoneScope(), IsFalse)
 
 	sv = SysVar{Scope: ScopeNone, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	c.Assert(sv.HasSessionScope(), IsFalse)
 	c.Assert(sv.HasGlobalScope(), IsFalse)
+	c.Assert(sv.HasNoneScope(), IsTrue)
 }
 
 func (*testSysVarSuite) TestBuiltInCase(c *C) {

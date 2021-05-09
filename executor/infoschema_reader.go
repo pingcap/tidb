@@ -1675,7 +1675,7 @@ func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error 
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.GetSysVars() {
 		var value string
-		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
+		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return err
 		}

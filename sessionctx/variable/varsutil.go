@@ -161,10 +161,9 @@ func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValu
 	return normalizedValue, nil
 }
 
-// GetSessionSystemVar gets a system variable.
-// If it is a session only variable, use the default value defined in code.
-// Returns error if there is no such variable.
-func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
+// GetSessionOrGlobalSystemVar gets a system variable of session or global scope.
+// It also respects TIDB's special "instance" scope in GetSessionOnlySysVars.
+func GetSessionOrGlobalSystemVar(s *SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	gVal, ok, err := GetSessionOnlySysVars(s, key)
 	if err != nil || ok {
@@ -174,6 +173,9 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// This cache results in incorrect behavior since changes to global
+	// variables will not be picked up. It should be removed once
+	// https://github.com/pingcap/tidb/issues/24368 is closed.
 	s.systems[key] = gVal
 	return gVal, nil
 }
@@ -311,25 +313,6 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 		return err
 	}
 	return vars.SetStmtVar(name, sVal)
-}
-
-// ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
-func ValidateGetSystemVar(name string, isGlobal bool) error {
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	switch sysVar.Scope {
-	case ScopeGlobal:
-		if !isGlobal {
-			return ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
-		}
-	case ScopeSession:
-		if isGlobal {
-			return ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
-		}
-	}
-	return nil
 }
 
 const (
