@@ -116,6 +116,7 @@ var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
 var _ = Suite(&testSuite5{&baseTestSuite{}})
+var _ = Suite(&testSuite13{&baseTestSuite{}})
 var _ = Suite(&testSuiteJoin1{&baseTestSuite{}})
 var _ = Suite(&testSuiteJoin2{&baseTestSuite{}})
 var _ = Suite(&testSuiteJoin3{&baseTestSuite{}})
@@ -4868,6 +4869,30 @@ func (s *testSuite8) TearDownTest(c *C) {
 			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
+	}
+}
+
+type testSuite13 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite13) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
+		} else {
+			if !config.CheckTableBeforeDrop {
+				tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+			} else {
+				tk.MustGetErrCode(fmt.Sprintf("drop table %v", tableName), errno.ErrAdminCheckTable)
+			}
 		}
 	}
 }
