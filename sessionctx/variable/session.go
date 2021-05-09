@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
@@ -174,7 +176,9 @@ type TransactionContext struct {
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
 
-	GlobalTemporaryTables map[int64]struct{}
+	// GlobalTemporaryTables is used to store transaction-specific information for global temporary tables.
+	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
+	GlobalTemporaryTables map[int64]tableutil.TempTable
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -1443,6 +1447,24 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
 	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
+}
+
+// GetTemporaryTable returns a TempTable by tableInfo.
+func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
+	if tblInfo.TempTableType == model.TempTableGlobal {
+		if s.TxnCtx.GlobalTemporaryTables == nil {
+			s.TxnCtx.GlobalTemporaryTables = make(map[int64]tableutil.TempTable)
+		}
+		globalTempTables := s.TxnCtx.GlobalTemporaryTables
+		globalTempTable, ok := globalTempTables[tblInfo.ID]
+		if !ok {
+			globalTempTable = tableutil.TempTableFromMeta(tblInfo)
+			globalTempTables[tblInfo.ID] = globalTempTable
+		}
+		return globalTempTable
+	}
+	// TODO: check local temporary tables
+	return nil
 }
 
 // special session variables.
