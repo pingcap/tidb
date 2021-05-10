@@ -124,6 +124,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so plan binding is not activated"))
 		return bestPlan, names, nil
 	}
+	err = setFoundInBinding(sctx, true)
+	if err != nil {
+		return nil, nil, err
+	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
 	if len(bindRecord.Bindings) > 0 {
 		orgBinding := bindRecord.Bindings[0] // the first is the original binding
@@ -269,12 +273,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 			plannercore.EraseLastSemicolon(x)
-			var normalizeExplainSQL string
-			if specifiledDB != "" {
-				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB))
-			} else {
-				normalizeExplainSQL = parser.Normalize(x.Text())
-			}
+			normalizeExplainSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB))
 			idx := int(0)
 			switch n := x.Stmt.(type) {
 			case *ast.SelectStmt:
@@ -304,12 +303,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		if len(x.Text()) == 0 {
 			return x, "", ""
 		}
-		var normalizedSQL, hash string
-		if specifiledDB != "" {
-			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB))
-		} else {
-			normalizedSQL, hash = parser.NormalizeDigest(x.Text())
-		}
+		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB))
 		return x, normalizedSQL, hash
 	}
 	return nil, "", ""
@@ -493,6 +487,12 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		stmtHints.MaxExecutionTime = maxExecutionTime.HintData.(uint64)
 	}
 	return
+}
+
+func setFoundInBinding(sctx sessionctx.Context, opt bool) error {
+	vars := sctx.GetSessionVars()
+	err := vars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToIntStr(opt))
+	return err
 }
 
 func init() {

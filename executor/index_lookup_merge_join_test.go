@@ -9,7 +9,6 @@ import (
 )
 
 // TODO: reopen the index merge join in future.
-
 //func (s *testSuite9) TestIndexLookupMergeJoinHang(c *C) {
 //	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM", `return(true)`), IsNil)
 //	defer func() {
