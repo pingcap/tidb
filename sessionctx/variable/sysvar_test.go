@@ -452,31 +452,31 @@ func (*testSysVarSuite) TestGetScopeNoneSystemVar(c *C) {
 }
 
 func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
-	// This tests instance scoped variables through GetSessionSystemVar().
+	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
 	// statement in GetSessionOnlySysVars can be removed.
 
 	vars := NewSessionVars()
 
-	val, err := GetSessionSystemVar(vars, TiDBCurrentTS)
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBCurrentTS)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, fmt.Sprintf("%d", vars.TxnCtx.StartTS))
 
-	val, err = GetSessionSystemVar(vars, TiDBLastTxnInfo)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBLastTxnInfo)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, vars.LastTxnInfo)
 
-	val, err = GetSessionSystemVar(vars, TiDBLastQueryInfo)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBLastQueryInfo)
 	c.Assert(err, IsNil)
 	info, err := json.Marshal(vars.LastQueryInfo)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, string(info))
 
-	val, err = GetSessionSystemVar(vars, TiDBGeneralLog)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBGeneralLog)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, BoolToOnOff(ProcessGeneralLog.Load()))
 
-	val, err = GetSessionSystemVar(vars, TiDBPProfSQLCPU)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBPProfSQLCPU)
 	c.Assert(err, IsNil)
 	expected := "0"
 	if EnablePProfSQLCPU.Load() {
@@ -484,74 +484,74 @@ func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 	}
 	c.Assert(val, Equals, expected)
 
-	val, err = GetSessionSystemVar(vars, TiDBExpensiveQueryTimeThreshold)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBExpensiveQueryTimeThreshold)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)))
 
-	val, err = GetSessionSystemVar(vars, TiDBMemoryUsageAlarmRatio)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBMemoryUsageAlarmRatio)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()))
 
-	val, err = GetSessionSystemVar(vars, TiDBConfig)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBConfig)
 	c.Assert(err, IsNil)
 	conf := config.GetGlobalConfig()
 	j, err := json.MarshalIndent(conf, "", "\t")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, config.HideConfig(string(j)))
 
-	val, err = GetSessionSystemVar(vars, TiDBForcePriority)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBForcePriority)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))])
 
-	val, err = GetSessionSystemVar(vars, TiDBDDLSlowOprThreshold)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBDDLSlowOprThreshold)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10))
 
-	val, err = GetSessionSystemVar(vars, PluginDir)
+	val, err = GetSessionOrGlobalSystemVar(vars, PluginDir)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, config.GetGlobalConfig().Plugin.Dir)
 
-	val, err = GetSessionSystemVar(vars, PluginLoad)
+	val, err = GetSessionOrGlobalSystemVar(vars, PluginLoad)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, config.GetGlobalConfig().Plugin.Load)
 
-	val, err = GetSessionSystemVar(vars, TiDBSlowLogThreshold)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBSlowLogThreshold)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10))
 
-	val, err = GetSessionSystemVar(vars, TiDBRecordPlanInSlowLog)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBRecordPlanInSlowLog)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10))
 
-	val, err = GetSessionSystemVar(vars, TiDBEnableSlowLog)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableSlowLog)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog))
 
-	val, err = GetSessionSystemVar(vars, TiDBQueryLogMaxLen)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBQueryLogMaxLen)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10))
 
-	val, err = GetSessionSystemVar(vars, TiDBCheckMb4ValueInUTF8)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCheckMb4ValueInUTF8)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8))
 
-	val, err = GetSessionSystemVar(vars, TiDBCapturePlanBaseline)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCapturePlanBaseline)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, CapturePlanBaseline.GetVal())
 
-	val, err = GetSessionSystemVar(vars, TiDBFoundInPlanCache)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, BoolToOnOff(vars.PrevFoundInPlanCache))
 
-	val, err = GetSessionSystemVar(vars, TiDBFoundInBinding)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInBinding)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, BoolToOnOff(vars.PrevFoundInBinding))
 
-	val, err = GetSessionSystemVar(vars, TiDBEnableCollectExecutionInfo)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableCollectExecutionInfo)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo))
 
-	val, err = GetSessionSystemVar(vars, TiDBTxnScope)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, vars.TxnScope.GetVarValue())
 }
