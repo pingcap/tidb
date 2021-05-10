@@ -2263,7 +2263,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	case *ast.AlterInstanceStmt:
 		err := ErrSpecificAccessDenied.GenWithStack("SUPER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
-	case *ast.AlterUserStmt, *ast.RenameUserStmt: // TODO: Is RenameUserStmt needed here?
+	case *ast.AlterUserStmt, *ast.RenameUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
