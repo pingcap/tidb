@@ -344,10 +344,31 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		return false, errors.Trace(err)
 	}
 	startTS := txn.StartTS()
+<<<<<<< HEAD
 	if delta.Delta < 0 {
 		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 	} else {
 		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+=======
+	updateStatsMeta := func(id int64) error {
+		var err error
+		if delta.Delta < 0 {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+		} else {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+		}
+		return errors.Trace(err)
+	}
+	if err = updateStatsMeta(id); err != nil {
+		return
+	}
+	affectedRows := h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+
+	// if it's a partitioned table and its global-stats exists, update its count and modify_count as well.
+	is := h.mu.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	if is == nil {
+		return false, errors.New("cannot get the information schema")
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 	}
 	if err != nil {
 		return false, errors.Trace(err)

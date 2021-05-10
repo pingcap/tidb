@@ -226,7 +226,71 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		var err error
 		util.WithRecovery(
 			func() {
+<<<<<<< HEAD
 				_, err = worker.fetchHandles(ctx1, result, exitCh, fetchCh, e.resultCh, e.finished)
+=======
+				var builder distsql.RequestBuilder
+				builder.SetDAGRequest(e.dagPBs[workID]).
+					SetStartTS(e.startTS).
+					SetDesc(e.descs[workID]).
+					SetKeepOrder(false).
+					SetStreaming(e.partialStreamings[workID]).
+					SetFromSessionVars(e.ctx.GetSessionVars()).
+					SetMemTracker(e.memTracker).
+					SetFromInfoSchema(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
+
+				worker := &partialIndexWorker{
+					stats:        e.stats,
+					idxID:        e.getPartitalPlanID(workID),
+					sc:           e.ctx,
+					batchSize:    e.maxChunkSize,
+					maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
+					maxChunkSize: e.maxChunkSize,
+				}
+
+				for parTblIdx, keyRange := range keyRanges {
+					// check if this executor is closed
+					select {
+					case <-e.finished:
+						break
+					default:
+					}
+
+					// init kvReq and worker for this partition
+					kvReq, err := builder.SetKeyRanges(keyRange).Build()
+					if err != nil {
+						worker.syncErr(e.resultCh, err)
+						return
+					}
+					result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.handleCols.GetFieldsTypes(), e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
+					if err != nil {
+						worker.syncErr(e.resultCh, err)
+						return
+					}
+					worker.batchSize = e.maxChunkSize
+					if worker.batchSize > worker.maxBatchSize {
+						worker.batchSize = worker.maxBatchSize
+					}
+					if e.partitionTableMode {
+						worker.partition = e.prunedPartitions[parTblIdx]
+					}
+
+					// fetch all data from this partition
+					ctx1, cancel := context.WithCancel(ctx)
+					_, fetchErr := worker.fetchHandles(ctx1, result, exitCh, fetchCh, e.resultCh, e.finished, e.handleCols)
+					if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
+						e.feedbacks[workID].Invalidate()
+					}
+					if err := result.Close(); err != nil {
+						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
+					}
+					cancel()
+					e.ctx.StoreQueryFeedback(e.feedbacks[workID])
+					if fetchErr != nil {
+						break
+					}
+				}
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 			},
 			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialIndexWorker"),
 		)

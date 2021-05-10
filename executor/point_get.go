@@ -332,8 +332,54 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	return e.snapshot.Get(ctx, key)
 }
 
+<<<<<<< HEAD
 func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, hasNull bool, err error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
+=======
+func (e *PointGetExecutor) verifyTxnScope() error {
+	txnScope := e.txn.GetOption(tikvstore.TxnScope).(string)
+	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+		return nil
+	}
+	var tblID int64
+	var tblName string
+	var partName string
+	is := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	if e.partInfo != nil {
+		tblID = e.partInfo.ID
+		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
+		tblName = tblInfo.Meta().Name.String()
+		partName = partInfo.Name.String()
+	} else {
+		tblID = e.tblInfo.ID
+		tblInfo, _ := is.TableByID(tblID)
+		tblName = tblInfo.Meta().Name.String()
+	}
+	valid := distsql.VerifyTxnScope(txnScope, tblID, is)
+	if valid {
+		return nil
+	}
+	if len(partName) > 0 {
+		return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, txnScope))
+	}
+	return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
+}
+
+// EncodeUniqueIndexKey encodes a unique index key.
+func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
+	encodedIdxVals, err := EncodeUniqueIndexValuesForKey(ctx, tblInfo, idxInfo, idxVals)
+	if err != nil {
+		return nil, err
+	}
+	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
+}
+
+// EncodeUniqueIndexValuesForKey encodes unique index values for a key.
+func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 	for i := range idxVals {
 		if idxVals[i].IsNull() {
 			hasNull = true

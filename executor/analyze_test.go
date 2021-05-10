@@ -86,6 +86,7 @@ PARTITION BY RANGE ( a ) (
 		}
 	}
 
+<<<<<<< HEAD
 	tk.MustExec("drop table t")
 	tk.MustExec(createTable)
 	for i := 1; i < 21; i++ {
@@ -101,13 +102,46 @@ PARTITION BY RANGE ( a ) (
 	for i, def := range pi.Definitions {
 		statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
 		if i == 0 {
+=======
+		is := tk.Se.(sessionctx.Context).GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		pi := table.Meta().GetPartitionInfo()
+		c.Assert(pi, NotNil)
+		do, err := session.GetDomain(s.store)
+		c.Assert(err, IsNil)
+		handle := do.StatsHandle()
+		for _, def := range pi.Definitions {
+			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 			c.Assert(statsTbl.Pseudo, IsFalse)
 			c.Assert(len(statsTbl.Columns), Equals, 3)
 			c.Assert(len(statsTbl.Indices), Equals, 1)
 		} else {
 			c.Assert(statsTbl.Pseudo, IsTrue)
 		}
+<<<<<<< HEAD
 	}
+=======
+		tk.MustExec("alter table t analyze partition p0")
+		is = tk.Se.(sessionctx.Context).GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+		table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		pi = table.Meta().GetPartitionInfo()
+		c.Assert(pi, NotNil)
+
+		for i, def := range pi.Definitions {
+			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+			if i == 0 {
+				c.Assert(statsTbl.Pseudo, IsFalse)
+				c.Assert(len(statsTbl.Columns), Equals, 3)
+				c.Assert(len(statsTbl.Indices), Equals, 1)
+			} else {
+				c.Assert(statsTbl.Pseudo, IsTrue)
+			}
+		}
+	})
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 }
 
 func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {
@@ -142,7 +176,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 
 	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
 	tk.MustExec("analyze table t with 30 samples")
-	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := tk.Se.(sessionctx.Context).GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -193,7 +227,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	tk.MustExec(fmt.Sprintf("insert into t values ('%s')", value))
 
 	tk.MustExec("analyze table t")
-	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := tk.Se.(sessionctx.Context).GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -202,6 +236,65 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65559))
 }
 
+<<<<<<< HEAD
+=======
+func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
+	c.Skip("unstable")
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	var dom *domain.Domain
+	session.DisableStats4Test()
+	session.SetSchemaLease(0)
+	dom, err = session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a, b))")
+	tk.MustExec("insert into t values(1, 1), (1, 1), (1, 2), (1, 2)")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("analyze table t with 10 cmsketch width")
+
+	is := tk.Se.(sessionctx.Context).GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	tbl := dom.StatsHandle().GetTableStats(tableInfo)
+
+	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2
+	cms := statistics.NewCMSketch(5, 10)
+	topn := statistics.NewTopN(2)
+	{
+		key1, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(1))
+		c.Assert(err, IsNil)
+		topn.AppendTopN(key1, 2)
+		key2, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(2))
+		c.Assert(err, IsNil)
+		topn.AppendTopN(key2, 2)
+		prefixKey, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+		c.Assert(err, IsNil)
+		cms.InsertBytes(prefixKey)
+		cms.InsertBytes(prefixKey)
+		cms.InsertBytes(prefixKey)
+		cms.InsertBytes(prefixKey)
+		cms.CalcDefaultValForAnalyze(2)
+	}
+	for _, idx := range tbl.Indices {
+		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+		c.Assert(idx.CMSketch.Equal(cms), IsTrue)
+		c.Assert(idx.TopN.Equal(topn), IsTrue)
+	}
+}
+
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
@@ -332,7 +425,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	}
 	tk.MustExec("analyze table t with 5 buckets, 6 samples")
 
-	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := tk.Se.(sessionctx.Context).GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()

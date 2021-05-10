@@ -22,12 +22,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -372,6 +368,7 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 	return false, ""
 }
 
+<<<<<<< HEAD
 // GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
 // Otherwise, snapshot schema is returned.
 func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
@@ -389,4 +386,62 @@ func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
 	}
 	return is
+=======
+func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
+	is.ruleBundleMutex.RLock()
+	defer is.ruleBundleMutex.RUnlock()
+	t, r := is.ruleBundleMap[name]
+	return t, r
+}
+
+func (is *infoSchema) RuleBundles() []*placement.Bundle {
+	is.ruleBundleMutex.RLock()
+	defer is.ruleBundleMutex.RUnlock()
+	bundles := make([]*placement.Bundle, 0, len(is.ruleBundleMap))
+	for _, bundle := range is.ruleBundleMap {
+		bundles = append(bundles, bundle)
+	}
+	return bundles
+}
+
+func (is *infoSchema) SetBundle(bundle *placement.Bundle) {
+	is.ruleBundleMutex.Lock()
+	defer is.ruleBundleMutex.Unlock()
+	is.ruleBundleMap[bundle.ID] = bundle
+}
+
+func (is *infoSchema) deleteBundle(id string) {
+	is.ruleBundleMutex.Lock()
+	defer is.ruleBundleMutex.Unlock()
+	delete(is.ruleBundleMap, id)
+}
+
+// GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.
+// If fallback to the default, only rules applied to all regions(empty keyrange) will be returned.
+// If the default bundle is unavailable, an empty bundle with an GroupID(ids[0]) is returned.
+func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
+	for _, id := range ids {
+		b, ok := h.BundleByName(placement.GroupID(id))
+		if ok {
+			return b.Clone()
+		}
+	}
+
+	newRules := []*placement.Rule{}
+
+	b, ok := h.BundleByName(placement.PDBundleID)
+	if ok {
+		for _, rule := range b.Rules {
+			if rule.StartKeyHex == "" && rule.EndKeyHex == "" {
+				newRules = append(newRules, rule.Clone())
+			}
+		}
+	}
+
+	id := int64(-1)
+	if len(ids) > 0 {
+		id = ids[0]
+	}
+	return &placement.Bundle{ID: placement.GroupID(id), Rules: newRules}
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 }

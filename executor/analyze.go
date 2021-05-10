@@ -127,7 +127,31 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	return statsHandle.Update(infoschema.GetInfoSchema(e.ctx))
+=======
+	if needGlobalStats {
+		for globalStatsID, info := range globalStatsMap {
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, e.opts, e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.idxID)
+			if err != nil {
+				if types.ErrPartitionStatsMissing.Equal(err) {
+					// When we find some partition-level stats are missing, we need to report warning.
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					continue
+				}
+				return err
+			}
+			for i := 0; i < globalStats.Num; i++ {
+				hg, cms, topN, fms := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i], globalStats.Fms[i]
+				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1)
+				if err != nil {
+					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+				}
+			}
+		}
+	}
+	return statsHandle.Update(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {

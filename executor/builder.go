@@ -2751,6 +2751,10 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+<<<<<<< HEAD
+=======
+		SetFromInfoSchema(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)).
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 		Build()
 	if err != nil {
 		return nil, err

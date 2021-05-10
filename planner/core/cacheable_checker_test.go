@@ -42,8 +42,13 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
 	tk.MustExec("create table t3(a int, b int)")
 	tbl := &ast.TableName{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")}
+<<<<<<< HEAD
 	is := infoschema.GetInfoSchema(tk.Se)
 	// test non-SelectStmt/-InsertStmt/-DeleteStmt/-UpdateStmt/-UnionStmt
+=======
+	is := tk.Se.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	// test non-SelectStmt/-InsertStmt/-DeleteStmt/-UpdateStmt/-SetOprStmt
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 	var stmt ast.Node = &ast.ShowStmt{}
 	c.Assert(core.Cacheable(stmt, is), IsFalse)
 

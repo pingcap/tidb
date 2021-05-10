@@ -71,7 +71,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 	//Cache the ret full rows in schemataRetriever
 	if !e.initialized {
-		is := infoschema.GetInfoSchema(sctx)
+		is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
 		sort.Sort(infoschema.SchemasSorter(dbs))
 		var err error
@@ -277,7 +277,7 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
-	is := infoschema.GetInfoSchema(ctx)
+	is := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
 	if err != nil {
 		return 0, err
@@ -562,7 +562,15 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx sessionctx.Context) error 
 	return nil
 }
 
+<<<<<<< HEAD
 func (e *hugeMemTableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) {
+=======
+func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo) {
+	if err := tryFillViewColumnType(ctx, sctx, sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema), schema.Name, tbl); err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return
+	}
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
@@ -1167,6 +1175,66 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
+<<<<<<< HEAD
+=======
+func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) error {
+	tikvStore, ok := ctx.GetStore().(helper.Storage)
+	if !ok {
+		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	regionsInfo, err := tikvHelper.GetRegionsInfo()
+	if err != nil {
+		return err
+	}
+	allSchemas := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
+	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
+	for _, region := range regionsInfo.Regions {
+		tableList := tableInfos[region.ID]
+		if len(tableList) == 0 {
+			e.setNewTiKVRegionStatusCol(&region, nil)
+		}
+		for _, table := range tableList {
+			e.setNewTiKVRegionStatusCol(&region, &table)
+		}
+	}
+	return nil
+}
+
+func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) {
+	row := make([]types.Datum, len(infoschema.TableTiKVRegionStatusCols))
+	row[0].SetInt64(region.ID)
+	row[1].SetString(region.StartKey, mysql.DefaultCollationName)
+	row[2].SetString(region.EndKey, mysql.DefaultCollationName)
+	if table != nil {
+		row[3].SetInt64(table.Table.ID)
+		row[4].SetString(table.DB.Name.O, mysql.DefaultCollationName)
+		row[5].SetString(table.Table.Name.O, mysql.DefaultCollationName)
+		if table.IsIndex {
+			row[6].SetInt64(1)
+			row[7].SetInt64(table.Index.ID)
+			row[8].SetString(table.Index.Name.O, mysql.DefaultCollationName)
+		} else {
+			row[6].SetInt64(0)
+		}
+	}
+	row[9].SetInt64(region.Epoch.ConfVer)
+	row[10].SetInt64(region.Epoch.Version)
+	row[11].SetInt64(region.WrittenBytes)
+	row[12].SetInt64(region.ReadBytes)
+	row[13].SetInt64(region.ApproximateSize)
+	row[14].SetInt64(region.ApproximateKeys)
+	if region.ReplicationStatus != nil {
+		row[15].SetString(region.ReplicationStatus.State, mysql.DefaultCollationName)
+		row[16].SetInt64(region.ReplicationStatus.StateID)
+	}
+	e.rows = append(e.rows, row)
+}
+
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 func (e *memtableRetriever) setDataForTikVRegionPeers(ctx sessionctx.Context) error {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -1235,7 +1303,7 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) err
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema).AllSchemas()
+	allSchemas := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
@@ -1384,7 +1452,7 @@ type initialTable struct {
 }
 
 func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
-	is := infoschema.GetInfoSchema(sctx)
+	is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	var databases []string
 	schemas := e.extractor.TableSchema
 	tables := e.extractor.TableName
@@ -1661,6 +1729,194 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(ctx)
+	is := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	var rows [][]types.Datum
+	for _, bundle := range is.RuleBundles() {
+		id, err := placement.ObjectIDFromGroupID(bundle.ID)
+		if err != nil {
+			return errors.Wrapf(err, "Restore bundle %s failed", bundle.ID)
+		}
+		if id == 0 {
+			continue
+		}
+		// Currently, only partitions have placement rules.
+		var tbName, dbName, ptName string
+		skip := true
+		tb, db, part := is.FindTableByPartitionID(id)
+		if tb != nil && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv)) {
+			dbName = db.Name.L
+			tbName = tb.Meta().Name.L
+			ptName = part.Name.L
+			skip = false
+		}
+		failpoint.Inject("outputInvalidPlacementRules", func(val failpoint.Value) {
+			if val.(bool) {
+				skip = false
+			}
+		})
+		if skip {
+			continue
+		}
+		for _, rule := range bundle.Rules {
+			constraint, err := rule.LabelConstraints.Restore()
+			if err != nil {
+				return errors.Wrapf(err, "Restore rule %s in bundle %s failed", rule.ID, bundle.ID)
+			}
+			row := types.MakeDatums(
+				bundle.ID,
+				bundle.Index,
+				rule.ID,
+				dbName,
+				tbName,
+				ptName,
+				nil,
+				string(rule.Role),
+				rule.Count,
+				constraint,
+			)
+			rows = append(rows, row)
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context, tableName string) error {
+	// Seeing client errors should require the PROCESS privilege, with the exception of errors for your own user.
+	// This is similar to information_schema.processlist, which is the closest comparison.
+	var hasProcessPriv bool
+	loginUser := ctx.GetSessionVars().User
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+
+	var rows [][]types.Datum
+	switch tableName {
+	case infoschema.TableClientErrorsSummaryGlobal:
+		if !hasProcessPriv {
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
+		for code, summary := range errno.GlobalStats() {
+			firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
+			lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
+			row := types.MakeDatums(
+				int(code),                    // ERROR_NUMBER
+				errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
+				summary.ErrorCount,           // ERROR_COUNT
+				summary.WarningCount,         // WARNING_COUNT
+				firstSeen,                    // FIRST_SEEN
+				lastSeen,                     // LAST_SEEN
+			)
+			rows = append(rows, row)
+		}
+	case infoschema.TableClientErrorsSummaryByUser:
+		for user, agg := range errno.UserStats() {
+			for code, summary := range agg {
+				// Allow anyone to see their own errors.
+				if !hasProcessPriv && loginUser != nil && loginUser.Username != user {
+					continue
+				}
+				firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				row := types.MakeDatums(
+					user,                         // USER
+					int(code),                    // ERROR_NUMBER
+					errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
+					summary.ErrorCount,           // ERROR_COUNT
+					summary.WarningCount,         // WARNING_COUNT
+					firstSeen,                    // FIRST_SEEN
+					lastSeen,                     // LAST_SEEN
+				)
+				rows = append(rows, row)
+			}
+		}
+	case infoschema.TableClientErrorsSummaryByHost:
+		if !hasProcessPriv {
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
+		for host, agg := range errno.HostStats() {
+			for code, summary := range agg {
+				firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
+				row := types.MakeDatums(
+					host,                         // HOST
+					int(code),                    // ERROR_NUMBER
+					errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
+					summary.ErrorCount,           // ERROR_COUNT
+					summary.WarningCount,         // WARNING_COUNT
+					firstSeen,                    // FIRST_SEEN
+					lastSeen,                     // LAST_SEEN
+				)
+				rows = append(rows, row)
+			}
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+type hugeMemTableRetriever struct {
+	dummyCloser
+	table       *model.TableInfo
+	columns     []*model.ColumnInfo
+	retrieved   bool
+	initialized bool
+	rows        [][]types.Datum
+	dbs         []*model.DBInfo
+	dbsIdx      int
+	tblIdx      int
+}
+
+// retrieve implements the infoschemaRetriever interface
+func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved {
+		return nil, nil
+	}
+
+	if !e.initialized {
+		is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+		dbs := is.AllSchemas()
+		sort.Sort(infoschema.SchemasSorter(dbs))
+		e.dbs = dbs
+		e.initialized = true
+		e.rows = make([][]types.Datum, 0, 1024)
+	}
+
+	var err error
+	switch e.table.Name.O {
+	case infoschema.TableColumns:
+		err = e.setDataForColumns(ctx, sctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.retrieved = len(e.rows) == 0
+
+	return adjustColumns(e.rows, e.columns, e.table), nil
+}
+
+func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
+	if len(outColumns) == len(table.Columns) {
+		return input
+	}
+	rows := make([][]types.Datum, len(input))
+	for i, fullRow := range input {
+		row := make([]types.Datum, len(outColumns))
+		for j, col := range outColumns {
+			row[j] = fullRow[col.Offset]
+		}
+		rows[i] = row
+	}
+	return rows
+}
+
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 // TiFlashSystemTableRetriever is used to read system table from tiflash.
 type TiFlashSystemTableRetriever struct {
 	dummyCloser

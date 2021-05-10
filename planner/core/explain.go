@@ -275,6 +275,58 @@ func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 	return ""
 }
 
+<<<<<<< HEAD
+=======
+func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	pi := ts.Table.GetPartitionInfo()
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return ""
+	}
+
+	is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	tmp, ok := is.TableByID(ts.Table.ID)
+	if !ok {
+		return "partition table not found" + strconv.FormatInt(ts.Table.ID, 10)
+	}
+	tbl := tmp.(table.PartitionedTable)
+
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
+}
+
+func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, partTable *PartitionInfo) string {
+	var buffer bytes.Buffer
+	idxArr, err := PartitionPruning(sctx, tbl, partTable.PruningConds, partTable.PartitionNames, partTable.Columns, partTable.ColumnNames)
+	if err != nil {
+		return "partition pruning error" + err.Error()
+	}
+
+	if len(idxArr) == 0 {
+		return "partition:dual"
+	}
+
+	if len(idxArr) == 1 && idxArr[0] == FullRange {
+		return "partition:all"
+	}
+
+	for i, idx := range idxArr {
+		if i == 0 {
+			buffer.WriteString("partition:")
+		} else {
+			buffer.WriteString(",")
+		}
+		buffer.WriteString(pi.Definitions[idx].Name.O)
+	}
+
+	return buffer.String()
+}
+
+// OperatorInfo return other operator information to be explained.
+func (p *PhysicalTableReader) OperatorInfo(normalized bool) string {
+	return "data:" + p.tablePlan.ExplainID().String()
+}
+
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
 	return "index:" + p.indexPlan.ExplainID().String()
@@ -285,6 +337,28 @@ func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
 	return p.ExplainInfo()
 }
 
+<<<<<<< HEAD
+=======
+func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
+	ts := p.IndexPlans[0].(*PhysicalIndexScan)
+	pi := ts.Table.GetPartitionInfo()
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return ""
+	}
+
+	var buffer bytes.Buffer
+	is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	tmp, ok := is.TableByID(ts.Table.ID)
+	if !ok {
+		fmt.Fprintf(&buffer, "partition table not found: %d", ts.Table.ID)
+		return buffer.String()
+	}
+
+	tbl := tmp.(table.PartitionedTable)
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
+}
+
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 	// The children can be inferred by the relation symbol.
@@ -294,11 +368,53 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 	return ""
 }
 
+<<<<<<< HEAD
+=======
+func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	pi := ts.Table.GetPartitionInfo()
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return ""
+	}
+
+	var buffer bytes.Buffer
+	is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	tmp, ok := is.TableByID(ts.Table.ID)
+	if !ok {
+		fmt.Fprintf(&buffer, "partition table not found: %d", ts.Table.ID)
+		return buffer.String()
+	}
+
+	tbl := tmp.(table.PartitionedTable)
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
+}
+
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	return ""
 }
 
+<<<<<<< HEAD
+=======
+func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	pi := ts.Table.GetPartitionInfo()
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return ""
+	}
+
+	is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	tmp, ok := is.TableByID(ts.Table.ID)
+	if !ok {
+		return "partition table not found" + strconv.FormatInt(ts.Table.ID, 10)
+	}
+	tbl := tmp.(table.PartitionedTable)
+
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
+}
+
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 // ExplainInfo implements Plan interface.
 func (p *PhysicalUnionScan) ExplainInfo() string {
 	return string(expression.SortedExplainExpressionList(p.Conditions))

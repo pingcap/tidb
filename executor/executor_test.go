@@ -2215,7 +2215,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
-	infoSchema := infoschema.GetInfoSchema(ctx)
+	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
@@ -2230,7 +2230,42 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 	}
 }
 
+<<<<<<< HEAD
 func (s *testSuiteP2) TestPointGetRepeatableRead(c *C) {
+=======
+func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_cluster_index_is_point_get;")
+	tk.MustExec("create database test_cluster_index_is_point_get;")
+	tk.MustExec("use test_cluster_index_is_point_get;")
+
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key (c, a));")
+	ctx := tk.Se.(sessionctx.Context)
+
+	tests := map[string]bool{
+		"select 1 from t where a='x'":                   false,
+		"select * from t where c='x'":                   false,
+		"select * from t where a='x' and c='x'":         true,
+		"select * from t where a='x' and c='x' and b=1": false,
+	}
+	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	for sqlStr, result := range tests {
+		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
+		c.Check(err, IsNil)
+		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
+		c.Check(err, IsNil)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
+		c.Check(err, IsNil)
+		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		c.Assert(err, IsNil)
+		c.Assert(ret, Equals, result)
+	}
+}
+
+func (s *testSerialSuite) TestPointGetRepeatableRead(c *C) {
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 	tk1.MustExec(`create table point_get (a int, b int, c int,

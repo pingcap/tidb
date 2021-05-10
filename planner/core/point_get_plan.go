@@ -876,7 +876,7 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, ch
 		})
 	}
 
-	infoSchema := infoschema.GetInfoSchema(ctx)
+	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	return CheckTableLock(ctx, infoSchema, visitInfos)
 }
 
@@ -1181,6 +1181,34 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
 	}.Init(ctx)
 	updatePlan.names = pointPlan.OutputNames()
+<<<<<<< HEAD
+=======
+	is := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	t, _ := is.TableByID(tbl.ID)
+	updatePlan.tblID2Table = map[int64]table.Table{
+		tbl.ID: t,
+	}
+	if tbl.GetPartitionInfo() != nil {
+		pt := t.(table.PartitionedTable)
+		var updateTableList []*ast.TableName
+		updateTableList = extractTableList(updateStmt.TableRefs.TableRefs, updateTableList, true)
+		updatePlan.PartitionedTable = make([]table.PartitionedTable, 0, len(updateTableList))
+		for _, updateTable := range updateTableList {
+			if len(updateTable.PartitionNames) > 0 {
+				pids := make(map[int64]struct{}, len(updateTable.PartitionNames))
+				for _, name := range updateTable.PartitionNames {
+					pid, err := tables.FindPartitionByName(tbl, name.L)
+					if err != nil {
+						return updatePlan
+					}
+					pids[pid] = struct{}{}
+				}
+				pt = tables.NewPartitionTableithGivenSets(pt, pids)
+			}
+			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
+		}
+	}
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 	return updatePlan
 }
 
@@ -1349,7 +1377,7 @@ func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *a
 	if pi.Type != model.PartitionTypeHash {
 		return nil
 	}
-	is := infoschema.GetInfoSchema(ctx)
+	is := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	table, ok := is.TableByID(tbl.ID)
 	if !ok {
 		return nil

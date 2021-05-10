@@ -199,7 +199,21 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
+<<<<<<< HEAD
 	kvReq, err := builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback).
+=======
+	var reqBuilder *distsql.RequestBuilder
+	if e.kvRangeBuilder != nil {
+		kvRange, err := e.kvRangeBuilder.buildKeyRange(getPhysicalTableID(e.table))
+		if err != nil {
+			return nil, err
+		}
+		reqBuilder = builder.SetKeyRanges(kvRange)
+	} else {
+		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
+	}
+	reqBuilder.
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
@@ -208,8 +222,17 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
+<<<<<<< HEAD
 		SetAllowBatchCop(e.batchCop).
 		Build()
+=======
+		SetAllowBatchCop(e.batchCop)
+	// infoschema maybe null for tests
+	if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
+		reqBuilder.SetFromInfoSchema(is)
+	}
+	kvReq, err := reqBuilder.Build()
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 	if err != nil {
 		return nil, err
 	}
