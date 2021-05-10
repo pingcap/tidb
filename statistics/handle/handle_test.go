@@ -2116,3 +2116,20 @@ func (s *testStatsSuite) TestHideExtendedStatsSwitch(c *C) {
 	}
 	tk.MustQuery("show variables like 'tidb_enable_extended_stats'").Check(testkit.Rows())
 }
+
+func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+
+	tk.MustExec("alter table t drop column a")
+	s.do.StatsHandle().SetLastUpdateVersion(s.do.StatsHandle().LastUpdateVersion() + 1)
+	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), time.Duration(0)), IsNil)
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+}
