@@ -94,26 +94,11 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 
-		syns := e.getSynonyms(name)
-		// Set system variable
-		for _, n := range syns {
-			err := e.setSysVariable(n, v)
-			if err != nil {
-				return err
-			}
+		if err := e.setSysVariable(name, v); err != nil {
+			return err
 		}
 	}
 	return nil
-}
-
-func (e *SetExecutor) getSynonyms(varName string) []string {
-	synonyms, ok := variable.SynonymsSysVariables[varName]
-	if ok {
-		return synonyms
-	}
-
-	synonyms = []string{varName}
-	return synonyms
 }
 
 func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) error {
@@ -122,16 +107,9 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	if sysVar == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	if sysVar.Scope == variable.ScopeNone {
-		return errors.Errorf("Variable '%s' is a read only variable", name)
-	}
 	var valStr string
 	var err error
 	if v.IsGlobal {
-		// Set global scope system variable.
-		if sysVar.Scope&variable.ScopeGlobal == 0 {
-			return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
-		}
 		valStr, err = e.getVarValue(v, sysVar)
 		if err != nil {
 			return err
@@ -152,10 +130,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	} else {
-		// Set session scope system variable.
-		if sysVar.Scope&variable.ScopeSession == 0 {
-			return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
-		}
 		valStr, err = e.getVarValue(v, nil)
 		if err != nil {
 			return err
@@ -185,6 +159,10 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		// autocommit, timezone, query cache
 		logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
+
+	// These are server instance scoped variables, and have special semantics.
+	// i.e. after SET SESSION, other users sessions will reflect the new value.
+	// TODO: in future these could be better managed as a post-set hook.
 
 	valStrToBoolStr := variable.BoolToOnOff(variable.TiDBOptOn(valStr))
 
