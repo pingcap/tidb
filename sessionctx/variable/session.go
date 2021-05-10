@@ -1396,11 +1396,7 @@ func (s *SessionVars) ClearStmtVars() {
 // i.e. oN / on / 1 => ON
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	sv := GetSysVar(name)
-	if err := sv.SetSessionFromHook(s, val); err != nil {
-		return err
-	}
-	s.systems[name] = val
-	return nil
+	return sv.SetSessionFromHook(s, val)
 }
 
 // GetReadableTxnMode returns the session variable TxnMode but rewrites it to "OPTIMISTIC" when it's empty.
