@@ -8128,7 +8128,7 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 
 	// for SelectionExec
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError", `return(true)`), IsNil)
-	_, err = tk.Exec("select * from (select 1 as a) t where a > 0")
+	_, err = tk.Exec("select * from (select rand() as a) t where a > 0")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "mock SelectionExec.baseExecutor.Open returned error")
 	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError")
