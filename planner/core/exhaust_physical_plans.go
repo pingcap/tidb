@@ -424,20 +424,7 @@ func (p *LogicalJoin) constructIndexJoin(
 			continue
 		}
 	}
-<<<<<<< HEAD
-	// Correct the collation used by hash.
-	for i := range outerHashKeys {
-		// Make compiler happy.
-		if len(innerHashKeys) == 0 {
-			return nil
-		}
-		chs, coll := expression.DeriveCollationFromExprs(nil, outerHashKeys[i], innerHashKeys[i])
-		outerHashKeys[i].GetType().Charset, outerHashKeys[i].GetType().Collate = chs, coll
-		innerHashKeys[i].GetType().Charset, innerHashKeys[i].GetType().Collate = chs, coll
-	}
-=======
 
->>>>>>> cd5b91fa0... executor, planner: fix collation for hash join building (#23770)
 	baseJoin := basePhysicalJoin{
 		InnerChildIdx:   1 - outerIdx,
 		LeftConditions:  p.LeftConditions,
@@ -446,15 +433,9 @@ func (p *LogicalJoin) constructIndexJoin(
 		JoinType:        joinType,
 		OuterJoinKeys:   newOuterKeys,
 		InnerJoinKeys:   newInnerKeys,
-<<<<<<< HEAD
-		DefaultValues:   p.DefaultValues,
-	}
-=======
-		IsNullEQ:        newIsNullEQ,
 		DefaultValues:   p.DefaultValues,
 	}
 
->>>>>>> cd5b91fa0... executor, planner: fix collation for hash join building (#23770)
 	join := PhysicalIndexJoin{
 		basePhysicalJoin: baseJoin,
 		innerTask:        innerTask,
