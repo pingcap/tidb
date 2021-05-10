@@ -15,6 +15,9 @@ package session_test
 
 import (
 	"fmt"
+	"math/rand"
+	"strings"
+	
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
@@ -23,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"math/rand"
-	"strings"
 )
 
 type testClusteredSuiteBase struct{ testSessionSuiteBase }
