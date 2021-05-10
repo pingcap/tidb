@@ -227,7 +227,7 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
 	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
 }
 
-func (s *partitionTableSuite) TestBatchGetandPointGet(c *C) {
+func (s *partitionTableSuite) TestBatchGetandPointGetwithHashPartition(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
@@ -237,32 +237,19 @@ func (s *partitionTableSuite) TestBatchGetandPointGet(c *C) {
 	tk.MustExec("use test_batchget_pointget")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 
-	// list partition table
-	tk.MustExec(`create table tlist(a int, b int, index idx_a(a), index idx_b(b)) partition by list(a)( 
-		partition p0 values in (1, 2, 3, 4),
-	  	partition p1 values in (5, 6, 7, 8),
-	  	partition p2 values in (9, 10, 11, 12));`)
-
-	// range partition table
-	tk.MustExec(`create table trange(a int, unique key(a)) partition by range(a) (
-		partition p0 values less than (30),
-		partition p1 values less than (60),
-		partition p2 values less than (90),
-		partition p3 values less than (120));`)
-
 	// hash partition table
 	tk.MustExec("create table thash(a int, unique key(a)) partition by hash(a) partitions 4;")
 
-	// insert data into list partition table
-	tk.MustExec("insert into tlist values(1,1), (2,2), (3, 3), (4, 4), (5,5), (6, 6), (7,7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (NULL, NULL);")
+	// regular partition table
+	tk.MustExec("create table tregular(a int, unique key(a));")
 
 	vals := make([]string, 0, 100)
 	// insert data into range partition table and hash partition table
 	for i := 0; i < 100; i++ {
 		vals = append(vals, fmt.Sprintf("(%v)", i+1))
 	}
-	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
 	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular values " + strings.Join(vals, ","))
 
 	// test PointGet
 	for i := 0; i < 100; i++ {
@@ -270,31 +257,15 @@ func (s *partitionTableSuite) TestBatchGetandPointGet(c *C) {
 		// select a from t where a={x}; // the result is {x}
 		x := rand.Intn(100) + 1
 		queryHash := fmt.Sprintf("select a from thash where a=%v", x)
+		queryRegular := fmt.Sprintf("select a from thash where a=%v", x)
 		c.Assert(tk.HasPlan(queryHash, "Point_Get"), IsTrue) // check if PointGet is used
-		tk.MustQuery(queryHash).Check(testkit.Rows(fmt.Sprintf("%v", x)))
-
-		queryRange := fmt.Sprintf("select a from trange where a=%v", x)
-		c.Assert(tk.HasPlan(queryRange, "Point_Get"), IsTrue) // check if PointGet is used
-		tk.MustQuery(queryRange).Check(testkit.Rows(fmt.Sprintf("%v", x)))
-
-		y := rand.Intn(12) + 1
-		queryList := fmt.Sprintf("select a from tlist where a=%v", y)
-		c.Assert(tk.HasPlan(queryList, "Point_Get"), IsTrue) // check if PointGet is used
-		tk.MustQuery(queryList).Check(testkit.Rows(fmt.Sprintf("%v", y)))
+		tk.MustQuery(queryHash).Check(tk.MustQuery(queryRegular).Rows())
 	}
 
 	// test empty PointGet
 	queryHash := fmt.Sprintf("select a from thash where a=200")
 	c.Assert(tk.HasPlan(queryHash, "Point_Get"), IsTrue) // check if PointGet is used
 	tk.MustQuery(queryHash).Check(testkit.Rows())
-
-	queryRange := fmt.Sprintf("select a from trange where a=200")
-	c.Assert(tk.HasPlan(queryRange, "Point_Get"), IsTrue) // check if PointGet is used
-	tk.MustQuery(queryRange).Check(testkit.Rows())
-
-	queryList := fmt.Sprintf("select a from tlist where a=200")
-	c.Assert(tk.HasPlan(queryList, "Point_Get"), IsTrue) // check if PointGet is used
-	tk.MustQuery(queryList).Check(testkit.Rows())
 
 	// test BatchGet
 	for i := 0; i < 100; i++ {
@@ -307,21 +278,9 @@ func (s *partitionTableSuite) TestBatchGetandPointGet(c *C) {
 		}
 
 		queryHash := fmt.Sprintf("select a from thash where a in (%v)", strings.Join(points, ","))
+		queryRegular := fmt.Sprintf("select a from tregular where a in (%v)", strings.Join(points, ","))
 		c.Assert(tk.HasPlan(queryHash, "Point_Get"), IsTrue) // check if PointGet is used
-		tk.MustQuery(queryHash).Check(testkit.Rows(fmt.Sprintf("%v", strings.Join(points, ","))))
-
-		queryRange := fmt.Sprintf("select a from trange where a in (%v)", strings.Join(points, ","))
-		c.Assert(tk.HasPlan(queryRange, "Point_Get"), IsTrue) // check if PointGet is used
-		tk.MustQuery(queryRange).Check(testkit.Rows(fmt.Sprintf("%v", strings.Join(points, ","))))
-
-		points = make([]string, 0, 10)
-		for i := 0; i < 10; i++ {
-			x := rand.Intn(12) + 1
-			points = append(points, fmt.Sprintf("%v", x))
-		}
-		queryList := fmt.Sprintf("select a from tlist where a in (%v)", strings.Join(points, ","))
-		c.Assert(tk.HasPlan(queryList, "Point_Get"), IsTrue) // check if PointGet is used
-		tk.MustQuery(queryList).Check(testkit.Rows(fmt.Sprintf("%v", strings.Join(points, ","))))
+		tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	}
 }
 
