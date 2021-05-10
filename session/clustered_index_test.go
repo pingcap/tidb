@@ -14,13 +14,17 @@
 package session_test
 
 import (
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"math/rand"
+	"strings"
 )
 
 type testClusteredSuiteBase struct{ testSessionSuiteBase }
@@ -509,7 +513,7 @@ func (s *testClusteredSuite) TestClusteredIndexSelectWhereInNull(c *C) {
 	tk := s.newTK(c)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a datetime, b bigint, primary key (a));")
-	tk.MustQuery("select * from t where a in (null);").Check(testkit.Rows( /* empty result */ ))
+	tk.MustQuery("select * from t where a in (null);").Check(testkit.Rows( /* empty result */))
 }
 
 func (s *testClusteredSuite) TestClusteredIndexSyntax(c *C) {
@@ -576,6 +580,50 @@ func (s *testClusteredSerialSuite) TestPrefixClusteredIndexAddIndexAndRecover(c 
 	tk1.MustExec("admin recover index t idx")
 	tk1.MustQuery("select * from t use index(idx)").Check(testkit.Rows("aaa bbb"))
 	tk1.MustExec("admin check table t")
+}
+
+func (s *testClusteredSerialSuite) TestPartitionTable(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_view")
+	tk.MustExec("use test_view")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table thash (a int, b int, c varchar(32), primary key(a, b) clustered) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table trange (a int, b int, c varchar(32), primary key(a, b) clustered) partition by range columns(a) (
+						partition p0 values less than (3000),
+						partition p1 values less than (6000),
+						partition p2 values less than (9000),
+						partition p3 values less than (10000))`)
+	tk.MustExec(`create table tnormal (a int, b int, c varchar(32), primary key(a, b))`)
+
+	vals := make([]string, 0, 4000)
+	existedPK := make(map[string]struct{}, 4000)
+	for i := 0; i < 4000; {
+		a := rand.Intn(10000)
+		b := rand.Intn(10000)
+		pk := fmt.Sprintf("%v, %v", a, b)
+		if _, ok := existedPK[pk]; ok {
+			continue
+		}
+		existedPK[pk] = struct{}{}
+		i++
+		vals = append(vals, fmt.Sprintf(`(%v, %v, '%v')`, a, b, rand.Intn(10000)))
+	}
+
+	tk.MustExec("insert into thash values " + strings.Join(vals, ", "))
+	tk.MustExec("insert into trange values " + strings.Join(vals, ", "))
+	tk.MustExec("insert into tnormal values " + strings.Join(vals, ", "))
+
+	for i := 0; i < 200; i++ {
+		cond := fmt.Sprintf("where a in (%v, %v, %v) and b < %v", rand.Intn(10000), rand.Intn(10000), rand.Intn(10000), rand.Intn(10000))
+		result := tk.MustQuery("select * from tnormal " + cond).Sort().Rows()
+		tk.MustQuery("select * from thash use index(primary) " + cond).Sort().Check(result)
+		tk.MustQuery("select * from trange use index(primary) " + cond).Sort().Check(result)
+	}
 }
 
 // https://github.com/pingcap/tidb/issues/23106
