@@ -182,7 +182,6 @@
           "TableReader 250.00 root partition:p4,p5 data:Selection",
           "└─Selection 250.00 cop[tikv]  ge(test_partition.t8.a, 10), le(test_partition.t8.a, 11)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
-
         ]
       },
       {
@@ -191,7 +190,6 @@
           "TableReader 260.00 root partition:p0,p1,p2,p5 data:Selection",
           "└─Selection 260.00 cop[tikv]  or(isnull(test_partition.t8.a), and(ge(test_partition.t8.a, 5), le(test_partition.t8.a, 8)))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
-
         ]
       },
       {
@@ -200,7 +198,6 @@
           "TableReader 250.00 root partition:all data:Selection",
           "└─Selection 250.00 cop[tikv]  ge(test_partition.t8.a, 5), le(test_partition.t8.a, 12)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
-
         ]
       },
       {
@@ -216,7 +213,14 @@
         "Result": [
           "TableReader 250.00 root partition:p4,p5 data:Selection",
           "└─Selection 250.00 cop[tikv]  gt(test_partition.t8.a, 9), lt(test_partition.t8.a, 12)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"         
+          "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t9",
+        "Result": [
+          "TableReader 10000.00 root partition:p0,p1 data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t9 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -2850,7 +2854,7 @@
         "Result": [
           "TableReader 10.00 root  data:Selection",
           "└─Selection 10.00 cop[tikv]  eq(test_partition.t.a, 10)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p_max keep order:false, stats:pseudo"         
+          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p_max keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2858,7 +2862,7 @@
         "Result": [
           "TableReader 10.00 root  data:Selection",
           "└─Selection 10.00 cop[tikv]  eq(test_partition.t.a, -1)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"         
+          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"
         ]
       },
       {

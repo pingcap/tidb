@@ -39,7 +39,8 @@ import (
 // tikv error instance
 var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
-	ErrTiKVServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	ErrTiKVServerTimeout    = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
+	ErrTiFlashServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiFlashServerTimeout)
 	// ErrGCTooEarly is the error that GC life time is shorter than transaction duration
 	ErrGCTooEarly = dbterror.ClassTiKV.NewStd(errno.ErrGCTooEarly)
 	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
@@ -49,8 +50,12 @@ var (
 	ErrResolveLockTimeout        = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
 	// ErrTiKVServerBusy is the error when tikv server is busy.
 	ErrTiKVServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerBusy)
+	// ErrTiFlashServerBusy is the error that tiflash server is busy.
+	ErrTiFlashServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiFlashServerBusy)
 	// ErrPDServerTimeout is the error when pd server is timeout.
 	ErrPDServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrPDServerTimeout)
+	// ErrRegionUnavailable is the error when region is not available.
+	ErrRegionUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrRegionUnavailable)
 )
 
 // Registers error returned from TiKV.
@@ -216,8 +221,16 @@ func ToTiDBErr(err error) error {
 		return ErrPDServerTimeout.GenWithStackByArgs(e.Error())
 	}
 
+	if errors.ErrorEqual(err, tikverr.ErrTiFlashServerTimeout) {
+		return ErrTiFlashServerTimeout
+	}
+
 	if errors.ErrorEqual(err, tikverr.ErrTiKVServerBusy) {
 		return ErrTiKVServerBusy
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrTiFlashServerBusy) {
+		return ErrTiFlashServerBusy
 	}
 
 	if e, ok := err.(*tikverr.ErrGCTooEarly); ok {
@@ -234,6 +247,10 @@ func ToTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrResolveLockTimeout) {
 		return ErrResolveLockTimeout
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrRegionUnavailable) {
+		return ErrRegionUnavailable
 	}
 
 	return errors.Trace(originErr)
