@@ -1090,13 +1090,13 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		// Could be restructured with an array of table, user/host columns and break/continue for easier maintenance.
 
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.UserTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.user error")
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.UserTable+" error")
 			break
 		}
 
 		// rename privileges from mysql.global_priv
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.GlobalPrivTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.globalprivtable error")
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.GlobalPrivTable+" error")
 			if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "rollback"); err != nil {
 				return err
 			}
@@ -1105,49 +1105,48 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 		// rename privileges from mysql.db
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.DBTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.dbtable error")
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.DBTable+" error")
 			break
 		}
 
 		// rename privileges from mysql.tables_priv
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.TablePrivTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.table-priv-table error")
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.TablePrivTable+" error")
 			break
 		}
 
 		// rename relationship from mysql.role_edges
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.RoleEdgeTable, "TO_USER", "TO_HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.role_edge_table (to) error")
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.RoleEdgeTable+" (to) error")
 			break
 		}
 
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.RoleEdgeTable, "FROM_USER", "FROM_HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.role_edge_table (from) error")
-			// Should we really break here as in DROP USER? it should all be rolled back right for this Old to New rename?
-			// Since the FROM_USER/HOST is already done
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.RoleEdgeTable+" (from) error")
 			break
 		}
 
 		// rename relationship from mysql.default_roles
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.DefaultRoleTable, "DEFAULT_ROLE_USER", "DEFAULT_ROLE_HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.default_role_table (default role user) error")
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.DefaultRoleTable+" (default role user) error")
 			break
 		}
 
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.DefaultRoleTable, "USER", "HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.default_role_table error")
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.DefaultRoleTable+" error")
 			break
 		}
 
 		// rename relationship from mysql.global_grants
 		// TODO: add global_grants into the parser
 		if err = renameUserHostInSystemTable(sqlExecutor, "global_grants", "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.user error")
+			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.global_grants error")
 			break
 		}
 
-		// WASHERE:
 		//TODO: need update columns_priv once we implement columns_priv functionality.
+		// When that is added, please refactor both executeRenameUser and executeDropUser to use an array of tables
+		// to loop over, so it is easier to maintain.
 	}
 
 	if len(failedUsers) == 0 {
