@@ -107,7 +107,7 @@ Most of the logging logic in PD will use the global zap handler.
 
 ### [pingcap/br](https://github.com/pingcap/br)
 
-BR is strangely listed here, it is not a necessary component for the tidb cluster to run. It is here just for one reason: tidb depends on BR, which in turn depends on tidb's `util/logutil/log.go`, constituting a circular dependency. 
+TiDB depends on BR, which in turn depends on tidb's `util/logutil/log.go`, constituting a circular dependency. 
 
 Not only is it a circular dependency, it also happens to depend on the log component 🙃🙃🙃🙃! This creates a considerable obstacle for the refactor.
 
