@@ -1305,15 +1305,15 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			// We try to convert the string constant to double.
 			// If the double result equals the int result, we can return the int result;
 			// otherwise, the compare function will be false.
+			// **Notice**
+			// we can not compare double result to int result directly, because year type will change its value, like
+			// 2 to 2002, here we just check whether double value equal int(double value). We can assert the int(string)
 			var doubleDatum types.Datum
 			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
 			if err != nil {
 				return con, false
 			}
-			if c, err = doubleDatum.CompareDatum(sc, &intDatum); err != nil {
-				return con, false
-			}
-			if c != 0 {
+			if doubleDatum.GetFloat64() != math.Trunc(doubleDatum.GetFloat64()) {
 				return con, true
 			}
 			return &Constant{
