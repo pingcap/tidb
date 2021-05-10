@@ -26,6 +26,4 @@ const (
 
 	// TiKV/PD/TiFlash errors.
 	CodeTiKVStoreLimit = 9008
-
-	CodeTiFlashServerTimeout = 9012
 )
