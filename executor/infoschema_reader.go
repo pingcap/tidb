@@ -77,7 +77,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 	// Cache the ret full rows in schemataRetriever
 	if !e.initialized {
-		is := infoschema.GetInfoSchema(sctx)
+		is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
 		sort.Sort(infoschema.SchemasSorter(dbs))
 		var err error
@@ -293,7 +293,7 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
-	is := infoschema.GetInfoSchema(ctx)
+	is := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
 	if err != nil {
 		return 0, err
@@ -581,7 +581,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 }
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo) {
-	if err := tryFillViewColumnType(ctx, sctx, infoschema.GetInfoSchema(sctx), schema.Name, tbl); err != nil {
+	if err := tryFillViewColumnType(ctx, sctx, sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema), schema.Name, tbl); err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return
 	}
@@ -1307,7 +1307,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) e
 	if err != nil {
 		return err
 	}
-	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema).AllSchemas()
+	allSchemas := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
 	for _, region := range regionsInfo.Regions {
 		tableList := tableInfos[region.ID]
@@ -1419,7 +1419,7 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) err
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema).AllSchemas()
+	allSchemas := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
@@ -1568,7 +1568,7 @@ type initialTable struct {
 }
 
 func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
-	is := infoschema.GetInfoSchema(sctx)
+	is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	var databases []string
 	schemas := e.extractor.TableSchema
 	tables := e.extractor.TableName
@@ -1848,7 +1848,7 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 
 func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
-	is := infoschema.GetInfoSchema(ctx)
+	is := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	var rows [][]types.Datum
 	for _, bundle := range is.RuleBundles() {
 		id, err := placement.ObjectIDFromGroupID(bundle.ID)
@@ -1985,7 +1985,7 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	}
 
 	if !e.initialized {
-		is := infoschema.GetInfoSchema(sctx)
+		is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
 		sort.Sort(infoschema.SchemasSorter(dbs))
 		e.dbs = dbs

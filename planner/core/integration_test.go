@@ -1110,7 +1110,7 @@ func (s *testIntegrationSuite) TestPartitionPruningForEQ(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime, b int) partition by range(weekday(a)) (partition p0 values less than(10), partition p1 values less than (100))")
 
-	is := infoschema.GetInfoSchema(tk.Se)
+	is := tk.Se.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	pt := tbl.(table.PartitionedTable)

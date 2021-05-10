@@ -170,7 +170,11 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if needGlobalStats {
 		for globalStatsID, info := range globalStatsMap {
+<<<<<<< HEAD
 			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(e.ctx, e.opts, infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
+=======
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, e.opts, e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.idxID)
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 			if err != nil {
 				if types.ErrPartitionStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
@@ -188,7 +192,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}
-	return statsHandle.Update(infoschema.GetInfoSchema(e.ctx))
+	return statsHandle.Update(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {

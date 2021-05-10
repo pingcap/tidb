@@ -320,7 +320,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		return nil, false, false, err
 	}
 	execStmt.BinaryArgs = args
-	is := infoschema.GetInfoSchema(sctx)
+	is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, false, false, err

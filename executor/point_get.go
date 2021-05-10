@@ -397,7 +397,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 	var tblID int64
 	var tblName string
 	var partName string
-	is := infoschema.GetInfoSchema(e.ctx)
+	is := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
 		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)

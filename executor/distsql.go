@@ -277,16 +277,19 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetKeyRanges(kvRanges).
+	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.memTracker).
-		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
-		Build()
+		SetMemTracker(e.memTracker)
+	// for tests, infoschema may be null
+	if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
+		builder.SetFromInfoSchema(is)
+	}
+	kvReq, err := builder.Build()
 	if err != nil {
 		e.feedback.Invalidate()
 		return err
@@ -510,9 +513,70 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		if err != nil {
 			e.feedback.Invalidate()
 		}
+<<<<<<< HEAD
 		cancel()
 		if err := result.Close(); err != nil {
 			logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
+=======
+		var builder distsql.RequestBuilder
+		builder.SetDAGRequest(e.dagPB).
+			SetStartTS(e.startTS).
+			SetDesc(e.desc).
+			SetKeepOrder(e.keepOrder).
+			SetStreaming(e.indexStreaming).
+			SetFromSessionVars(e.ctx.GetSessionVars()).
+			SetMemTracker(tracker)
+		// for tests, infoschema may be null
+		if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
+			builder.SetFromInfoSchema(is)
+		}
+
+		for partTblIdx, kvRange := range kvRanges {
+			// check if executor is closed
+			finished := false
+			select {
+			case <-e.finished:
+				finished = true
+			default:
+			}
+			if finished {
+				break
+			}
+
+			// init kvReq, result and worker for this partition
+			kvReq, err := builder.SetKeyRanges(kvRange).Build()
+			if err != nil {
+				worker.syncErr(err)
+				break
+			}
+			result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
+			if err != nil {
+				worker.syncErr(err)
+				break
+			}
+			worker.batchSize = initBatchSize
+			if worker.batchSize > worker.maxBatchSize {
+				worker.batchSize = worker.maxBatchSize
+			}
+			if e.partitionTableMode {
+				worker.partitionTable = e.prunedPartitions[partTblIdx]
+			}
+
+			// fetch data from this partition
+			ctx1, cancel := context.WithCancel(ctx)
+			_, fetchErr := worker.fetchHandles(ctx1, result)
+			if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
+				e.feedback.Invalidate()
+			}
+			cancel()
+			if err := result.Close(); err != nil {
+				logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
+			}
+			e.ctx.StoreQueryFeedback(e.feedback)
+			if fetchErr != nil {
+				break // if any error occurs, exit after releasing all resources
+			}
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 		}
 		e.ctx.StoreQueryFeedback(e.feedback)
 		close(workCh)

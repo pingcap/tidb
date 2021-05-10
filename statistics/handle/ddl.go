@@ -52,8 +52,81 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				}
 			}
 		}
+<<<<<<< HEAD
 		if pruneMode == variable.Dynamic {
 			// TODO: need trigger full analyze
+=======
+	}
+	return nil
+}
+
+// analyzeOptionDefault saves the default values of NumBuckets and NumTopN.
+// These values will be used in dynamic mode when we drop table partition and then need to merge global-stats.
+// These values originally came from the analyzeOptionDefault structure in the planner/core/planbuilder.go file.
+var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets: 256,
+	ast.AnalyzeOptNumTopN:    20,
+}
+
+// updateGlobalStats will trigger the merge of global-stats when we drop table partition
+func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
+	// We need to merge the partition-level stats to global-stats when we drop table partition in dynamic mode.
+	tableID := tblInfo.ID
+	is := h.mu.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	globalStats, err := h.TableStatsFromStorage(tblInfo, tableID, true, 0)
+	if err != nil {
+		return err
+	}
+	// If we do not currently have global-stats, no new global-stats will be generated.
+	if globalStats == nil {
+		return nil
+	}
+	opts := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	for key, val := range analyzeOptionDefault {
+		opts[key] = val
+	}
+	// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
+	globalColStatsTopNNum, globalColStatsBucketNum := 0, 0
+	for colID := range globalStats.Columns {
+		globalColStatsTopN := globalStats.Columns[colID].TopN
+		if globalColStatsTopN != nil && len(globalColStatsTopN.TopN) > globalColStatsTopNNum {
+			globalColStatsTopNNum = len(globalColStatsTopN.TopN)
+		}
+		globalColStats := globalStats.Columns[colID]
+		if globalColStats != nil && len(globalColStats.Buckets) > globalColStatsBucketNum {
+			globalColStatsBucketNum = len(globalColStats.Buckets)
+		}
+	}
+	if globalColStatsTopNNum != 0 {
+		opts[ast.AnalyzeOptNumTopN] = uint64(globalColStatsTopNNum)
+	}
+	if globalColStatsBucketNum != 0 {
+		opts[ast.AnalyzeOptNumBuckets] = uint64(globalColStatsBucketNum)
+	}
+	// Generate the new column global-stats
+	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, 0)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < newColGlobalStats.Num; i++ {
+		hg, cms, topN, fms := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i], newColGlobalStats.Fms[i]
+		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, fms, 2, 1)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Generate the new index global-stats
+	globalIdxStatsTopNNum, globalIdxStatsBucketNum := 0, 0
+	for idx := range tblInfo.Indices {
+		globalIdxStatsTopN := globalStats.Indices[int64(idx)].TopN
+		if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) > globalIdxStatsTopNNum {
+			globalIdxStatsTopNNum = len(globalIdxStatsTopN.TopN)
+		}
+		globalIdxStats := globalStats.Indices[int64(idx)]
+		if globalIdxStats != nil && len(globalIdxStats.Buckets) > globalIdxStatsBucketNum {
+			globalIdxStatsBucketNum = len(globalIdxStats.Buckets)
+>>>>>>> 5e9e0e6e3... *: consitent get infoschema (#24230)
 		}
 	case model.ActionDropTablePartition:
 		pruneMode := h.CurrentPruneMode()
