@@ -9164,7 +9164,7 @@ func (s *testIntegrationSuite) TestIssue24429(c *C) {
 	tk.MustExec("set @@sql_mode = ANSI_QUOTES;")
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int);")
-	tk.MustQuery(`select t."a"=10 from t;`)
+	tk.MustQuery(`select t."a"=10 from t;`).Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite) TestVitessHash(c *C) {
