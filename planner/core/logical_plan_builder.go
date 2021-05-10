@@ -3657,10 +3657,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				}
 
 				b.handleHelper.pushMap(nil)
-				p := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IdForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
-				p.SetSchema(getResultCTESchema(cte.seedLP.Schema()))
+				var p LogicalPlan
+				lp := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IdForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
+				lp.SetSchema(getResultCTESchema(cte.seedLP.Schema()))
+				p = lp
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				if len(asName.String()) > 0 {
+					var err error
+					p, err = b.adjustCTEPlanSchema(p, cte.def)
+					if err != nil {
+						return nil, err
+					}
 					var on types.NameSlice
 					for i, name := range p.OutputNames() {
 						cpOn := *name

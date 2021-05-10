@@ -186,7 +186,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 		}
 	}
 
-	if !(isProj && canEliminate && canProjectionBeEliminatedLoose(proj)) {
+	if !(isProj && canEliminate && canProjectionBeEliminatedLoose(proj) && !proj.AvoidEliminateForCTE) {
 		return p
 	}
 	exprs := proj.Exprs
