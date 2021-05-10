@@ -1,6 +1,7 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/release-notes.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/tikv/pd/blob/master/CHANGELOG.md).
 
+
 ## [3.0.4] 2019-10-08
 ## New features
 * Add system table `performance_schema.events_statements_summary_by_digest` to troubleshoot performance issues at SQL level
