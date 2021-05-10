@@ -234,8 +234,9 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 
 	// Schema changed, result decided by whether related tables change.
 	if schemaVer < s.latestSchemaVer {
-		// The DDL relatedPhysicalTableIDs is empty.
-		if len(relatedPhysicalTableIDs) == 0 {
+		// When a transaction executes a DDL, relatedPhysicalTableIDs is nil.
+		// When a transaction only contains DML on temporary tables, relatedPhysicalTableIDs is [].
+		if relatedPhysicalTableIDs == nil {
 			logutil.BgLogger().Info("the related physical table ID is empty", zap.Int64("schemaVer", schemaVer),
 				zap.Int64("latestSchemaVer", s.latestSchemaVer))
 			return nil, ResultFail

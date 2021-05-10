@@ -486,8 +486,14 @@ func (s *session) doCommit(ctx context.Context) error {
 
 	// Get the related table or partition IDs.
 	relatedPhysicalTables := s.GetSessionVars().TxnCtx.TableDeltaMap
+	// Get accessed global temporary tables in the transaction.
+	temporaryTables := s.GetSessionVars().TxnCtx.GlobalTemporaryTables
 	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
 	for id := range relatedPhysicalTables {
+		// Schema change on global temporary tables doesn't affect transactions.
+		if _, ok := temporaryTables[id]; ok {
+			continue
+		}
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
