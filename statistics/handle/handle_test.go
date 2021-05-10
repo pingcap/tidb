@@ -2353,6 +2353,8 @@ func (s *testStatsSuite) TestIndexFMSketch(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c)) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	defer tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("analyze table t index ia")
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
 	tk.MustExec("analyze table t index ibc")
