@@ -331,6 +331,7 @@ func (*testSysVarSuite) TestTimeZone(c *C) {
 	// Unfortunately this is not strictly MySQL compatible. i.e.
 	// This should not fail:
 	// val, err := sv.Validate(vars, "America/EDMONTON", ScopeSession)
+	// See: https://github.com/pingcap/tidb/issues/8087
 
 	val, err := sv.Validate(vars, "America/Edmonton", ScopeSession)
 	c.Assert(err, IsNil)
