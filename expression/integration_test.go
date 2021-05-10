@@ -8065,6 +8065,16 @@ func (s *testSuite2) TestIssue12205(c *C) {
 		testkit.Rows("Warning 1292 Truncated incorrect time value: '18446744072635875000'"))
 }
 
+func (s *testIntegrationSuite) Test23262(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a year)")
+	tk.MustExec("insert into t values(2002)")
+	tk.MustQuery("select * from t where a=2").Check(testkit.Rows("2002"))
+	tk.MustQuery("select * from t where a='2'").Check(testkit.Rows("2002"))
+}
+
 func (s *testIntegrationSuite) TestIssue11333(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
