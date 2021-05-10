@@ -2830,5 +2830,12 @@ func (s *testStatsSuite) TestIssues24401(c *C) {
 	// partition table with dynamic prune mode
 	testKit.MustExec("analyze table tp")
 	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
-	c.Assert(len(rows), Greater, 0)
+	lenRows := len(rows)
+	c.Assert(lenRows, Equals, 6)
+
+	// check fm-sketch won't increase infinitely
+	testKit.MustExec("insert into t values (10), (20), (30), (12), (23), (23), (4344)")
+	testKit.MustExec("analyze table tp")
+	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	c.Assert(len(rows), Equals, lenRows)
 }
