@@ -24,7 +24,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -1433,8 +1432,6 @@ func (s *testPrivilegeSuite) TestRenameUser(c *C) {
 	c.Assert(err.Error(), Matches, "\\[executor:1396\\]Operation RENAME USER failed for ru6@localhost.*")
 
 	// Test multi rename, this is a full swap of ru3 and ru6, i.e. need to read its previous state in the same transaction.
-	// Needed to avoid panic due to loc == nil in Time.ConvertTimeZone
-	se1.GetSessionVars().TimeZone = time.UTC
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")
 	c.Assert(err, IsNil)
 
