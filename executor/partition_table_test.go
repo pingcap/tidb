@@ -303,7 +303,7 @@ func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
 		queryRegular := fmt.Sprintf("select * from tregular where a > 2 or b < 5 order by a, b limit %v;", y)
 		c.Assert(tk.HasPlan(queryPartition, "IndexMerge"), IsTrue) // check if indexMerge is used
 		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
-  }
+	}
 }
 
 func (s *partitionTableSuite) TestView(c *C) {
