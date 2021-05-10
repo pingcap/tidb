@@ -312,6 +312,10 @@ type LogicalAggregation struct {
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
+
+	// noCopPushDown indicates if planner must not push this agg down to coprocessor.
+	// It is true when the agg is in the outer child tree of apply.
+	noCopPushDown bool
 }
 
 // HasDistinct shows whether LogicalAggregation has functions with distinct.
