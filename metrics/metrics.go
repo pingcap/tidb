@@ -173,12 +173,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ServerInfo)
 	prometheus.MustRegister(TokenGauge)
 	prometheus.MustRegister(ConfigStatus)
-<<<<<<< HEAD
-=======
 	prometheus.MustRegister(TiFlashQueryTotalCounter)
-
-	tikvmetrics.InitMetrics(TiDB, TiKVClient)
-	tikvmetrics.RegisterMetrics()
-	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
->>>>>>> 5715eefd2... *: Add the metric about the SQL with TiFlash Success  (#23426)
 }

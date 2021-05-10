@@ -2372,64 +2372,9 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
-<<<<<<< HEAD
-=======
-
-	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return ret
-	}
-
-	pi := ts.Table.GetPartitionInfo()
-	if pi == nil {
-		return ret
-	}
-
-	tmp, _ := b.is.TableByID(ts.Table.ID)
-	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
-	if err != nil {
-		b.err = err
-		return nil
-	}
 	if v.StoreType == kv.TiFlash {
 		sctx.IsTiFlash.Store(true)
-		partsExecutor := make([]Executor, 0, len(partitions))
-		for _, part := range partitions {
-			exec, err := buildNoRangeTableReader(b, v)
-			if err != nil {
-				b.err = err
-				return nil
-			}
-			exec.ranges = ts.Ranges
-			nexec, err := nextPartitionForTableReader{exec: exec}.nextPartition(context.Background(), part)
-			if err != nil {
-				b.err = err
-				return nil
-			}
-			partsExecutor = append(partsExecutor, nexec)
-		}
-		if len(partsExecutor) == 0 {
-			return &TableDualExec{baseExecutor: *ret.base()}
-		}
-		if len(partsExecutor) == 1 {
-			return partsExecutor[0]
-		}
-		return &UnionExec{
-			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), partsExecutor...),
-			concurrency:  b.ctx.GetSessionVars().UnionConcurrency(),
-		}
 	}
-
-	if len(partitions) == 0 {
-		return &TableDualExec{baseExecutor: *ret.base()}
-	}
-	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
-		sctx:       b.ctx,
-		partitions: partitions,
-		ranges:     ts.Ranges,
-	}
-
->>>>>>> 5715eefd2... *: Add the metric about the SQL with TiFlash Success  (#23426)
 	return ret
 }
 
