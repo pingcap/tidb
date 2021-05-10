@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
+	txndriver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
@@ -97,7 +98,7 @@ type copTaskAndRPCContext struct {
 	ctx  *tikv.RPCContext
 }
 
-func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
+func buildBatchCopTasks(bo *backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.Len()
@@ -112,7 +113,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 			})
 		}
 
-		err := tikv.SplitKeyRanges(bo, cache, ranges, appendTask)
+		err := tikv.SplitKeyRanges(bo.TiKVBackoffer(), cache, ranges, appendTask)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -122,7 +123,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
 		for _, task := range tasks {
-			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region, false)
+			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -174,7 +175,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
-	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
+	bo := newBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := toTiKVKeyRanges(req.KeyRanges)
 	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), ranges, req.StoreType)
 	if err != nil {
@@ -219,7 +220,7 @@ func (b *batchCopIterator) run(ctx context.Context) {
 	// We run workers for every batch cop.
 	for _, task := range b.tasks {
 		b.wg.Add(1)
-		bo := tikv.NewBackofferWithVars(ctx, copNextMaxBackoff, b.vars)
+		bo := newBackofferWithVars(ctx, copNextMaxBackoff, b.vars)
 		go b.handleTask(ctx, bo, task)
 	}
 	b.wg.Wait()
@@ -289,7 +290,7 @@ func (b *batchCopIterator) Close() error {
 	return nil
 }
 
-func (b *batchCopIterator) handleTask(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) {
+func (b *batchCopIterator) handleTask(ctx context.Context, bo *backoffer, task *batchCopTask) {
 	tasks := []*batchCopTask{task}
 	for idx := 0; idx < len(tasks); idx++ {
 		ret, err := b.handleTaskOnce(ctx, bo, tasks[idx])
@@ -304,7 +305,7 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *tikv.Backoffer, t
 }
 
 // Merge all ranges and request again.
-func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
+func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
 	var ranges []tikvstore.KeyRange
 	for _, taskCtx := range batchTask.copTasks {
 		taskCtx.task.ranges.Do(func(ran *tikvstore.KeyRange) {
@@ -314,7 +315,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backo
 	return buildBatchCopTasks(bo, b.store.GetRegionCache(), tikv.NewKeyRanges(ranges), b.req.StoreType)
 }
 
-func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
+func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoffer, task *batchCopTask) ([]*batchCopTask, error) {
 	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
 	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.copTasks))
 	for _, task := range task.copTasks {
@@ -359,7 +360,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffe
 	return nil, b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
 }
 
-func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *tikv.Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (err error) {
+func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (err error) {
 	defer response.Close()
 	resp := response.BatchResponse
 	if resp == nil {
@@ -387,12 +388,12 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return tikverr.ErrTiFlashServerTimeout
+			return txndriver.ErrTiFlashServerTimeout
 		}
 	}
 }
 
-func (b *batchCopIterator) handleBatchCopResponse(bo *tikv.Backoffer, response *coprocessor.BatchResponse, task *batchCopTask) (err error) {
+func (b *batchCopIterator) handleBatchCopResponse(bo *backoffer, response *coprocessor.BatchResponse, task *batchCopTask) (err error) {
 	if otherErr := response.GetOtherError(); otherErr != "" {
 		err = errors.Errorf("other error: %s", otherErr)
 		logutil.BgLogger().Warn("other error",
