@@ -139,7 +139,7 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 
 	sessionVars := ctx.GetSessionVars()
-	timestampStr, err := sessionVars.GetSystemVar(variable.Timestamp)
+	timestampStr, err := variable.GetSessionSystemVar(sessionVars, "timestamp")
 	if err != nil {
 		return now, err
 	}

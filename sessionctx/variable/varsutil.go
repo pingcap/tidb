@@ -158,6 +158,25 @@ func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValu
 	return normalizedValue, nil
 }
 
+// GetSessionSystemVar gets a system variable.
+// If it is a session only variable, use the default value defined in code.
+// Returns error if there is no such variable.
+func GetSessionSystemVar(s *SessionVars, name string) (string, error) {
+
+	// This depends on https://github.com/pingcap/tidb/pull/24359 merging
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	if sv.HasSessionScope() {
+		return sv.GetSessionFromHook(s)
+	}
+	if sv.HasNoneScope() {
+		return sv.Value, nil
+	}
+	return sv.GetGlobalFromHook(s)
+}
+
 // GetGlobalSystemVar gets a global system variable.
 func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	sv := GetSysVar(name)

@@ -1422,8 +1422,8 @@ func (b *builtinWeekWithoutModeSig) evalInt(row chunk.Row) (int64, bool, error) 
 	}
 
 	mode := 0
-	modeStr, err := b.ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
-	if err == nil && modeStr != "" {
+	modeStr, ok := b.ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
+	if ok && modeStr != "" {
 		mode, err = strconv.Atoi(modeStr)
 		if err != nil {
 			return 0, true, handleInvalidTimeError(b.ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))
