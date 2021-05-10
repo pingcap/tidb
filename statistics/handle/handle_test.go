@@ -2332,6 +2332,8 @@ func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	defer tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("create table t(a int, b int, c int) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1, 1, 1)")
 	tk.MustExec("analyze table t")
@@ -2375,11 +2377,9 @@ func (s *testStatsSuite) TestIndexFMSketch(c *C) {
 		tk.MustExec("analyze table t")
 		rs := tk.MustQuery(fmt.Sprintf("select value from mysql.stats_fm_sketch")).Rows()
 		c.Assert(len(rs), Equals, rows)
-		totNDV := int64(0)
 		for i := range rs {
 			fm, err := statistics.DecodeFMSketch([]byte(rs[i][0].(string)))
 			c.Assert(err, IsNil)
-			totNDV += int64(ndv)
 			c.Assert(fm.NDV(), Equals, int64(ndv))
 		}
 	}
