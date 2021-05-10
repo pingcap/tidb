@@ -3724,7 +3724,7 @@ func (s *testIntegrationSerialSuite) TestEnforceMPP(c *C) {
 	tk.MustExec("set @@global.tidb_allow_mpp = True")
 	tk.MustQuery("select @@global.tidb_allow_mpp").Check(testkit.Rows("ON"))
 
-	err := tk.ExecToErr("set @@global.tidb_allow_mpp = enforceWithTypo")
+	err = tk.ExecToErr("set @@global.tidb_allow_mpp = enforceWithTypo")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_allow_mpp' can't be set to the value of 'enforceWithTypo'`)
 
