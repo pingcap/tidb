@@ -319,7 +319,7 @@ func createTable4DynamicPruneModeTestWithExpression(tk *testkit.TestKit) {
 }
 
 type testData4Expression struct {
-	sql string
+	sql        string
 	partitions []string
 }
 
