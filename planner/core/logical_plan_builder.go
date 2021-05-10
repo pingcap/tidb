@@ -2266,6 +2266,16 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 // ORDER BY, WHERE & GROUP BY.
 // Finally it restore the original SELECT stmt.
 func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err error) {
+	if sel.With != nil {
+		l := len(r.b.outerCTEs)
+		defer func() {
+			r.b.outerCTEs = r.b.outerCTEs[:l]
+		}()
+		err := r.b.buildWith(r.ctx, sel.With)
+		if err != nil {
+			return err
+		}
+	}
 	// collect correlated aggregate from sub-queries inside FROM clause.
 	_, err = r.collectFromTableRefs(r.ctx, sel.From)
 	if err != nil {
