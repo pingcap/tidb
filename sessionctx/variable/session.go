@@ -46,11 +46,13 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // PreparedStmtCount is exported for test.
@@ -866,6 +868,23 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 		EnableWindowFunction:        s.EnableWindowFunction,
 		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
 	}
+}
+
+// GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
+// Otherwise, transaction infoschema is returned.
+// Nil if there is no available infoschema.
+func (s *SessionVars) GetInfoSchema() interface{} {
+	type IS interface {
+		SchemaMetaVersion() int64
+	}
+	if snap, ok := s.SnapshotInfoschema.(IS); ok {
+		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", s.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
+		return snap
+	}
+	if s.TxnCtx != nil && s.TxnCtx.InfoSchema != nil {
+		return s.TxnCtx.InfoSchema
+	}
+	return nil
 }
 
 // PartitionPruneMode presents the prune mode used.
