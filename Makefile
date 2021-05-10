@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-include Makefile.common
+include Makefile.debug
 
 .PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
 
