@@ -978,15 +978,16 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 }
 
 // GetChangingColVal gets the changing column value when executing "modify/change column" statement.
+// For statement like update-where, it will fetch the old row out and insert it into kv again.
+// Since update statement can see the writable columns, it is responsible for the casting relative column / get the fault value here.
+// old row : a-b-[nil]
+// new row : a-b-[a'/default]
+// Thus the writable new row is corresponding to Write-Only constraints.
 func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.Column, rowMap map[int64]types.Datum, defaultVals []types.Datum) (_ types.Datum, isDefaultVal bool, err error) {
 	relativeCol := cols[col.ChangeStateInfo.DependencyColumnOffset]
 	idxColumnVal, ok := rowMap[relativeCol.ID]
 	if ok {
-		// It needs cast values here when filling back column or index values in "modify/change column" statement.
-		if ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
-			return idxColumnVal, false, nil
-		}
-		idxColumnVal, err := table.CastValue(ctx, rowMap[relativeCol.ID], col.ColumnInfo, false, false)
+		idxColumnVal, err = table.CastValue(ctx, idxColumnVal, col.ColumnInfo, false, false)
 		// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
 		if err != nil {
 			return idxColumnVal, false, errors.Trace(err)
