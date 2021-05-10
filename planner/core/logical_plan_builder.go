@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -3640,14 +3641,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 					cte.recursiveRef = true
 					p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID}.Init(b.ctx, b.getSelectOffset())
-					p.SetSchema(cte.seedLP.Schema())
+					p.SetSchema(getResultCTESchema(cte.seedLP.Schema()))
 					p.SetOutputNames(cte.seedLP.OutputNames())
 					return p, nil
 				}
 
 				b.handleHelper.pushMap(nil)
 				p := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IdForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
-				p.SetSchema(cte.seedLP.Schema())
+				p.SetSchema(getResultCTESchema(cte.seedLP.Schema()))
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				if len(asName.String()) > 0 {
 					var on types.NameSlice
@@ -5835,7 +5836,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 		if err != nil {
 			return err
 		}
-		recurPart, err =  b.buildProjection4CTEUnion(ctx, cInfo.seedLP, recurPart)
+		recurPart, err = b.buildProjection4CTEUnion(ctx, cInfo.seedLP, recurPart)
 		if err != nil {
 			return err
 		}
@@ -5879,7 +5880,7 @@ func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExp
 	}
 	if len(def.ColNameList) > 0 {
 		if len(def.ColNameList) != len(p.OutputNames()) {
-			return nil, errors.New("CTE columns length is not consistent.")
+			return nil, ddl.ErrViewWrongList
 		}
 		for i, n := range def.ColNameList {
 			outPutNames[i].ColName = n
@@ -5947,16 +5948,26 @@ func (b *PlanBuilder) buildProjection4CTEUnion(ctx context.Context, seed Logical
 		return nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 	}
 	exprs := make([]expression.Expression, len(seed.Schema().Columns))
+	resSchema := getResultCTESchema(seed.Schema())
 	for i, col := range recur.Schema().Columns {
-		if !seed.Schema().Columns[i].RetType.Equal(col.RetType) {
-			exprs[i] = expression.BuildCastFunction4Union(b.ctx, col, seed.Schema().Columns[i].RetType)
+		if !resSchema.Columns[i].RetType.Equal(col.RetType) {
+			exprs[i] = expression.BuildCastFunction4Union(b.ctx, col, resSchema.Columns[i].RetType)
 		} else {
 			exprs[i] = col
 		}
 	}
 	b.optFlag |= flagEliminateProjection
 	proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
-	proj.SetSchema(seed.Schema().Clone())
+	proj.SetSchema(resSchema)
 	proj.SetChildren(recur)
 	return proj, nil
+}
+
+func getResultCTESchema(seedSchema *expression.Schema) *expression.Schema {
+	res := seedSchema.Clone()
+	for _, col := range res.Columns {
+		col.RetType = col.RetType.Clone()
+		col.RetType.Flag &= ^mysql.NotNullFlag
+	}
+	return res
 }

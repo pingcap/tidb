@@ -1198,3 +1198,12 @@ type LogicalCTETable struct {
 	name         string
 	idForStorage int
 }
+
+// ExtractCorrelatedCols implements LogicalPlan interface.
+func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
+	if p.cte.recursivePartLogicalPlan != nil {
+		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
+	}
+	return corCols
+}

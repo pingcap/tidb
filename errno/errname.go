@@ -355,7 +355,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrViewSelectClause:                         mysql.Message("View's SELECT contains a '%s' clause", nil),
 	ErrViewSelectVariable:                       mysql.Message("View's SELECT contains a variable or parameter", nil),
 	ErrViewSelectTmptable:                       mysql.Message("View's SELECT refers to a temporary table '%-.192s'", nil),
-	ErrViewWrongList:                            mysql.Message("View's SELECT and view's field list have different column counts", nil),
+	ErrViewWrongList:                            mysql.Message("In definition of view, derived table or common table expression, SELECT list and column names list have different column counts", nil),
 	ErrWarnViewMerge:                            mysql.Message("View merge algorithm can't be used here for now (assumed undefined algorithm)", nil),
 	ErrWarnViewWithoutKey:                       mysql.Message("View being updated does not have complete key of underlying table in it", nil),
 	ErrViewInvalid:                              mysql.Message("View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them", nil),

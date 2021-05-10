@@ -1378,3 +1378,12 @@ type PhysicalCTETable struct {
 
 	IdForStorage int
 }
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4PhysicalPlan(p.SeedPlan)
+	if p.RecurPlan != nil {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(p.RecurPlan)...)
+	}
+	return corCols
+}
