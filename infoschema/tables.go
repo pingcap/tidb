@@ -161,7 +161,7 @@ const (
 	TableClientErrorsSummaryByUser = "CLIENT_ERRORS_SUMMARY_BY_USER"
 	// TableClientErrorsSummaryByHost is the string constant of client errors table.
 	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
-	// TableStatementsSammaryEvicted is the string constant of statements summary evicted table.
+	// TableStatementsSummaryEvicted is the string constant of statements summary evicted table.
 	TableStatementsSummaryEvicted = "STATEMENTS_SUMMARY_EVICTED"
 )
 

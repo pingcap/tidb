@@ -2,7 +2,6 @@ package stmtsummary
 
 import (
 	"container/list"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -46,9 +45,7 @@ func newStmtSummaryByDigestEvictedElement(beginTimeForCurrentInterval int64, int
 // AddEvicted is used add an evicted record to stmtSummaryByDigestEvicted
 func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDigestKey, evictedValue *stmtSummaryByDigest, historySize int) {
 
-	fmt.Println("Adding Evicted")
 	// *need to get optimized*!!
-
 	evictedValue.Lock()
 	defer evictedValue.Unlock()
 	for e := evictedValue.history.Back(); e != nil; e = e.Prev() {
@@ -61,11 +58,8 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 		}
 
 		// look for match history interval
-		fmt.Println("Insertion start!")
-
 		// no record in history
 		if ssbde.history.Len() == 0 && historySize > 0 {
-			fmt.Println("No History, create one and direct insert")
 			beginTime := eBeginTime
 			intervalSeconds := eEndTime - eBeginTime
 			record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
@@ -80,14 +74,12 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 
 			if sBeginTime <= eBeginTime &&
 				sEndTime >= eEndTime {
-				fmt.Println("Find match, adding")
 				// is in this history interval
 				h.Value.(*stmtSummaryByDigestEvictedElement).addEvicted(evictedKey, e.Value.(*stmtSummaryByDigestElement))
 				break
 			}
 
 			if sEndTime <= eBeginTime {
-				fmt.Println("Digest too young, inserting")
 				// digest is young, insert into new interval after this history interval
 				beginTime := eBeginTime
 				intervalSeconds := eEndTime - eBeginTime
@@ -101,16 +93,13 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 				// digestElement is old
 				if h != ssbde.history.Front() {
 					// check older history digestEvictedElement
-					fmt.Println("Digest is old, find older evict")
 					continue
 				} else if ssbde.history.Len() >= historySize {
-					fmt.Println("Digest too old, abandon")
 					// out of history size, abandon
 					break
 				} else {
 					// is oldest digest
 					// creat a digestEvictedElement and PushFront!
-					fmt.Println("oldest, pushing")
 					beginTime := eBeginTime
 					intervalSeconds := eEndTime - eBeginTime
 					record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
@@ -120,7 +109,6 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 				}
 			}
 		}
-		fmt.Println("Finish insertion")
 	}
 }
 
@@ -184,7 +172,6 @@ func (seElement *stmtSummaryByDigestEvictedElement) toEvictedCountDatum() []type
 		types.NewTime(types.FromGoTime(time.Unix(seElement.sum.endTime, 0)), mysql.TypeTimestamp, 0),
 		int64(len(seElement.digestKeyMap)),
 	)
-	fmt.Println(datum)
 	return datum
 }
 
