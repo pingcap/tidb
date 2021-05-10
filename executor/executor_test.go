@@ -6732,7 +6732,7 @@ func (s *testSuiteP1) TestIssue22941(c *C) {
 	rs.Check(testkit.Rows("<nil> 1 0"))
 }
 
-func (s *testSerialSuite) TestIssue24210(c *C) {
+func (s *testSerialSuite1) TestIssue24210(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// for ProjectionExec

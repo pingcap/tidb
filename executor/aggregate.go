@@ -241,9 +241,6 @@ func (e *HashAggExec) Close() error {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 	}
-	for range e.finalOutputCh {
-	}
-	e.executed = false
 
 	if e.runtimeStats != nil {
 		var partialConcurrency, finalConcurrency int
