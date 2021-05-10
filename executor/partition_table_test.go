@@ -305,6 +305,65 @@ func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 	tk.MustIndexLookup("select * from tlist where a<1")
 }
 
+func createTable4DynamicPruneModeTestWithExpression(tk *testkit.TestKit) {
+	tk.MustExec("create table trange(a int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11));")
+	tk.MustExec("create table thash(a int) partition by hash(a) partitions 4;")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into trange values(1), (2), (3), (4), (5), (6), (7), (10);")
+	tk.MustExec("insert into thash values(1), (2), (3), (4), (5), (6), (7), (10);")
+	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (10);")
+	tk.MustExec("set session tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("analyze table trange")
+	tk.MustExec("analyze table thash")
+	tk.MustExec("analyze table t")
+}
+
+type testData4Expression struct {
+	sql string
+	partitions []string
+}
+
+func (s *partitionTableSuite) TestDynamicPruneModeWithEqualExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_equal_expression")
+	tk.MustExec("create database db_equal_expression")
+	tk.MustExec("use db_equal_expression")
+	createTable4DynamicPruneModeTestWithExpression(tk)
+
+	tables := []string{"trange", "thash"}
+	tests := []testData4Expression{
+		{
+			sql: "select * from %s where a = 2",
+			partitions: []string{
+				"p0",
+				"p2",
+			},
+		},
+		{
+			sql: "select * from %s where a = 4 or a = 1",
+			partitions: []string{
+				"p0,p1",
+				"p0,p1",
+			},
+		},
+		{
+			sql: "select * from %s where a = -1",
+			partitions: []string{
+				"p0",
+				"p1",
+			},
+		},
+	}
+
+	for _, t := range tests {
+		for i := range t.partitions {
+			sql := fmt.Sprintf(t.sql, tables[i])
+			c.Assert(tk.MustPartition(sql, t.partitions[i]), IsTrue)
+			tk.MustQuery(sql).Sort().Check(tk.MustQuery(fmt.Sprintf(t.sql, "t")).Sort().Rows())
+		}
+	}
+}
+
 func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists p")

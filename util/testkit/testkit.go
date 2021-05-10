@@ -255,6 +255,17 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 	return true
 }
 
+// MustPartition checks if the result execution plan must read specific partitions.
+func (tk *TestKit) MustPartition(sql string, partitions string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][3], "partition:"+partitions) {
+			return true
+		}
+	}
+	return false
+}
+
 // MustUseIndex checks if the result execution plan contains specific index(es).
 func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
