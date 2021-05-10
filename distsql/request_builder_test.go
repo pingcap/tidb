@@ -533,7 +533,7 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		KeepOrder:      true,
 		Desc:           false,
 		Concurrency:    15,
-		IsolationLevel: tikvstore.RC,
+		IsolationLevel: kv.RC,
 		Priority:       1,
 		NotFillCache:   true,
 		SyncLog:        false,

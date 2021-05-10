@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
@@ -7767,6 +7768,7 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustQuery("select collation(concat(1 collate `binary`));").Check(testkit.Rows("binary"))
 	tk.MustQuery("select coercibility(concat(1 collate `binary`));").Check(testkit.Rows("0"))
@@ -7777,6 +7779,12 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	tk.MustQuery("select collation(1);").Check(testkit.Rows("binary"))
 	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
 	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime)")
+	tk.MustExec("insert into t values ('2020-02-02')")
+	tk.MustQuery("select collation(concat(unix_timestamp(a))) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select coercibility(concat(unix_timestamp(a))) from t;").Check(testkit.Rows("4"))
 }
 
 // issues 14448, 19383, 17734
@@ -8838,8 +8846,7 @@ PARTITION BY RANGE (c) (
 		c.Log(testcase.name)
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
-		_, err = tk.Exec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
-		c.Assert(err, IsNil)
+		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		res, err := tk.Exec(testcase.sql)
 		_, resErr := session.GetRows4Test(context.Background(), tk.Se, res)
 		var checkErr error
@@ -8853,6 +8860,9 @@ PARTITION BY RANGE (c) (
 			c.Assert(checkErr.Error(), Matches, ".*can not be read by.*")
 		} else {
 			c.Assert(checkErr, IsNil)
+		}
+		if res != nil {
+			res.Close()
 		}
 		failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	}
@@ -8983,6 +8993,96 @@ func (s *testIntegrationSuite) TestClusteredIndexCorCol(c *C) {
 	tk.MustExec("insert into t1 values (1, 'crazy lumiere'), (10, 'goofy mestorf');")
 	tk.MustExec("insert into t2 select * from t1 ;")
 	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str = t1.c_str and t2.c_int = 10 order by t2.c_str limit 1) x from t1;").Check(testkit.Rows("<nil>", "goofy mestorf"))
+}
+
+func (s *testIntegrationSuite) TestEnumPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c_enum enum('c', 'b', 'a'))")
+	tk.MustExec("insert into t values ('a'), ('b'), ('c'), ('a'), ('b'), ('a')")
+
+	// test order by
+	tk.MustQuery("select c_enum from t order by c_enum").
+		Check(testkit.Rows("c", "b", "b", "a", "a", "a"))
+	tk.MustQuery("select c_enum from t order by c_enum desc").
+		Check(testkit.Rows("a", "a", "a", "b", "b", "c"))
+	tk.MustQuery("select c_enum from t order by if(c_enum>1, c_enum, c_enum)").
+		Check(testkit.Rows("a", "a", "a", "b", "b", "c"))
+
+	// test selection
+	tk.MustQuery("select c_enum from t where c_enum order by c_enum").
+		Check(testkit.Rows("c", "b", "b", "a", "a", "a"))
+	tk.MustQuery("select c_enum from t where c_enum > 'a' order by c_enum").
+		Check(testkit.Rows("c", "b", "b"))
+	tk.MustQuery("select c_enum from t where c_enum > 1 order by c_enum").
+		Check(testkit.Rows("b", "b", "a", "a", "a"))
+	tk.MustQuery("select c_enum from t where c_enum = 1 order by c_enum").
+		Check(testkit.Rows("c"))
+	tk.MustQuery("select c_enum from t where c_enum = 'a' order by c_enum").
+		Check(testkit.Rows("a", "a", "a"))
+	tk.MustQuery("select c_enum from t where c_enum + 1 order by c_enum").
+		Check(testkit.Rows("c", "b", "b", "a", "a", "a"))
+	tk.MustQuery("select c_enum from t where c_enum - 1 order by c_enum").
+		Check(testkit.Rows("b", "b", "a", "a", "a"))
+
+	// test projection
+	tk.MustQuery("select c_enum+1 from t order by c_enum").
+		Check(testkit.Rows("2", "3", "3", "4", "4", "4"))
+	tk.MustQuery("select c_enum, c_enum=1 from t order by c_enum").
+		Check(testkit.Rows("c 1", "b 0", "b 0", "a 0", "a 0", "a 0"))
+	tk.MustQuery("select c_enum, c_enum>1 from t order by c_enum").
+		Check(testkit.Rows("c 0", "b 1", "b 1", "a 1", "a 1", "a 1"))
+	tk.MustQuery("select c_enum, c_enum>'a' from t order by c_enum").
+		Check(testkit.Rows("c 1", "b 1", "b 1", "a 0", "a 0", "a 0"))
+
+	// test aggregate
+	tk.MustQuery("select max(c_enum) from t").
+		Check(testkit.Rows("c"))
+	tk.MustQuery("select min(c_enum) from t").
+		Check(testkit.Rows("a"))
+	tk.MustQuery("select max(c_enum+1) from t").
+		Check(testkit.Rows("4"))
+	tk.MustQuery("select min(c_enum+1) from t").
+		Check(testkit.Rows("2"))
+	tk.MustQuery("select avg(c_enum) from t").
+		Check(testkit.Rows("2.3333333333333335"))
+	tk.MustQuery("select avg(distinct c_enum) from t").
+		Check(testkit.Rows("2"))
+	tk.MustQuery("select distinct c_enum from t order by c_enum").
+		Check(testkit.Rows("c", "b", "a"))
+	tk.MustQuery("select c_enum from t group by c_enum order by c_enum").
+		Check(testkit.Rows("c", "b", "a"))
+
+	// test correlated
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (
+		a char(3) NOT NULL default '',
+		e enum('a','b','c','d','e') NOT NULL default 'a'
+	)`)
+	tk.MustExec("INSERT INTO t1 VALUES ('aaa','e')")
+	tk.MustExec("INSERT INTO t1 VALUES ('bbb','e')")
+	tk.MustExec("INSERT INTO t1 VALUES ('ccc','a')")
+	tk.MustExec("INSERT INTO t1 VALUES ('ddd','e')")
+	tk.MustQuery(`SELECT DISTINCT e AS c FROM t1 outr WHERE
+	a <> SOME ( SELECT a FROM t1 WHERE e = outr.e)`).
+		Check(testkit.Rows("e"))
+
+	// no index
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(e enum('c','b','a'))")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	tk.MustQuery("select e from t where e > 'b'").
+		Check(testkit.Rows("c"))
+	tk.MustQuery("select e from t where e > 2").
+		Check(testkit.Rows("a"))
+
+	// enable index
+	tk.MustExec("alter table t add index idx(e)")
+	tk.MustQuery("select e from t where e > 'b'").
+		Check(testkit.Rows("c"))
+	tk.MustQuery("select e from t where e > 2").
+		Check(testkit.Rows("a"))
 }
 
 func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {
@@ -9187,4 +9287,52 @@ func (s *testIntegrationSuite) TestRefineArgNullValues(c *C) {
 		"<nil>",
 		"<nil>",
 	))
+}
+
+func (s *testIntegrationSuite) TestEnumIndex(c *C) {
+	defer s.cleanEnv(c)
+
+	elems := []string{"\"a\"", "\"b\"", "\"c\""}
+	rand.Shuffle(len(elems), func(i, j int) {
+		elems[i], elems[j] = elems[j], elems[i]
+	})
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,tidx")
+	tk.MustExec("create table t(e enum(" + strings.Join(elems, ",") + "))")
+	tk.MustExec("create table tidx(e enum(" + strings.Join(elems, ",") + "), index idx(e))")
+
+	nRows := 50
+	values := make([]string, 0, nRows)
+	for i := 0; i < nRows; i++ {
+		values = append(values, fmt.Sprintf("(%v)", rand.Intn(len(elems))+1))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
+	tk.MustExec(fmt.Sprintf("insert into tidx values %v", strings.Join(values, ", ")))
+
+	ops := []string{"=", "!=", ">", ">=", "<", "<="}
+	testElems := []string{"\"a\"", "\"b\"", "\"c\"", "\"d\"", "\"\"", "1", "2", "3", "4", "0", "-1"}
+	for i := 0; i < nRows; i++ {
+		cond := fmt.Sprintf("e" + ops[rand.Intn(len(ops))] + testElems[rand.Intn(len(testElems))])
+		result := tk.MustQuery("select * from t where " + cond).Sort().Rows()
+		tk.MustQuery("select * from tidx where " + cond).Sort().Check(result)
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(e enum('d','c','b','a'), a int, index idx(e));")
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3),(4,4);")
+	tk.MustQuery("select /*+ use_index(t, idx) */ * from t where e not in ('a','d') and a = 2;").Check(
+		testkit.Rows("c 2"))
+
+	// issue 24419
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t02")
+	tk.MustExec("CREATE TABLE `t02` (  `COL1` enum('^YSQT0]V@9TFN>^WB6G?NG@S8>VYOM;BSC@<BCQ6','TKZQQ=C1@IH9W>64=ZISGS?O[JDFBI5M]QXJYQNSKU>NGAWLXS26LMTZ2YNN`XKIUGKY0IHDWV>E[BJJCABOKH1M^CB5E@DLS7Q88PWZTEAY]1ZQMN5NX[I<KBBK','PXWTHJ?R]P=`Y','OFJHCEKCQGT:MXI7P3[YO4N0DF=2XJWJ4Z9Z;HQ8TMUTZV8YLQAHWJ4BDZHR3A','@[ETQPEKKDD;9INXAQISU0O65J86AWQ2SZ8=ZZW6TKT4GCF_O13^ZQW_S>FIYA983K:E4N77@FINM5HVGQCUCVNF5WLOOOEORAM=_JLMVFURMUASTVDBE','NL3V:J9LM4U5KUCV<RIJ_RKMZ4;CXD_0:K`HCO=P1YNYTHX8KYZRQ?PL01HLNSUC_R7:I5<V[HV0BIDEBZAPT73R7`DP43XXPLQCEI8>R;P','M5=T5FLQEZMPZAXH]4G:TSYYYVQ7O@4S6C3N8WPFKSP;SRD6VW@94BBH8XCT','P]I52Y46F?@RMOOF6;FWDTO`7FIT]R:]ELHD[CNLDSHC7FPBYOOJXLZSBV^5C^AAF6J5BCKE4V9==@H=4C]GMZXPNM','ECIQWH>?MK=ARGI0WVJNIBZFCFVJHFIUYJ:2?2WWZBNBWTPFNQPLLBFP9R_','E<<T9UUF2?XM8TWS_','W[5E_U1J?YSOQISL1KD','M@V^`^8I','5UTEJUZIQ^ZJOJU_D6@V2DSVOIK@LUT^E?RTL>_Y9OT@SOPYR72VIJVMBWIVPF@TTBZ@8ZPBZL=LXZF`WM4V2?K>AT','PZ@PR6XN28JL`B','ZOHBSCRMZPOI`IVTSEZAIDAF7DS@1TT20AP9','QLDIOY[Y:JZR@OL__I^@FBO=O_?WOOR:2BE:QJC','BI^TGJ_N<H:7OW8XXITM@FBWDNJ=KA`X:9@BUY4UHKSHFP`EAWR9_QS^HR2AI39MGVXWVD]RUI46SHU=GXAX;RT765X:CU7M4XOD^S9JFZI=HTTS?C0CT','M@HGGFM43C7','@M`IHSJQ8HBTGOS`=VW]QBMLVWN`SP;E>EEXYKV1POHTOJQPGCPVR=TYZMGWABUQR07J8U::W4','N`ZN4P@9T[JW;FR6=FA4WP@APNPG[XQVIK4]F]2>EC>JEIOXC``;;?OHP') DEFAULT NULL,  `COL2` tinyint DEFAULT NULL,  `COL3` time DEFAULT NULL,  KEY `U_M_COL4` (`COL1`,`COL2`),  KEY `U_M_COL5` (`COL3`,`COL2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into t02(col1, col2) values ('OFJHCEKCQGT:MXI7P3[YO4N0DF=2XJWJ4Z9Z;HQ8TMUTZV8YLQAHWJ4BDZHR3A', 39), ('OFJHCEKCQGT:MXI7P3[YO4N0DF=2XJWJ4Z9Z;HQ8TMUTZV8YLQAHWJ4BDZHR3A', 51), ('OFJHCEKCQGT:MXI7P3[YO4N0DF=2XJWJ4Z9Z;HQ8TMUTZV8YLQAHWJ4BDZHR3A', 55), ('OFJHCEKCQGT:MXI7P3[YO4N0DF=2XJWJ4Z9Z;HQ8TMUTZV8YLQAHWJ4BDZHR3A', -30), ('ZOHBSCRMZPOI`IVTSEZAIDAF7DS@1TT20AP9', -30);")
+	tk.MustQuery("select * from t02 where col1 not in (\"W1Rgd74pbJaGX47h1MPjpr0XSKJNCnwEleJ50Vbpl9EmbHJX6D6BXYKT2UAbl1uDw3ZGeYykhzG6Gld0wKdOiT4Gv5j9upHI0Q7vrXij4N9WNFJvB\", \"N`ZN4P@9T[JW;FR6=FA4WP@APNPG[XQVIK4]F]2>EC>JEIOXC``;;?OHP\") and col2 = -30;").Check(
+		testkit.Rows(
+			"OFJHCEKCQGT:MXI7P3[YO4N0DF=2XJWJ4Z9Z;HQ8TMUTZV8YLQAHWJ4BDZHR3A -30 <nil>",
+			"ZOHBSCRMZPOI`IVTSEZAIDAF7DS@1TT20AP9 -30 <nil>"))
 }
