@@ -3615,7 +3615,17 @@ func (s *testIntegrationSuite) TestSequenceAsDataSource(c *C) {
 func (s *testIntegrationSerialSuite) TestEnforceMPP(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	// test set variable
+	// test value limit of tidb_opt_tiflash_concurrency_factor
+	err := tk.ExecToErr("set @@tidb_opt_tiflash_concurrency_factor = 0")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_opt_tiflash_concurrency_factor' can't be set to the value of '0'`)
+
+	tk.MustExec("set @@tidb_opt_tiflash_concurrency_factor = 1")
+	tk.MustQuery("select @@tidb_opt_tiflash_concurrency_factor").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_tiflash_concurrency_factor = 24")
+	tk.MustQuery("select @@tidb_opt_tiflash_concurrency_factor").Check(testkit.Rows("24"))
+
+	// test set tidb_allow_mpp
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("OFF"))
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
