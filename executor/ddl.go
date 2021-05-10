@@ -312,16 +312,12 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 		if isSystemTable(tn.Schema.L, tn.Name.L) {
 			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
 		}
-
-		if obt == tableObject && config.CheckTableBeforeDrop {
-			tableInfo, err := e.is.TableByName(tn.Schema, tn.Name)
-			if err != nil {
-				return err
-			}
-			tempTableType := tableInfo.Meta().TempTableType
-			if tempTableType == model.TempTableGlobal || tempTableType == model.TempTableLocal {
-				return ErrAdminCheckTable
-			}
+		tableInfo, err := e.is.TableByName(tn.Schema, tn.Name)
+		if err != nil {
+			return err
+		}
+		tempTableType := tableInfo.Meta().TempTableType
+		if obt == tableObject && config.CheckTableBeforeDrop && tempTableType != model.TempTableGlobal && tempTableType != model.TempTableLocal {
 			logutil.BgLogger().Warn("admin check table before drop",
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),

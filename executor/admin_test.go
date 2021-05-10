@@ -76,7 +76,7 @@ func (s *testSuite5) TestAdminCheckIndex(c *C) {
 	check()
 }
 
-func (s *testSuite13) TestAdminCheckIndexInTemporaryMode(c *C) {
+func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists temporary_admin_test;")
