@@ -14,13 +14,17 @@
 package variable
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 )
 
 func TestT(t *testing.T) {
@@ -325,4 +329,229 @@ func (*testSysVarSuite) TestCollationServer(c *C) {
 
 	c.Assert(sv.SetSessionFromHook(vars, "utf8mb4_bin"), IsNil)
 	c.Assert(vars.systems[CharacterSetServer], Equals, "utf8mb4") // check it also changes charset.
+}
+
+func (*testSysVarSuite) TestTimeZone(c *C) {
+	sv := GetSysVar(TimeZone)
+	vars := NewSessionVars()
+
+	// TiDB uses the Golang TZ library, so TZs are case-sensitive.
+	// Unfortunately this is not strictly MySQL compatible. i.e.
+	// This should not fail:
+	// val, err := sv.Validate(vars, "America/EDMONTON", ScopeSession)
+	// See: https://github.com/pingcap/tidb/issues/8087
+
+	val, err := sv.Validate(vars, "America/Edmonton", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "America/Edmonton")
+
+	val, err = sv.Validate(vars, "+10:00", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "+10:00")
+
+	val, err = sv.Validate(vars, "UTC", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "UTC")
+
+	val, err = sv.Validate(vars, "+00:00", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "+00:00")
+
+	c.Assert(sv.SetSessionFromHook(vars, "UTC"), IsNil) // sets
+	tz, err := parseTimeZone("UTC")
+	c.Assert(err, IsNil)
+	c.Assert(vars.TimeZone, Equals, tz)
+
+}
+
+func (*testSysVarSuite) TestForeignKeyChecks(c *C) {
+	sv := GetSysVar(ForeignKeyChecks)
+	vars := NewSessionVars()
+
+	val, err := sv.Validate(vars, "on", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "OFF") // warns and refuses to set ON.
+
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	c.Assert(warn.Error(), Equals, "[variable:8047]variable 'foreign_key_checks' does not yet support value: on")
+
+}
+
+func (*testSysVarSuite) TestTxnIsolation(c *C) {
+	sv := GetSysVar(TxnIsolation)
+	vars := NewSessionVars()
+
+	_, err := sv.Validate(vars, "on", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tx_isolation' can't be set to the value of 'on'")
+
+	val, err := sv.Validate(vars, "read-COMMitted", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "READ-COMMITTED")
+
+	_, err = sv.Validate(vars, "Serializable", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+
+	_, err = sv.Validate(vars, "read-uncommitted", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'READ-UNCOMMITTED' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+
+	vars.systems[TiDBSkipIsolationLevelCheck] = "ON"
+
+	val, err = sv.Validate(vars, "Serializable", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "SERIALIZABLE")
+}
+
+func (*testSysVarSuite) TestTiDBMultiStatementMode(c *C) {
+	sv := GetSysVar(TiDBMultiStatementMode)
+	vars := NewSessionVars()
+
+	val, err := sv.Validate(vars, "on", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ON")
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil)
+	c.Assert(vars.MultiStatementMode, Equals, 1)
+
+	val, err = sv.Validate(vars, "0", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "OFF")
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil)
+	c.Assert(vars.MultiStatementMode, Equals, 0)
+
+	val, err = sv.Validate(vars, "Warn", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "WARN")
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil)
+	c.Assert(vars.MultiStatementMode, Equals, 2)
+}
+
+func (*testSysVarSuite) TestReadOnlyNoop(c *C) {
+	vars := NewSessionVars()
+	for _, name := range []string{TxReadOnly, TransactionReadOnly} {
+		sv := GetSysVar(name)
+		val, err := sv.Validate(vars, "on", ScopeSession)
+		c.Assert(err.Error(), Equals, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
+		c.Assert(val, Equals, "OFF")
+	}
+}
+
+func (*testSysVarSuite) TestGetScopeNoneSystemVar(c *C) {
+	val, ok, err := GetScopeNoneSystemVar(Port)
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, "4000")
+
+	val, ok, err = GetScopeNoneSystemVar("nonsensevar")
+	c.Assert(err.Error(), Equals, "[variable:1193]Unknown system variable 'nonsensevar'")
+	c.Assert(ok, IsFalse)
+	c.Assert(val, Equals, "")
+
+	val, ok, err = GetScopeNoneSystemVar(CharacterSetClient)
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
+	c.Assert(val, Equals, "")
+}
+
+func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
+	// This tests instance scoped variables through GetSessionSystemVar().
+	// Eventually these should be changed to use getters so that the switch
+	// statement in GetSessionOnlySysVars can be removed.
+
+	vars := NewSessionVars()
+
+	val, err := GetSessionSystemVar(vars, TiDBCurrentTS)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, fmt.Sprintf("%d", vars.TxnCtx.StartTS))
+
+	val, err = GetSessionSystemVar(vars, TiDBLastTxnInfo)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, vars.LastTxnInfo)
+
+	val, err = GetSessionSystemVar(vars, TiDBLastQueryInfo)
+	c.Assert(err, IsNil)
+	info, err := json.Marshal(vars.LastQueryInfo)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, string(info))
+
+	val, err = GetSessionSystemVar(vars, TiDBGeneralLog)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(ProcessGeneralLog.Load()))
+
+	val, err = GetSessionSystemVar(vars, TiDBPProfSQLCPU)
+	c.Assert(err, IsNil)
+	expected := "0"
+	if EnablePProfSQLCPU.Load() {
+		expected = "1"
+	}
+	c.Assert(val, Equals, expected)
+
+	val, err = GetSessionSystemVar(vars, TiDBExpensiveQueryTimeThreshold)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)))
+
+	val, err = GetSessionSystemVar(vars, TiDBMemoryUsageAlarmRatio)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()))
+
+	val, err = GetSessionSystemVar(vars, TiDBConfig)
+	c.Assert(err, IsNil)
+	conf := config.GetGlobalConfig()
+	j, err := json.MarshalIndent(conf, "", "\t")
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, config.HideConfig(string(j)))
+
+	val, err = GetSessionSystemVar(vars, TiDBForcePriority)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))])
+
+	val, err = GetSessionSystemVar(vars, TiDBDDLSlowOprThreshold)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10))
+
+	val, err = GetSessionSystemVar(vars, PluginDir)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, config.GetGlobalConfig().Plugin.Dir)
+
+	val, err = GetSessionSystemVar(vars, PluginLoad)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, config.GetGlobalConfig().Plugin.Load)
+
+	val, err = GetSessionSystemVar(vars, TiDBSlowLogThreshold)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10))
+
+	val, err = GetSessionSystemVar(vars, TiDBRecordPlanInSlowLog)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10))
+
+	val, err = GetSessionSystemVar(vars, TiDBEnableSlowLog)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog))
+
+	val, err = GetSessionSystemVar(vars, TiDBQueryLogMaxLen)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10))
+
+	val, err = GetSessionSystemVar(vars, TiDBCheckMb4ValueInUTF8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8))
+
+	val, err = GetSessionSystemVar(vars, TiDBCapturePlanBaseline)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, CapturePlanBaseline.GetVal())
+
+	val, err = GetSessionSystemVar(vars, TiDBFoundInPlanCache)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(vars.PrevFoundInPlanCache))
+
+	val, err = GetSessionSystemVar(vars, TiDBFoundInBinding)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(vars.PrevFoundInBinding))
+
+	val, err = GetSessionSystemVar(vars, TiDBEnableCollectExecutionInfo)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo))
+
+	val, err = GetSessionSystemVar(vars, TiDBTxnScope)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, vars.TxnScope.GetVarValue())
 }
