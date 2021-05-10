@@ -16,8 +16,11 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -330,4 +333,36 @@ func (s *testSuite5) TestIssue23722(c *C) {
 	tk.MustQuery("select  t.* from t where col_19 in  " +
 		"( select col_19 from t where t.col_18 <> 'David' and t.col_19 >= 'jDzNn' ) " +
 		"order by col_15 , col_16 , col_17 , col_18 , col_19;").Check(testkit.Rows("38799.400 20301 KETeFZhkoxnwMAhA Charlie zyhXEppZdqyqNV"))
+}
+
+func (s *testSuite5) TestPartitionTableIndexJoinAndIndexReader(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec(`create table t (a int, b int, key(a)) partition by hash(a) partitions 4`)
+	tk.MustExec("create table tnormal (a int, b int, key(a), key(b))")
+	nRows := 512
+	values := make([]string, 0, nRows)
+	for i := 0; i < nRows; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
+	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
+
+	randRange := func() (int, int) {
+		a, b := rand.Intn(nRows), rand.Intn(nRows)
+		if a > b {
+			return b, a
+		}
+		return a, b
+	}
+	for i := 0; i < nRows; i++ {
+		lb, rb := randRange()
+		cond := fmt.Sprintf("(t2.b between %v and %v)", lb, rb)
+		result := tk.MustQuery("select t1.a from tnormal t1, tnormal t2 where t1.a=t2.b and " + cond).Sort().Rows()
+		tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ t1.a from t t1, t t2 where t1.a=t2.b and " + cond).Sort().Check(result)
+	}
 }

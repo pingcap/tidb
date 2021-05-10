@@ -111,10 +111,11 @@ func int32ToBoolStr(i int32) string {
 }
 
 func checkCollation(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-	if _, err := collate.GetCollationByName(normalizedValue); err != nil {
+	coll, err := collate.GetCollationByName(normalizedValue)
+	if err != nil {
 		return normalizedValue, errors.Trace(err)
 	}
-	return normalizedValue, nil
+	return coll.Name, nil
 }
 
 func checkCharacterSet(normalizedValue string, argName string) (string, error) {
@@ -149,6 +150,17 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 	return normalizedValue, nil
 }
 
+func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
+		returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
+		if !TiDBOptOn(vars.systems[TiDBSkipIsolationLevelCheck]) {
+			return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
+		}
+		vars.StmtCtx.AppendWarning(returnErr)
+	}
+	return normalizedValue, nil
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -178,11 +190,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
 	case TiDBLastTxnInfo:
-		info, err := json.Marshal(s.LastTxnInfo)
-		if err != nil {
-			return "", true, err
-		}
-		return string(info), true, nil
+		return s.LastTxnInfo, true, nil
 	case TiDBLastQueryInfo:
 		info, err := json.Marshal(s.LastQueryInfo)
 		if err != nil {
@@ -279,24 +287,15 @@ func GetScopeNoneSystemVar(key string) (string, bool, error) {
 const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
-func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
+func SetSessionSystemVar(vars *SessionVars, name string, value string) error {
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	sVal := ""
-	var err error
-	if !value.IsNull() {
-		sVal, err = value.ToString()
-	}
+	sVal, err := sysVar.Validate(vars, value, ScopeSession)
 	if err != nil {
 		return err
 	}
-	sVal, err = sysVar.Validate(vars, sVal, ScopeSession)
-	if err != nil {
-		return err
-	}
-	CheckDeprecationSetSystemVar(vars, name)
 	return vars.SetSystemVar(name, sVal)
 }
 
@@ -311,7 +310,6 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	if err != nil {
 		return err
 	}
-	CheckDeprecationSetSystemVar(vars, name)
 	return vars.SetStmtVar(name, sVal)
 }
 
@@ -341,18 +339,9 @@ const (
 	maxChunkSizeLowerBound = 32
 )
 
-// CheckDeprecationSetSystemVar checks if the system variable is deprecated.
-func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
-	switch name {
-	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
-		TiDBHashJoinConcurrency, TiDBHashAggPartialConcurrency, TiDBHashAggFinalConcurrency,
-		TiDBProjectionConcurrency, TiDBWindowConcurrency, TiDBMergeJoinConcurrency, TiDBStreamAggConcurrency:
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
-	case TIDBMemQuotaHashJoin, TIDBMemQuotaMergeJoin,
-		TIDBMemQuotaSort, TIDBMemQuotaTopn,
-		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin:
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
-	}
+// appendDeprecationWarning adds a warning that the item is deprecated.
+func appendDeprecationWarning(s *SessionVars, name, replacement string) {
+	s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, replacement))
 }
 
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.

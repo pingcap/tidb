@@ -18,6 +18,7 @@ import (
 	"context"
 	"sort"
 	"strconv"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -255,7 +256,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 	defer store.Close()
 	se := &session{
 		store:       store,
-		parser:      parser.New(),
+		parserPool:  &sync.Pool{New: func() interface{} { return parser.New() }},
 		sessionVars: variable.NewSessionVars(),
 	}
 	startStates := []model.SchemaState{model.StateNone, model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization}

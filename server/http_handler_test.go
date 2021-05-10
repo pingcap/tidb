@@ -274,8 +274,8 @@ func (ts *HTTPHandlerTestSuite) TestRegionsAPIForClusterIndex(c *C) {
 				frameCnt++
 			}
 		}
-		// Primary index is as the record frame, so frame count is 1.
-		c.Assert(frameCnt, Equals, 1)
+		// frameCnt = clustered primary key + secondary index(idx) = 2.
+		c.Assert(frameCnt, Equals, 2)
 		c.Assert(resp.Body.Close(), IsNil)
 	}
 }
@@ -294,8 +294,10 @@ func (ts *HTTPHandlerTestSuite) TestRangesAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.TableName, Equals, "t")
-	c.Assert(len(data.Indices), Equals, 1)
+	c.Assert(len(data.Indices), Equals, 2)
 	_, ok := data.Indices["PRIMARY"]
+	c.Assert(ok, IsTrue)
+	_, ok = data.Indices["idx"]
 	c.Assert(ok, IsTrue)
 }
 
@@ -552,7 +554,7 @@ partition by range (a)
 	err = txn2.Commit()
 	c.Assert(err, IsNil)
 	dbt.mustExec("drop table if exists t")
-	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b) clustered)")
+	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b) clustered, key idx(c))")
 	dbt.mustExec("insert into t values(1.1,'111',1),(2.2,'222',2)")
 }
 
@@ -953,6 +955,10 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	decodeKeyMvcc(resp.Body, c, true)
 
 	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx2/3?a=4&b=")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
+
+	resp, err = ts.fetchStatus("/mvcc/index/tidb/t/idx?a=1.1&b=111&c=1")
 	c.Assert(err, IsNil)
 	decodeKeyMvcc(resp.Body, c, true)
 
@@ -1468,5 +1474,30 @@ func (ts *HTTPHandlerTestSuite) TestTestHandler(c *C) {
 	c.Assert(err, IsNil)
 	err = resp.Body.Close()
 	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+}
+
+func (ts *HTTPHandlerTestSuite) TestDDLHookHandler(c *C) {
+	defer ts.stopServer(c)
+
+	ts.startServer(c)
+	resp, err := ts.fetchStatus("/test/ddl/hook")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=ctc_hook`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "\"success!\"")
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=default_hook`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err = ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "\"success!\"")
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 }
