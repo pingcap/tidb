@@ -24,7 +24,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -1433,57 +1432,6 @@ func (s *testPrivilegeSuite) TestRenameUser(c *C) {
 	c.Assert(err.Error(), Matches, "\\[executor:1396\\]Operation RENAME USER failed for ru6@localhost.*")
 
 	// Test multi rename, this is a full swap of ru3 and ru6, i.e. need to read its previous state in the same transaction.
-	// Needed to avoid panic due to loc == nil in Time.ConvertTimeZone
-	se1.GetSessionVars().TimeZone = time.UTC
-	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")
-	c.Assert(err, IsNil)
-
-	// Cleanup
-	mustExec(c, rootSe, "DROP USER ru6@localhost")
-	mustExec(c, rootSe, "DROP USER ru3")
-	mustExec(c, rootSe, "DROP USER 'ru1'@'localhost'")
-}
-
-func (s *testPrivilegeSuite) TestRenameUser(c *C) {
-	rootSe := newSession(c, s.store, s.dbName)
-	mustExec(c, rootSe, "CREATE USER 'ru1'@'localhost'")
-	mustExec(c, rootSe, "CREATE USER ru3")
-	mustExec(c, rootSe, "CREATE USER ru6@localhost")
-	se1 := newSession(c, s.store, s.dbName)
-	c.Assert(se1.Auth(&auth.UserIdentity{Username: "ru1", Hostname: "localhost"}, nil, nil), IsTrue)
-
-	// Check privileges (need CREATE USER)
-	_, err := se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
-	mustExec(c, rootSe, "GRANT UPDATE ON mysql.user TO 'ru1'@'localhost'")
-	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
-	// Workaround for *errors.withStack type
-	errString := err.Error()
-	c.Assert(errString, Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
-	mustExec(c, rootSe, "GRANT CREATE USER ON *.* TO 'ru1'@'localhost'")
-	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
-	c.Assert(err, IsNil)
-
-	// Test a few single rename (both Username and Hostname)
-	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru4'@'%' TO 'ru3'@'localhost'")
-	c.Assert(err, IsNil)
-	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3'@'localhost' TO 'ru3'@'%'")
-	c.Assert(err, IsNil)
-	// Including negative tests, i.e. non existing from user and existing to user
-	_, err = rootSe.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru1@localhost")
-	c.Assert(err.Error(), Matches, "\\[executor:1396\\]Operation RENAME USER failed for ru3@%.*")
-	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru4 TO ru5@localhost")
-	c.Assert(err.Error(), Matches, "\\[executor:1396\\]Operation RENAME USER failed for ru4@%.*")
-	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru3")
-	c.Assert(err.Error(), Matches, "\\[executor:1396\\]Operation RENAME USER failed for ru3@%.*")
-	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru4 TO ru7")
-	c.Assert(err.Error(), Matches, "\\[executor:1396\\]Operation RENAME USER failed for ru4@%.*")
-	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost")
-	c.Assert(err.Error(), Matches, "\\[executor:1396\\]Operation RENAME USER failed for ru6@localhost.*")
-
-	// Test multi rename, this is a full swap of ru3 and ru6, i.e. need to read its previous state in the same transaction.
-	// Needed to avoid panic due to loc == nil in Time.ConvertTimeZone
-	se1.GetSessionVars().TimeZone = time.UTC
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")
 	c.Assert(err, IsNil)
 
