@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -234,7 +235,11 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 		case "VIEW":
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
 		case "BASE TABLE":
-			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+			if !config.CheckTableBeforeDrop {
+				tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+			} else {
+				tk.MustGetErrCode(fmt.Sprintf("drop table %v", tableName), errno.ErrAdminCheckTable)
+			}
 		default:
 			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
 		}
