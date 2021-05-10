@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
@@ -879,16 +878,10 @@ func (b *builtinTiDBBoundStalenessSig) vecEvalInt(input *chunk.Chunk, result *ch
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	args0 := buf0.Times()
 	args1 := buf1.Times()
-	i64s := result.Int64s()
-	var minResolveTS uint64
-	if store := b.ctx.GetStore(); store != nil {
-		minResolveTS = store.GetMinResolveTS(b.ctx.GetSessionVars().CheckAndGetTxnScope())
-	}
-	// Try to get from the stmt cache to make sure this function is deterministic.
-	stmtCtx := b.ctx.GetSessionVars().StmtCtx
-	minResolveTS = stmtCtx.GetOrStoreStmtCache(stmtctx.StmtResolveTsCacheKey, minResolveTS).(uint64)
+	minResolveTS := getMinResolveTS(b.ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue

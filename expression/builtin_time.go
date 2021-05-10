@@ -7177,13 +7177,7 @@ func (b *builtinTiDBBoundStalenessSig) evalInt(row chunk.Row) (int64, bool, erro
 		return 0, true, nil
 	}
 	minTS, maxTS := oracle.ComposeTS(minTime.Unix()*1000, 0), oracle.ComposeTS(maxTime.Unix()*1000, 0)
-	var minResolveTS uint64
-	if store := b.ctx.GetStore(); store != nil {
-		minResolveTS = store.GetMinResolveTS(b.ctx.GetSessionVars().CheckAndGetTxnScope())
-	}
-	// Try to get from the stmt cache to make sure this function is deterministic.
-	stmtCtx := b.ctx.GetSessionVars().StmtCtx
-	minResolveTS = stmtCtx.GetOrStoreStmtCache(stmtctx.StmtResolveTsCacheKey, minResolveTS).(uint64)
+	minResolveTS := getMinResolveTS(b.ctx)
 	return calAppropriateTS(minTS, maxTS, minResolveTS), false, nil
 }
 
@@ -7201,6 +7195,21 @@ func checkTimeRange(t time.Time) bool {
 	return true
 }
 
+func getMinResolveTS(sessionCtx sessionctx.Context) (minResolveTS uint64) {
+	if store := sessionCtx.GetStore(); store != nil {
+		minResolveTS = store.GetMinResolveTS(sessionCtx.GetSessionVars().CheckAndGetTxnScope())
+	}
+	// Inject mocked ResolveTS for test.
+	failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
+		injectTS := val.(int)
+		minResolveTS = uint64(injectTS)
+	})
+	// Try to get from the stmt cache to make sure this function is deterministic.
+	stmtCtx := sessionCtx.GetSessionVars().StmtCtx
+	minResolveTS = stmtCtx.GetOrStoreStmtCache(stmtctx.StmtResolveTsCacheKey, minResolveTS).(uint64)
+	return
+}
+
 // For a resolved TS t and a time range [t1, t2]:
 //   1. If t < t1, we will use t1 as the result,
 //      and with it, a read request may fail because it's an unreached resolved TS.
@@ -7209,10 +7218,6 @@ func checkTimeRange(t time.Time) bool {
 //   2. If t2 < t, we will use t2 as the result,
 //      and with it, a read request won't fail because it's bigger than the latest resolved TS.
 func calAppropriateTS(minTS, maxTS, minResolveTS uint64) int64 {
-	failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
-		injectTS := val.(int)
-		minResolveTS = uint64(injectTS)
-	})
 	if minResolveTS < minTS {
 		return int64(minTS)
 	} else if minTS <= minResolveTS && minResolveTS <= maxTS {
