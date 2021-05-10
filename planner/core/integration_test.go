@@ -3611,6 +3611,32 @@ func (s *testIntegrationSuite) TestSequenceAsDataSource(c *C) {
 
 func (s *testIntegrationSerialSuite) TestEnforceMPP(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+
+	// test set variable
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("OFF"))
+	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ON"))
+	tk.MustExec("set @@session.tidb_allow_mpp = 2")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ENFORCE"))
+
+	tk.MustExec("set @@session.tidb_allow_mpp = off")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("OFF"))
+	tk.MustExec("set @@session.tidb_allow_mpp = oN")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ON"))
+	tk.MustExec("set @@session.tidb_allow_mpp = enForcE")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ENFORCE"))
+
+	tk.MustExec("set @@global.tidb_allow_mpp = faLsE")
+	tk.MustQuery("select @@global.tidb_allow_mpp").Check(testkit.Rows("OFF"))
+	tk.MustExec("set @@global.tidb_allow_mpp = True")
+	tk.MustQuery("select @@global.tidb_allow_mpp").Check(testkit.Rows("ON"))
+
+	err := tk.ExecToErr("set @@global.tidb_allow_mpp = enforceWithTypo")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_allow_mpp' can't be set to the value of 'enforceWithTypo'`)
+
+	// test query
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
