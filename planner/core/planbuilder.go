@@ -1934,7 +1934,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		return nil, errors.Errorf("Only support fast analyze in tikv storage.")
 	}
 	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
-	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion == statistics.Version2 {
+	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion >= statistics.Version2 {
 		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
 	}
 	for _, tbl := range as.TableNames {

@@ -2016,7 +2016,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 		oldHist = idx.TruncateHistogram(bktID)
 	}
 	var oldTopN *statistics.TopN
-	if analyzeTask.idxExec.analyzePB.IdxReq.GetVersion() == statistics.Version2 {
+	if analyzeTask.idxExec.analyzePB.IdxReq.GetVersion() >= statistics.Version2 {
 		oldTopN = idx.TopN.Copy()
 		oldTopN.RemoveVal(oldHist.Bounds.GetRow(len(oldHist.Buckets)*2 - 1).GetBytes(0))
 	}

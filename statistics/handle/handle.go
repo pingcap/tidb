@@ -1119,7 +1119,7 @@ func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID, sta
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if statsVer == statistics.Version2 {
+	if statsVer >= statistics.Version2 {
 		// Before stats ver 2, histogram represents all data in this column.
 		// In stats ver 2, histogram + TopN represent all data in this column.
 		// So we need to add TopN total count here.

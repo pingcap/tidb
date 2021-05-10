@@ -616,7 +616,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 		StatsVer: colExec.analyzeVer,
 	}
 	colResult.Count = int64(colResult.Hist[0].TotalRowCount())
-	if colResult.StatsVer == statistics.Version2 {
+	if colResult.StatsVer >= statistics.Version2 {
 		colResult.Count += int64(topNs[0].TotalCount())
 	}
 	return append(result, colResult)
@@ -1627,7 +1627,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		}
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
-	if statsVer == statistics.Version2 {
+	if statsVer >= statistics.Version2 {
 		poped := statistics.MergeTopNAndUpdateCMSketch(topN, idxExec.oldTopN, cms, uint32(idxExec.opts[ast.AnalyzeOptNumTopN]))
 		hist.AddIdxVals(poped)
 	}
