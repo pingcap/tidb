@@ -8108,14 +8108,6 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (k char(20), v int, primary key (k(4)) clustered, key (k)) collate utf8mb4_general_ci;")
-	tk.MustExec("insert into t values('01233', 1);")
-	tk.MustExec("create index idx on t(k(2))")
-	tk.MustQuery("select * from t use index(k_2);").Check(testkit.Rows("01233 1"))
-	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows("01233 1"))
-	tk.MustExec("admin check table t;")
-
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime)")
 	tk.MustExec("insert into t values ('2020-02-02')")
 	tk.MustQuery("select collation(concat(unix_timestamp(a))) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
