@@ -406,7 +406,7 @@ func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) 
 
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
-	is := infoschema.GetInfoSchema(s)
+	is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
 	pm := privilege.GetPrivilegeManager(s)
@@ -1660,7 +1660,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	s.PrepareTSFuture(ctx)
-	prepareExec := executor.NewPrepareExec(s, infoschema.GetInfoSchema(s), sql)
+	prepareExec := executor.NewPrepareExec(s, s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		return
@@ -1701,7 +1701,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	if prepareStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
 	} else {
-		is = infoschema.GetInfoSchema(s)
+		is = s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	}
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
@@ -1781,7 +1781,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		return false, nil
 	}
 	// check schema version
-	is := infoschema.GetInfoSchema(s)
+	is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		prepared.CachedPlan = nil
 		return false, nil
@@ -2892,7 +2892,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 		txnScope = oracle.GlobalTxnScope
 	}
 	if txnScope != oracle.GlobalTxnScope {
-		is := infoschema.GetInfoSchema(s)
+		is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
 		for physicalTableID := range deltaMap {
 			var tableName string
