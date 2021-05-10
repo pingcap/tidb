@@ -1086,9 +1086,6 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 			break
 		}
 
-		// begin a transaction to rename a user.
-		// Could be restructured with an array of table, user/host columns and break/continue for easier maintenance.
-
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.UserTable, "User", "Host", userToUser); err != nil {
 			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.UserTable+" error")
 			break
