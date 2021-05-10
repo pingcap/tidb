@@ -172,6 +172,8 @@ type TransactionContext struct {
 
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
+
+	GlobalTemporaryTables map[int64]struct{}
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -962,7 +964,7 @@ func NewSessionVars() *SessionVars {
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:            tikvstore.PriorityLow,
+		DDLReorgPriority:            kv.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		preferRangeScan:             DefOptPreferRangeScan,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
@@ -1308,13 +1310,13 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	val = strings.ToLower(val)
 	switch val {
 	case "priority_low":
-		s.DDLReorgPriority = tikvstore.PriorityLow
+		s.DDLReorgPriority = kv.PriorityLow
 	case "priority_normal":
-		s.DDLReorgPriority = tikvstore.PriorityNormal
+		s.DDLReorgPriority = kv.PriorityNormal
 	case "priority_high":
-		s.DDLReorgPriority = tikvstore.PriorityHigh
+		s.DDLReorgPriority = kv.PriorityHigh
 	default:
-		s.DDLReorgPriority = tikvstore.PriorityLow
+		s.DDLReorgPriority = kv.PriorityLow
 	}
 }
 
@@ -1375,11 +1377,7 @@ func (s *SessionVars) ClearStmtVars() {
 // i.e. oN / on / 1 => ON
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	sv := GetSysVar(name)
-	if err := sv.SetSessionFromHook(s, val); err != nil {
-		return err
-	}
-	s.systems[name] = val
-	return nil
+	return sv.SetSessionFromHook(s, val)
 }
 
 // GetReadableTxnMode returns the session variable TxnMode but rewrites it to "OPTIMISTIC" when it's empty.

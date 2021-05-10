@@ -202,11 +202,11 @@ type StmtCacheKey int
 const (
 	// StmtNowTsCacheKey is a variable for now/current_timestamp calculation/cache for one stmt.
 	StmtNowTsCacheKey StmtCacheKey = iota
-	// StmtNowTsCacheKey is a variable for resolveTs calculation/cache for one stmt.
+	// StmtResolveTsCacheKey is a variable for resolveTs calculation/cache for one stmt.
 	StmtResolveTsCacheKey
 )
 
-// GetFromStmtCache gets the cached value of the given key if it exists, otherwise will store the value.
+// GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
 func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interface{}) interface{} {
 	if sc.stmtCache == nil {
 		sc.stmtCache = make(map[StmtCacheKey]interface{})

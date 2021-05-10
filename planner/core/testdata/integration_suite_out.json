@@ -879,19 +879,6 @@
           "  └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo"
         ],
         "Warn": null
-      },
-      {
-        "SQL": "select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t",
-        "Plan": [
-          "PartitionUnion 30000.00 root  ",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
-        ],
-        "Warn": null
       }
     ]
   },
@@ -1530,6 +1517,50 @@
           "  └─TableReader(Probe) 9980.01 root  data:Selection",
           "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t.id)), not(isnull(test.t.value))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestSequenceAsDataSource",
+    "Cases": [
+      {
+        "SQL": "select 1 from s1",
+        "Plan": [
+          "Projection 1.00 root  1->Column#1",
+          "└─TableDual 1.00 root  rows:1"
+        ]
+      },
+      {
+        "SQL": "select count(1) from s1",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#1",
+          "└─TableDual 1.00 root  rows:1"
+        ]
+      },
+      {
+        "SQL": "select count(*) from s1",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#1",
+          "└─TableDual 1.00 root  rows:1"
+        ]
+      },
+      {
+        "SQL": "select sum(1) from s1",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:sum(1)->Column#1",
+          "└─TableDual 1.00 root  rows:1"
+        ]
+      },
+      {
+        "SQL": "select count(1) as cnt from s1 union select count(1) as cnt from s2",
+        "Plan": [
+          "HashAgg 2.00 root  group by:Column#3, funcs:firstrow(Column#3)->Column#3",
+          "└─Union 2.00 root  ",
+          "  ├─StreamAgg 1.00 root  funcs:count(1)->Column#1",
+          "  │ └─TableDual 1.00 root  rows:1",
+          "  └─StreamAgg 1.00 root  funcs:count(1)->Column#2",
+          "    └─TableDual 1.00 root  rows:1"
         ]
       }
     ]

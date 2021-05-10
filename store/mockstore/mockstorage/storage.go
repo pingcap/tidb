@@ -14,6 +14,7 @@
 package mockstorage
 
 import (
+	"context"
 	"crypto/tls"
 
 	"github.com/pingcap/tidb/kv"
@@ -32,17 +33,18 @@ type mockStorage struct {
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
-func NewMockStorage(tikvStore *tikv.KVStore) kv.Storage {
+func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	return &mockStorage{
 		KVStore:  tikvStore,
 		Store:    coprStore,
 		memCache: kv.NewCacheDB(),
-	}
+	}, nil
+
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {
@@ -74,6 +76,11 @@ func (s *mockStorage) Describe() string {
 func (s *mockStorage) Begin() (kv.Transaction, error) {
 	txn, err := s.KVStore.Begin()
 	return newTiKVTxn(txn, err)
+}
+
+// ShowStatus returns the specified status of the storage
+func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, kv.ErrNotImplemented
 }
 
 // BeginWithOption begins a transaction with given option
