@@ -1281,6 +1281,11 @@ error = '''
 Unknown SEQUENCE: '%-.300s'
 '''
 
+["schema:8003"]
+error = '''
+TiDB admin check table failed.
+'''
+
 ["schema:8020"]
 error = '''
 Table '%s' was locked in %s by %v
