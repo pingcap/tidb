@@ -360,26 +360,26 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 		// select /*+ hash_agg() */ a from t where a in (?, ?, ?) group by a;
 		x := rand.Intn(1099)
 
-		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ a from trange where a > %v group by a;", x)
-		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular1 where a > %v group by a;", x)
+		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from trange where a > %v group by a;", x)
+		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular1 where a > %v group by a;", x)
 		c.Assert(tk.HasPlan(queryPartition1, "StreamAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
-		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ a from trange where a > %v group by a;", x)
-		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular1 where a > %v group by a;", x)
+		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from trange where a > %v group by a;", x)
+		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular1 where a > %v group by a;", x)
 		c.Assert(tk.HasPlan(queryPartition2, "HashAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
 
 		y := rand.Intn(1099)
 		z := rand.Intn(1099)
 
-		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ a from trange where a in(%v, %v, %v) group by a;", x, y, z)
-		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular1 where a in(%v, %v, %v) group by a;", x, y, z)
+		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from trange where a in(%v, %v, %v) group by a;", x, y, z)
+		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular1 where a in(%v, %v, %v) group by a;", x, y, z)
 		c.Assert(tk.HasPlan(queryPartition3, "StreamAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition3).Sort().Check(tk.MustQuery(queryRegular3).Sort().Rows())
 
-		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ a from trange where a in (%v, %v, %v) group by a;", x, y, z)
-		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular1 where a in (%v, %v, %v) group by a;", x, y, z)
+		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from trange where a in (%v, %v, %v) group by a;", x, y, z)
+		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular1 where a in (%v, %v, %v) group by a;", x, y, z)
 		c.Assert(tk.HasPlan(queryPartition4, "HashAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition4).Sort().Check(tk.MustQuery(queryRegular4).Sort().Rows())
 	}
@@ -392,26 +392,26 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 		// select /*+ hash_agg() */ a from t where a in (?, ?, ?) group by a;
 		x := rand.Intn(1099)
 
-		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ a from thash where a > %v group by a;", x)
-		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular1 where a > %v group by a;", x)
+		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from thash where a > %v group by a;", x)
+		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular1 where a > %v group by a;", x)
 		c.Assert(tk.HasPlan(queryPartition1, "StreamAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
-		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ a from thash where a > %v group by a;", x)
-		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular1 where a > %v group by a;", x)
+		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from thash where a > %v group by a;", x)
+		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular1 where a > %v group by a;", x)
 		c.Assert(tk.HasPlan(queryPartition2, "HashAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
 
 		y := rand.Intn(1099)
 		z := rand.Intn(1099)
 
-		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ a from thash where a in(%v, %v, %v) group by a;", x, y, z)
-		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular1 where a in(%v, %v, %v) group by a;", x, y, z)
+		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from thash where a in(%v, %v, %v) group by a;", x, y, z)
+		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular1 where a in(%v, %v, %v) group by a;", x, y, z)
 		c.Assert(tk.HasPlan(queryPartition3, "StreamAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition3).Sort().Check(tk.MustQuery(queryRegular3).Sort().Rows())
 
-		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ a from thash where a in (%v, %v, %v) group by a;", x, y, z)
-		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular1 where a in (%v, %v, %v) group by a;", x, y, z)
+		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from thash where a in (%v, %v, %v) group by a;", x, y, z)
+		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular1 where a in (%v, %v, %v) group by a;", x, y, z)
 		c.Assert(tk.HasPlan(queryPartition4, "HashAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition4).Sort().Check(tk.MustQuery(queryRegular4).Sort().Rows())
 	}
@@ -424,26 +424,26 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 		// select /*+ hash_agg() */ a from t where a in (?, ?, ?) group by a;
 		x := rand.Intn(12) + 1
 
-		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ a from tlist where a > %v group by a;", x)
-		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular2 where a > %v group by a;", x)
+		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tlist where a > %v group by a;", x)
+		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular2 where a > %v group by a;", x)
 		c.Assert(tk.HasPlan(queryPartition1, "StreamAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
-		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ a from tlist where a > %v group by a;", x)
-		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular2 where a > %v group by a;", x)
+		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tlist where a > %v group by a;", x)
+		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular2 where a > %v group by a;", x)
 		c.Assert(tk.HasPlan(queryPartition2, "HashAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
 
 		y := rand.Intn(12) + 1
 		z := rand.Intn(12) + 1
 
-		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ a from tlist where a in(%v, %v, %v) group by a;", x, y, z)
-		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ a from tregular2 where a in(%v, %v, %v) group by a;", x, y, z)
+		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tlist where a in(%v, %v, %v) group by a;", x, y, z)
+		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular2 where a in(%v, %v, %v) group by a;", x, y, z)
 		c.Assert(tk.HasPlan(queryPartition3, "StreamAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition3).Sort().Check(tk.MustQuery(queryRegular3).Sort().Rows())
 
-		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ a from tlist where a in (%v, %v, %v) group by a;", x, y, z)
-		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ a from tregular2 where a in (%v, %v, %v) group by a;", x, y, z)
+		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tlist where a in (%v, %v, %v) group by a;", x, y, z)
+		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular2 where a in (%v, %v, %v) group by a;", x, y, z)
 		c.Assert(tk.HasPlan(queryPartition4, "HashAgg"), IsTrue) // check if IndexLookUp is used
 		tk.MustQuery(queryPartition4).Sort().Check(tk.MustQuery(queryRegular4).Sort().Rows())
 	}
