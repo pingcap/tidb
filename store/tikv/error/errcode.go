@@ -18,10 +18,7 @@ package error
 const (
 	CodeUnknown                     = 1105
 	CodeLockWaitTimeout             = 1205
-	CodeTruncatedWrongValue         = 1292
 	CodeQueryInterrupted            = 1317
-	CodeDivisionByZero              = 1365
-	CodeDataOutOfRange              = 1690
 	CodeLockAcquireFailAndNoWaitSet = 3572
 
 	// TiKV/PD/TiFlash errors.
