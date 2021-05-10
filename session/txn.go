@@ -285,7 +285,7 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 // Rollback overrides the Transaction interface.
 func (txn *LazyTxn) Rollback() error {
 	defer txn.reset()
-	txn.State = txninfo.TxnRollingBack
+	atomic.StoreInt32(&txn.State, txninfo.TxnRollingBack)
 	// mockSlowRollback is used to mock a rollback which takes a long time
 	failpoint.Inject("mockSlowRollback", func(_ failpoint.Value) {})
 	return txn.Transaction.Rollback()
@@ -300,7 +300,6 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
 	atomic.StorePointer(&txn.blockStartTime, unsafe.Pointer(nil))
 	atomic.StoreInt32(&txn.State, originState)
-	txn.State = originState
 	return err
 }
 

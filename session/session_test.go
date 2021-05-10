@@ -4370,6 +4370,7 @@ func (s *testTxnStateSuite) TestCommitting(c *C) {
 	tk.MustExec("insert into t(a) values (1), (2);")
 	tk.MustExec("begin pessimistic;")
 	tk.MustExec("select * from t where a = 1 for update;")
+	ch := make(chan struct{})
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		c.Assert(tk2.Se.TxnInfo(), NotNil)
@@ -4377,23 +4378,28 @@ func (s *testTxnStateSuite) TestCommitting(c *C) {
 		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)")
 		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit")
 		tk2.MustExec("commit;")
+		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnCommitting)
 	tk.MustExec("commit;")
+	<-ch
 }
 
 func (s *testTxnStateSuite) TestRollbacking(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1), (2);")
+	ch := make(chan struct{})
 	go func() {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into t(a) values (3);")
 		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "sleep(200)")
 		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback")
 		tk.MustExec("rollback;")
+		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
+	<-ch
 }

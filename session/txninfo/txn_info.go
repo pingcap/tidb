@@ -66,7 +66,7 @@ type TxnInfo struct {
 }
 
 // ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table
-func (info TxnInfo) ToDatum() []types.Datum {
+func (info *TxnInfo) ToDatum() []types.Datum {
 	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
 	var blockStartTime interface{}
 	if info.BlockStartTime == nil {
