@@ -43,6 +43,31 @@
     ]
   },
   {
+    "Name": "TestPushDownToTiFlashWithKeepOrder",
+    "Cases": [
+      {
+        "SQL": "explain select max(a) from t",
+        "Plan": [
+          "StreamAgg_9 1.00 root  funcs:max(test.t.a)->Column#3",
+          "└─TopN_10 1.00 root  test.t.a:desc, offset:0, count:1",
+          "  └─TableReader_18 1.00 root  data:TopN_17",
+          "    └─TopN_17 1.00 batchCop[tiflash]  test.t.a:desc, offset:0, count:1",
+          "      └─TableFullScan_16 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select min(a) from t",
+        "Plan": [
+          "StreamAgg_9 1.00 root  funcs:min(test.t.a)->Column#3",
+          "└─Limit_13 1.00 root  offset:0, count:1",
+          "  └─TableReader_23 1.00 root  data:Limit_22",
+          "    └─Limit_22 1.00 cop[tiflash]  offset:0, count:1",
+          "      └─TableFullScan_21 1.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestBroadcastJoin",
     "Cases": [
       {
@@ -485,6 +510,33 @@
           "  │ └─IndexRangeScan_6 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
           "  └─Selection_9(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
           "    └─TableRowIDScan_7 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestLimitIndexLookUpKeepOrder",
+    "Cases": [
+      {
+        "SQL": "desc select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10",
+        "Plan": [
+          "Limit_12 0.00 root  offset:0, count:10",
+          "└─Projection_34 0.00 root  test.t.a, test.t.b, test.t.c, test.t.d",
+          "  └─IndexLookUp_33 0.00 root  ",
+          "    ├─IndexRangeScan_30(Build) 2.50 cop[tikv] table:t, index:idx(a, b, c) range:(1 2,1 10), keep order:true, stats:pseudo",
+          "    └─Selection_32(Probe) 0.00 cop[tikv]  eq(test.t.d, 10)",
+          "      └─TableRowIDScan_31 2.50 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b desc, c desc limit 10",
+        "Plan": [
+          "Limit_12 0.00 root  offset:0, count:10",
+          "└─Projection_34 0.00 root  test.t.a, test.t.b, test.t.c, test.t.d",
+          "  └─IndexLookUp_33 0.00 root  ",
+          "    ├─IndexRangeScan_30(Build) 2.50 cop[tikv] table:t, index:idx(a, b, c) range:(1 2,1 10), keep order:true, desc, stats:pseudo",
+          "    └─Selection_32(Probe) 0.00 cop[tikv]  eq(test.t.d, 10)",
+          "      └─TableRowIDScan_31 2.50 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]

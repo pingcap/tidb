@@ -189,6 +189,9 @@ type PhysicalIndexMergeReader struct {
 	partialPlans []PhysicalPlan
 	// tablePlan is a PhysicalTableScan to get the table tuples. Current, it must be not nil.
 	tablePlan PhysicalPlan
+	// ExtraHandleCol indicates the index of extraHandleCol when the partial
+	// reader is TableReader.
+	ExtraHandleCol *expression.Column
 }
 
 // PhysicalIndexScan represents an index scan plan.

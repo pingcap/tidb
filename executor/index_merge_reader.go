@@ -102,6 +102,10 @@ type IndexMergeReaderExecutor struct {
 	corColInAccess  bool
 	idxCols         [][]*expression.Column
 	colLens         [][]int
+
+	// extraHandleIdx indicates the index of extraHandleCol when the partial
+	// reader is TableReader.
+	extraHandleIdx int
 }
 
 // Open implements the Executor Open interface
@@ -280,7 +284,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		var err error
 		util.WithRecovery(
 			func() {
-				_, err = worker.fetchHandles(ctx1, exitCh, fetchCh, e.resultCh, e.finished)
+				_, err = worker.fetchHandles(ctx1, exitCh, fetchCh, e.resultCh, e.finished, e.extraHandleIdx)
 			},
 			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialTableWorker"),
 		)
@@ -305,7 +309,7 @@ type partialTableWorker struct {
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
-	finished <-chan struct{}) (count int64, err error) {
+	finished <-chan struct{}, extraHandleIdx int) (count int64, err error) {
 	var chk *chunk.Chunk
 	handleOffset := -1
 	if w.tableInfo.PKIsHandle {
@@ -318,7 +322,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 			}
 		}
 	} else {
-		return 0, errors.Errorf("cannot find the column for handle")
+		handleOffset = extraHandleIdx
 	}
 
 	chk = chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
