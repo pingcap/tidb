@@ -163,12 +163,14 @@ type DDL interface {
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
 	GetID() string
-	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
+	// GetTableMaxHandle gets the max row ID of a normal table or a partition.
 	GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetHook gets the hook. It's exported for testing.
 	GetHook() Callback
+	// SetHook sets the hook.
+	SetHook(h Callback)
 }
 
 type limitJobTask struct {
@@ -623,6 +625,14 @@ func (d *ddl) GetHook() Callback {
 	defer d.mu.Unlock()
 
 	return d.mu.hook
+}
+
+// SetHook set the customized hook.
+func (d *ddl) SetHook(h Callback) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.mu.hook = h
 }
 
 func (d *ddl) startCleanDeadTableLock() {

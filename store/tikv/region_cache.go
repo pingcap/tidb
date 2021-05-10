@@ -275,9 +275,10 @@ type RegionCache struct {
 	enableForwarding bool
 
 	mu struct {
-		sync.RWMutex                         // mutex protect cached region
-		regions      map[RegionVerID]*Region // cached regions are organized as regionVerID to region ref mapping
-		sorted       *btree.BTree            // cache regions are organized as sorted key to region ref mapping
+		sync.RWMutex                           // mutex protect cached region
+		regions        map[RegionVerID]*Region // cached regions are organized as regionVerID to region ref mapping
+		latestVersions map[uint64]RegionVerID  // cache the map from regionID to its latest RegionVerID
+		sorted         *btree.BTree            // cache regions are organized as sorted key to region ref mapping
 	}
 	storeMu struct {
 		sync.RWMutex
@@ -299,6 +300,7 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 		pdClient: pdClient,
 	}
 	c.mu.regions = make(map[RegionVerID]*Region)
+	c.mu.latestVersions = make(map[uint64]RegionVerID)
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
@@ -976,6 +978,15 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 	}
 }
 
+// removeVersionFromCache removes a RegionVerID from cache, tries to cleanup
+// both c.mu.regions and c.mu.versions. Note this function is not thread-safe.
+func (c *RegionCache) removeVersionFromCache(oldVer RegionVerID, regionID uint64) {
+	delete(c.mu.regions, oldVer)
+	if ver, ok := c.mu.latestVersions[regionID]; ok && ver.Equals(oldVer) {
+		delete(c.mu.latestVersions, regionID)
+	}
+}
+
 // insertRegionToCache tries to insert the Region to cache.
 // It should be protected by c.mu.Lock().
 func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
@@ -995,9 +1006,14 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 		// Don't refresh TiFlash work idx for region. Otherwise, it will always goto a invalid store which
 		// is under transferring regions.
 		store.workTiFlashIdx = atomic.LoadInt32(&oldRegionStore.workTiFlashIdx)
-		delete(c.mu.regions, oldRegion.VerID())
+		c.removeVersionFromCache(oldRegion.VerID(), cachedRegion.VerID().id)
 	}
 	c.mu.regions[cachedRegion.VerID()] = cachedRegion
+	newVer := cachedRegion.VerID()
+	latest, ok := c.mu.latestVersions[cachedRegion.VerID().id]
+	if !ok || latest.GetVer() < newVer.GetVer() || latest.GetConfVer() < newVer.GetConfVer() {
+		c.mu.latestVersions[cachedRegion.VerID().id] = newVer
+	}
 }
 
 // searchCachedRegion finds a region from cache by key. Like `getCachedRegion`,
@@ -1032,34 +1048,54 @@ func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 // `getCachedRegion`, it should be called with c.mu.RLock(), and the returned
 // Region should not be used after c.mu is RUnlock().
 func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
-	var newestRegion *Region
 	ts := time.Now().Unix()
-	for v, r := range c.mu.regions {
-		if v.id == regionID {
-			lastAccess := atomic.LoadInt64(&r.lastAccess)
-			if ts-lastAccess > RegionCacheTTLSec {
-				continue
+	ver, ok := c.mu.latestVersions[regionID]
+	if !ok {
+		return nil
+	}
+	latestRegion, ok := c.mu.regions[ver]
+	if !ok {
+		// should not happen
+		logutil.BgLogger().Warn("region version not found",
+			zap.Uint64("regionID", regionID), zap.Stringer("version", &ver))
+		return nil
+	}
+	lastAccess := atomic.LoadInt64(&latestRegion.lastAccess)
+	if ts-lastAccess > RegionCacheTTLSec {
+		return nil
+	}
+	if latestRegion != nil {
+		atomic.CompareAndSwapInt64(&latestRegion.lastAccess, atomic.LoadInt64(&latestRegion.lastAccess), ts)
+	}
+	return latestRegion
+}
+
+// TODO: revise it by get store by closure.
+func (c *RegionCache) getStoresByType(typ tikvrpc.EndpointType) []*Store {
+	c.storeMu.Lock()
+	defer c.storeMu.Unlock()
+	stores := make([]*Store, 0)
+	for _, store := range c.storeMu.stores {
+		if store.getResolveState() != resolved {
+			continue
+		}
+		if store.storeType == typ {
+			//TODO: revise it with store.clone()
+			storeLabel := make([]*metapb.StoreLabel, 0)
+			for _, label := range store.labels {
+				storeLabel = append(storeLabel, &metapb.StoreLabel{
+					Key:   label.Key,
+					Value: label.Value,
+				})
 			}
-			if newestRegion == nil {
-				newestRegion = r
-				continue
-			}
-			nv := newestRegion.VerID()
-			cv := r.VerID()
-			if nv.GetConfVer() < cv.GetConfVer() {
-				newestRegion = r
-				continue
-			}
-			if nv.GetVer() < cv.GetVer() {
-				newestRegion = r
-				continue
-			}
+			stores = append(stores, &Store{
+				addr:    store.addr,
+				storeID: store.storeID,
+				labels:  store.labels,
+			})
 		}
 	}
-	if newestRegion != nil {
-		atomic.CompareAndSwapInt64(&newestRegion.lastAccess, atomic.LoadInt64(&newestRegion.lastAccess), ts)
-	}
-	return newestRegion
+	return stores
 }
 
 func filterUnavailablePeers(region *pd.Region) {
@@ -1517,6 +1553,11 @@ type RegionVerID struct {
 	ver     uint64
 }
 
+// NewRegionVerID creates a region ver id, which used for invalidating regions.
+func NewRegionVerID(id, confVer, ver uint64) RegionVerID {
+	return RegionVerID{id, confVer, ver}
+}
+
 // GetID returns the id of the region
 func (r *RegionVerID) GetID() uint64 {
 	return r.id
@@ -1535,6 +1576,11 @@ func (r *RegionVerID) GetConfVer() uint64 {
 // String formats the RegionVerID to string
 func (r *RegionVerID) String() string {
 	return fmt.Sprintf("{ region id: %v, ver: %v, confVer: %v }", r.id, r.ver, r.confVer)
+}
+
+// Equals checks whether the RegionVerID equals to another one
+func (r *RegionVerID) Equals(another RegionVerID) bool {
+	return r.id == another.id && r.confVer == another.confVer && r.ver == another.ver
 }
 
 // VerID returns the Region's RegionVerID.
