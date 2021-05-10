@@ -480,7 +480,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	affectedRows := h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
 
 	// if it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-	is := infoschema.GetInfoSchema(h.mu.ctx)
+	is := h.mu.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	if is == nil {
 		return false, errors.New("cannot get the information schema")
 	}

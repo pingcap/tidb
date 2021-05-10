@@ -74,7 +74,7 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	// We need to merge the partition-level stats to global-stats when we drop table partition in dynamic mode.
 	tableID := tblInfo.ID
-	is := infoschema.GetInfoSchema(h.mu.ctx)
+	is := h.mu.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	globalStats, err := h.TableStatsFromStorage(tblInfo, tableID, true, 0)
 	if err != nil {
 		return err
