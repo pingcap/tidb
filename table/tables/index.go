@@ -376,3 +376,12 @@ func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum,
 	}
 	return vals, nil
 }
+
+// IsIndexWritable check whether the index is writable.
+func IsIndexWritable(idx table.Index) bool {
+	s := idx.Meta().State
+	if s != model.StateDeleteOnly && s != model.StateDeleteReorganization {
+		return true
+	}
+	return false
+}
