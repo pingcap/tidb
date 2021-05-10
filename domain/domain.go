@@ -284,7 +284,7 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	return false
 }
 
-// InfoSchema gets information schema from domain.
+// InfoSchema gets the latest information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
 	return do.infoCache.GetLatest()
 }
