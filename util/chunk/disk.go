@@ -16,7 +16,6 @@ package chunk
 import (
 	"errors"
 	"io"
-	"io/ioutil"
 	"os"
 	"strconv"
 	"sync"
@@ -67,7 +66,7 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label()))
+	l.disk, err = os.CreateTemp(config.GetGlobalConfig().TempStoragePath, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return errors2.Trace(err)
 	}

@@ -19,7 +19,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -451,7 +450,7 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 	var certPool *x509.CertPool
 	if len(ca) > 0 {
 		var caCert []byte
-		caCert, err = ioutil.ReadFile(ca)
+		caCert, err = os.ReadFile(ca)
 		if err != nil {
 			logutil.BgLogger().Warn("read file failed", zap.Error(err))
 			err = errors.Trace(err)

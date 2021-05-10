@@ -16,7 +16,6 @@ package chunk
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"strconv"
@@ -36,7 +35,7 @@ import (
 )
 
 func TestT(t *testing.T) {
-	path, _ := ioutil.TempDir("", "oom-use-tmp-storage")
+	path, _ := os.MkdirTemp("", "oom-use-tmp-storage")
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = path
 	})

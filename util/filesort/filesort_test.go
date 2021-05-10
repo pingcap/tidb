@@ -14,7 +14,6 @@
 package filesort
 
 import (
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"testing"
@@ -127,7 +126,7 @@ func (s *testFileSortSuite) TestInMemory(c *C) {
 		ret    bool
 	)
 
-	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	tmpDir, err = os.MkdirTemp("", "util_filesort_test")
 	c.Assert(err, IsNil)
 
 	fsBuilder := new(Builder)
@@ -177,7 +176,7 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 		ret    bool
 	)
 
-	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	tmpDir, err = os.MkdirTemp("", "util_filesort_test")
 	c.Assert(err, IsNil)
 
 	fsBuilder := new(Builder)
@@ -245,7 +244,7 @@ func (s *testFileSortSuite) TestMultipleWorkers(c *C) {
 		ret    bool
 	)
 
-	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	tmpDir, err = os.MkdirTemp("", "util_filesort_test")
 	c.Assert(err, IsNil)
 
 	fsBuilder := new(Builder)
@@ -294,13 +293,13 @@ func (s *testFileSortSuite) TestClose(c *C) {
 
 	// Prepare two FileSorter instances for tests
 	fsBuilder := new(Builder)
-	tmpDir0, err = ioutil.TempDir("", "util_filesort_test")
+	tmpDir0, err = os.MkdirTemp("", "util_filesort_test")
 	c.Assert(err, IsNil)
 	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir0).Build()
 	c.Assert(err, IsNil)
 	defer fs0.Close()
 
-	tmpDir1, err = ioutil.TempDir("", "util_filesort_test")
+	tmpDir1, err = os.MkdirTemp("", "util_filesort_test")
 	c.Assert(err, IsNil)
 	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir1).Build()
 	c.Assert(err, IsNil)
@@ -373,13 +372,13 @@ func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
 
 	// Prepare two FileSorter instances for tests
 	fsBuilder := new(Builder)
-	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	tmpDir, err = os.MkdirTemp("", "util_filesort_test")
 	c.Assert(err, IsNil)
 	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
 	defer fs0.Close()
 
-	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
+	tmpDir, err = os.MkdirTemp("", "util_filesort_test")
 	c.Assert(err, IsNil)
 	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
