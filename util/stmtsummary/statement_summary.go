@@ -253,11 +253,9 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		other:                   ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
-		fmt.Println("Evict!!!")
 		historySize := newSsMap.historySize()
 		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
-	fmt.Println("OnEvict Set!")
 	return newSsMap
 }
 
