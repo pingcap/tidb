@@ -200,7 +200,7 @@ func (t BackoffType) TError() error {
 	case BoTxnLock, BoTxnLockFast, boTxnNotFound:
 		return tikverr.ErrResolveLockTimeout
 	case BoPDRPC:
-		return tikverr.ErrPDServerTimeout
+		return tikverr.NewErrPDServerTimeout("")
 	case BoRegionMiss:
 		return tikverr.ErrRegionUnavailable
 	case boTiKVServerBusy:
