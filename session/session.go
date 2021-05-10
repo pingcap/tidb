@@ -406,7 +406,7 @@ func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) 
 
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
-	is := infoschema.GetInfoSchema(s)
+	is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
 	pm := privilege.GetPrivilegeManager(s)
@@ -999,29 +999,42 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
-func (s *session) SetGlobalSysVar(name, value string) error {
-	if name == variable.TiDBSlowLogMasking {
-		name = variable.TiDBRedactLog
-	}
+func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	var sVal string
-	var err error
-	sVal, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal)
-	if err != nil {
+	if value, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal); err != nil {
 		return err
 	}
-	name = strings.ToLower(name)
+	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
+		return err
+	}
+
+	return s.updateGlobalSysVar(sv, value)
+}
+
+// SetGlobalSysVarOnly updates the sysvar, but does not call the validation function or update aliases.
+// This is helpful to prevent duplicate warnings being appended from aliases, or recursion.
+func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	if err = sv.SetGlobalFromHook(s.sessionVars, value, true); err != nil {
+		return err
+	}
+	return s.updateGlobalSysVar(sv, value)
+}
+
+func (s *session) updateGlobalSysVar(sv *variable.SysVar, value string) error {
 	// update mysql.tidb if required.
-	if s.varFromTiDBTable(name) {
-		if err = s.setTiDBTableValue(name, sVal); err != nil {
+	if s.varFromTiDBTable(sv.Name) {
+		if err := s.setTiDBTableValue(sv.Name, value); err != nil {
 			return err
 		}
 	}
-	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
-	stmt, err := s.ParseWithParams(context.TODO(), "REPLACE %n.%n VALUES (%?, %?)", mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+	stmt, err := s.ParseWithParams(context.TODO(), "REPLACE %n.%n VALUES (%?, %?)", mysql.SystemDB, mysql.GlobalVariablesTable, sv.Name, value)
 	if err != nil {
 		return err
 	}
@@ -1647,7 +1660,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	s.PrepareTSFuture(ctx)
-	prepareExec := executor.NewPrepareExec(s, infoschema.GetInfoSchema(s), sql)
+	prepareExec := executor.NewPrepareExec(s, s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		return
@@ -1688,7 +1701,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	if prepareStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
 	} else {
-		is = infoschema.GetInfoSchema(s)
+		is = s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	}
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
@@ -1768,7 +1781,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		return false, nil
 	}
 	// check schema version
-	is := infoschema.GetInfoSchema(s)
+	is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		prepared.CachedPlan = nil
 		return false, nil
@@ -2635,7 +2648,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		// `collation_server` is related to `character_set_server`, set `character_set_server` will also set `collation_server`.
 		// We have to make sure we set the `collation_server` with right value.
 		if _, ok := vars.GetSystemVar(varName); !ok || varName == variable.CollationServer {
-			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
+			err = vars.SetSystemVar(varName, varVal)
 			if err != nil {
 				return err
 			}
@@ -2879,7 +2892,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 		txnScope = oracle.GlobalTxnScope
 	}
 	if txnScope != oracle.GlobalTxnScope {
-		is := infoschema.GetInfoSchema(s)
+		is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
 		for physicalTableID := range deltaMap {
 			var tableName string
