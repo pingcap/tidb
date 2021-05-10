@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -887,10 +886,6 @@ func (b *builtinTiDBBoundStalenessSig) vecEvalInt(input *chunk.Chunk, result *ch
 	if store := b.ctx.GetStore(); store != nil {
 		minResolveTS = store.GetMinResolveTS(b.ctx.GetSessionVars().CheckAndGetTxnScope())
 	}
-	failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
-		injectTS := val.(int)
-		minResolveTS = uint64(injectTS)
-	})
 	// Try to get from the stmt cache to make sure this function is deterministic.
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	minResolveTS = stmtCtx.GetOrStoreStmtCache(stmtctx.StmtResolveTsCacheKey, minResolveTS).(uint64)
@@ -928,13 +923,7 @@ func (b *builtinTiDBBoundStalenessSig) vecEvalInt(input *chunk.Chunk, result *ch
 			continue
 		}
 		minTS, maxTS := oracle.ComposeTS(minTime.Unix()*1000, 0), oracle.ComposeTS(maxTime.Unix()*1000, 0)
-		if minResolveTS < minTS {
-			i64s[i] = int64(minTS)
-		} else if minTS <= minResolveTS && minResolveTS <= maxTS {
-			i64s[i] = int64(minResolveTS)
-		} else {
-			i64s[i] = int64(maxTS)
-		}
+		i64s[i] = calAppropriateTS(minTS, maxTS, minResolveTS)
 	}
 	return nil
 }
