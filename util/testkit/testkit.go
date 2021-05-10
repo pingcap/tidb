@@ -259,7 +259,7 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 func (tk *TestKit) MustPartition(sql string, partitions string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
-		if strings.Contains(rs.rows[i][3], "partition:"+partitions) {
+		if strings.Compare(rs.rows[i][3], "partition:"+partitions) == 0 {
 			return true
 		}
 	}
