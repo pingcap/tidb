@@ -249,7 +249,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	if ok {
 		return sVal, true, nil
 	}
-	if sysVar.Scope&ScopeGlobal == 0 {
+	if !sysVar.HasGlobalScope() {
 		// None-Global variable can use pre-defined default value.
 		return sysVar.Value, true, nil
 	}

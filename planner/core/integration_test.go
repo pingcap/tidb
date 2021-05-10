@@ -3256,8 +3256,11 @@ func (s *testIntegrationSerialSuite) TestMppJoinDecimal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists tt")
 	tk.MustExec("create table t (c1 decimal(8, 5), c2 decimal(9, 5), c3 decimal(9, 4) NOT NULL, c4 decimal(8, 4) NOT NULL, c5 decimal(40, 20))")
+	tk.MustExec("create table tt (pk int(11) NOT NULL AUTO_INCREMENT primary key,col_varchar_64 varchar(64),col_char_64_not_null char(64) NOT null, col_decimal_30_10_key decimal(30,10), col_tinyint tinyint, col_varchar_key varchar(1), key col_decimal_30_10_key (col_decimal_30_10_key), key col_varchar_key(col_varchar_key));")
 	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table tt")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
@@ -3265,7 +3268,7 @@ func (s *testIntegrationSerialSuite) TestMppJoinDecimal(c *C) {
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	c.Assert(exists, IsTrue)
 	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
+		if tblInfo.Name.L == "t" || tblInfo.Name.L == "tt" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,
