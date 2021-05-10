@@ -535,7 +535,8 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 }
 
 func (c *RegionCache) GetAllValidTiFlashStores(id RegionVerID, currentStore *Store) []uint64 {
-	allStores := make([]uint64, 0, 1)
+	allStores := make([]uint64, 0, 4)
+	// make sure currentStore id is always the first in allStores
 	allStores = append(allStores, currentStore.storeID)
 	ts := time.Now().Unix()
 	cachedRegion := c.getCachedRegionWithRLock(id)
