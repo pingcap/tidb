@@ -88,6 +88,10 @@ func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx
 	// when meeting io error.
 	ss.GetRegionCache().OnSendFailForBatchRegions(bo, ctx.Store, regionInfos, true, err)
 
+	// Retry on send request failure when it's not canceled.
+	// When a store is not available, the leader of related region should be elected quickly.
+	// TODO: the number of retry time should be limited:since region may be unavailable
+	// when some unrecoverable disaster happened.
 	err = bo.Backoff(BoTiFlashRPC, errors.Errorf("send request error: %v, ctx: %v, regionInfos: %v", err, ctx, regionInfos))
 	return errors.Trace(err)
 }
