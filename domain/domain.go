@@ -925,19 +925,16 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
-
 	err := do.sysVarCache.RebuildSysVarCache(ctx)
 	if err != nil {
 		return err
 	}
-
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
 	if do.etcdClient != nil {
 		watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
 		duration = 10 * time.Minute
 	}
-
 	do.wg.Add(1)
 	go func() {
 		defer func() {
