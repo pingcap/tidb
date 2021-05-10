@@ -772,7 +772,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 			TotalSize: rootRowCollector.TotalSizes[i],
 		}
 		sampleCollectors = append(sampleCollectors, collector)
-		hg, topn, err := statistics.BuildHistAndTopNOnRowSample(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collector, &col.FieldType, true)
+		hg, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collector, &col.FieldType, true)
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
 		}
@@ -805,7 +805,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 			FMSketch:  rootRowCollector.FMSketches[colLen+i],
 			TotalSize: rootRowCollector.TotalSizes[colLen+i],
 		}
-		hg, topn, err := statistics.BuildHistAndTopNOnRowSample(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), idx.ID, collector, types.NewFieldType(mysql.TypeBlob), false)
+		hg, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), idx.ID, collector, types.NewFieldType(mysql.TypeBlob), false)
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
 		}
@@ -944,7 +944,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if e.analyzeVer < 2 {
 			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
 		} else {
-			hg, topn, err = statistics.BuildHistAndTopNOnRowSample(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true)
+			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true)
 			topNs = append(topNs, topn)
 		}
 		if err != nil {
