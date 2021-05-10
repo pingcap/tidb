@@ -104,8 +104,8 @@ func (s *testSuite9) TestExplainFor(c *C) {
 			}
 		}
 		c.Assert(buf.String(), Matches, ""+
-			"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task:.*num: 1, max:.*, proc_keys: 0, rpc_num: 1, rpc_time: .*data:TableFullScan_4 N/A N/A\n"+
-			"└─TableFullScan_4 10000.00 0 cop.* table:t1 .*keep order:false, stats:pseudo N/A N/A")
+			"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task: {num:.*, max:.*, proc_keys: 0, rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
+			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:.*} keep order:false, stats:pseudo N/A N/A")
 	}
 	tkRoot.MustQuery("select * from t1;")
 	check()
