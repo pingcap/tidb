@@ -93,7 +93,7 @@ func checkFile(path string) error {
 				continue
 			}
 			if !preIsStd {
-				return errors.New(fmt.Sprintf("stdlib %s need be group together and before non-stdlib group in %s", im.Path.Value, path))
+				return fmt.Errorf("stdlib %s need be group together and before non-stdlib group in %s", im.Path.Value, path)
 			}
 			continue
 		}
@@ -103,7 +103,7 @@ func checkFile(path string) error {
 				continue
 			}
 			if !checkSepWithNewline(src, importSpecs[i-1].Path.Pos(), im.Path.Pos()) {
-				return errors.New(fmt.Sprintf("non-stdlib %s need be group together and after stdlib group in %s", im.Path.Value, path))
+				return fmt.Errorf("non-stdlib %s need be group together and after stdlib group in %s", im.Path.Value, path)
 			}
 			preIsStd = false
 		}
