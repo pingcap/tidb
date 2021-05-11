@@ -497,7 +497,7 @@ func (s *partitionTableSuite) TestDynamicPruneModeWithEqualExpression(c *C) {
 			c.Assert(tk.MustPartition(sql, t.partitions[i]), IsTrue)
 			tk.MustQuery(sql).Sort().Check(tk.MustQuery(fmt.Sprintf(t.sql, "t")).Sort().Rows())
 		}
-  }
+	}
 }
 
 func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
