@@ -406,7 +406,7 @@ func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) 
 
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
-	is := infoschema.GetInfoSchema(s)
+	is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
 	pm := privilege.GetPrivilegeManager(s)
@@ -491,7 +491,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(tikvstore.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
+	s.txn.SetOption(tikvstore.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs))
 	s.txn.SetOption(tikvstore.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(tikvstore.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
@@ -1492,7 +1492,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
-				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
+				zap.Int64("schemaVersion", s.sessionVars.GetInfoSchema().SchemaMetaVersion()),
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
@@ -1667,7 +1667,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	s.PrepareTSFuture(ctx)
-	prepareExec := executor.NewPrepareExec(s, infoschema.GetInfoSchema(s), sql)
+	prepareExec := executor.NewPrepareExec(s, s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		return
@@ -1708,7 +1708,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	if prepareStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
 	} else {
-		is = infoschema.GetInfoSchema(s)
+		is = s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	}
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
@@ -1788,7 +1788,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		return false, nil
 	}
 	// check schema version
-	is := infoschema.GetInfoSchema(s)
+	is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		prepared.CachedPlan = nil
 		return false, nil
@@ -1933,12 +1933,12 @@ func (s *session) NewTxn(ctx context.Context) error {
 		}
 		vars := s.GetSessionVars()
 		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
-			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
+			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", txnID),
 			zap.String("txnScope", txnScope))
 	}
 
-	txn, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
+	txn, err := s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
 	if err != nil {
 		return err
 	}
@@ -1949,13 +1949,12 @@ func (s *session) NewTxn(ctx context.Context) error {
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		InfoSchema:    is,
-		SchemaVersion: is.SchemaMetaVersion(),
-		CreateTime:    time.Now(),
-		StartTS:       txn.StartTS(),
-		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		IsStaleness:   false,
-		TxnScope:      s.sessionVars.CheckAndGetTxnScope(),
+		InfoSchema:  is,
+		CreateTime:  time.Now(),
+		StartTS:     txn.StartTS(),
+		ShardStep:   int(s.sessionVars.ShardAllocateStep),
+		IsStaleness: false,
+		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
 	}
 	return nil
 }
@@ -2680,11 +2679,10 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		InfoSchema:    is,
-		SchemaVersion: is.SchemaMetaVersion(),
-		CreateTime:    time.Now(),
-		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		TxnScope:      s.GetSessionVars().CheckAndGetTxnScope(),
+		InfoSchema: is,
+		CreateTime: time.Now(),
+		ShardStep:  int(s.sessionVars.ShardAllocateStep),
+		TxnScope:   s.GetSessionVars().CheckAndGetTxnScope(),
 	}
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
@@ -2732,7 +2730,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(s.GetSessionVars().CheckAndGetTxnScope()).SetStartTs(startTS))
+	txn, err := s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(s.GetSessionVars().CheckAndGetTxnScope()).SetStartTs(startTS))
 	if err != nil {
 		return err
 	}
@@ -2756,7 +2754,7 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 		}
 		vars := s.GetSessionVars()
 		logutil.Logger(ctx).Info("InitTxnWithExactStaleness() inside a transaction auto commit",
-			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
+			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", txnID),
 			zap.String("txnScope", txnScope))
 	}
@@ -2765,22 +2763,22 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	txnScope := s.GetSessionVars().CheckAndGetTxnScope()
 	switch option.Mode {
 	case ast.TimestampBoundReadTimestamp:
-		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetStartTs(option.StartTS))
+		txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetStartTs(option.StartTS))
 		if err != nil {
 			return err
 		}
 	case ast.TimestampBoundExactStaleness:
-		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
+		txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
 		if err != nil {
 			return err
 		}
 	case ast.TimestampBoundMaxStaleness:
-		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetMaxPrevSec(option.PrevSec))
+		txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetMaxPrevSec(option.PrevSec))
 		if err != nil {
 			return err
 		}
 	case ast.TimestampBoundMinReadTimestamp:
-		txn, err = s.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(txnScope).SetMinStartTS(option.StartTS))
+		txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetMinStartTS(option.StartTS))
 		if err != nil {
 			return err
 		}
@@ -2794,13 +2792,12 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		InfoSchema:    is,
-		SchemaVersion: is.SchemaMetaVersion(),
-		CreateTime:    time.Now(),
-		StartTS:       txn.StartTS(),
-		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		IsStaleness:   true,
-		TxnScope:      txnScope,
+		InfoSchema:  is,
+		CreateTime:  time.Now(),
+		StartTS:     txn.StartTS(),
+		ShardStep:   int(s.sessionVars.ShardAllocateStep),
+		IsStaleness: true,
+		TxnScope:    txnScope,
 	}
 	return nil
 }
@@ -2827,7 +2824,7 @@ func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		user := vars.User
-		schemaVersion := vars.TxnCtx.SchemaVersion
+		schemaVersion := vars.GetInfoSchema().SchemaMetaVersion()
 		if ss, ok := execStmt.StmtNode.(ast.SensitiveStmtNode); ok {
 			logutil.BgLogger().Info("CRUCIAL OPERATION",
 				zap.Uint64("conn", vars.ConnectionID),
@@ -2856,7 +2853,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
 			zap.Stringer("user", vars.User),
-			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
+			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
 			zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
@@ -2894,7 +2891,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 		txnScope = oracle.GlobalTxnScope
 	}
 	if txnScope != oracle.GlobalTxnScope {
-		is := infoschema.GetInfoSchema(s)
+		is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
 		for physicalTableID := range deltaMap {
 			var tableName string

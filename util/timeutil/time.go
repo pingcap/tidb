@@ -81,7 +81,7 @@ func InferSystemTZ() string {
 	case !ok:
 		path, err1 := filepath.EvalSymlinks("/etc/localtime")
 		if err1 == nil {
-			if strings.Index(path, "posixrules") != -1 {
+			if strings.Contains(path, "posixrules") {
 				path, err1 = inferOneStepLinkForPath("/etc/localtime")
 				if err1 != nil {
 					logutil.BgLogger().Error("locate timezone files failed", zap.Error(err1))
