@@ -47,6 +47,8 @@ var (
 	ErrGCTooEarly = dbterror.ClassTiKV.NewStd(errno.ErrGCTooEarly)
 	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
 	ErrTiKVStaleCommand = dbterror.ClassTiKV.NewStd(errno.ErrTiKVStaleCommand)
+	// ErrQueryInterrupted is the error when the query is interrupted.
+	ErrQueryInterrupted = dbterror.ClassTiKV.NewStd(errno.ErrQueryInterrupted)
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
 	ErrTiKVMaxTimestampNotSynced = dbterror.ClassTiKV.NewStd(errno.ErrTiKVMaxTimestampNotSynced)
 	ErrResolveLockTimeout        = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
@@ -229,6 +231,10 @@ func ToTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrTiFlashServerTimeout) {
 		return ErrTiFlashServerTimeout
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrQueryInterrupted) {
+		return ErrQueryInterrupted
 	}
 
 	if errors.ErrorEqual(err, tikverr.ErrTiKVServerBusy) {

@@ -16,7 +16,5 @@ package error
 // MySQL error code.
 // This value is numeric. It is not portable to other database systems.
 const (
-	CodeLockWaitTimeout             = 1205
-	CodeQueryInterrupted            = 1317
 	CodeLockAcquireFailAndNoWaitSet = 3572
 )
