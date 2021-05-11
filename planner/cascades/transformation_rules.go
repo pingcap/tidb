@@ -2509,12 +2509,12 @@ func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	return []*memo.GroupExpr{newApplyGroupExpr}, false, false, nil
 }
 
-// PushSelDownWindow pushes Selection down to the child of Window.
+// MergeAdjacentWindow merge adjacent Window.
 type MergeAdjacentWindow struct {
 	baseRule
 }
 
-// MergeAdjacentWindow creates a new Transformation MergeAdjacentWindow.
+// NewRuleMergeAdjacentWindow creates a new Transformation MergeAdjacentWindow.
 // The pattern of this rule is `Window -> Window`.
 func NewRuleMergeAdjacentWindow() Transformation {
 	rule := &MergeAdjacentWindow{}
