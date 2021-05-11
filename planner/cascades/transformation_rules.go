@@ -130,6 +130,9 @@ var TiKVLayerOptimizationBatch = TransformationRuleBatch{
 	memo.OperandTopN: {
 		NewRulePushTopNDownTiKVSingleGather(),
 	},
+	memo.OperandWindow: {
+		NewRuleMergeAdjacentWindow(),
+	},
 }
 
 // PostTransformationBatch does the transformation which is related to
@@ -2504,4 +2507,128 @@ func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	newApplyGroupExpr := memo.NewGroupExpr(newApply)
 	newApplyGroupExpr.SetChildren(outerChildGroup, old.Children[1].GetExpr().Children[0])
 	return []*memo.GroupExpr{newApplyGroupExpr}, false, false, nil
+}
+
+// PushSelDownWindow pushes Selection down to the child of Window.
+type MergeAdjacentWindow struct {
+	baseRule
+}
+
+// MergeAdjacentWindow creates a new Transformation MergeAdjacentWindow.
+// The pattern of this rule is `Window -> Window`.
+func NewRuleMergeAdjacentWindow() Transformation {
+	rule := &MergeAdjacentWindow{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandWindow,
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandWindow, memo.EngineAll),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
+	curWinPlan := expr.GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	nextWinPlan := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	ctx := expr.GetExpr().ExprNode.SCtx()
+
+	// Whether Partition parts are the same.
+	if len(curWinPlan.PartitionBy) != len(nextWinPlan.PartitionBy) ||
+		len(curWinPlan.OrderBy) != len(nextWinPlan.OrderBy) ||
+		(curWinPlan.Frame == nil && nextWinPlan.Frame != nil) ||
+		(curWinPlan.Frame != nil && nextWinPlan.Frame == nil) {
+		return false
+	}
+	for i, item := range curWinPlan.PartitionBy {
+		if !item.Col.Equal(ctx, nextWinPlan.PartitionBy[i].Col) ||
+			item.Desc != nextWinPlan.PartitionBy[i].Desc {
+			return false
+		}
+	}
+
+	// Whether OrderBy parts are the same.
+	for i, item := range curWinPlan.OrderBy {
+		if !item.Col.Equal(ctx, nextWinPlan.OrderBy[i].Col) ||
+			item.Desc != nextWinPlan.OrderBy[i].Desc {
+			return false
+		}
+	}
+
+	// Whether Frame parts are the same.
+	if curWinPlan.Frame != nil {
+		if curWinPlan.Frame.Type != nextWinPlan.Frame.Type ||
+			curWinPlan.Frame.Start.Type != nextWinPlan.Frame.Start.Type ||
+			curWinPlan.Frame.Start.UnBounded != nextWinPlan.Frame.Start.UnBounded ||
+			curWinPlan.Frame.Start.Num != nextWinPlan.Frame.Start.Num {
+			return false
+		}
+		for i, expr := range curWinPlan.Frame.Start.CalcFuncs {
+			if !expr.Equal(ctx, nextWinPlan.Frame.Start.CalcFuncs[i]) {
+				return false
+			}
+		}
+		for i, expr := range curWinPlan.Frame.End.CalcFuncs {
+			if !expr.Equal(ctx, nextWinPlan.Frame.End.CalcFuncs[i]) {
+				return false
+			}
+		}
+	}
+
+	// Whether the first window uses the unsettled columns in the next window.
+
+	// `select a, b, sum(bb) over (partition by a) as 'sum_bb' from (select a, b, max(b) over (partition by a) as 'bb' from t) as tt`
+	// The adjacent windows in the above sql statement cannot be merged.
+	// The reason is that the first one uses an unsettled column `bb` from the second one.
+	nextWindowNewCols := make(map[*expression.Column]struct{})
+	for _, nc := range nextWinPlan.Schema().Columns {
+		isExisted := false
+		for _, plan := range nextWinPlan.Children() {
+			for _, c := range plan.Schema().Columns {
+				if nc.Equal(ctx, c) {
+					isExisted = true
+					break
+				}
+			}
+			if isExisted {
+				break
+			}
+		}
+		if !isExisted {
+			nextWindowNewCols[nc] = struct{}{}
+		}
+	}
+	for _, funDesc := range curWinPlan.WindowFuncDescs {
+		for _, arg := range funDesc.Args {
+			cols := expression.ExtractColumns(arg)
+			for _, c := range cols {
+				for nc := range nextWindowNewCols {
+					if c.Equal(ctx, nc) {
+						return false
+					}
+				}
+			}
+		}
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// This rule will transform `window -> window -> x` to `window -> x`
+func (r *MergeAdjacentWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	curWinPlan := old.GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	nextWinPlan := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	ctx := old.GetExpr().ExprNode.SCtx()
+
+	newWindowFuncs := make([]*aggregation.WindowFuncDesc, len(curWinPlan.WindowFuncDescs)+len(nextWinPlan.WindowFuncDescs))
+	newWindowFuncs = append(newWindowFuncs, curWinPlan.WindowFuncDescs...)
+	newWindowFuncs = append(newWindowFuncs, nextWinPlan.WindowFuncDescs...)
+	newWindowPlan := plannercore.LogicalWindow{
+		WindowFuncDescs: newWindowFuncs,
+		PartitionBy:     curWinPlan.PartitionBy,
+		OrderBy:         curWinPlan.OrderBy,
+		Frame:           curWinPlan.Frame,
+	}.Init(ctx, curWinPlan.SelectBlockOffset())
+	newWindowGroupExpr := memo.NewGroupExpr(newWindowPlan)
+	newWindowGroupExpr.SetChildren(old.Children[0].GetExpr().Children...)
+	return []*memo.GroupExpr{newWindowGroupExpr}, true, false, nil
 }
