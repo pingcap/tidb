@@ -1804,6 +1804,12 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	if res, success := TryPushCastDownToControlFunctionForHybridType(ctx, expr, tp); success {
+		if tp.EvalType() != types.ETJson {
+			res = FoldConstant(res)
+		}
+		return res
+	}
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
@@ -1982,4 +1988,93 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 		Flag:    mysql.BinaryFlag,
 	}
 	return BuildCastFunction(ctx, expr, tp)
+}
+
+func TryPushCastDownToControlFunctionForHybridType(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression, success bool) {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok {
+		return expr, false
+	}
+
+	var wrapCastFunc func(ctx sessionctx.Context, expr Expression) Expression
+	switch tp.EvalType() {
+	case types.ETInt:
+		wrapCastFunc = WrapWithCastAsInt
+	case types.ETReal:
+		wrapCastFunc = WrapWithCastAsReal
+	case types.ETString:
+		wrapCastFunc = WrapWithCastAsString
+	default:
+		return expr, false
+	}
+	containsHybrid := func(args []Expression) bool {
+		for _, arg := range args {
+			if arg.GetType().Hybrid() {
+				return true
+			}
+		}
+		return false
+	}
+
+	args := sf.GetArgs()
+	switch sf.FuncName.L {
+	case ast.If:
+		if containsHybrid(args[1:]) {
+			args[1] = wrapCastFunc(ctx, args[1])
+			args[2] = wrapCastFunc(ctx, args[2])
+			f, err := funcs[ast.If].getFunction(ctx, args)
+			if err != nil {
+				return expr, false
+			}
+			return &ScalarFunction{
+				FuncName: model.NewCIStr(ast.If),
+				RetType:  f.getRetTp(),
+				Function: f,
+			}, true
+		}
+	case ast.Ifnull:
+		if containsHybrid(args) {
+			args[0] = wrapCastFunc(ctx, args[0])
+			args[1] = wrapCastFunc(ctx, args[1])
+			f, err := funcs[ast.Ifnull].getFunction(ctx, args)
+			if err != nil {
+				return expr, false
+			}
+			return &ScalarFunction{
+				FuncName: model.NewCIStr(ast.Ifnull),
+				RetType:  f.getRetTp(),
+				Function: f,
+			}, true
+		}
+	case ast.Case:
+		hasHybrid := false
+		for i := 0; i < len(args)-1; i += 2 {
+			hasHybrid = hasHybrid || args[i+1].GetType().Hybrid()
+		}
+		if len(args)%2 == 1 {
+			hasHybrid = hasHybrid || args[len(args)-1].GetType().Hybrid()
+		}
+		if !hasHybrid {
+			return expr, false
+		}
+
+		for i := 0; i < len(args)-1; i += 2 {
+			args[i+1] = wrapCastFunc(ctx, args[i+1])
+		}
+		if len(args)%2 == 1 {
+			args[len(args)-1] = wrapCastFunc(ctx, args[len(args)-1])
+		}
+		f, err := funcs[ast.Case].getFunction(ctx, args)
+		if err != nil {
+			return expr, false
+		}
+		return &ScalarFunction{
+			FuncName: model.NewCIStr(ast.Case),
+			RetType:  f.getRetTp(),
+			Function: f,
+		}, true
+	default:
+		return expr, false
+	}
+	return expr, false
 }
