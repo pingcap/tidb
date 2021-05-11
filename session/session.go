@@ -2629,8 +2629,6 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		return nil
 	}
 
-	var err error
-
 	vars.CommonGlobalLoaded = true
 
 	// Deep copy sessionvar cache
@@ -2669,8 +2667,6 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 			}
 		}
 	}
-
-	vars.CommonGlobalLoaded = true
 	return nil
 }
 
