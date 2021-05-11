@@ -449,6 +449,10 @@ func (s *Server) onConn(conn *clientConn) {
 	conn.Run(ctx)
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		// Audit plugin may be disabled before a conn is created, leading no connectionInfo in sessionVars.
+		if sessionVars.ConnectionInfo == nil {
+			sessionVars.ConnectionInfo = conn.connectInfo()
+		}
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
