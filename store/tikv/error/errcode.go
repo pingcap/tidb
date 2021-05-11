@@ -16,6 +16,5 @@ package error
 // MySQL error code.
 // This value is numeric. It is not portable to other database systems.
 const (
-	CodeUnknown                     = 1105
 	CodeLockAcquireFailAndNoWaitSet = 3572
 )
