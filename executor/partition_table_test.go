@@ -15,6 +15,8 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -66,7 +68,7 @@ func (s *testSuite9) TestPartitionReaderUnderApply(c *C) {
 		"5 naughty swartz 9.524000"))
 }
 
-func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
+func (s *testSuite9) TestPartitionInfoDisable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_info_null")
@@ -102,10 +104,6 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
 	tbInfo.Partition.Enable = false
 	tbInfo.Partition.Num = 0
 
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-	tk.MustQuery("explain select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows("Batch_Point_Get_5 2.00 root table:t_info_null, index:idx_media_id(media, date, app) keep order:false, desc:false"))
-	tk.MustQuery("explain select * from t_info_null").Check(testkit.Rows("TableReader_5 10000.00 root  data:TableFullScan_4",
-		"└─TableFullScan_4 10000.00 cop[tikv] table:t_info_null keep order:false, stats:pseudo"))
 	// No panic.
 	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
 }
