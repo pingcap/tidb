@@ -52,15 +52,7 @@ func (i *implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // RestoreWithDefaultDB returns restore strings for StmtNode with defaultDB
-<<<<<<< HEAD
 func RestoreWithDefaultDB(node ast.StmtNode, defaultDB string) string {
-=======
-// This function is customized for SQL bind usage.
-func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
-	if s, ok := SimpleCases(node, defaultDB, origin); ok {
-		return s
-	}
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	var sb strings.Builder
 	// Three flags for restore with default DB:
 	// 1. RestoreStringSingleQuotes specifies to use single quotes to surround the string;

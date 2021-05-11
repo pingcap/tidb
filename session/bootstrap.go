@@ -404,47 +404,9 @@ const (
 	version49 = 49
 	// version50 fixes the bug of concurrent create / drop binding
 	version50 = 50
-<<<<<<< HEAD
-	// version51 restore all SQL bindings.
-	version51 = 51
-=======
-	// version51 introduces CreateTablespacePriv to mysql.user.
-	// version51 will be redone in version63 so it's skipped here.
-	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
+	// version51 will be redone in version52
+	// version52 restore all SQL bindings.
 	version52 = 52
-	// version53 introduce Global variable tidb_enable_strict_double_type_check
-	version53 = 53
-	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9+.
-	version54 = 54
-	// version55 fixes the bug that upgradeToVer48 would be missed when upgrading from v4.0 to a new version
-	version55 = 55
-	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
-	version56 = 56
-	// version57 fixes the bug of concurrent create / drop binding
-	version57 = 57
-	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
-	// version58 will be redone in version64 so it's skipped here.
-	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
-	version59 = 59
-	// version60 redesigns `mysql.stats_extended`
-	version60 = 60
-	// version61 will be redone in version67
-	// version62 add column ndv for mysql.stats_buckets.
-	version62 = 62
-	// version63 fixes the bug that upgradeToVer51 would be missed when upgrading from v4.0 to a new version
-	version63 = 63
-	// version64 is redone upgradeToVer58 after upgradeToVer63, this is to preserve the order of the columns in mysql.user
-	version64 = 64
-	// version65 add mysql.stats_fm_sketch table.
-	version65 = 65
-	// version66 enables the feature `track_aggregate_memory_usage` by default.
-	version66 = 66
-	// version67 restore all SQL bindings.
-	version67 = 67
-
-	// please make sure this is the largest version
-	currentBootstrapVersion = version67
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 )
 
 var (
@@ -498,27 +460,8 @@ var (
 		upgradeToVer48,
 		upgradeToVer49,
 		upgradeToVer50,
-<<<<<<< HEAD
-		upgradeToVer51,
-=======
-		// We will redo upgradeToVer51 in upgradeToVer63, it is skipped here.
+		// We will redo upgradeToVer51 in upgradeToVer52, it is skipped here.
 		upgradeToVer52,
-		upgradeToVer53,
-		upgradeToVer54,
-		upgradeToVer55,
-		upgradeToVer56,
-		upgradeToVer57,
-		// We will redo upgradeToVer58 in upgradeToVer64, it is skipped here.
-		upgradeToVer59,
-		upgradeToVer60,
-		// We will redo upgradeToVer61 in upgradeToVer67, it is skipped here.
-		upgradeToVer62,
-		upgradeToVer63,
-		upgradeToVer64,
-		upgradeToVer65,
-		upgradeToVer66,
-		upgradeToVer67,
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	}
 )
 
@@ -1202,13 +1145,8 @@ type bindInfo struct {
 	source     string
 }
 
-<<<<<<< HEAD
-func upgradeToVer51(s Session, ver int64) {
-	if ver >= version51 {
-=======
-func upgradeToVer67(s Session, ver int64) {
-	if ver >= version67 {
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
+func upgradeToVer52(s Session, ver int64) {
+	if ver >= version52 {
 		return
 	}
 	bindMap := make(map[string]bindInfo)
@@ -1232,7 +1170,7 @@ func upgradeToVer67(s Session, ver int64) {
 			WHERE source != 'builtin'
 			ORDER BY update_time DESC`)
 	if err != nil {
-		logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
+		logutil.BgLogger().Fatal("upgradeToVer52 error", zap.Error(err))
 	}
 	defer terror.Call(rs.Close)
 	req := rs.NewChunk()
@@ -1242,7 +1180,7 @@ func upgradeToVer67(s Session, ver int64) {
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
-			logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
+			logutil.BgLogger().Fatal("upgradeToVer52 error", zap.Error(err))
 		}
 		if req.NumRows() == 0 {
 			break

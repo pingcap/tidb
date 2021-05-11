@@ -236,193 +236,109 @@ var testSQLs = []struct {
 		createSQL:   "binding for select * from t where i>100 using select * from t use index(index_t) where i>100",
 		overlaySQL:  "binding for select * from t where i>99 using select * from t use index(index_t) where i>99",
 		querySQL:    "select * from t where i          >      30.0",
-<<<<<<< HEAD
-		originSQL:   "select * from test . t where i > ?",
-		bindSQL:     "SELECT * FROM test.t USE INDEX (index_t) WHERE i > 99",
-		dropSQL:     "binding for select * from t where i>100",
-		memoryUsage: float64(112),
-=======
 		originSQL:   "select * from `test` . `t` where `i` > ?",
 		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 99",
 		dropSQL:     "binding for select * from t where i>100",
 		memoryUsage: float64(126),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 	{
 		createSQL:   "binding for select * from t union all select * from t using select * from t use index(index_t) union all select * from t use index()",
 		overlaySQL:  "",
 		querySQL:    "select * from t union all         select * from t",
-<<<<<<< HEAD
-		originSQL:   "select * from test . t union all select * from test . t",
-		bindSQL:     "SELECT * FROM test.t USE INDEX (index_t) UNION ALL SELECT * FROM test.t USE INDEX ()",
-		dropSQL:     "binding for select * from t union all select * from t",
-		memoryUsage: float64(164),
-=======
 		originSQL:   "select * from `test` . `t` union all select * from `test` . `t`",
 		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) UNION ALL SELECT * FROM `test`.`t` USE INDEX ()",
 		dropSQL:     "binding for select * from t union all select * from t",
 		memoryUsage: float64(182),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 	{
 		createSQL:   "binding for (select * from t) union all (select * from t) using (select * from t use index(index_t)) union all (select * from t use index())",
 		overlaySQL:  "",
 		querySQL:    "(select * from t) union all         (select * from t)",
-<<<<<<< HEAD
-		originSQL:   "( select * from test . t ) union all ( select * from test . t )",
-		bindSQL:     "(SELECT * FROM test.t USE INDEX (index_t)) UNION ALL (SELECT * FROM test.t USE INDEX ())",
-		dropSQL:     "binding for (select * from t) union all (select * from t)",
-		memoryUsage: float64(176),
-=======
 		originSQL:   "( select * from `test` . `t` ) union all ( select * from `test` . `t` )",
 		bindSQL:     "(SELECT * FROM `test`.`t` USE INDEX (`index_t`)) UNION ALL (SELECT * FROM `test`.`t` USE INDEX ())",
 		dropSQL:     "binding for (select * from t) union all (select * from t)",
 		memoryUsage: float64(194),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 	{
 		createSQL:   "binding for select * from t intersect select * from t using select * from t use index(index_t) intersect select * from t use index()",
 		overlaySQL:  "",
 		querySQL:    "select * from t intersect         select * from t",
-<<<<<<< HEAD
-		originSQL:   "select * from test . t intersect select * from test . t",
-		bindSQL:     "SELECT * FROM test.t USE INDEX (index_t) INTERSECT SELECT * FROM test.t USE INDEX ()",
-		dropSQL:     "binding for select * from t intersect select * from t",
-		memoryUsage: float64(164),
-=======
 		originSQL:   "select * from `test` . `t` intersect select * from `test` . `t`",
 		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) INTERSECT SELECT * FROM `test`.`t` USE INDEX ()",
 		dropSQL:     "binding for select * from t intersect select * from t",
 		memoryUsage: float64(182),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 	{
 		createSQL:   "binding for select * from t except select * from t using select * from t use index(index_t) except select * from t use index()",
 		overlaySQL:  "",
 		querySQL:    "select * from t except         select * from t",
-<<<<<<< HEAD
-		originSQL:   "select * from test . t except select * from test . t",
-		bindSQL:     "SELECT * FROM test.t USE INDEX (index_t) EXCEPT SELECT * FROM test.t USE INDEX ()",
-		dropSQL:     "binding for select * from t except select * from t",
-		memoryUsage: float64(158),
-=======
 		originSQL:   "select * from `test` . `t` except select * from `test` . `t`",
 		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) EXCEPT SELECT * FROM `test`.`t` USE INDEX ()",
 		dropSQL:     "binding for select * from t except select * from t",
 		memoryUsage: float64(176),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 	{
 		createSQL:   "binding for select * from t using select /*+ use_index(t,index_t)*/ * from t",
 		overlaySQL:  "",
 		querySQL:    "select * from t ",
-<<<<<<< HEAD
-		originSQL:   "select * from test . t",
-		bindSQL:     "SELECT /*+ use_index(t index_t)*/ * FROM test.t",
-		dropSQL:     "binding for select * from t",
-		memoryUsage: float64(94),
-=======
 		originSQL:   "select * from `test` . `t`",
 		bindSQL:     "SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t`",
 		dropSQL:     "binding for select * from t",
 		memoryUsage: float64(106),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 	{
 		createSQL:   "binding for delete from t where i = 1 using delete /*+ use_index(t,index_t) */ from t where i = 1",
 		overlaySQL:  "",
 		querySQL:    "delete    from t where   i = 2",
-<<<<<<< HEAD
-		originSQL:   "delete from test . t where i = ?",
-		bindSQL:     "DELETE /*+ use_index(t index_t)*/ FROM test.t WHERE i = 1",
-		dropSQL:     "binding for delete from t where i = 1",
-		memoryUsage: float64(114),
-=======
 		originSQL:   "delete from `test` . `t` where `i` = ?",
 		bindSQL:     "DELETE /*+ use_index(`t` `index_t`)*/ FROM `test`.`t` WHERE `i` = 1",
 		dropSQL:     "binding for delete from t where i = 1",
 		memoryUsage: float64(130),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 	{
 		createSQL:   "binding for delete t, t1 from t inner join t1 on t.s = t1.s where t.i = 1 using delete /*+ use_index(t,index_t), hash_join(t,t1) */ t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
 		overlaySQL:  "",
 		querySQL:    "delete t,   t1 from t inner join t1 on t.s = t1.s  where   t.i = 2",
-<<<<<<< HEAD
-		originSQL:   "delete test . t , test . t1 from test . t join test . t1 on t . s = t1 . s where t . i = ?",
-		bindSQL:     "DELETE /*+ use_index(t index_t) hash_join(t, t1)*/ test.t,test.t1 FROM test.t JOIN test.t1 ON t.s = t1.s WHERE t.i = 1",
-		dropSQL:     "binding for delete t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
-		memoryUsage: float64(233),
-=======
 		originSQL:   "delete `test` . `t` , `test` . `t1` from `test` . `t` join `test` . `t1` on `t` . `s` = `t1` . `s` where `t` . `i` = ?",
 		bindSQL:     "DELETE /*+ use_index(`t` `index_t`) hash_join(`t`, `t1`)*/ `test`.`t`,`test`.`t1` FROM `test`.`t` JOIN `test`.`t1` ON `t`.`s` = `t1`.`s` WHERE `t`.`i` = 1",
 		dropSQL:     "binding for delete t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
 		memoryUsage: float64(297),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 	{
 		createSQL:   "binding for update t set s = 'a' where i = 1 using update /*+ use_index(t,index_t) */ t set s = 'a' where i = 1",
 		overlaySQL:  "",
 		querySQL:    "update   t  set s='b' where i=2",
-<<<<<<< HEAD
-		originSQL:   "update test . t set s = ? where i = ?",
-		bindSQL:     "UPDATE /*+ use_index(t index_t)*/ test.t SET s='a' WHERE i = 1",
-		dropSQL:     "binding for update t set s = 'a' where i = 1",
-		memoryUsage: float64(124),
-=======
 		originSQL:   "update `test` . `t` set `s` = ? where `i` = ?",
 		bindSQL:     "UPDATE /*+ use_index(`t` `index_t`)*/ `test`.`t` SET `s`='a' WHERE `i` = 1",
 		dropSQL:     "binding for update t set s = 'a' where i = 1",
 		memoryUsage: float64(144),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 	{
 		createSQL:   "binding for update t, t1 set t.s = 'a' where t.i = t1.i using update /*+ inl_join(t1) */ t, t1 set t.s = 'a' where t.i = t1.i",
 		overlaySQL:  "",
 		querySQL:    "update   t  , t1 set t.s='b' where t.i=t1.i",
-<<<<<<< HEAD
-		originSQL:   "update ( test . t ) join test . t1 set t . s = ? where t . i = t1 . i",
-		bindSQL:     "UPDATE /*+ inl_join(t1)*/ (test.t) JOIN test.t1 SET t.s='a' WHERE t.i = t1.i",
-		dropSQL:     "binding for update t, t1 set t.s = 'a' where t.i = t1.i",
-		memoryUsage: float64(170),
-=======
 		originSQL:   "update ( `test` . `t` ) join `test` . `t1` set `t` . `s` = ? where `t` . `i` = `t1` . `i`",
 		bindSQL:     "UPDATE /*+ inl_join(`t1`)*/ (`test`.`t`) JOIN `test`.`t1` SET `t`.`s`='a' WHERE `t`.`i` = `t1`.`i`",
 		dropSQL:     "binding for update t, t1 set t.s = 'a' where t.i = t1.i",
 		memoryUsage: float64(212),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 	{
 		createSQL:   "binding for insert into t1 select * from t where t.i = 1 using insert into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
 		overlaySQL:  "",
 		querySQL:    "insert  into   t1 select * from t where t.i  = 2",
-<<<<<<< HEAD
-		originSQL:   "insert into test . t1 select * from test . t where t . i = ?",
-		bindSQL:     "INSERT INTO test.t1 SELECT /*+ use_index(t index_t)*/ * FROM test.t WHERE t.i = 1",
-		dropSQL:     "binding for insert into t1 select * from t where t.i = 1",
-		memoryUsage: float64(166),
-=======
 		originSQL:   "insert into `test` . `t1` select * from `test` . `t` where `t` . `i` = ?",
 		bindSQL:     "INSERT INTO `test`.`t1` SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t` WHERE `t`.`i` = 1",
 		dropSQL:     "binding for insert into t1 select * from t where t.i = 1",
 		memoryUsage: float64(194),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 	{
 		createSQL:   "binding for replace into t1 select * from t where t.i = 1 using replace into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
 		overlaySQL:  "",
 		querySQL:    "replace  into   t1 select * from t where t.i  = 2",
-<<<<<<< HEAD
-		originSQL:   "replace into test . t1 select * from test . t where t . i = ?",
-		bindSQL:     "REPLACE INTO test.t1 SELECT /*+ use_index(t index_t)*/ * FROM test.t WHERE t.i = 1",
-		dropSQL:     "binding for replace into t1 select * from t where t.i = 1",
-		memoryUsage: float64(168),
-=======
 		originSQL:   "replace into `test` . `t1` select * from `test` . `t` where `t` . `i` = ?",
 		bindSQL:     "REPLACE INTO `test`.`t1` SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t` WHERE `t`.`i` = 1",
 		dropSQL:     "binding for replace into t1 select * from t where t.i = 1",
 		memoryUsage: float64(196),
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	},
 }
 
@@ -765,47 +681,6 @@ func (s *testSuite) TestDMLSQLBind(c *C) {
 	c.Assert(tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"), IsTrue)
 }
 
-<<<<<<< HEAD
-=======
-func (s *testSuite) TestBestPlanInBaselines(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
-	tk.MustExec("insert into t value(1, 1);")
-
-	// before binding
-	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
-
-	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
-	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"), IsTrue)
-
-	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ia) */ a, b from t where a = 1 limit 0, 1`)
-	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ib) */ a, b from t where b = 1 limit 0, 1`)
-
-	sql, hash := normalizeWithDefaultDB(c, "select a, b from t where a = 1 limit 0, 1", "test")
-	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
-	c.Check(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select `a` , `b` from `test` . `t` where `a` = ? limit ...")
-	bind := bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `ia`)*/ `a`,`b` FROM `test`.`t` WHERE `a` = 1 LIMIT 0,1")
-	c.Check(bindData.Db, Equals, "test")
-	c.Check(bind.Status, Equals, "using")
-
-	tk.MustQuery("select a, b from t where a = 3 limit 1, 10")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
-
-	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
-	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"), IsTrue)
-}
-
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 func (s *testSuite) TestErrorBind(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -955,16 +830,6 @@ func (s *testSuite) TestDMLCapturePlanBaseline(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows = tk.MustQuery("show global bindings").Sort().Rows()
 	c.Assert(len(rows), Equals, 4)
-<<<<<<< HEAD
-	c.Assert(rows[0][0], Equals, "delete from test . t where b = ? and c > ?")
-	c.Assert(rows[0][1], Equals, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b`=1 AND `c`>1")
-	c.Assert(rows[1][0], Equals, "insert into test . t1 select * from test . t where t . b = ? and t . c > ?")
-	c.Assert(rows[1][1], Equals, "INSERT INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b`=1 AND `t`.`c`>1")
-	c.Assert(rows[2][0], Equals, "replace into test . t1 select * from test . t where t . b = ? and t . c > ?")
-	c.Assert(rows[2][1], Equals, "REPLACE INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b`=1 AND `t`.`c`>1")
-	c.Assert(rows[3][0], Equals, "update test . t set a = ? where b = ? and c > ?")
-	c.Assert(rows[3][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`)*/ `test`.`t` SET `a`=1 WHERE `b`=1 AND `c`>1")
-=======
 	c.Assert(rows[0][0], Equals, "delete from `test` . `t` where `b` = ? and `c` > ?")
 	c.Assert(rows[0][1], Equals, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b` = 1 AND `c` > 1")
 	c.Assert(rows[1][0], Equals, "insert into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?")
@@ -973,7 +838,6 @@ func (s *testSuite) TestDMLCapturePlanBaseline(c *C) {
 	c.Assert(rows[2][1], Equals, "REPLACE INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1")
 	c.Assert(rows[3][0], Equals, "update `test` . `t` set `a` = ? where `b` = ? and `c` > ?")
 	c.Assert(rows[3][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`)*/ `test`.`t` SET `a`=1 WHERE `b` = 1 AND `c` > 1")
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 }
 
 func (s *testSuite) TestCapturePlanBaseline(c *C) {
@@ -1001,13 +865,8 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-<<<<<<< HEAD
-	c.Assert(rows[0][0], Equals, "select * from test . t where a > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>10")
-=======
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` > 10")
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 }
 
 func (s *testSuite) TestCaptureDBCaseSensitivity(c *C) {
@@ -1162,26 +1021,16 @@ func (s *testSuite) TestCapturePreparedStmt(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-<<<<<<< HEAD
-	c.Assert(rows[0][0], Equals, "select * from test . t where b = ? and c > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b`=? AND `c`>?")
-=======
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `b` = ? and `c` > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?")
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 
 	c.Assert(tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
 	tk.MustExec("admin flush bindings")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-<<<<<<< HEAD
-	c.Assert(rows[0][0], Equals, "select * from test . t where b = ? and c > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b`=? AND `c`>?")
-=======
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `b` = ? and `c` > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?")
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 }
 
 func (s *testSuite) TestDropSingleBindings(c *C) {
@@ -1934,31 +1783,6 @@ func (s *testSuite) TestDMLIndexHintBind(c *C) {
 	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
 }
 
-<<<<<<< HEAD
-=======
-func (s *testSuite) TestCapturedBindingCharset(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	stmtsummary.StmtSummaryByDigestMap.Clear()
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(name varchar(25), index idx(name))")
-
-	tk.MustExec("set character_set_connection = 'ascii'")
-	tk.MustExec("update t set name = 'hello' where name <= 'abc'")
-	tk.MustExec("update t set name = 'hello' where name <= 'abc'")
-	tk.MustExec("set character_set_connection = 'utf8mb4'")
-	tk.MustExec("admin capture bindings")
-	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "update `test` . `t` set `name` = ? where `name` <= ?")
-	c.Assert(rows[0][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`='hello' WHERE `name` <= 'abc'")
-	// Charset and Collation are empty now, they are not used currently.
-	c.Assert(rows[0][6], Equals, "")
-	c.Assert(rows[0][7], Equals, "")
-}
-
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 func (s *testSuite) TestConcurrentCapture(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -2005,8 +1829,6 @@ func (s *testSuite) TestUpdateSubqueryCapture(c *C) {
 func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
-<<<<<<< HEAD
-=======
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`CREATE TABLE t (
@@ -2034,13 +1856,8 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 
 	// Test for capture baseline
 	s.cleanBindingEnv(tk)
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
-<<<<<<< HEAD
-	tk.MustExec("use test")
-	tk.MustExec("create table t(name varchar(25), index idx(name))")
-=======
 	tk.MustExec("select * from t where b=2 and c=213124")
 	tk.MustExec("select * from t where b=2 and c=213124")
 	tk.MustExec("admin capture bindings")
@@ -2049,7 +1866,6 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `b` = ? and `c` = ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b` = 2 AND `c` = 213124")
 	tk.MustExec("set @@tidb_capture_plan_baselines = off")
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 
 	tk.MustExec("set character_set_connection = 'ascii'")
 	tk.MustExec("update t set name = 'hello' where name <= 'abc'")
@@ -2058,13 +1874,6 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-<<<<<<< HEAD
-	c.Assert(rows[0][0], Equals, "update test . t set name = _ascii ? where name <= _ascii ?")
-	c.Assert(rows[0][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`=_ASCII'hello' WHERE `name`<=_ASCII'abc'")
-	// Charset and Collation are empty now, they are not used currently.
-	c.Assert(rows[0][6], Equals, "")
-	c.Assert(rows[0][7], Equals, "")
-=======
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `c` = ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
 	tk.MustExec("select /*+ use_index(t idxc)*/ * from t where c=3924541")
@@ -2083,7 +1892,6 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	status := rows[1][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 }
 
 func (s *testSuite) TestCaptureWithZeroSlowLogThreshold(c *C) {

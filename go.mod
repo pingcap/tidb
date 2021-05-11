@@ -46,13 +46,8 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20210308075244-560097d1309b
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
-<<<<<<< HEAD
-	github.com/pingcap/parser v0.0.0-20210303062609-d1d977c9ceed
+	github.com/pingcap/parser v0.0.0-20210421190550-451a84cf120a
 	github.com/pingcap/sysutil v0.0.0-20201130064824-f0c8aa6a6966
-=======
-	github.com/pingcap/parser v0.0.0-20210310110710-c7333a4927e6
-	github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99
->>>>>>> 2bea06ed2... util, types: don't let SPM be affected by charset (#23161)
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
 	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
 	github.com/prometheus/client_golang v1.5.1
