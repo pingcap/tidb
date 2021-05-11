@@ -216,7 +216,6 @@ const (
 	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
-	// tidb_distsql_scan_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.

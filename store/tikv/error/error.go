@@ -15,11 +15,11 @@ package error
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/util/dbterror"
 )
 
 var (
@@ -35,36 +35,32 @@ var (
 	ErrInvalidTxn = errors.New("invalid transaction")
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout = errors.New("tikv server timeout")
+	// ErrTiFlashServerTimeout is the error when tiflash server is timeout.
+	ErrTiFlashServerTimeout = errors.New("tiflash server timeout")
+	// ErrQueryInterrupted is the error when the query is interrupted.
+	ErrQueryInterrupted = errors.New("query interruppted")
+	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
+	ErrTiKVStaleCommand = errors.New("tikv stale command")
+	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
+	ErrTiKVMaxTimestampNotSynced = errors.New("tikv max timestamp not synced")
+	// ErrLockAcquireFailAndNoWaitSet is the error that acquire the lock failed while no wait is setted.
+	ErrLockAcquireFailAndNoWaitSet = errors.New("lock acquired failed and no wait is setted")
 	// ErrResolveLockTimeout is the error that resolve lock timeout.
 	ErrResolveLockTimeout = errors.New("resolve lock timeout")
+	// ErrLockWaitTimeout is the error that wait for the lock is timeout.
+	ErrLockWaitTimeout = errors.New("lock wait timeout")
+	// ErrTiKVServerBusy is the error when tikv server is busy.
+	ErrTiKVServerBusy = errors.New("tikv server busy")
+	// ErrTiFlashServerBusy is the error that tiflash server is busy.
+	ErrTiFlashServerBusy = errors.New("tiflash server busy")
+	// ErrRegionUnavailable is the error when region is not available.
+	ErrRegionUnavailable = errors.New("region unavailable")
+	// ErrUnknown is the unknow error.
+	ErrUnknown = errors.New("unknow")
 )
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
 const MismatchClusterID = "mismatch cluster id"
-
-// error instances.
-var (
-	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
-	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(CodePDServerTimeout)
-	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(CodeRegionUnavailable)
-	ErrTiKVServerBusy              = dbterror.ClassTiKV.NewStd(CodeTiKVServerBusy)
-	ErrTiFlashServerBusy           = dbterror.ClassTiKV.NewStd(CodeTiFlashServerBusy)
-	ErrTiKVStaleCommand            = dbterror.ClassTiKV.NewStd(CodeTiKVStaleCommand)
-	ErrTiKVMaxTimestampNotSynced   = dbterror.ClassTiKV.NewStd(CodeTiKVMaxTimestampNotSynced)
-	ErrGCTooEarly                  = dbterror.ClassTiKV.NewStd(CodeGCTooEarly)
-	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
-	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(CodeLockAcquireFailAndNoWaitSet)
-	ErrLockWaitTimeout             = dbterror.ClassTiKV.NewStd(CodeLockWaitTimeout)
-	ErrTokenLimit                  = dbterror.ClassTiKV.NewStd(CodeTiKVStoreLimit)
-	ErrUnknown                     = dbterror.ClassTiKV.NewStd(CodeUnknown)
-)
-
-// Registers error returned from TiKV.
-var (
-	_ = dbterror.ClassTiKV.NewStd(CodeDataOutOfRange)
-	_ = dbterror.ClassTiKV.NewStd(CodeTruncatedWrongValue)
-	_ = dbterror.ClassTiKV.NewStd(CodeDivisionByZero)
-)
 
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
@@ -167,4 +163,37 @@ type ErrEntryTooLarge struct {
 
 func (e *ErrEntryTooLarge) Error() string {
 	return fmt.Sprintf("entry size too large, size: %v,limit: %v.", e.Size, e.Limit)
+}
+
+// ErrPDServerTimeout is the error when pd server is timeout.
+type ErrPDServerTimeout struct {
+	msg string
+}
+
+// NewErrPDServerTimeout creates an ErrPDServerTimeout.
+func NewErrPDServerTimeout(msg string) error {
+	return &ErrPDServerTimeout{msg}
+}
+
+func (e *ErrPDServerTimeout) Error() string {
+	return e.msg
+}
+
+// ErrGCTooEarly is the error that GC life time is shorter than transaction duration
+type ErrGCTooEarly struct {
+	TxnStartTS  time.Time
+	GCSafePoint time.Time
+}
+
+func (e *ErrGCTooEarly) Error() string {
+	return fmt.Sprintf("GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v", e.TxnStartTS, e.GCSafePoint)
+}
+
+// ErrTokenLimit is the error that token is up to the limit.
+type ErrTokenLimit struct {
+	StoreID uint64
+}
+
+func (e *ErrTokenLimit) Error() string {
+	return fmt.Sprintf("Store token is up to the limit, store id = %d.", e.StoreID)
 }
