@@ -91,6 +91,7 @@ func newTxnScope(varValue string, txnScope string) TxnScope {
 
 const (
 	physicalShiftBits = 18
+	logicalBits       = (1 << physicalShiftBits) - 1
 	// GlobalTxnScope is the default transaction scope for a Oracle service.
 	GlobalTxnScope = "global"
 	// LocalTxnScope indicates the local txn scope for a Oracle service.
@@ -120,6 +121,11 @@ func ExtractPhysical(ts uint64) int64 {
 	return int64(ts >> physicalShiftBits)
 }
 
+// ExtractLogical return a ts's logical part.
+func ExtractLogical(ts uint64) int64 {
+	return int64(ts & logicalBits)
+}
+
 // GetPhysical returns physical from an instant time with millisecond precision.
 func GetPhysical(t time.Time) int64 {
 	return t.UnixNano() / int64(time.Millisecond)
@@ -140,6 +146,25 @@ func GetTimeFromTS(ts uint64) time.Time {
 func GoTimeToTS(t time.Time) uint64 {
 	ts := (t.UnixNano() / int64(time.Millisecond)) << physicalShiftBits
 	return uint64(ts)
+}
+
+// CompareTS is used to compare two timestamps.
+// If tsoOne > tsoTwo, returns 1.
+// If tsoOne = tsoTwo, returns 0.
+// If tsoOne < tsoTwo, returns -1.
+func CompareTS(tsoOne, tsoTwo uint64) int {
+	tsOnePhy := ExtractPhysical(tsoOne)
+	tsOneLog := ExtractLogical(tsoOne)
+	tsTwoPhy := ExtractPhysical(tsoTwo)
+	tsTwoLog := ExtractLogical(tsoTwo)
+
+	if tsOnePhy > tsTwoPhy || (tsOnePhy == tsTwoPhy && tsOneLog > tsTwoLog) {
+		return 1
+	}
+	if tsOnePhy == tsTwoPhy && tsOneLog == tsTwoLog {
+		return 0
+	}
+	return -1
 }
 
 // GoTimeToLowerLimitStartTS returns the min start_ts of the uncommitted transaction.

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -141,7 +140,6 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	is := dom.InfoSchema()
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	txnCtx.InfoSchema = is
-	txnCtx.SchemaVersion = is.SchemaMetaVersion()
 	// DDL will force commit old transaction, after DDL, in transaction status should be false.
 	e.ctx.GetSessionVars().SetInTxn(false)
 	return nil
@@ -238,11 +236,11 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	sessionVars := e.ctx.GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
-		err = variable.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum(mysql.DefaultCharset))
+		err = variable.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, mysql.DefaultCharset)
 		if err != nil {
 			return err
 		}
-		err = variable.SetSessionSystemVar(sessionVars, variable.CollationDatabase, types.NewStringDatum(mysql.DefaultCollationName))
+		err = variable.SetSessionSystemVar(sessionVars, variable.CollationDatabase, mysql.DefaultCollationName)
 		if err != nil {
 			return err
 		}

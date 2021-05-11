@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -38,7 +38,7 @@ func NewRegionBatchRequestSender(cache *tikv.RegionCache, client tikv.Client) *R
 	}
 }
 
-func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *tikv.Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
+func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
 	// use the first ctx to send request, because every ctx has same address.
 	cancel = func() {}
 	rpcCtx := ctxs[0].ctx
@@ -67,18 +67,23 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *tikv.Backoffer, ctxs
 	return
 }
 
-func (ss *RegionBatchRequestSender) onSendFail(bo *tikv.Backoffer, ctxs []copTaskAndRPCContext, err error) error {
+func (ss *RegionBatchRequestSender) onSendFail(bo *backoffer, ctxs []copTaskAndRPCContext, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
 	} else if atomic.LoadUint32(&tikv.ShuttingDown) > 0 {
-		return kv.ErrTiDBShuttingDown
+		return tikverr.ErrTiDBShuttingDown
 	}
 
 	for _, failedCtx := range ctxs {
 		ctx := failedCtx.ctx
 		if ctx.Meta != nil {
-			ss.GetRegionCache().OnSendFail(bo, ctx, ss.NeedReloadRegion(ctx), err)
+			// The reload region param is always true. Because that every time we try, we must
+			// re-build the range then re-create the batch sender. As a result, the len of "failStores"
+			// will change. If tiflash's replica is more than two, the "reload region" will always be false.
+			// Now that the batch cop and mpp has a relative low qps, it's reasonable to reload every time
+			// when meeting io error.
+			ss.GetRegionCache().OnSendFail(bo.TiKVBackoffer(), ctx, true, err)
 		}
 	}
 

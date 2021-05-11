@@ -34,14 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
-func init() {
-	// Some test depends on the values of timeutil.SystemLocation()
-	// If we don't SetSystemTZ() here, the value would change unpredictable.
-	// Affectd by the order whether a testsuite runs before or after integration test.
-	// Note, SetSystemTZ() is a sync.Once operation.
-	timeutil.SetSystemTZ("system")
-}
-
 func (s *testEvaluatorSuite) TestDate(c *C) {
 	tblDate := []struct {
 		Input  interface{}
@@ -865,9 +857,9 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	}
 
 	// Test that "timestamp" and "time_zone" variable may affect the result of Now() builtin function.
-	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("+00:00"))
+	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", "+00:00")
 	c.Assert(err, IsNil)
-	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(1234))
+	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", "1234")
 	c.Assert(err, IsNil)
 	fc := funcs[ast.Now]
 	resetStmtContext(s.ctx)
@@ -878,9 +870,9 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	result, err := v.ToString()
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, "1970-01-01 00:20:34")
-	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(0))
+	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", "0")
 	c.Assert(err, IsNil)
-	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("system"))
+	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", "system")
 	c.Assert(err, IsNil)
 }
 
@@ -1121,7 +1113,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx.TimeZone = timeutil.SystemLocation()
-	timezones := []types.Datum{types.NewDatum(1234), types.NewDatum(0)}
+	timezones := []string{"1234", "0"}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
 		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone)
