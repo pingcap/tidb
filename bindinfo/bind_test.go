@@ -365,7 +365,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(112))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(120))
 
 	p := parser.New()
 	stmt, err := p.ParseOneStmt("select * from t where i          >      30.0", "", "")
@@ -472,7 +472,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(112))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(120))
 
 	handle := tk.Se.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindData := handle.GetBindRecord("select * from test . t where i > ?", "test")
@@ -830,7 +830,7 @@ func (s *testSuite) TestDMLCapturePlanBaseline(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows = tk.MustQuery("show global bindings").Sort().Rows()
 	c.Assert(len(rows), Equals, 4)
-	c.Assert(rows[0][0], Equals, "delete from `test` . `t` where `b` = ? and `c` > ?")
+	c.Assert(rows[0][0], Equals, "delete from test . t where b = ? and c > ?")
 	c.Assert(rows[0][1], Equals, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b` = 1 AND `c` > 1")
 	c.Assert(rows[1][0], Equals, "insert into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?")
 	c.Assert(rows[1][1], Equals, "INSERT INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1")
@@ -865,7 +865,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+	c.Assert(rows[0][0], Equals, "select * from test . t where a > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` > 10")
 }
 
@@ -1021,7 +1021,7 @@ func (s *testSuite) TestCapturePreparedStmt(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `b` = ? and `c` > ?")
+	c.Assert(rows[0][0], Equals, "select * from test . t where b = ? and c > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?")
 
 	c.Assert(tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
@@ -1845,7 +1845,7 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	tk.MustExec("create global binding for select * from t using select /*+ use_index(t, idxb) */ * from t")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t`")
+	c.Assert(rows[0][0], Equals, "select * from test . t")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(`t` `idxb`)*/ * FROM `test`.`t`")
 	c.Assert(tk.MustUseIndex("select * from t", "idxb(b)"), IsTrue)
 	c.Assert(tk.MustUseIndex("select * from test.t", "idxb(b)"), IsTrue)
@@ -1935,6 +1935,6 @@ func (s *testSuite) TestBindingWithoutCharset(c *C) {
 	tk.MustExec("create global binding for select * from t where a = 'aa' using select * from t where a = 'aa'")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
+	c.Assert(rows[0][0], Equals, "select * from test . t where a = ?")
 	c.Assert(rows[0][1], Equals, "SELECT * FROM `test`.`t` WHERE `a` = 'aa'")
 }
