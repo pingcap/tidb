@@ -112,12 +112,12 @@ func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error
 		} else {
 			stores = allStores
 		}
-		resolveTS := store.getMinResolveTSByStores(stores)
+		safeTS := store.getMinSafeTSByStores(stores)
 		startTs = *options.MinStartTS
-		// If the resolveTS is larger than the minStartTS, we will use resolveTS as StartTS, otherwise we will use
+		// If the safeTS is larger than the minStartTS, we will use safeTS as StartTS, otherwise we will use
 		// minStartTS directly.
-		if oracle.CompareTS(startTs, resolveTS) < 0 {
-			startTs = resolveTS
+		if oracle.CompareTS(startTs, safeTS) < 0 {
+			startTs = safeTS
 		}
 	} else if options.MaxPrevSec != nil {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
