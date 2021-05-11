@@ -1318,14 +1318,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			if err != nil {
 				return con, false
 			}
-<<<<<<< HEAD
-			if c, err = doubleDatum.CompareDatum(sc, &intDatum); err != nil {
-				return con, false
-			}
-			if c != 0 {
-=======
 			if doubleDatum.GetFloat64() != math.Trunc(doubleDatum.GetFloat64()) {
->>>>>>> f4b9da59c... expression: fix refine compare constant (#23339)
 				return con, true
 			}
 			return &Constant{
