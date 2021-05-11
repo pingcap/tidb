@@ -364,6 +364,8 @@ type SubqueryExpr struct {
 	Exists     bool
 }
 
+func (*SubqueryExpr) resultSet() {}
+
 // Restore implements Node interface.
 func (n *SubqueryExpr) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain("(")
