@@ -482,6 +482,13 @@ func (s *partitionTableSuite) TestDynamicPruneModeWithEqualExpression(c *C) {
 				"p1",
 			},
 		},
+		{
+			sql: "select * from %s where a is NULL",
+			partitions: []string{
+				"p0",
+				"p0",
+			},
+		},
 	}
 
 	for _, t := range tests {
