@@ -16,25 +16,5 @@ package error
 // MySQL error code.
 // This value is numeric. It is not portable to other database systems.
 const (
-	CodeUnknown                     = 1105
-	CodeLockWaitTimeout             = 1205
-	CodeTruncatedWrongValue         = 1292
-	CodeQueryInterrupted            = 1317
-	CodeDivisionByZero              = 1365
-	CodeDataOutOfRange              = 1690
 	CodeLockAcquireFailAndNoWaitSet = 3572
-
-	// TiKV/PD/TiFlash errors.
-	CodePDServerTimeout    = 9001
-	CodeTiKVServerBusy     = 9003
-	CodeResolveLockTimeout = 9004
-	CodeRegionUnavailable  = 9005
-	CodeGCTooEarly         = 9006
-
-	CodeTiKVStoreLimit = 9008
-
-	CodeTiKVStaleCommand          = 9010
-	CodeTiKVMaxTimestampNotSynced = 9011
-	CodeTiFlashServerTimeout      = 9012
-	CodeTiFlashServerBusy         = 9013
 )
