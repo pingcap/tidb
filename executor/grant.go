@@ -473,8 +473,8 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 	if priv.Priv == mysql.UsagePriv {
 		return nil
 	}
-	globalOnlyPrivs := mysql.Privileges{mysql.ProcessPriv, mysql.ShowDBPriv, mysql.SuperPriv, mysql.CreateUserPriv, mysql.CreateTablespacePriv, mysql.ShutdownPriv, mysql.ReloadPriv, mysql.FilePriv, mysql.ReplicationClientPriv, mysql.ReplicationSlavePriv}
-	for _, v := range globalOnlyPrivs {
+	staticGlobalOnlyPrivs := mysql.Privileges{mysql.ProcessPriv, mysql.ShowDBPriv, mysql.SuperPriv, mysql.CreateUserPriv, mysql.CreateTablespacePriv, mysql.ShutdownPriv, mysql.ReloadPriv, mysql.FilePriv, mysql.ReplicationClientPriv, mysql.ReplicationSlavePriv, mysql.ConfigPriv}
+	for _, v := range staticGlobalOnlyPrivs {
 		if v == priv.Priv {
 			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
 		}
