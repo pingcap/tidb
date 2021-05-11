@@ -201,7 +201,7 @@ type SlidingWindowAggFunc interface {
 	// PartialResult stores the intermediate result which will be used in the next
 	// sliding window, ensure call ResetPartialResult after a frame are evaluated
 	// completely.
-	Slide(sctx sessionctx.Context, getRow func(uint64)chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
+	Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
 }
 
 // MaxMinSlidingWindowAggFunc is the interface to evaluate the max/min agg function using sliding window

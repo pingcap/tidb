@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -202,26 +201,28 @@ type processor struct {
 	end                *core.FrameBound
 	curRowIdx          uint64
 	// curStartRow and curEndRow defines the current frame range
-	curStartRow uint64
-	curEndRow   uint64
-	orderByCols []*expression.Column
+	lastStartRow uint64
+	lastEndRow   uint64
+	rowStart     uint64
+	orderByCols  []*expression.Column
 	// expectedCmpResult is used to decide if one value is included in the frame.
 	expectedCmpResult int64
 
 	// rows keeps rows starting from curStartRow, TODO(zhifeng): make it a queue
 	rows                     []chunk.Row
-	whole                    bool
 	rowCnt                   uint64
+	whole                    bool
 	isRangeFrame             bool
+	emptyFrame               bool
 	initializedSlidingWindow bool
 }
 
 func (p *processor) getRow(i uint64) chunk.Row {
-	return p.rows[i-p.curStartRow]
+	return p.rows[i-p.rowStart]
 }
 
 func (p *processor) getRows(s, e uint64) []chunk.Row {
-	return p.rows[s-p.curStartRow : e-p.curStartRow]
+	return p.rows[s-p.rowStart : e-p.rowStart]
 }
 
 func (p *processor) init() {
@@ -240,16 +241,6 @@ func (p *processor) consume(ctx sessionctx.Context, rows []chunk.Row) (more int6
 	num := uint64(len(rows))
 	p.rowCnt += num
 	p.rows = append(p.rows, rows...)
-	// the question is, rowNumber would have frame (of length 1) differently than other processor?
-	// well, 1 processor only process 1 frame, you could test to see if rowNumber and sum over row frame will generate
-	// 2 window function. but we could still support different frame here, it just adds complexity
-	//for i, wf := range p.windowFuncs {
-	//	// TODO: add mem track later
-	//	_, err = wf.UpdatePartialResult(ctx, rows, p.partialResults[i])
-	//	if err != nil {
-	//		return
-	//	}
-	//}
 	rows = rows[:0]
 	if p.end.UnBounded {
 		if !p.whole {
@@ -272,7 +263,7 @@ func (p *processor) getStart(ctx sessionctx.Context) (uint64, error) {
 	}
 	if p.isRangeFrame {
 		var start uint64
-		for start = p.curStartRow; start < p.rowCnt; start++ {
+		for start = p.lastStartRow; start < p.rowCnt; start++ {
 			var res int64
 			var err error
 			for i := range p.orderByCols {
@@ -314,7 +305,7 @@ func (p *processor) getEnd(ctx sessionctx.Context) (uint64, error) {
 	}
 	if p.isRangeFrame {
 		var end uint64
-		for end = p.curEndRow; end < p.rowCnt; end++ {
+		for end = p.lastEndRow; end < p.rowCnt; end++ {
 			var res int64
 			var err error
 			for i := range p.orderByCols {
@@ -356,12 +347,10 @@ func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained i
 	)
 	for remained > 0 && p.moreToProduce(ctx) {
 		start, err = p.getStart(ctx)
-		fmt.Printf("produce->p.getStart %d\n", start)
 		if err != nil {
 			return
 		}
 		end, err = p.getEnd(ctx)
-		fmt.Printf("produce->p.getEnd %d\n", end)
 		if err != nil {
 			return
 		}
@@ -371,22 +360,16 @@ func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained i
 			}
 			end = p.rowCnt
 		}
-		if start > p.rowCnt {
+		if start >= p.rowCnt {
 			if !p.whole {
 				return
 			}
 			start = p.rowCnt
 		}
-		// TODO(zhifeng): if start >= end, we should return a default value
+		// if start >= end, we should return a default value, and we reset the frame to empty.
 		if start >= end {
 			for i, wf := range p.windowFuncs {
-				slidingWindowAggFunc := p.slidingWindowFuncs[i]
-				if slidingWindowAggFunc != nil && p.initializedSlidingWindow {
-					err = slidingWindowAggFunc.Slide(ctx, p.getRow, p.curStartRow, p.curEndRow, start-p.curStartRow, end-p.curEndRow, p.partialResults[i])
-					if err != nil {
-						return
-					}
-				} else {
+				if !p.emptyFrame {
 					wf.ResetPartialResult(p.partialResults[i])
 				}
 				err = wf.AppendFinalResult2Chunk(ctx, p.partialResults[i], chk)
@@ -394,12 +377,17 @@ func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained i
 					return
 				}
 			}
+			if !p.emptyFrame {
+				p.emptyFrame = true
+				p.initializedSlidingWindow = false
+			}
 		} else {
+			p.emptyFrame = false
 			for i, wf := range p.windowFuncs {
 				slidingWindowAggFunc := p.slidingWindowFuncs[i]
-				if p.curStartRow != start || p.curEndRow != end {
+				if p.lastStartRow != start || p.lastEndRow != end {
 					if slidingWindowAggFunc != nil && p.initializedSlidingWindow {
-						err = slidingWindowAggFunc.Slide(ctx, p.getRow, p.curStartRow, p.curEndRow, start-p.curStartRow, end-p.curEndRow, p.partialResults[i])
+						err = slidingWindowAggFunc.Slide(ctx, p.getRow, p.lastStartRow, p.lastEndRow, start-p.lastStartRow, end-p.lastEndRow, p.partialResults[i])
 					} else {
 						// TODO(zhifeng): track memory usage here
 						wf.ResetPartialResult(p.partialResults[i])
@@ -413,36 +401,50 @@ func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained i
 				if err != nil {
 					return
 				}
-				if !p.initializedSlidingWindow {
-					p.initializedSlidingWindow = true
-				}
 			}
+			p.initializedSlidingWindow = true
 		}
+		p.curRowIdx++
+		p.lastStartRow, p.lastEndRow = start, end
+
 		produced++
 		remained--
-		p.curRowIdx++
-		p.rows = p.rows[start-p.curStartRow:]
-		p.curStartRow, p.curEndRow = start, end
+	}
+	extend := p.curRowIdx
+	if p.lastEndRow < extend {
+		extend = p.lastEndRow
+	}
+	if p.lastStartRow < extend {
+		extend = p.lastStartRow
+	}
+	if extend > p.rowStart {
+		p.rows = p.rows[extend-p.rowStart:]
+		p.rowStart = extend
 	}
 	return
 }
 
 func (p *processor) moreToProduce(ctx sessionctx.Context) bool {
-	cursor, err := p.getStart(ctx)
-	end, err := p.getEnd(ctx)
-	if end > cursor {
-		cursor = end
+	if p.curRowIdx >= p.rowCnt {
+		return false
 	}
-	fmt.Printf("moreToProduce->p.getEnd %d rowCnt %d whole %t curRowIdx %d\n", end, p.rowCnt, p.whole, p.curRowIdx)
+	if p.whole {
+		return true
+	}
+	start, err := p.getStart(ctx)
+	_ = err
+	end, err := p.getEnd(ctx)
 	_ = err
 	// TODO(Zhifeng): handle the error here
-	return (cursor <= p.rowCnt || p.whole) && p.curRowIdx < p.rowCnt
+	return end < p.rowCnt && start < p.rowCnt
 }
 
 // reset resets the processor
 func (p *processor) reset() {
-	p.curStartRow = 0
-	p.curEndRow = 0
+	p.lastStartRow = 0
+	p.lastEndRow = 0
+	p.rowStart = 0
+	p.emptyFrame = false
 	p.curRowIdx = 0
 	p.rowCnt = 0
 	p.whole = false

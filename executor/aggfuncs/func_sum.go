@@ -203,7 +203,7 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 
 var _ SlidingWindowAggFunc = &sum4Decimal{}
 
-func (e *sum4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64)chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+func (e *sum4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4SumDecimal)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastEnd+i))
