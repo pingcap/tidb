@@ -388,13 +388,8 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	return nil, kv.ErrNotExist
 }
 
-<<<<<<< HEAD
 func getPhysID(tblInfo *model.TableInfo, val int64) int64 {
-	pi := tblInfo.Partition
-=======
-func getPhysID(tblInfo *model.TableInfo, intVal int64) int64 {
 	pi := tblInfo.GetPartitionInfo()
->>>>>>> 67874c579... executor: fix a panic when batch point get is used for partition table (#23652)
 	if pi == nil {
 		return tblInfo.ID
 	}

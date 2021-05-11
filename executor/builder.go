@@ -2517,13 +2517,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
 	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
-<<<<<<< HEAD
-=======
-	// Do not collect the feedback when the table is the partition table.
-	if collectIndex && tbl.Meta().GetPartitionInfo() != nil {
-		collectIndex = false
-	}
->>>>>>> 67874c579... executor: fix a panic when batch point get is used for partition table (#23652)
 	if !collectIndex {
 		e.feedback.Invalidate()
 	}

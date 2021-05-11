@@ -15,12 +15,6 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/sessionctx/variable"
->>>>>>> 67874c579... executor: fix a panic when batch point get is used for partition table (#23652)
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -70,33 +64,6 @@ func (s *testSuite9) TestPartitionReaderUnderApply(c *C) {
 		"3 vibrant shamir 6.300000",
 		"4 hungry wilson 4.900000",
 		"5 naughty swartz 9.524000"))
-<<<<<<< HEAD
-=======
-
-	// For issue 19450 release-4.0
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
-	tk.MustQuery("select * from t1 where c_decimal in (select c_decimal from t2 where t1.c_int = t2.c_int or t1.c_int = t2.c_int and t1.c_str > t2.c_str)").Check(testkit.Rows(
-		"1 romantic robinson 4.436000",
-		"2 stoic chaplygin 9.826000",
-		"3 vibrant shamir 6.300000",
-		"4 hungry wilson 4.900000",
-		"5 naughty swartz 9.524000"))
-}
-
-func (s *partitionTableSuite) TestImproveCoverage(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table coverage_rr (
-pk1 varchar(35) NOT NULL,
-pk2 int NOT NULL,
-c int,
-PRIMARY KEY (pk1,pk2)) partition by hash(pk2) partitions 4;`)
-	tk.MustExec("create table coverage_dt (pk1 varchar(35), pk2 int)")
-	tk.MustExec("insert into coverage_rr values ('ios', 3, 2),('android', 4, 7),('linux',5,1)")
-	tk.MustExec("insert into coverage_dt values ('apple',3),('ios',3),('linux',5)")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustQuery("select /*+ INL_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Sort().Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Sort().Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
 }
 
 func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
@@ -141,35 +108,4 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
 		"└─TableFullScan_4 10000.00 cop[tikv] table:t_info_null keep order:false, stats:pseudo"))
 	// No panic.
 	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
-}
-
-func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table p (id int, c int) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("alter table p add unique idx(id)")
-	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
-	tk.MustQuery("select id from p use index (idx)").Check(testkit.Rows("1", "3", "5", "7"))
-}
-
-func (s *globalIndexSuite) TestGlobalIndexDoubleRead(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table p (id int, c int) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("alter table p add unique idx(id)")
-	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
-	tk.MustQuery("select * from p use index (idx)").Check(testkit.Rows("1 3", "3 4", "5 6", "7 9"))
-}
-
-func (s *globalIndexSuite) TestIssue21731(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists p")
-	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
->>>>>>> 67874c579... executor: fix a panic when batch point get is used for partition table (#23652)
 }
