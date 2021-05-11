@@ -227,6 +227,63 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
 	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
 }
 
+func (s *partitionTableSuite) TestBatchGetandPointGetwithHashPartition(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_batchget_pointget")
+	tk.MustExec("use test_batchget_pointget")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// hash partition table
+	tk.MustExec("create table thash(a int, unique key(a)) partition by hash(a) partitions 4;")
+
+	// regular partition table
+	tk.MustExec("create table tregular(a int, unique key(a));")
+
+	vals := make([]string, 0, 100)
+	// insert data into range partition table and hash partition table
+	for i := 0; i < 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%v)", i+1))
+	}
+	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular values " + strings.Join(vals, ","))
+
+	// test PointGet
+	for i := 0; i < 100; i++ {
+		// explain select a from t where a = {x}; // x >= 1 and x <= 100 Check if PointGet is used
+		// select a from t where a={x}; // the result is {x}
+		x := rand.Intn(100) + 1
+		queryHash := fmt.Sprintf("select a from thash where a=%v", x)
+		queryRegular := fmt.Sprintf("select a from thash where a=%v", x)
+		c.Assert(tk.HasPlan(queryHash, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryHash).Check(tk.MustQuery(queryRegular).Rows())
+	}
+
+	// test empty PointGet
+	queryHash := fmt.Sprintf("select a from thash where a=200")
+	c.Assert(tk.HasPlan(queryHash, "Point_Get"), IsTrue) // check if PointGet is used
+	tk.MustQuery(queryHash).Check(testkit.Rows())
+
+	// test BatchGet
+	for i := 0; i < 100; i++ {
+		// explain select a from t where a in ({x1}, {x2}, ... {x10}); // BatchGet is used
+		// select a from t where where a in ({x1}, {x2}, ... {x10});
+		points := make([]string, 0, 10)
+		for i := 0; i < 10; i++ {
+			x := rand.Intn(100) + 1
+			points = append(points, fmt.Sprintf("%v", x))
+		}
+
+		queryHash := fmt.Sprintf("select a from thash where a in (%v)", strings.Join(points, ","))
+		queryRegular := fmt.Sprintf("select a from tregular where a in (%v)", strings.Join(points, ","))
+		c.Assert(tk.HasPlan(queryHash, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+	}
+}
+
 func (s *partitionTableSuite) TestView(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
