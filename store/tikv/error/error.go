@@ -36,6 +36,8 @@ var (
 	ErrInvalidTxn = errors.New("invalid transaction")
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout = errors.New("tikv server timeout")
+	// ErrTiFlashServerTimeout is the error when tiflash server is timeout.
+	ErrTiFlashServerTimeout = errors.New("tiflash server timeout")
 	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
 	ErrTiKVStaleCommand = errors.New("tikv stale command")
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
@@ -57,18 +59,9 @@ const MismatchClusterID = "mismatch cluster id"
 
 // error instances.
 var (
-	ErrTiFlashServerTimeout        = dbterror.ClassTiKV.NewStd(CodeTiFlashServerTimeout)
 	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(CodeLockAcquireFailAndNoWaitSet)
-	ErrTokenLimit                  = dbterror.ClassTiKV.NewStd(CodeTiKVStoreLimit)
 	ErrUnknown                     = dbterror.ClassTiKV.NewStd(CodeUnknown)
-)
-
-// Registers error returned from TiKV.
-var (
-	_ = dbterror.ClassTiKV.NewStd(CodeDataOutOfRange)
-	_ = dbterror.ClassTiKV.NewStd(CodeTruncatedWrongValue)
-	_ = dbterror.ClassTiKV.NewStd(CodeDivisionByZero)
 )
 
 // IsErrNotFound checks if err is a kind of NotFound error.
@@ -196,4 +189,13 @@ type ErrGCTooEarly struct {
 
 func (e *ErrGCTooEarly) Error() string {
 	return fmt.Sprintf("GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v", e.TxnStartTS, e.GCSafePoint)
+}
+
+// ErrTokenLimit is the error that token is up to the limit.
+type ErrTokenLimit struct {
+	StoreID uint64
+}
+
+func (e *ErrTokenLimit) Error() string {
+	return fmt.Sprintf("Store token is up to the limit, store id = %d.", e.StoreID)
 }

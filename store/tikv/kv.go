@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -184,72 +184,12 @@ func (s *KVStore) runSafePointChecker() {
 
 // Begin a global transaction.
 func (s *KVStore) Begin() (*KVTxn, error) {
-	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
+	return s.BeginWithOption(tidbkv.DefaultTransactionOption())
 }
 
-// BeginWithTxnScope begins a transaction with the given txnScope (local or global)
-func (s *KVStore) BeginWithTxnScope(txnScope string) (*KVTxn, error) {
-	txn, err := newTiKVTxn(s, txnScope)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return txn, nil
-}
-
-// BeginWithStartTS begins a transaction with startTS.
-func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (*KVTxn, error) {
-	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return txn, nil
-}
-
-// BeginWithExactStaleness begins transaction with given staleness
-func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVTxn, error) {
-	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return txn, nil
-}
-
-// BeginWithMinStartTS begins transaction with the least startTS
-func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTxn, error) {
-	stores := make([]*Store, 0)
-	allStores := s.regionCache.getStoresByType(tikvrpc.TiKV)
-	if txnScope != oracle.GlobalTxnScope {
-		for _, store := range allStores {
-			if store.IsLabelsMatch([]*metapb.StoreLabel{
-				{
-					Key:   DCLabelKey,
-					Value: txnScope,
-				},
-			}) {
-				stores = append(stores, store)
-			}
-		}
-	} else {
-		stores = allStores
-	}
-	resolveTS := s.getMinResolveTSByStores(stores)
-	startTS := minStartTS
-	// If the resolveTS is larger than the minStartTS, we will use resolveTS as StartTS, otherwise we will use
-	// minStartTS directly.
-	if oracle.CompareTS(startTS, resolveTS) < 0 {
-		startTS = resolveTS
-	}
-	return s.BeginWithStartTS(txnScope, startTS)
-}
-
-// BeginWithMaxPrevSec begins transaction with given max previous seconds for startTS
-func (s *KVStore) BeginWithMaxPrevSec(txnScope string, maxPrevSec uint64) (*KVTxn, error) {
-	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-	minStartTS, err := s.getStalenessTimestamp(bo, txnScope, maxPrevSec)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return s.BeginWithMinStartTS(txnScope, minStartTS)
+// BeginWithOption begins a transaction with the given TransactionOption
+func (s *KVStore) BeginWithOption(options tidbkv.TransactionOption) (*KVTxn, error) {
+	return newTiKVTxnWithOptions(s, options)
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
