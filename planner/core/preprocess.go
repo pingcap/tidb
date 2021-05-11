@@ -574,7 +574,7 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 			return
 		}
 		tempTableType := tableInfo.Meta().TempTableType
-		if stmt.Tp == ast.AdminCheckTable && (tempTableType == model.TempTableGlobal || tempTableType == model.TempTableLocal) {
+		if stmt.Tp == ast.AdminCheckTable && tempTableType != model.TempTableNone {
 			p.err = infoschema.ErrAdminCheckTable
 			return
 		}

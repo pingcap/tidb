@@ -316,7 +316,7 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 			return err
 		}
 		tempTableType := tableInfo.Meta().TempTableType
-		if obt == tableObject && config.CheckTableBeforeDrop && tempTableType != model.TempTableGlobal && tempTableType != model.TempTableLocal {
+		if obt == tableObject && config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
 			logutil.BgLogger().Warn("admin check table before drop",
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),
