@@ -160,9 +160,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			var err1 error
 			if result.StatsVer == statistics.Version3 {
-				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, nil, result.TopNs[i], result.Fms[i], result.StatsVer, 1)
+				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, nil, result.TopNs[i], result.Fms[i], result.StatsVer, 1, result.TableID.IsPartitionTable() && needGlobalStats)
 			} else {
-				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.Fms[i], result.StatsVer, 1)
+				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.Fms[i], result.StatsVer, 1, result.TableID.IsPartitionTable() && needGlobalStats)
 			}
 			if err1 != nil {
 				err = err1
@@ -198,7 +198,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			for i := 0; i < globalStats.Num; i++ {
 				hg, cms, topN, fms := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i], globalStats.Fms[i]
-				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1)
+				// fms for global stats doesn't need to dump to kv.
+				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1, false)
 				if err != nil {
 					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
 				}
