@@ -72,10 +72,6 @@ func (f inspectionFilter) enable(name string) bool {
 	return len(f.set) == 0 || f.set.Exist(name)
 }
 
-func (f inspectionFilter) exist(name string) bool {
-	return len(f.set) > 0 && f.set.Exist(name)
-}
-
 type (
 	// configInspection is used to check whether a same configuration item has a
 	// different value between different instance in the cluster

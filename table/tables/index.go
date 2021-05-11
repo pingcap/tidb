@@ -105,10 +105,6 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 	return false
 }
 
-func (c *index) checkNeedRestoredData() bool {
-	return NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
-}
-
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
 	// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
