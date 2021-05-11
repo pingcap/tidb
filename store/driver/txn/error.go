@@ -38,6 +38,8 @@ import (
 
 // tikv error instance
 var (
+	// ErrTokenLimit is the error that token is up to the limit.
+	ErrTokenLimit = dbterror.ClassTiKV.NewStd(errno.ErrTiKVStoreLimit)
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout    = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
 	ErrTiFlashServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiFlashServerTimeout)
@@ -56,6 +58,13 @@ var (
 	ErrPDServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrPDServerTimeout)
 	// ErrRegionUnavailable is the error when region is not available.
 	ErrRegionUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrRegionUnavailable)
+)
+
+// Registers error returned from TiKV.
+var (
+	_ = dbterror.ClassTiKV.NewStd(errno.ErrDataOutOfRange)
+	_ = dbterror.ClassTiKV.NewStd(errno.ErrTruncatedWrongValue)
+	_ = dbterror.ClassTiKV.NewStd(errno.ErrDivisionByZero)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -244,6 +253,10 @@ func ToTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrRegionUnavailable) {
 		return ErrRegionUnavailable
+	}
+
+	if e, ok := err.(*tikverr.ErrTokenLimit); ok {
+		return ErrTokenLimit.GenWithStackByArgs(e.StoreID)
 	}
 
 	return errors.Trace(originErr)

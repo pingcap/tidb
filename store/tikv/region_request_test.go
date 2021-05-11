@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/retry"
 
@@ -178,7 +179,9 @@ func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
-	c.Assert(err.Error(), Equals, "[tikv:9008]Store token is up to the limit, store id = 1")
+	e, ok := errors.Cause(err).(*tikverr.ErrTokenLimit)
+	c.Assert(ok, IsTrue)
+	c.Assert(e.StoreID, Equals, uint64(1))
 	kv.StoreLimit.Store(oldStoreLimit)
 }
 
