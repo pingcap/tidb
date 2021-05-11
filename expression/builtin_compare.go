@@ -385,14 +385,18 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 
 	hasTemporal := false
 	if cmpTp == types.ETString {
-		for _, arg := range args {
-			if types.IsTypeTemporal(arg.GetType().Tp) {
-				hasTemporal = true
-				break
+		if args[0].GetType().Tp == mysql.TypeDuration {
+			cmpTp = types.ETDuration
+		} else {
+			for _, arg := range args {
+				if types.IsTypeTemporal(arg.GetType().Tp) {
+					hasTemporal = true
+					break
+				}
 			}
-		}
-		if hasTemporal {
-			cmpTp = types.ETDatetime
+			if hasTemporal {
+				cmpTp = types.ETDatetime
+			}
 		}
 	}
 
@@ -1305,15 +1309,15 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			// We try to convert the string constant to double.
 			// If the double result equals the int result, we can return the int result;
 			// otherwise, the compare function will be false.
+			// **Notice**
+			// we can not compare double result to int result directly, because year type will change its value, like
+			// 2 to 2002, here we just check whether double value equal int(double value). We can assert the int(string)
 			var doubleDatum types.Datum
 			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
 			if err != nil {
 				return con, false
 			}
-			if c, err = doubleDatum.CompareDatum(sc, &intDatum); err != nil {
-				return con, false
-			}
-			if c != 0 {
+			if doubleDatum.GetFloat64() != math.Trunc(doubleDatum.GetFloat64()) {
 				return con, true
 			}
 			return &Constant{
@@ -1344,8 +1348,13 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
-		finalArg1 = arg1
-		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
+		// Why check not null flag
+		// eg: int_col > const_val(which is less than min_int32)
+		// If int_col got null, compare result cannot be true
+		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg0Type.Flag)) {
+			finalArg1 = arg1
+		}
+		if isExceptional && arg1.GetType().EvalType() == types.ETInt && mysql.HasNotNullFlag(arg0Type.Flag) {
 			// Judge it is inf or -inf
 			// For int:
 			//			inf:  01111111 & 1 == 1
@@ -1363,8 +1372,10 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
-		finalArg0 = arg0
-		if isExceptional && arg0.GetType().EvalType() == types.ETInt {
+		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)) {
+			finalArg0 = arg0
+		}
+		if isExceptional && arg0.GetType().EvalType() == types.ETInt && mysql.HasNotNullFlag(arg1Type.Flag) {
 			if arg0.Value.GetInt64()&1 == 1 {
 				isNegativeInfinite = true
 			} else {
@@ -1373,7 +1384,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// int constant [cmp] year type
-	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear {
+	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear && !arg0.Value.IsNull() {
 		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
 		if failed == nil {
 			arg0.Value.SetInt64(adjusted)
@@ -1381,7 +1392,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// year type [cmp] int constant
-	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear {
+	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear && !arg1.Value.IsNull() {
 		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
 		if failed == nil {
 			arg1.Value.SetInt64(adjusted)

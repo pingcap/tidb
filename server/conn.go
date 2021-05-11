@@ -879,35 +879,39 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		sqlType = stmtType
 	}
 
+	cost := time.Since(startTime)
+	sessionVar := cc.ctx.GetSessionVars()
+	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, cc.ctx.AffectedRows(), sessionVar.InTxn())
+
 	switch sqlType {
 	case "Use":
-		queryDurationHistogramUse.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramUse.Observe(cost.Seconds())
 	case "Show":
-		queryDurationHistogramShow.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramShow.Observe(cost.Seconds())
 	case "Begin":
-		queryDurationHistogramBegin.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramBegin.Observe(cost.Seconds())
 	case "Commit":
-		queryDurationHistogramCommit.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramCommit.Observe(cost.Seconds())
 	case "Rollback":
-		queryDurationHistogramRollback.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramRollback.Observe(cost.Seconds())
 	case "Insert":
-		queryDurationHistogramInsert.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramInsert.Observe(cost.Seconds())
 	case "Replace":
-		queryDurationHistogramReplace.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramReplace.Observe(cost.Seconds())
 	case "Delete":
-		queryDurationHistogramDelete.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramDelete.Observe(cost.Seconds())
 	case "Update":
-		queryDurationHistogramUpdate.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramUpdate.Observe(cost.Seconds())
 	case "Select":
-		queryDurationHistogramSelect.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramSelect.Observe(cost.Seconds())
 	case "Execute":
-		queryDurationHistogramExecute.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramExecute.Observe(cost.Seconds())
 	case "Set":
-		queryDurationHistogramSet.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramSet.Observe(cost.Seconds())
 	case metrics.LblGeneral:
-		queryDurationHistogramGeneral.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramGeneral.Observe(cost.Seconds())
 	default:
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(cost.Seconds())
 	}
 }
 

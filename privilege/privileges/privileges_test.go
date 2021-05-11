@@ -156,6 +156,31 @@ func (s *testPrivilegeSuite) TestCheckPointGetDBPrivilege(c *C) {
 	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 }
 
+func (s *testPrivilegeSuite) TestIssue22946(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, "create database db1;")
+	mustExec(c, rootSe, "create database db2;")
+	mustExec(c, rootSe, "use test;")
+	mustExec(c, rootSe, "create table a(id int);")
+	mustExec(c, rootSe, "use db1;")
+	mustExec(c, rootSe, "create table a(id int primary key,name varchar(20));")
+	mustExec(c, rootSe, "use db2;")
+	mustExec(c, rootSe, "create table b(id int primary key,address varchar(50));")
+	mustExec(c, rootSe, "CREATE USER 'delTest'@'localhost';")
+	mustExec(c, rootSe, "grant all on db1.* to delTest@'localhost';")
+	mustExec(c, rootSe, "grant all on db2.* to delTest@'localhost';")
+	mustExec(c, rootSe, "grant select on test.* to delTest@'localhost';")
+	mustExec(c, rootSe, "flush privileges;")
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "delTest", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.ExecuteInternal(context.Background(), `delete from db1.a as A where exists(select 1 from db2.b as B where A.id = B.id);`)
+	c.Assert(err, IsNil)
+	mustExec(c, rootSe, "use db1;")
+	_, err = se.ExecuteInternal(context.Background(), "delete from test.a as A;")
+	c.Assert(terror.ErrorEqual(err, core.ErrPrivilegeCheckFail), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'test1'@'localhost';`)
@@ -875,6 +900,45 @@ func (s *testPrivilegeSuite) TestShowCreateTable(c *C) {
 	// should pass
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tsct2", Hostname: "localhost", AuthUsername: "tsct2", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, `SHOW CREATE TABLE mysql.user`)
+}
+
+func (s *testPrivilegeSuite) TestReplaceAndInsertOnDuplicate(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER tr_insert`)
+	mustExec(c, se, `CREATE USER tr_update`)
+	mustExec(c, se, `CREATE USER tr_delete`)
+	mustExec(c, se, `CREATE TABLE t1 (a int primary key, b int)`)
+	mustExec(c, se, `GRANT INSERT ON t1 TO tr_insert`)
+	mustExec(c, se, `GRANT UPDATE ON t1 TO tr_update`)
+	mustExec(c, se, `GRANT DELETE ON t1 TO tr_delete`)
+
+	// Restrict the permission to INSERT only.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_insert", Hostname: "localhost", AuthUsername: "tr_insert", AuthHostname: "%"}, nil, nil), IsTrue)
+
+	// REPLACE requires INSERT + DELETE privileges, having INSERT alone is insufficient.
+	_, err := se.ExecuteInternal(context.Background(), `REPLACE INTO t1 VALUES (1, 2)`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]DELETE command denied to user 'tr_insert'@'%' for table 't1'")
+
+	// INSERT ON DUPLICATE requires INSERT + UPDATE privileges, having INSERT alone is insufficient.
+	_, err = se.ExecuteInternal(context.Background(), `INSERT INTO t1 VALUES (3, 4) ON DUPLICATE KEY UPDATE b = 5`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]UPDATE command denied to user 'tr_insert'@'%' for table 't1'")
+
+	// Plain INSERT should work.
+	mustExec(c, se, `INSERT INTO t1 VALUES (6, 7)`)
+
+	// Also check that having DELETE alone is insufficient for REPLACE.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_delete", Hostname: "localhost", AuthUsername: "tr_delete", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), `REPLACE INTO t1 VALUES (8, 9)`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'tr_delete'@'%' for table 't1'")
+
+	// Also check that having UPDATE alone is insufficient for INSERT ON DUPLICATE.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_update", Hostname: "localhost", AuthUsername: "tr_update", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), `INSERT INTO t1 VALUES (10, 11) ON DUPLICATE KEY UPDATE b = 12`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'tr_update'@'%' for table 't1'")
 }
 
 func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {

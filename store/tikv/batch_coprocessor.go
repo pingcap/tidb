@@ -350,8 +350,8 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 		IsolationLevel: pbIsolationLevel(b.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(b.req.Priority),
 		NotFillCache:   b.req.NotFillCache,
-		HandleTime:     true,
-		ScanDetail:     true,
+		RecordTimeStat: true,
+		RecordScanStat: true,
 		TaskId:         b.req.TaskID,
 	})
 	req.StoreTp = kv.TiFlash
@@ -387,7 +387,8 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 				return nil
 			}
 
-			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
+			// Currently this function is only used in TiFlash batch cop.
+			if err1 := bo.Backoff(boTiFlashRPC, errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
 				return errors.Trace(err)
 			}
 

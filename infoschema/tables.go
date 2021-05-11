@@ -475,6 +475,7 @@ var partitionsCols = []columnInfo{
 	{name: "PARTITION_COMMENT", tp: mysql.TypeVarchar, size: 80},
 	{name: "NODEGROUP", tp: mysql.TypeVarchar, size: 12},
 	{name: "TABLESPACE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -727,6 +728,8 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogRewriteTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogPreprocSubQueriesStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogPreProcSubQueryTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogOptimizeTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogWaitTSTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.PreWriteTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.WaitPrewriteBinlogTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.CommitTimeStr, tp: mysql.TypeDouble, size: 22},
@@ -770,6 +773,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogPlanFromBinding, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1231,6 +1235,7 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the last time"},
 	{name: "PLAN_IN_CACHE", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement hit plan cache"},
 	{name: "PLAN_CACHE_HITS", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times these statements hit plan cache"},
+	{name: "PLAN_IN_BINDING", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement is matched with the hints in the binding"},
 	{name: "QUERY_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled original statement"},
 	{name: "PREV_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The previous statement before commit"},
 	{name: "PLAN_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
