@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 )
@@ -181,7 +182,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 			CalleeAddress: "202",
 			BackoffTime:   180,
 			RequestCount:  20,
-			CommitDetail: &execdetails.CommitDetails{
+			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime:   500,
 				PrewriteTime:      50000,
 				CommitTime:        5000,
@@ -199,7 +200,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				PrewriteRegionNum: 100,
 				TxnRetry:          10,
 			},
-			ScanDetail: &execdetails.ScanDetail{
+			ScanDetail: &util.ScanDetail{
 				TotalKeys:                 6000,
 				ProcessedKeys:             1500,
 				RocksdbDeleteSkippedCount: 100,
@@ -208,7 +209,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: execdetails.TimeDetail{
+			TimeDetail: util.TimeDetail{
 				ProcessTime: 1500,
 				WaitTime:    150,
 			},
@@ -308,7 +309,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 			CalleeAddress: "302",
 			BackoffTime:   18,
 			RequestCount:  2,
-			CommitDetail: &execdetails.CommitDetails{
+			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime:   50,
 				PrewriteTime:      5000,
 				CommitTime:        500,
@@ -326,7 +327,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				PrewriteRegionNum: 10,
 				TxnRetry:          1,
 			},
-			ScanDetail: &execdetails.ScanDetail{
+			ScanDetail: &util.ScanDetail{
 				TotalKeys:                 600,
 				ProcessedKeys:             150,
 				RocksdbDeleteSkippedCount: 100,
@@ -335,7 +336,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: execdetails.TimeDetail{
+			TimeDetail: util.TimeDetail{
 				ProcessTime: 150,
 				WaitTime:    15,
 			},
@@ -564,7 +565,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 			CalleeAddress: "129",
 			BackoffTime:   80,
 			RequestCount:  10,
-			CommitDetail: &execdetails.CommitDetails{
+			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime:   100,
 				PrewriteTime:      10000,
 				CommitTime:        1000,
@@ -582,7 +583,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 				PrewriteRegionNum: 20,
 				TxnRetry:          2,
 			},
-			ScanDetail: &execdetails.ScanDetail{
+			ScanDetail: &util.ScanDetail{
 				TotalKeys:                 1000,
 				ProcessedKeys:             500,
 				RocksdbDeleteSkippedCount: 100,
@@ -591,7 +592,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: execdetails.TimeDetail{
+			TimeDetail: util.TimeDetail{
 				ProcessTime: 500,
 				WaitTime:    50,
 			},

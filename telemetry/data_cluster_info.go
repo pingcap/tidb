@@ -49,8 +49,14 @@ func getClusterInfo(ctx sessionctx.Context) ([]*clusterInfoItem, error) {
 		if row.Len() < 7 {
 			continue
 		}
-		listenHostHash, listenPort := parseAddressAndHash(row.GetString(1))
-		statusHostHash, statusPort := parseAddressAndHash(row.GetString(2))
+		listenHostHash, listenPort, err := parseAddressAndHash(row.GetString(1))
+		if err != nil {
+			return nil, err
+		}
+		statusHostHash, statusPort, err := parseAddressAndHash(row.GetString(2))
+		if err != nil {
+			return nil, err
+		}
 		r = append(r, &clusterInfoItem{
 			InstanceType:   row.GetString(0),
 			ListenHostHash: listenHostHash,

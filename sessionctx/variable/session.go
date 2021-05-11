@@ -29,11 +29,9 @@ import (
 	"time"
 
 	"github.com/klauspost/cpuid"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -42,8 +40,8 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -54,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // PreparedStmtCount is exported for test.
@@ -175,6 +174,8 @@ type TransactionContext struct {
 
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
+
+	GlobalTemporaryTables map[int64]struct{}
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -404,12 +405,18 @@ type SessionVars struct {
 	TxnCtx *TransactionContext
 
 	// KVVars is the variables for KV storage.
-	KVVars *kv.Variables
+	KVVars *tikvstore.Variables
 
 	// txnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
 	txnIsolationLevelOneShot struct {
 		state txnIsolationLevelOneShotState
 		value string
+	}
+
+	// mppTaskIDAllocator is used to allocate mpp task id for a session.
+	mppTaskIDAllocator struct {
+		lastTS uint64
+		taskID int64
 	}
 
 	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
@@ -712,7 +719,7 @@ type SessionVars struct {
 	enableIndexMerge bool
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
-	replicaRead kv.ReplicaReadType
+	replicaRead tikvstore.ReplicaReadType
 
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
@@ -762,7 +769,7 @@ type SessionVars struct {
 	SelectLimit uint64
 
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
-	EnableClusteredIndex bool
+	EnableClusteredIndex ClusteredIndexDefMode
 
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
@@ -780,7 +787,7 @@ type SessionVars struct {
 	EnableAmendPessimisticTxn bool
 
 	// LastTxnInfo keeps track the info of last committed transaction.
-	LastTxnInfo kv.TxnInfo
+	LastTxnInfo string
 
 	// LastQueryInfo keeps track the info of last query.
 	LastQueryInfo QueryInfo
@@ -818,6 +825,25 @@ type SessionVars struct {
 	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
+
+	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
+	EnableDynamicPrivileges bool
+
+	// CTEMaxRecursionDepth indicates The common table expression (CTE) maximum recursion depth.
+	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
+	CTEMaxRecursionDepth int
+}
+
+// AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
+// startTs is different.
+func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
+	if s.mppTaskIDAllocator.lastTS == startTS {
+		s.mppTaskIDAllocator.taskID++
+		return s.mppTaskIDAllocator.taskID
+	}
+	s.mppTaskIDAllocator.lastTS = startTS
+	s.mppTaskIDAllocator.taskID = 1
+	return 1
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -842,6 +868,23 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 		EnableWindowFunction:        s.EnableWindowFunction,
 		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
 	}
+}
+
+// GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
+// Otherwise, transaction infoschema is returned.
+// Nil if there is no available infoschema.
+func (s *SessionVars) GetInfoSchema() interface{} {
+	type IS interface {
+		SchemaMetaVersion() int64
+	}
+	if snap, ok := s.SnapshotInfoschema.(IS); ok {
+		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", s.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
+		return snap
+	}
+	if s.TxnCtx != nil && s.TxnCtx.InfoSchema != nil {
+		return s.TxnCtx.InfoSchema
+	}
+	return nil
 }
 
 // PartitionPruneMode presents the prune mode used.
@@ -965,7 +1008,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		enableIndexMerge:            false,
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
-		replicaRead:                 kv.ReplicaReadLeader,
+		replicaRead:                 tikvstore.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
@@ -1000,7 +1043,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 	}
-	vars.KVVars = kv.NewVariables(&vars.Killed)
+	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:     DefIndexLookupConcurrency,
 		indexSerialScanConcurrency: DefIndexSerialScanConcurrency,
@@ -1114,15 +1157,15 @@ func (s *SessionVars) SetEnableIndexMerge(val bool) {
 }
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
-func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
+func (s *SessionVars) GetReplicaRead() tikvstore.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
-		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
+		return tikvstore.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
 	return s.replicaRead
 }
 
 // SetReplicaRead set SessionVars.replicaRead.
-func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
+func (s *SessionVars) SetReplicaRead(val tikvstore.ReplicaReadType) {
 	s.replicaRead = val
 }
 
@@ -1347,420 +1390,13 @@ func (s *SessionVars) ClearStmtVars() {
 	s.stmtVars = make(map[string]string)
 }
 
-// SetSystemVar sets the value of a system variable.
+// SetSystemVar sets the value of a system variable for session scope.
+// Validation is expected to be performed before calling this function,
+// and the values should been normalized.
+// i.e. oN / on / 1 => ON
 func (s *SessionVars) SetSystemVar(name string, val string) error {
-	switch name {
-	case TxnIsolationOneShot:
-		switch val {
-		case "SERIALIZABLE", "READ-UNCOMMITTED":
-			skipIsolationLevelCheck, err := GetSessionSystemVar(s, TiDBSkipIsolationLevelCheck)
-			returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(val)
-			if err != nil {
-				returnErr = err
-			}
-			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
-				return returnErr
-			}
-			// SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
-			// 1. tx_isolation
-			// 2. transaction_isolation
-			// The following if condition is used to deduplicate two same warnings.
-			if name == "transaction_isolation" {
-				s.StmtCtx.AppendWarning(returnErr)
-			}
-		}
-		s.txnIsolationLevelOneShot.state = oneShotSet
-		s.txnIsolationLevelOneShot.value = val
-	case TimeZone:
-		tz, err := parseTimeZone(val)
-		if err != nil {
-			return err
-		}
-		s.TimeZone = tz
-	case SQLModeVar:
-		val = mysql.FormatSQLModeStr(val)
-		// Modes is a list of different modes separated by commas.
-		sqlMode, err2 := mysql.GetSQLMode(val)
-		if err2 != nil {
-			return errors.Trace(err2)
-		}
-		s.StrictSQLMode = sqlMode.HasStrictMode()
-		s.SQLMode = sqlMode
-		s.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
-	case TiDBSnapshot:
-		err := setSnapshotTS(s, val)
-		if err != nil {
-			return err
-		}
-	case AutoCommit:
-		isAutocommit := TiDBOptOn(val)
-		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
-		if isAutocommit {
-			s.SetInTxn(false)
-		}
-	case AutoIncrementIncrement:
-		// AutoIncrementIncrement is valid in [1, 65535].
-		s.AutoIncrementIncrement = tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
-	case AutoIncrementOffset:
-		// AutoIncrementOffset is valid in [1, 65535].
-		s.AutoIncrementOffset = tidbOptPositiveInt32(val, DefAutoIncrementOffset)
-	case MaxExecutionTime:
-		timeoutMS := tidbOptPositiveInt32(val, 0)
-		s.MaxExecutionTime = uint64(timeoutMS)
-	case InnodbLockWaitTimeout:
-		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
-		s.LockWaitTimeout = lockWaitSec * 1000
-	case WindowingUseHighPrecision:
-		s.WindowingUseHighPrecision = TiDBOptOn(val)
-	case TiDBSkipUTF8Check:
-		s.SkipUTF8Check = TiDBOptOn(val)
-	case TiDBSkipASCIICheck:
-		s.SkipASCIICheck = TiDBOptOn(val)
-	case TiDBOptAggPushDown:
-		s.AllowAggPushDown = TiDBOptOn(val)
-	case TiDBOptBCJ:
-		s.AllowBCJ = TiDBOptOn(val)
-	case TiDBBCJThresholdSize:
-		s.BroadcastJoinThresholdSize = tidbOptInt64(val, DefBroadcastJoinThresholdSize)
-	case TiDBBCJThresholdCount:
-		s.BroadcastJoinThresholdCount = tidbOptInt64(val, DefBroadcastJoinThresholdCount)
-	case TiDBOptDistinctAggPushDown:
-		s.AllowDistinctAggPushDown = TiDBOptOn(val)
-	case TiDBOptWriteRowID:
-		s.AllowWriteRowID = TiDBOptOn(val)
-	case TiDBOptInSubqToJoinAndAgg:
-		s.SetAllowInSubqToJoinAndAgg(TiDBOptOn(val))
-	case TiDBOptPreferRangeScan:
-		s.SetAllowPreferRangeScan(TiDBOptOn(val))
-	case TiDBOptCorrelationThreshold:
-		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
-	case TiDBOptCorrelationExpFactor:
-		s.CorrelationExpFactor = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
-	case TiDBOptCPUFactor:
-		s.CPUFactor = tidbOptFloat64(val, DefOptCPUFactor)
-	case TiDBOptCopCPUFactor:
-		s.CopCPUFactor = tidbOptFloat64(val, DefOptCopCPUFactor)
-	case TiDBOptTiFlashConcurrencyFactor:
-		s.CopTiFlashConcurrencyFactor = tidbOptFloat64(val, DefOptTiFlashConcurrencyFactor)
-	case TiDBOptNetworkFactor:
-		s.NetworkFactor = tidbOptFloat64(val, DefOptNetworkFactor)
-	case TiDBOptScanFactor:
-		s.ScanFactor = tidbOptFloat64(val, DefOptScanFactor)
-	case TiDBOptDescScanFactor:
-		s.DescScanFactor = tidbOptFloat64(val, DefOptDescScanFactor)
-	case TiDBOptSeekFactor:
-		s.SeekFactor = tidbOptFloat64(val, DefOptSeekFactor)
-	case TiDBOptMemoryFactor:
-		s.MemoryFactor = tidbOptFloat64(val, DefOptMemoryFactor)
-	case TiDBOptDiskFactor:
-		s.DiskFactor = tidbOptFloat64(val, DefOptDiskFactor)
-	case TiDBOptConcurrencyFactor:
-		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
-	case TiDBIndexLookupConcurrency:
-		s.indexLookupConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-	case TiDBIndexLookupJoinConcurrency:
-		s.indexLookupJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-	case TiDBIndexJoinBatchSize:
-		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
-	case TiDBAllowBatchCop:
-		s.AllowBatchCop = int(tidbOptInt64(val, DefTiDBAllowBatchCop))
-	case TiDBAllowMPPExecution:
-		s.AllowMPPExecution = TiDBOptOn(val)
-	case TiDBIndexLookupSize:
-		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
-	case TiDBHashJoinConcurrency:
-		s.hashJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-	case TiDBProjectionConcurrency:
-		s.projectionConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-	case TiDBHashAggPartialConcurrency:
-		s.hashAggPartialConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-	case TiDBHashAggFinalConcurrency:
-		s.hashAggFinalConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-	case TiDBWindowConcurrency:
-		s.windowConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-	case TiDBMergeJoinConcurrency:
-		s.mergeJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-	case TiDBStreamAggConcurrency:
-		s.streamAggConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-	case TiDBDistSQLScanConcurrency:
-		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
-	case TiDBIndexSerialScanConcurrency:
-		s.indexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
-	case TiDBExecutorConcurrency:
-		s.ExecutorConcurrency = tidbOptPositiveInt32(val, DefExecutorConcurrency)
-	case TiDBBackoffLockFast:
-		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
-	case TiDBBackOffWeight:
-		s.KVVars.BackOffWeight = tidbOptPositiveInt32(val, kv.DefBackOffWeight)
-	case TiDBConstraintCheckInPlace:
-		s.ConstraintCheckInPlace = TiDBOptOn(val)
-	case TiDBBatchInsert:
-		s.BatchInsert = TiDBOptOn(val)
-	case TiDBBatchDelete:
-		s.BatchDelete = TiDBOptOn(val)
-	case TiDBBatchCommit:
-		s.BatchCommit = TiDBOptOn(val)
-	case TiDBDMLBatchSize:
-		s.DMLBatchSize = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
-	case TiDBMaxChunkSize:
-		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
-	case TiDBInitChunkSize:
-		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
-	case TIDBMemQuotaQuery:
-		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
-	case TiDBMemQuotaApplyCache:
-		s.MemQuotaApplyCache = tidbOptInt64(val, DefTiDBMemQuotaApplyCache)
-	case TIDBMemQuotaHashJoin:
-		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
-	case TIDBMemQuotaMergeJoin:
-		s.MemQuotaMergeJoin = tidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
-	case TIDBMemQuotaSort:
-		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
-	case TIDBMemQuotaTopn:
-		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
-	case TIDBMemQuotaIndexLookupReader:
-		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
-	case TIDBMemQuotaIndexLookupJoin:
-		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
-	case TiDBGeneralLog:
-		ProcessGeneralLog.Store(TiDBOptOn(val))
-	case TiDBPProfSQLCPU:
-		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)
-	case TiDBDDLSlowOprThreshold:
-		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
-	case TiDBRetryLimit:
-		s.RetryLimit = tidbOptInt64(val, DefTiDBRetryLimit)
-	case TiDBDisableTxnAutoRetry:
-		s.DisableTxnAutoRetry = TiDBOptOn(val)
-	case TiDBEnableStreaming:
-		s.EnableStreaming = TiDBOptOn(val)
-	case TiDBEnableChunkRPC:
-		s.EnableChunkRPC = TiDBOptOn(val)
-	case TiDBEnableCascadesPlanner:
-		s.SetEnableCascadesPlanner(TiDBOptOn(val))
-	case TiDBOptimizerSelectivityLevel:
-		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
-	case TiDBEnableTablePartition:
-		s.EnableTablePartition = val
-	case TiDBEnableListTablePartition:
-		s.EnableListTablePartition = TiDBOptOn(val)
-	case TiDBDDLReorgPriority:
-		s.setDDLReorgPriority(val)
-	case TiDBForcePriority:
-		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
-	case TiDBEnableRadixJoin:
-		s.EnableRadixJoin = TiDBOptOn(val)
-	case TiDBEnableWindowFunction:
-		s.EnableWindowFunction = TiDBOptOn(val)
-	case TiDBEnableStrictDoubleTypeCheck:
-		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
-	case TiDBEnableVectorizedExpression:
-		s.EnableVectorizedExpression = TiDBOptOn(val)
-	case TiDBOptJoinReorderThreshold:
-		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
-	case TiDBSlowQueryFile:
-		s.SlowQueryFile = val
-	case TiDBEnableFastAnalyze:
-		s.EnableFastAnalyze = TiDBOptOn(val)
-	case TiDBWaitSplitRegionFinish:
-		s.WaitSplitRegionFinish = TiDBOptOn(val)
-	case TiDBWaitSplitRegionTimeout:
-		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeout))
-	case TiDBExpensiveQueryTimeThreshold:
-		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
-	case TiDBTxnMode:
-		s.TxnMode = strings.ToUpper(val)
-	case TiDBRowFormatVersion:
-		formatVersion := int(tidbOptInt64(val, DefTiDBRowFormatV1))
-		if formatVersion == DefTiDBRowFormatV1 {
-			s.RowEncoder.Enable = false
-		} else if formatVersion == DefTiDBRowFormatV2 {
-			s.RowEncoder.Enable = true
-		}
-	case TiDBLowResolutionTSO:
-		s.LowResolutionTSO = TiDBOptOn(val)
-	case TiDBEnableIndexMerge:
-		s.SetEnableIndexMerge(TiDBOptOn(val))
-	case TiDBEnableNoopFuncs:
-		s.EnableNoopFuncs = TiDBOptOn(val)
-	case TiDBReplicaRead:
-		if strings.EqualFold(val, "follower") {
-			s.SetReplicaRead(kv.ReplicaReadFollower)
-		} else if strings.EqualFold(val, "leader-and-follower") {
-			s.SetReplicaRead(kv.ReplicaReadMixed)
-		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
-			s.SetReplicaRead(kv.ReplicaReadLeader)
-		}
-	case TiDBAllowRemoveAutoInc:
-		s.AllowRemoveAutoInc = TiDBOptOn(val)
-	// It's a global variable, but it also wants to be cached in server.
-	case TiDBMaxDeltaSchemaCount:
-		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
-	case TiDBUsePlanBaselines:
-		s.UsePlanBaselines = TiDBOptOn(val)
-	case TiDBEvolvePlanBaselines:
-		s.EvolvePlanBaselines = TiDBOptOn(val)
-	case TiDBEnableExtendedStats:
-		s.EnableExtendedStats = TiDBOptOn(val)
-	case TiDBIsolationReadEngines:
-		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
-		for _, engine := range strings.Split(val, ",") {
-			switch engine {
-			case kv.TiKV.Name():
-				s.IsolationReadEngines[kv.TiKV] = struct{}{}
-			case kv.TiFlash.Name():
-				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
-			case kv.TiDB.Name():
-				s.IsolationReadEngines[kv.TiDB] = struct{}{}
-			}
-		}
-	case TiDBStoreLimit:
-		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
-	case TiDBMetricSchemaStep:
-		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
-	case TiDBMetricSchemaRangeDuration:
-		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
-	case CollationConnection, CollationDatabase, CollationServer:
-		coll, err := collate.GetCollationByName(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
-			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
-			if err != nil {
-				return err
-			}
-		}
-		switch name {
-		case CollationConnection:
-			s.systems[CollationConnection] = coll.Name
-			s.systems[CharacterSetConnection] = coll.CharsetName
-		case CollationDatabase:
-			s.systems[CollationDatabase] = coll.Name
-			s.systems[CharsetDatabase] = coll.CharsetName
-		case CollationServer:
-			s.systems[CollationServer] = coll.Name
-			s.systems[CharacterSetServer] = coll.CharsetName
-		}
-		val = coll.Name
-	case CharacterSetConnection, CharacterSetClient, CharacterSetResults,
-		CharacterSetServer, CharsetDatabase, CharacterSetFilesystem:
-		if val == "" {
-			if name == CharacterSetResults {
-				s.systems[CharacterSetResults] = ""
-				return nil
-			}
-			return ErrWrongValueForVar.GenWithStackByArgs(name, "NULL")
-		}
-		cht, coll, err := charset.GetCharsetInfo(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
-			cht, coll = charset.GetDefaultCharsetAndCollate()
-		}
-		switch name {
-		case CharacterSetConnection:
-			s.systems[CollationConnection] = coll
-			s.systems[CharacterSetConnection] = cht
-		case CharsetDatabase:
-			s.systems[CollationDatabase] = coll
-			s.systems[CharsetDatabase] = cht
-		case CharacterSetServer:
-			s.systems[CollationServer] = coll
-			s.systems[CharacterSetServer] = cht
-		}
-		val = cht
-	case TiDBSlowLogThreshold:
-		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
-	case TiDBRecordPlanInSlowLog:
-		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
-	case TiDBEnableSlowLog:
-		config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
-	case TiDBQueryLogMaxLen:
-		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
-	case TiDBCheckMb4ValueInUTF8:
-		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
-	case TiDBFoundInPlanCache:
-		s.FoundInPlanCache = TiDBOptOn(val)
-	case TiDBFoundInBinding:
-		s.FoundInBinding = TiDBOptOn(val)
-	case TiDBEnableCollectExecutionInfo:
-		oldConfig := config.GetGlobalConfig()
-		newValue := TiDBOptOn(val)
-		if oldConfig.EnableCollectExecutionInfo != newValue {
-			newConfig := *oldConfig
-			newConfig.EnableCollectExecutionInfo = newValue
-			config.StoreGlobalConfig(&newConfig)
-		}
-	case SQLSelectLimit:
-		result, err := strconv.ParseUint(val, 10, 64)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		s.SelectLimit = result
-	case TiDBAllowAutoRandExplicitInsert:
-		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
-	case TiDBEnableClusteredIndex:
-		s.EnableClusteredIndex = TiDBOptOn(val)
-	case TiDBPartitionPruneMode:
-		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
-	case TiDBEnableParallelApply:
-		s.EnableParallelApply = TiDBOptOn(val)
-	case TiDBSlowLogMasking:
-		// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
-		return s.SetSystemVar(TiDBRedactLog, val)
-	case TiDBRedactLog:
-		s.EnableRedactLog = TiDBOptOn(val)
-		errors.RedactLogEnabled.Store(s.EnableRedactLog)
-	case TiDBShardAllocateStep:
-		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
-	case TiDBEnableChangeColumnType:
-		s.EnableChangeColumnType = TiDBOptOn(val)
-	case TiDBEnableChangeMultiSchema:
-		s.EnableChangeMultiSchema = TiDBOptOn(val)
-	case TiDBEnablePointGetCache:
-		s.EnablePointGetCache = TiDBOptOn(val)
-	case TiDBEnableAlterPlacement:
-		s.EnableAlterPlacement = TiDBOptOn(val)
-	case TiDBEnableAmendPessimisticTxn:
-		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
-	case TiDBTxnScope:
-		switch val {
-		case oracle.GlobalTxnScope:
-			s.TxnScope = oracle.NewGlobalTxnScope()
-		case oracle.LocalTxnScope:
-			s.TxnScope = oracle.GetTxnScope()
-		default:
-			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
-		}
-	case TiDBMemoryUsageAlarmRatio:
-		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
-	case TiDBEnableRateLimitAction:
-		s.EnabledRateLimitAction = TiDBOptOn(val)
-	case TiDBEnableAsyncCommit:
-		s.EnableAsyncCommit = TiDBOptOn(val)
-	case TiDBEnable1PC:
-		s.Enable1PC = TiDBOptOn(val)
-	case TiDBGuaranteeLinearizability:
-		s.GuaranteeLinearizability = TiDBOptOn(val)
-	case TiDBAnalyzeVersion:
-		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
-	case TiDBEnableIndexMergeJoin:
-		s.EnableIndexMergeJoin = TiDBOptOn(val)
-	case TiDBTrackAggregateMemoryUsage:
-		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
-	case TiDBMultiStatementMode:
-		s.MultiStatementMode = TiDBOptMultiStmt(val)
-	case TiDBEnableExchangePartition:
-		s.TiDBEnableExchangePartition = TiDBOptOn(val)
-	case TiDBAllowFallbackToTiKV:
-		s.AllowFallbackToTiKV = make(map[kv.StoreType]struct{})
-		for _, engine := range strings.Split(val, ",") {
-			switch engine {
-			case kv.TiFlash.Name():
-				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
-			}
-		}
-	}
-	s.systems[name] = val
-	return nil
+	sv := GetSysVar(name)
+	return sv.SetSessionFromHook(s, val)
 }
 
 // GetReadableTxnMode returns the session variable TxnMode but rewrites it to "OPTIMISTIC" when it's empty.

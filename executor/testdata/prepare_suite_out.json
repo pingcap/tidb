@@ -63,7 +63,7 @@
               "Projection_3 1.00 root  10->Column#1, cba->Column#2",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "0",
+            "LastPlanUseCache": "1",
             "Result": [
               "10 cba"
             ]
@@ -114,13 +114,29 @@
             "Vars": [
               {
                 "Name": "v1",
+                "Value": "-200"
+              }
+            ],
+            "Plan": [
+              "Projection_4 10.00 root  test.t1.a",
+              "└─IndexReader_6 10.00 root  index:IndexRangeScan_5",
+              "  └─IndexRangeScan_5 10.00 cop[tikv] table:t1, index:b(b, a) range:[-200,-200], keep order:false, stats:pseudo"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": null
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
                 "Value": "\"abc\""
               }
             ],
             "Plan": [
               "Projection_4 8000.00 root  test.t1.a",
               "└─IndexReader_10 8000.00 root  index:Selection_9",
-              "  └─Selection_9 8000.00 cop[tikv]  eq(cast(test.t1.b), 0)",
+              "  └─Selection_9 8000.00 cop[tikv]  eq(cast(test.t1.b, double BINARY), 0)",
               "    └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:b(b, a) keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "0",
@@ -188,10 +204,10 @@
             "Plan": [
               "HashJoin_38 63744383.74 root  inner join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
               "├─TableReader_59(Build) 7984.01 root  data:Selection_58",
-              "│ └─Selection_58 7984.01 cop[tikv]  eq(cast(test.t2.b), 0), not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+              "│ └─Selection_58 7984.01 cop[tikv]  eq(cast(test.t2.b, double BINARY), 0), not(isnull(test.t2.a)), not(isnull(test.t2.b))",
               "│   └─TableFullScan_57 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
               "└─TableReader_52(Probe) 7984.01 root  data:Selection_51",
-              "  └─Selection_51 7984.01 cop[tikv]  eq(cast(test.t1.b), 0), not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+              "  └─Selection_51 7984.01 cop[tikv]  eq(cast(test.t1.b, double BINARY), 0), not(isnull(test.t1.a)), not(isnull(test.t1.b))",
               "    └─TableFullScan_50 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "0",

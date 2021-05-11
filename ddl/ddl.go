@@ -163,12 +163,14 @@ type DDL interface {
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
 	GetID() string
-	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
+	// GetTableMaxHandle gets the max row ID of a normal table or a partition.
 	GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetHook gets the hook. It's exported for testing.
 	GetHook() Callback
+	// SetHook sets the hook.
+	SetHook(h Callback)
 }
 
 type limitJobTask struct {
@@ -592,6 +594,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		}
 
 		if historyJob.Error != nil {
+			logutil.BgLogger().Info("[ddl] DDL job is failed", zap.Int64("jobID", jobID))
 			return errors.Trace(historyJob.Error)
 		}
 		// Only for JobStateCancelled job which is adding columns or drop columns.
@@ -622,6 +625,14 @@ func (d *ddl) GetHook() Callback {
 	defer d.mu.Unlock()
 
 	return d.mu.hook
+}
+
+// SetHook set the customized hook.
+func (d *ddl) SetHook(h Callback) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.mu.hook = h
 }
 
 func (d *ddl) startCleanDeadTableLock() {
@@ -666,6 +677,17 @@ type RecoverInfo struct {
 	SnapshotTS    uint64
 	CurAutoIncID  int64
 	CurAutoRandID int64
+}
+
+// delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
+// It should be called before any DDL that could break data consistency.
+// This provides a safe window for async commit and 1PC to commit with an old schema.
+func delayForAsyncCommit() {
+	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
+	duration := cfg.SafeWindow + cfg.AllowedClockDrift
+	logutil.BgLogger().Info("sleep before DDL finishes to make async commit and 1PC safe",
+		zap.Duration("duration", duration))
+	time.Sleep(duration)
 }
 
 var (

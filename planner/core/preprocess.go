@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/sem"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -563,7 +564,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		return
 	}
 	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.IsTemporary && !enableNoopFuncs {
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
 		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")
 		return
 	}
@@ -675,7 +676,7 @@ func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 	p.checkDropTableNames(stmt.Tables)
 	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.IsTemporary && !enableNoopFuncs {
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
 		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
 		return
 	}
@@ -1202,6 +1203,9 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
+	if sem.IsEnabled() && node.Tp == ast.ShowConfig {
+		p.err = ErrNotSupportedWithSem.GenWithStackByArgs("SHOW CONFIG")
+	}
 	if node.DBName == "" {
 		if node.Table != nil && node.Table.Schema.L != "" {
 			node.DBName = node.Table.Schema.O

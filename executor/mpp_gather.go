@@ -24,14 +24,13 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
-	if !ctx.GetSessionVars().AllowMPPExecution || collate.NewCollationEnabled() {
+	if !ctx.GetSessionVars().AllowMPPExecution {
 		return false
 	}
 	_, ok := tr.GetTablePlan().(*plannercore.PhysicalExchangeSender)
@@ -46,8 +45,7 @@ type MPPGather struct {
 	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
 
-	allocTaskID *int64
-	mppReqs     []*kv.MPPDispatchRequest
+	mppReqs []*kv.MPPDispatchRequest
 
 	respIter distsql.SelectResult
 }
@@ -88,7 +86,7 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 		e.mppReqs = append(e.mppReqs, req)
 	}
 	for _, r := range pf.ExchangeReceivers {
-		err = e.appendMPPDispatchReq(r.ChildPf, r.Tasks, false)
+		err = e.appendMPPDispatchReq(r.GetExchangeSender().Fragment, r.Tasks, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -110,7 +108,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
 	planIDs := collectPlanIDS(e.originalPlan, nil)
-	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.allocTaskID, e.is)
+	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -127,7 +125,6 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.respIter.Fetch(ctx)
 	return nil
 }
 
@@ -139,6 +136,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
+	e.mppReqs = nil
 	if e.respIter != nil {
 		return e.respIter.Close()
 	}

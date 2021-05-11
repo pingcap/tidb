@@ -15,11 +15,14 @@ package config
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
@@ -32,6 +35,11 @@ const (
 	// DefStoresRefreshInterval is the default value of StoresRefreshInterval
 	DefStoresRefreshInterval = 60
 )
+
+func init() {
+	conf := DefaultConfig()
+	StoreGlobalConfig(&conf)
+}
 
 // Config contains configuration options.
 type Config struct {
@@ -47,12 +55,14 @@ type Config struct {
 	StoresRefreshInterval uint64
 	OpenTracingEnable     bool
 	Path                  string
+	EnableForwarding      bool
+	TxnScope              string
 }
 
 // DefaultConfig returns the default configuration.
 func DefaultConfig() Config {
 	return Config{
-		CommitterConcurrency:  16,
+		CommitterConcurrency:  128,
 		MaxTxnTTL:             60 * 60 * 1000, // 1hour
 		ServerMemoryQuota:     0,
 		TiKVClient:            DefaultTiKVClient(),
@@ -61,6 +71,8 @@ func DefaultConfig() Config {
 		StoresRefreshInterval: DefStoresRefreshInterval,
 		OpenTracingEnable:     false,
 		Path:                  "",
+		EnableForwarding:      false,
+		TxnScope:              "",
 	}
 }
 
@@ -117,6 +129,38 @@ func StoreGlobalConfig(config *Config) {
 	globalConf.Store(config)
 }
 
+// UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
+func UpdateGlobal(f func(conf *Config)) func() {
+	g := GetGlobalConfig()
+	restore := func() {
+		StoreGlobalConfig(g)
+	}
+	newConf := *g
+	f(&newConf)
+	StoreGlobalConfig(&newConf)
+	return restore
+}
+
+const (
+	globalTxnScope = "global"
+)
+
+// GetTxnScopeFromConfig extracts @@txn_scope value from config
+func GetTxnScopeFromConfig() (bool, string) {
+	failpoint.Inject("injectTxnScope", func(val failpoint.Value) {
+		v := val.(string)
+		if len(v) > 0 {
+			failpoint.Return(false, v)
+		}
+		failpoint.Return(true, globalTxnScope)
+	})
+
+	if kvcfg := GetGlobalConfig(); kvcfg != nil && len(kvcfg.TxnScope) > 0 {
+		return false, kvcfg.TxnScope
+	}
+	return true, globalTxnScope
+}
+
 // ParsePath parses this path.
 // Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
 func ParsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
@@ -141,4 +185,39 @@ func ParsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 	}
 	etcdAddrs = strings.Split(u.Host, ",")
 	return
+}
+
+var (
+	internalClientInit sync.Once
+	internalHTTPClient *http.Client
+	internalHTTPSchema string
+)
+
+// InternalHTTPClient is used by TiDB-Server to request other components.
+func InternalHTTPClient() *http.Client {
+	internalClientInit.Do(initInternalClient)
+	return internalHTTPClient
+}
+
+// InternalHTTPSchema specifies use http or https to request other components.
+func InternalHTTPSchema() string {
+	internalClientInit.Do(initInternalClient)
+	return internalHTTPSchema
+}
+
+func initInternalClient() {
+	clusterSecurity := GetGlobalConfig().Security
+	tlsCfg, err := clusterSecurity.ToTLSConfig()
+	if err != nil {
+		logutil.BgLogger().Fatal("could not load cluster ssl", zap.Error(err))
+	}
+	if tlsCfg == nil {
+		internalHTTPSchema = "http"
+		internalHTTPClient = http.DefaultClient
+		return
+	}
+	internalHTTPSchema = "https"
+	internalHTTPClient = &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}
 }

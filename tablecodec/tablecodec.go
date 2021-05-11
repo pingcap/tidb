@@ -478,7 +478,7 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 			if id != hid {
 				continue
 			}
-			if types.CommonHandleNeedRestoredData(ft) {
+			if types.NeedRestoredData(ft) {
 				continue
 			}
 			d, err := decodeHandleToDatum(handle, ft, idx)
@@ -576,11 +576,11 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	case mysql.TypeFloat:
 		datum.SetFloat32(float32(datum.GetFloat64()))
 		return datum, nil
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeTinyBlob,
+		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
 		datum.SetString(datum.GetString(), ft.Collate)
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24,
-		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeTinyBlob,
-		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
+		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
@@ -1165,7 +1165,7 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 	if idxInfo.Global {
 		idxVal = encodePartitionID(idxVal, partitionID)
 	}
-	if collate.NewCollationEnabled() && (IdxValNeedRestoredData || len(handleRestoredData) > 0) {
+	if IdxValNeedRestoredData || len(handleRestoredData) > 0 {
 		colIds := make([]int64, 0, len(idxInfo.Columns))
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
 		for i, idxCol := range idxInfo.Columns {
@@ -1221,7 +1221,7 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 		idxVal = encodePartitionID(idxVal, partitionID)
 		newEncode = true
 	}
-	if collate.NewCollationEnabled() && IdxValNeedRestoredData {
+	if IdxValNeedRestoredData {
 		colIds := make([]int64, len(idxInfo.Columns))
 		for i, col := range idxInfo.Columns {
 			colIds[i] = tblInfo.Columns[col.Offset].ID

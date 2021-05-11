@@ -301,6 +301,9 @@ type LogicalPlan interface {
 
 	// rollBackTaskMap roll back all taskMap's logs after TimeStamp TS.
 	rollBackTaskMap(TS uint64)
+
+	// canPushToCop check if we might push this plan to a specific store.
+	canPushToCop(store kv.StoreType) bool
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -338,6 +341,12 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
+	// Cost returns the estimated cost of the subplan.
+	Cost() float64
+
+	// SetCost set the cost of the subplan.
+	SetCost(cost float64)
+
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
@@ -373,6 +382,17 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
+	cost             float64
+}
+
+// Cost implements PhysicalPlan interface.
+func (p *basePhysicalPlan) Cost() float64 {
+	return p.cost
+}
+
+// SetCost implements PhysicalPlan interface.
+func (p *basePhysicalPlan) SetCost(cost float64) {
+	p.cost = cost
 }
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
@@ -403,7 +423,7 @@ func (p *basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
-// ExplainInfo implements Plan interface.
+// ExplainNormalizedInfo implements PhysicalPlan interface.
 func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
 	return ""
 }

@@ -44,6 +44,8 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -636,16 +638,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		return errors.Trace(err)
 	}
 
-	useDistributedGC, err := w.checkUseDistributedGC()
-	if err != nil {
-		logutil.Logger(ctx).Error("[gc worker] failed to load gc mode, fall back to central mode.",
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
-		useDistributedGC = false
-	}
-
-	if useDistributedGC {
+	if w.checkUseDistributedGC() {
 		err = w.uploadSafePointToPD(ctx, safePoint)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to upload safe point to PD",
@@ -949,27 +942,24 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	return jobConcurrency, nil
 }
 
-func (w *GCWorker) checkUseDistributedGC() (bool, error) {
-	str, err := w.loadValueFromSysTable(gcModeKey)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if str == "" {
+// Central mode is deprecated in v5.0. This function will always return true.
+func (w *GCWorker) checkUseDistributedGC() bool {
+	mode, err := w.loadValueFromSysTable(gcModeKey)
+	if err == nil && mode == "" {
 		err = w.saveValueToSysTable(gcModeKey, gcModeDefault)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		str = gcModeDefault
 	}
-	if strings.EqualFold(str, gcModeDistributed) {
-		return true, nil
+	if err != nil {
+		logutil.BgLogger().Error("[gc worker] failed to load gc mode, fall back to distributed mode",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
+	} else if strings.EqualFold(mode, gcModeCentral) {
+		logutil.BgLogger().Warn("[gc worker] distributed mode will be used as central mode is deprecated")
+	} else if !strings.EqualFold(mode, gcModeDistributed) {
+		logutil.BgLogger().Warn("[gc worker] distributed mode will be used",
+			zap.String("invalid gc mode", mode))
 	}
-	if strings.EqualFold(str, gcModeCentral) {
-		return false, nil
-	}
-	logutil.BgLogger().Warn("[gc worker] distributed mode will be used",
-		zap.String("invalid gc mode", str))
-	return true, nil
+	return true
 }
 
 func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
@@ -1022,7 +1012,7 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, con
 		zap.Int("concurrency", concurrency))
 	startTime := time.Now()
 
-	handler := func(ctx context.Context, r kv.KeyRange) (tikv.RangeTaskStat, error) {
+	handler := func(ctx context.Context, r tikvstore.KeyRange) (tikv.RangeTaskStat, error) {
 		return w.resolveLocksForRange(ctx, safePoint, r.StartKey, r.EndKey)
 	}
 
@@ -1097,7 +1087,7 @@ retryScanAndResolve:
 			continue
 		}
 		if resp.Resp == nil {
-			return stat, errors.Trace(tikv.ErrBodyMissing)
+			return stat, errors.Trace(tikverr.ErrBodyMissing)
 		}
 		locksResp := resp.Resp.(*kvrpcpb.ScanLockResponse)
 		if locksResp.GetError() != nil {
@@ -1278,7 +1268,7 @@ func (w *GCWorker) registerLockObservers(ctx context.Context, safePoint uint64, 
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
-			return errors.Trace(tikv.ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		errStr := resp.Resp.(*kvrpcpb.RegisterLockObserverResponse).Error
 		if len(errStr) > 0 {
@@ -1319,7 +1309,7 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 			continue
 		}
 		if resp.Resp == nil {
-			logError(store, tikv.ErrBodyMissing)
+			logError(store, tikverr.ErrBodyMissing)
 			continue
 		}
 		respInner := resp.Resp.(*kvrpcpb.CheckLockObserverResponse)
@@ -1385,7 +1375,7 @@ func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, st
 			continue
 		}
 		if resp.Resp == nil {
-			logError(store, tikv.ErrBodyMissing)
+			logError(store, tikverr.ErrBodyMissing)
 			continue
 		}
 		errStr := resp.Resp.(*kvrpcpb.RemoveLockObserverResponse).Error
@@ -1612,7 +1602,7 @@ func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region ti
 	}
 
 	if resp.Resp == nil {
-		return nil, errors.Trace(tikv.ErrBodyMissing)
+		return nil, errors.Trace(tikverr.ErrBodyMissing)
 	}
 	gcResp := resp.Resp.(*kvrpcpb.GCResponse)
 	if gcResp.GetError() != nil {
@@ -1634,7 +1624,7 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 		"gc-runner",
 		w.tikvStore,
 		concurrency,
-		func(ctx context.Context, r kv.KeyRange) (tikv.RangeTaskStat, error) {
+		func(ctx context.Context, r tikvstore.KeyRange) (tikv.RangeTaskStat, error) {
 			return w.doGCForRange(ctx, r.StartKey, r.EndKey, safePoint)
 		})
 
@@ -2196,7 +2186,7 @@ func (s *mergeLockScanner) physicalScanLocksForStore(ctx context.Context, safePo
 			return errors.Trace(err)
 		}
 		if response.Resp == nil {
-			return errors.Trace(tikv.ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		resp := response.Resp.(*kvrpcpb.PhysicalScanLockResponse)
 		if len(resp.Error) > 0 {

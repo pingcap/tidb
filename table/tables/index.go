@@ -16,6 +16,7 @@ package tables
 import (
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -81,11 +83,15 @@ func (c *indexIter) Next() (indexData []types.Datum, h kv.Handle, err error) {
 
 // index is the data structure for index data in the KV store.
 type index struct {
-	idxInfo          *model.IndexInfo
-	tblInfo          *model.TableInfo
-	prefix           kv.Key
-	needRestoredData bool
-	phyTblID         int64
+	idxInfo  *model.IndexInfo
+	tblInfo  *model.TableInfo
+	prefix   kv.Key
+	phyTblID int64
+	// initNeedRestoreData is used to initialize `needRestoredData` in `index.Create()`.
+	// This routine cannot be done in `NewIndex()` because `needRestoreData` relies on `NewCollationEnabled()` and
+	// the collation global variable is initialized *after* `NewIndex()`.
+	initNeedRestoreData sync.Once
+	needRestoredData    bool
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -97,10 +103,6 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 		}
 	}
 	return false
-}
-
-func (c *index) checkNeedRestoredData() bool {
-	return NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 }
 
 // NewIndex builds a new Index object.
@@ -120,7 +122,6 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		prefix:   prefix,
 		phyTblID: physicalID,
 	}
-	index.needRestoredData = index.checkNeedRestoredData()
 	return index
 }
 
@@ -175,6 +176,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 
 	// save the key buffer to reuse.
 	writeBufs.IndexKeyBuf = key
+	c.initNeedRestoreData.Do(func() {
+		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+	})
 	idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, opt.Untouched, indexedValues, h, c.phyTblID, handleRestoreData)
 	if err != nil {
 		return nil, err
@@ -207,7 +211,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
-			err = us.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+			err = us.GetMemBuffer().SetWithFlags(key, idxVal, tikvstore.SetPresumeKeyNotExists)
 		} else {
 			err = us.GetMemBuffer().Set(key, idxVal)
 		}
@@ -228,7 +232,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, us kv.UnionStore, indexedVa
 		return err
 	}
 	if distinct {
-		err = us.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+		err = us.GetMemBuffer().DeleteWithFlags(key, tikvstore.SetNeedLocked)
 	} else {
 		err = us.GetMemBuffer().Delete(key)
 	}

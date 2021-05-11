@@ -77,16 +77,3 @@ func (s *testTxnSuite) TestRetryExceedCountError(c *C) {
 	})
 	c.Assert(err, NotNil)
 }
-
-func (s *testTxnSuite) TestBasicFunc(c *C) {
-	if IsMockCommitErrorEnable() {
-		defer MockCommitErrorEnable()
-	} else {
-		defer MockCommitErrorDisable()
-	}
-
-	MockCommitErrorEnable()
-	c.Assert(IsMockCommitErrorEnable(), IsTrue)
-	MockCommitErrorDisable()
-	c.Assert(IsMockCommitErrorEnable(), IsFalse)
-}

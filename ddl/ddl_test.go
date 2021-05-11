@@ -42,14 +42,6 @@ type DDLForTest interface {
 	SetInterceptor(h Interceptor)
 }
 
-// SetHook implements DDL.SetHook interface.
-func (d *ddl) SetHook(h Callback) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.mu.hook = h
-}
-
 // SetInterceptor implements DDL.SetInterceptor interface.
 func (d *ddl) SetInterceptor(i Interceptor) {
 	d.mu.Lock()
@@ -79,8 +71,6 @@ func TestT(t *testing.T) {
 		// Test for table lock.
 		conf.EnableTableLock = true
 		conf.Log.SlowThreshold = 10000
-		// Test for add/drop primary key.
-		conf.AlterPrimaryKey = true
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})

@@ -750,6 +750,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "CLUSTERED", tp: mysql.TypeVarchar, size: 64},
 }
 
 var slowQueryCols = []columnInfo{
@@ -867,6 +868,7 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "JOB_INFO", tp: mysql.TypeVarchar, size: 64},
 	{name: "PROCESSED_ROWS", tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: "START_TIME", tp: mysql.TypeDatetime},
+	{name: "END_TIME", tp: mysql.TypeDatetime},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 }
 
@@ -1451,11 +1453,11 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var servers []ServerInfo
 	var isDefaultVersion bool
 	if len(config.GetGlobalConfig().ServerVersion) == 0 {
 		isDefaultVersion = true
 	}
+	var servers = make([]ServerInfo, 0, len(tidbNodes))
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
@@ -1502,11 +1504,11 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
-	var servers []ServerInfo
 	members, err := etcd.EtcdAddrs()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	var servers = make([]ServerInfo, 0, len(members))
 	for _, addr := range members {
 		// Get PD version
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.ClusterVersion)
@@ -1735,7 +1737,7 @@ func (s SchemasSorter) Less(i, j int) bool {
 }
 
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
-	is := GetInfoSchema(ctx)
+	is := ctx.GetSessionVars().GetInfoSchema().(InfoSchema)
 	dbs := is.AllSchemas()
 	sort.Sort(SchemasSorter(dbs))
 	switch it.meta.Name.O {

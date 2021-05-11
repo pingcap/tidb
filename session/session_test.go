@@ -48,11 +48,14 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -256,7 +259,7 @@ func (m mockPumpPullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
 }
 
 func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
-	return mockPumpPullBinlogsClient{mocktikv.MockGRPCClientStream()}, nil
+	return mockPumpPullBinlogsClient{mockcopr.MockGRPCClientStream()}, nil
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
@@ -1783,12 +1786,12 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 	c.Assert(err, NotNil)
 	// Check error type and error message
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(1, 1): [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
 	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2): [kv:1062]Duplicate entry '2' for key 'val'")
+	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'val'")
 
 	// Test for https://github.com/pingcap/tidb/issues/463
 	tk.MustExec("drop table test;")
@@ -2213,7 +2216,8 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}
 	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
 	c.Assert(err, IsNil)
-	s.cluster.SplitTable(tbl.Meta().ID, 10)
+	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
 
 	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 	tk.MustExec("set tidb_init_chunk_size = 2")
@@ -2398,7 +2402,8 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	}
 	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
 	c.Assert(err, IsNil)
-	s.cluster.SplitIndex(tbl.Meta().ID, tbl.Indices()[0].Meta().ID, 10)
+	indexStart := tablecodec.EncodeTableIndexPrefix(tbl.Meta().ID, tbl.Indices()[0].Meta().ID)
+	s.cluster.SplitKeys(indexStart, indexStart.PrefixNext(), 10)
 
 	tk.Se.GetSessionVars().IndexLookupSize = 10
 	rs, err := tk.Exec("select * from chk order by k")
@@ -2653,7 +2658,7 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	tk.MustExec("begin")
 	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
-	vars := txn.GetVars()
+	vars := txn.GetVars().(*tikv.Variables)
 	c.Assert(vars.BackoffLockFast, Equals, 1)
 	c.Assert(vars.BackOffWeight, Equals, 100)
 	tk.MustExec("rollback")
@@ -2663,7 +2668,7 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(tk.Se.GetSessionVars().InTxn(), IsTrue)
 	txn, err = tk.Se.Txn(false)
 	c.Assert(err, IsNil)
-	vars = txn.GetVars()
+	vars = txn.GetVars().(*tikv.Variables)
 	c.Assert(vars.BackOffWeight, Equals, 50)
 
 	tk.MustExec("set @@autocommit = 1")
@@ -2726,9 +2731,9 @@ func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	tk1.MustExec("begin")
 	tk2.MustExec("update no_retry set id = id + 1")
 	tk1.MustExec("update no_retry set id = id + 1")
-	c.Assert(tikv.MockRetryableErrorResp.Enable(`return(true)`), IsNil)
+	c.Assert(tikvutil.MockRetryableErrorResp.Enable(`return(true)`), IsNil)
 	_, err := tk1.Se.Execute(context.Background(), "commit")
-	tikv.MockRetryableErrorResp.Disable()
+	tikvutil.MockRetryableErrorResp.Disable()
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))
@@ -3057,11 +3062,11 @@ func (s *testSessionSuite2) TestReplicaRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadLeader)
 	tk.MustExec("set @@tidb_replica_read = 'follower';")
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
 	tk.MustExec("set @@tidb_replica_read = 'leader';")
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadLeader)
 }
 
 func (s *testSessionSuite3) TestIsolationRead(c *C) {
@@ -3146,12 +3151,12 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetEnableCascadesPlanner(), IsTrue)
 
 	// Test READ_CONSISTENT_REPLICA hint
-	tk.Se.GetSessionVars().SetReplicaRead(kv.ReplicaReadLeader)
+	tk.Se.GetSessionVars().SetReplicaRead(tikvstore.ReplicaReadLeader)
 	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA() */ 1;")
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
 	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA(), READ_CONSISTENT_REPLICA() */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
 }
 
 func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
@@ -3252,7 +3257,7 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("")`)
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("")`)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
@@ -3263,9 +3268,9 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
-	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
@@ -3312,7 +3317,7 @@ PARTITION BY RANGE (c) (
 					GroupID: groupID,
 					Role:    placement.Leader,
 					Count:   1,
-					LabelConstraints: []placement.LabelConstraint{
+					LabelConstraints: []placement.Constraint{
 						{
 							Key:    placement.DCLabelKey,
 							Op:     placement.In,
@@ -3373,8 +3378,8 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("dc-1")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("dc-1")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	// set txn_scope to local
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
@@ -3741,7 +3746,7 @@ func (s *testSessionSuite2) TestMemoryUsageAlarmVariable(c *C) {
 	err = tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=-1")
 	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_memory_usage_alarm_ratio' can't be set to the value of '-1'")
 	err = tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
-	c.Assert(err.Error(), Equals, "Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
+	c.Assert(err.Error(), Equals, "[variable:1228]Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
 }
 
 func (s *testSessionSuite2) TestSelectLockInShare(c *C) {
@@ -4120,6 +4125,43 @@ func (s *testSessionSerialSuite) TestRemovedSysVars(c *C) {
 	c.Assert(err.Error(), Equals, "[variable:1193]Unknown system variable 'bogus_var'")
 }
 
+func (s *testSessionSerialSuite) TestCorrectScopeError(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeNone, Name: "sv_none", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal, Name: "sv_global", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeSession, Name: "sv_session", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "sv_both", Value: "acdc"})
+
+	// check set behavior
+
+	// none
+	_, err := tk.Exec("SET sv_none='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'sv_none' is a read only variable")
+	_, err = tk.Exec("SET GLOBAL sv_none='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'sv_none' is a read only variable")
+
+	// global
+	tk.MustExec("SET GLOBAL sv_global='acdc'")
+	_, err = tk.Exec("SET sv_global='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1229]Variable 'sv_global' is a GLOBAL variable and should be set with SET GLOBAL")
+
+	// session
+	_, err = tk.Exec("SET GLOBAL sv_session='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1228]Variable 'sv_session' is a SESSION variable and can't be used with SET GLOBAL")
+	tk.MustExec("SET sv_session='acdc'")
+
+	// both
+	tk.MustExec("SET GLOBAL sv_both='acdc'")
+	tk.MustExec("SET sv_both='acdc'")
+
+	// unregister
+	variable.UnregisterSysVar("sv_none")
+	variable.UnregisterSysVar("sv_global")
+	variable.UnregisterSysVar("sv_session")
+	variable.UnregisterSysVar("sv_both")
+}
+
 func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -4167,6 +4209,15 @@ func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	_, err = tk.Exec("SET GLOBAL tidb_gc_run_interval = '11mins'")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_gc_run_interval'") // wrong format
 
+}
+
+func (s *testSessionSerialSuite) TestGlobalVarCollationServer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@global.collation_server=utf8mb4_general_ci")
+	tk.MustQuery("show global variables like 'collation_server'").Check(testkit.Rows("collation_server utf8mb4_general_ci"))
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustQuery("show global variables like 'collation_server'").Check(testkit.Rows("collation_server utf8mb4_general_ci"))
+	tk.MustQuery("show variables like 'collation_server'").Check(testkit.Rows("collation_server utf8mb4_general_ci"))
 }
 
 func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
@@ -4228,4 +4279,25 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	err = stmt.Restore(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(sb.String(), Equals, "SELECT 3")
+}
+
+func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows")
+	tk.MustExec("begin")
+	tk.MustExec("insert into g_tmp values (3, 3, 3)")
+	tk.MustExec("insert into g_tmp values (4, 7, 9)")
+
+	// Cover table scan.
+	tk.MustQuery("select * from g_tmp").Check(testkit.Rows("3 3 3", "4 7 9"))
+	// Cover index reader.
+	tk.MustQuery("select b from g_tmp where b > 3").Check(testkit.Rows("7"))
+	// Cover index lookup.
+	tk.MustQuery("select c from g_tmp where b = 3").Check(testkit.Rows("3"))
+	// Cover point get.
+	tk.MustQuery("select * from g_tmp where a = 3").Check(testkit.Rows("3 3 3"))
+	tk.MustExec("commit")
+
+	// The global temporary table data is discard after the transaction commit.
+	tk.MustQuery("select * from g_tmp").Check(testkit.Rows())
 }

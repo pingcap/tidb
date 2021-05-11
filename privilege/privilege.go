@@ -46,6 +46,10 @@ type Manager interface {
 	// RequestVerificationWithUser verifies specific user privilege for the request.
 	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
 
+	// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
+	// Dynamic privileges are only assignable globally, and have their own grantable attribute.
+	RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
+
 	// ConnectionVerification verifies user privilege for connection.
 	ConnectionVerification(user, host string, auth, salt []byte, tlsState *tls.ConnectionState) (string, string, bool)
 
@@ -55,7 +59,7 @@ type Manager interface {
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
-	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
+	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USER_PRIVILEGES table.
 	UserPrivilegesTable() [][]types.Datum
 
 	// ActiveRoles active roles for current session.
@@ -70,6 +74,9 @@ type Manager interface {
 
 	// GetAllRoles return all roles of user.
 	GetAllRoles(user, host string) []*auth.RoleIdentity
+
+	// IsDynamicPrivilege returns if a privilege is in the list of privileges.
+	IsDynamicPrivilege(privNameInUpper string) bool
 }
 
 const key keyType = 0

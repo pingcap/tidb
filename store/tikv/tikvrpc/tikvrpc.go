@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -67,6 +67,8 @@ const (
 	CmdCheckLockObserver
 	CmdRemoveLockObserver
 	CmdPhysicalScanLock
+
+	CmdStoreSafeTS
 
 	CmdCop CmdType = 512 + iota
 	CmdCopStream
@@ -164,6 +166,8 @@ func (t CmdType) String() string {
 		return "DebugGetRegionProperties"
 	case CmdTxnHeartBeat:
 		return "TxnHeartBeat"
+	case CmdStoreSafeTS:
+		return "StoreSafeTS"
 	}
 	return "Unknown"
 }
@@ -175,7 +179,12 @@ type Request struct {
 	kvrpcpb.Context
 	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
 	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
-	StoreTp         kv.StoreType
+	StoreTp         EndpointType
+	// ForwardedHost is the address of a store which will handle the request. It's different from
+	// the address the request sent to.
+	// If it's not empty, the store which receive the request will forward it to
+	// the forwarded host. It's useful when network partition occurs.
+	ForwardedHost string
 }
 
 // NewRequest returns new kv rpc request.
@@ -200,6 +209,22 @@ func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.
 	req.ReplicaReadType = replicaReadType
 	req.ReplicaReadSeed = replicaReadSeed
 	return req
+}
+
+// EnableStaleRead enables stale read
+func (req *Request) EnableStaleRead() {
+	req.StaleRead = true
+	req.ReplicaReadType = kv.ReplicaReadMixed
+	req.ReplicaRead = false
+}
+
+// IsDebugReq check whether the req is debug req.
+func (req *Request) IsDebugReq() bool {
+	switch req.Type {
+	case CmdDebugGetRegionProperties:
+		return true
+	}
+	return false
 }
 
 // Get returns GetRequest in request.
@@ -397,11 +422,9 @@ func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
 }
 
-// EnableStaleRead enables stale read
-func (req *Request) EnableStaleRead() {
-	req.StaleRead = true
-	req.ReplicaReadType = kv.ReplicaReadMixed
-	req.ReplicaRead = false
+// StoreSafeTS returns StoreSafeTSRequest in request.
+func (req *Request) StoreSafeTS() *kvrpcpb.StoreSafeTSRequest {
+	return req.Req.(*kvrpcpb.StoreSafeTSRequest)
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -461,15 +484,6 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_TxnHeartBeat{TxnHeartBeat: req.TxnHeartBeat()}}
 	}
 	return nil
-}
-
-// IsDebugReq check whether the req is debug req.
-func (req *Request) IsDebugReq() bool {
-	switch req.Type {
-	case CmdDebugGetRegionProperties:
-		return true
-	}
-	return false
 }
 
 // Response wraps all kv/coprocessor responses.
@@ -908,6 +922,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.KvCheckSecondaryLocks(ctx, req.CheckSecondaryLocks())
 	case CmdTxnHeartBeat:
 		resp.Resp, err = client.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
+	case CmdStoreSafeTS:
+		resp.Resp, err = client.GetStoreSafeTS(ctx, req.StoreSafeTS())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}

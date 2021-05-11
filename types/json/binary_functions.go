@@ -137,11 +137,8 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 		// The unicode must can be represented in 2 bytes.
 		return char, 0, errors.Trace(err)
 	}
-	var unicode uint16
-	err = binary.Read(bytes.NewReader(char[0:2]), binary.BigEndian, &unicode)
-	if err != nil {
-		return char, 0, errors.Trace(err)
-	}
+
+	unicode := binary.BigEndian.Uint16(char[0:2])
 	size = utf8.RuneLen(rune(unicode))
 	utf8.EncodeRune(char[0:size], rune(unicode))
 	return
@@ -530,7 +527,6 @@ func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) {
 		elems = append(elems, newBj)
 	}
 	bm.modifyValue, bm.err = buildBinaryObject(keys, elems)
-	return
 }
 
 func (bm *binaryModifier) remove(path PathExpression) BinaryJSON {
@@ -585,7 +581,6 @@ func (bm *binaryModifier) doRemove(path PathExpression) {
 		}
 	}
 	bm.modifyValue, bm.err = buildBinaryObject(keys, elems)
-	return
 }
 
 // rebuild merges the old and the modified JSON into a new BinaryJSON

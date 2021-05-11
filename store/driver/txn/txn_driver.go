@@ -15,20 +15,17 @@ package txn
 
 import (
 	"context"
-	"fmt"
-	"strings"
-	"time"
+	"sync/atomic"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/table/tables"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"go.uber.org/zap"
 )
 
 type tikvTxn struct {
@@ -38,6 +35,12 @@ type tikvTxn struct {
 
 // NewTiKVTxn returns a new Transaction.
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
+	txn.SetKVFilter(TiDBKVFilter{})
+
+	entryLimit := atomic.LoadUint64(&kv.TxnEntrySizeLimit)
+	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
+
 	return &tikvTxn{txn, make(map[int64]*model.TableInfo)}
 }
 
@@ -51,7 +54,8 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
-	err := txn.KVTxn.LockKeys(ctx, lockCtx, keysInput...)
+	keys := toTiKVKeys(keysInput)
+	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
 	return txn.extractKeyErr(err)
 }
 
@@ -62,14 +66,124 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
-	return txn.KVTxn.GetSnapshot()
+	return &tikvSnapshot{txn.KVTxn.GetSnapshot()}
+}
+
+// Iter creates an Iterator positioned on the first entry that k <= entry's key.
+// If such entry is not found, it returns an invalid Iterator with no error.
+// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
+// The Iterator must be Closed after use.
+func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	it, err := txn.KVTxn.Iter(k, upperBound)
+	return newKVIterator(it), ToTiDBErr(err)
+}
+
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+// The returned iterator will iterate from greater key to smaller key.
+// If k is nil, the returned iterator will be positioned at the last key.
+// TODO: Add lower bound limit
+func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
+	it, err := txn.KVTxn.IterReverse(k)
+	return newKVIterator(it), ToTiDBErr(err)
+}
+
+// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+// Do not use len(value) == 0 or value == nil to represent non-exist.
+// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
+func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.GetSnapshot()).BatchGet(ctx, keys)
+}
+
+func (txn *tikvTxn) Delete(k kv.Key) error {
+	err := txn.KVTxn.Delete(k)
+	return ToTiDBErr(err)
+}
+
+func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	data, err := txn.KVTxn.Get(ctx, k)
+	return data, ToTiDBErr(err)
+}
+
+func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
+	err := txn.KVTxn.Set(k, v)
+	return ToTiDBErr(err)
+}
+
+func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
+	return newMemBuffer(txn.KVTxn.GetMemBuffer())
+}
+
+func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
+	return &tikvUnionStore{txn.KVTxn.GetUnionStore()}
+}
+
+func (txn *tikvTxn) SetOption(opt int, val interface{}) {
+	switch opt {
+	case tikvstore.BinlogInfo:
+		txn.SetBinlogExecutor(&binlogExecutor{
+			txn:     txn.KVTxn,
+			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
+		})
+	case tikvstore.SchemaChecker:
+		txn.SetSchemaLeaseChecker(val.(tikv.SchemaLeaseChecker))
+	case tikvstore.IsolationLevel:
+		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
+		txn.KVTxn.GetSnapshot().SetIsolationLevel(level)
+	case tikvstore.Priority:
+		txn.KVTxn.SetPriority(getTiKVPriority(val.(int)))
+	case tikvstore.NotFillCache:
+		txn.KVTxn.GetSnapshot().SetNotFillCache(val.(bool))
+	case tikvstore.SyncLog:
+		txn.EnableForceSyncLog()
+	case tikvstore.Pessimistic:
+		txn.SetPessimistic(val.(bool))
+	case tikvstore.SnapshotTS:
+		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
+	case tikvstore.TaskID:
+		txn.KVTxn.GetSnapshot().SetTaskID(val.(uint64))
+	case tikvstore.InfoSchema:
+		txn.SetSchemaVer(val.(tikv.SchemaVer))
+	case tikvstore.CommitHook:
+		txn.SetCommitCallback(val.(func(string, error)))
+	case tikvstore.Enable1PC:
+		txn.SetEnable1PC(val.(bool))
+	case tikvstore.TxnScope:
+		txn.SetScope(val.(string))
+	default:
+		txn.KVTxn.SetOption(opt, val)
+	}
+}
+
+func (txn *tikvTxn) GetOption(opt int) interface{} {
+	switch opt {
+	case tikvstore.TxnScope:
+		return txn.KVTxn.GetScope()
+	default:
+		return txn.KVTxn.GetOption(opt)
+	}
+}
+
+// SetVars sets variables to the transaction.
+func (txn *tikvTxn) SetVars(vars interface{}) {
+	if vs, ok := vars.(*tikv.Variables); ok {
+		txn.KVTxn.SetVars(vs)
+	}
+}
+
+func (txn *tikvTxn) GetVars() interface{} {
+	return txn.KVTxn.GetVars()
 }
 
 func (txn *tikvTxn) extractKeyErr(err error) error {
-	if e, ok := errors.Cause(err).(*tikv.ErrKeyExist); ok {
+	if e, ok := errors.Cause(err).(*tikverr.ErrKeyExist); ok {
 		return txn.extractKeyExistsErr(e.GetKey())
 	}
-	return errors.Trace(err)
+	return extractKeyErr(err)
 }
 
 func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
@@ -82,8 +196,7 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if tblInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
 	}
-
-	value, err := txn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}
@@ -94,102 +207,10 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
 }
 
-func genKeyExistsError(name string, value string, err error) error {
-	if err != nil {
-		logutil.BgLogger().Info("extractKeyExistsErr meets error", zap.Error(err))
-	}
-	return kv.ErrKeyExists.FastGenByArgs(value, name)
-}
+// TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.
+type TiDBKVFilter struct{}
 
-func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.TableInfo) error {
-	const name = "PRIMARY"
-	_, handle, err := tablecodec.DecodeRecordKey(key)
-	if err != nil {
-		return genKeyExistsError(name, key.String(), err)
-	}
-
-	if handle.IsInt() {
-		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
-			if mysql.HasUnsignedFlag(pkInfo.Flag) {
-				handleStr := fmt.Sprintf("%d", uint64(handle.IntValue()))
-				return genKeyExistsError(name, handleStr, nil)
-			}
-		}
-		return genKeyExistsError(name, handle.String(), nil)
-	}
-
-	if len(value) == 0 {
-		return genKeyExistsError(name, handle.String(), errors.New("missing value"))
-	}
-
-	idxInfo := tables.FindPrimaryIndex(tblInfo)
-	if idxInfo == nil {
-		return genKeyExistsError(name, handle.String(), errors.New("cannot find index info"))
-	}
-
-	cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
-	for _, col := range tblInfo.Columns {
-		cols[col.ID] = &col.FieldType
-	}
-	handleColIDs := make([]int64, 0, len(idxInfo.Columns))
-	for _, col := range idxInfo.Columns {
-		handleColIDs = append(handleColIDs, tblInfo.Columns[col.Offset].ID)
-	}
-
-	row, err := tablecodec.DecodeRowToDatumMap(value, cols, time.Local)
-	if err != nil {
-		return genKeyExistsError(name, handle.String(), err)
-	}
-
-	data, err := tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, cols, time.Local, row)
-	if err != nil {
-		return genKeyExistsError(name, handle.String(), err)
-	}
-
-	valueStr := make([]string, 0, len(data))
-	for _, col := range idxInfo.Columns {
-		d := data[tblInfo.Columns[col.Offset].ID]
-		str, err := d.ToString()
-		if err != nil {
-			return genKeyExistsError(name, key.String(), err)
-		}
-		valueStr = append(valueStr, str)
-	}
-	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
-}
-
-func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.TableInfo, indexID int64) error {
-	var idxInfo *model.IndexInfo
-	for _, index := range tblInfo.Indices {
-		if index.ID == indexID {
-			idxInfo = index
-		}
-	}
-	if idxInfo == nil {
-		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find index info"))
-	}
-	name := idxInfo.Name.String()
-
-	if len(value) == 0 {
-		return genKeyExistsError(name, key.String(), errors.New("missing value"))
-	}
-
-	colInfo := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
-	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleNotNeeded, colInfo)
-	if err != nil {
-		return genKeyExistsError(name, key.String(), err)
-	}
-	valueStr := make([]string, 0, len(values))
-	for i, val := range values {
-		d, err := tablecodec.DecodeColumnValue(val, colInfo[i].Ft, time.Local)
-		if err != nil {
-			return genKeyExistsError(name, key.String(), err)
-		}
-		str, err := d.ToString()
-		if err != nil {
-			return genKeyExistsError(name, key.String(), err)
-		}
-		valueStr = append(valueStr, str)
-	}
-	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
+// IsUnnecessaryKeyValue defines which kinds of KV pairs from TiDB needn't be committed.
+func (f TiDBKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
+	return tablecodec.IsUntouchedIndexKValue(key, value)
 }

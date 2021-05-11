@@ -23,12 +23,21 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
+)
+
+// Used for pessimistic lock wait time
+// these two constants are special for lock protocol with tikv
+// 0 means always wait, -1 means nowait, others meaning lock wait in milliseconds
+var (
+	LockAlwaysWait = int64(0)
+	LockNoWait     = int64(-1)
 )
 
 type actionPessimisticLock struct {
@@ -98,17 +107,17 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		if action.LockWaitTime > 0 {
 			timeLeft := action.LockWaitTime - (time.Since(lockWaitStartTime)).Milliseconds()
 			if timeLeft <= 0 {
-				req.PessimisticLock().WaitTimeout = kv.LockNoWait
+				req.PessimisticLock().WaitTimeout = LockNoWait
 			} else {
 				req.PessimisticLock().WaitTimeout = timeLeft
 			}
 		}
 		failpoint.Inject("PessimisticLockErrWriteConflict", func() error {
 			time.Sleep(300 * time.Millisecond)
-			return kv.ErrWriteConflict
+			return &tikverr.ErrWriteConflict{WriteConflict: nil}
 		})
 		startTime := time.Now()
-		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
+		resp, err := c.store.SendReq(bo, req, batch.region, ReadTimeoutShort)
 		if action.LockCtx.Stats != nil {
 			atomic.AddInt64(&action.LockCtx.Stats.LockRPCTime, int64(time.Since(startTime)))
 			atomic.AddInt64(&action.LockCtx.Stats.LockRPCCount, 1)
@@ -129,7 +138,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		lockResp := resp.Resp.(*pb.PessimisticLockResponse)
 		keyErrs := lockResp.GetErrors()
@@ -147,11 +156,11 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		for _, keyErr := range keyErrs {
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
-				e := &ErrKeyExist{AlreadyExist: alreadyExist}
+				e := &tikverr.ErrKeyExist{AlreadyExist: alreadyExist}
 				return c.extractKeyExistsErr(e)
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
-				return &ErrDeadlock{Deadlock: deadlock}
+				return &tikverr.ErrDeadlock{Deadlock: deadlock}
 			}
 
 			// Extract lock from key error
@@ -175,14 +184,14 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		// If msBeforeTxnExpired is not zero, it means there are still locks blocking us acquiring
 		// the pessimistic lock. We should return acquire fail with nowait set or timeout error if necessary.
 		if msBeforeTxnExpired > 0 {
-			if action.LockWaitTime == kv.LockNoWait {
-				return ErrLockAcquireFailAndNoWaitSet
-			} else if action.LockWaitTime == kv.LockAlwaysWait {
+			if action.LockWaitTime == LockNoWait {
+				return tikverr.ErrLockAcquireFailAndNoWaitSet
+			} else if action.LockWaitTime == LockAlwaysWait {
 				// do nothing but keep wait
 			} else {
 				// the lockWaitTime is set, we should return wait timeout if we are still blocked by a lock
 				if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
-					return errors.Trace(ErrLockWaitTimeout)
+					return errors.Trace(tikverr.ErrLockWaitTimeout)
 				}
 			}
 			if action.LockCtx.PessimisticLockWaited != nil {
@@ -198,7 +207,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// actionPessimisticLock runs on each region parallelly, we have to consider that
 			// the error may be dropped.
 			if atomic.LoadUint32(action.Killed) == 1 {
-				return errors.Trace(ErrQueryInterrupted)
+				return errors.Trace(tikverr.ErrQueryInterrupted)
 			}
 		}
 	}
@@ -210,7 +219,7 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 		ForUpdateTs:  c.forUpdateTS,
 		Keys:         batch.mutations.GetKeys(),
 	})
-	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
+	resp, err := c.store.SendReq(bo, req, batch.region, ReadTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}

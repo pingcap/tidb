@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -294,7 +295,7 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 		},
 		Client: client,
 	}
-	txn.SetOption(kv.BinlogInfo, info)
+	txn.SetOption(tikvstore.BinlogInfo, info)
 }
 
 const specialPrefix = `/*T! `

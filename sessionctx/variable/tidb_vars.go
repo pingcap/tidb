@@ -529,6 +529,9 @@ const (
 	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
+
+	// TiDBEnableDynamicPrivileges enables MySQL 8.0 compatible dynamic privileges (experimental).
+	TiDBEnableDynamicPrivileges = "tidb_enable_dynamic_privileges"
 )
 
 // TiDB vars that have only global scope
@@ -544,6 +547,8 @@ const (
 	TiDBGCConcurrency = "tidb_gc_concurrency"
 	// TiDBGCScanLockMode enables the green GC feature (default)
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
+	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
+	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 )
 
 // Default TiDB system variable values.
@@ -609,7 +614,7 @@ const (
 	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
-	DefTiDBAllowMPPExecution           = false
+	DefTiDBAllowMPPExecution           = true
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -654,7 +659,7 @@ const (
 	DefTiDBFoundInBinding              = false
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
-	DefTiDBEnableClusteredIndex        = false
+	DefTiDBEnableClusteredIndex        = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                   = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
@@ -669,6 +674,7 @@ const (
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
+	DefCTEMaxRecursionDepth            = 1000
 )
 
 // Process global variables.
@@ -691,31 +697,7 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	CapturePlanBaseline                   = serverGlobalVariable{globalVal: BoolOff}
+	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 )
-
-// FeatureSwitchVariables is used to filter result of show variables, these switches should be turn blind to users.
-var FeatureSwitchVariables = []string{
-	TiDBEnableChangeColumnType,
-	TiDBEnablePointGetCache,
-	TiDBEnableAlterPlacement,
-	TiDBEnableChangeMultiSchema,
-	TiDBEnableAsyncCommit,
-	TiDBEnable1PC,
-	TiDBGuaranteeLinearizability,
-	TiDBEnableClusteredIndex,
-	TiDBTrackAggregateMemoryUsage,
-	TiDBPartitionPruneMode,
-}
-
-// FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
-func FilterImplicitFeatureSwitch(sysVar *SysVar) bool {
-	for _, one := range FeatureSwitchVariables {
-		if one == sysVar.Name {
-			return true
-		}
-	}
-	return false
-}

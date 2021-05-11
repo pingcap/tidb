@@ -187,6 +187,21 @@ type Execute struct {
 	Plan          Plan
 }
 
+// Check if result of GetVar expr is BinaryLiteral
+// Because GetVar use String to represent BinaryLiteral, here we need to convert string back to BinaryLiteral.
+func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) (res bool) {
+	scalarFunc, ok := expr.(*expression.ScalarFunction)
+	if ok && scalarFunc.FuncName.L == ast.GetVar {
+		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
+		if err != nil || isNull {
+			res = false
+		} else if dt, ok2 := sctx.GetSessionVars().Users[name]; ok2 {
+			res = (dt.Kind() == types.KindBinaryLiteral)
+		}
+	}
+	return res
+}
+
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := sctx.GetSessionVars()
@@ -228,6 +243,13 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 				return err
 			}
 			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			if isGetVarBinaryLiteral(sctx, usingVar) {
+				binVal, convErr := val.ToBytes()
+				if convErr != nil {
+					return convErr
+				}
+				val.SetBinaryLiteral(types.BinaryLiteral(binVal))
+			}
 			param.Datum = val
 			param.InExecute = true
 			vars.PreparedParams = append(vars.PreparedParams, val)
@@ -275,7 +297,8 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
-	stmtCtx := sctx.GetSessionVars().StmtCtx
+	sessVars := sctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
 	stmtCtx.UseCache = prepared.UseCache
 	var cacheKey kvcache.Key
@@ -375,6 +398,12 @@ REBUILD:
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache && !stmtCtx.OptimDependOnMutableConst {
+		// rebuild key to exclude kv.TiFlash when stmt is not read only
+		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
+			delete(sessVars.IsolationReadEngines, kv.TiFlash)
+			cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
@@ -403,6 +432,9 @@ REBUILD:
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
+	if sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst {
+		return nil
+	}
 	var (
 		prepared = preparedStmt.PreparedAst
 		ok       bool
@@ -417,15 +449,17 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 			return err
 		}
 	case *Update:
-		ok, err = IsPointUpdateByAutoCommit(sctx, p)
-		if err != nil {
-			return err
-		}
-		if ok {
-			// make constant expression store paramMarker
-			sctx.GetSessionVars().StmtCtx.PointExec = true
-			p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
-		}
+		// Temporarily turn off the cache for UPDATE to solve #21884.
+
+		//ok, err = IsPointUpdateByAutoCommit(sctx, p)
+		//if err != nil {
+		//	return err
+		//}
+		//if ok {
+		//	// make constant expression store paramMarker
+		//	sctx.GetSessionVars().StmtCtx.PointExec = true
+		//	p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+		//}
 	}
 	if ok {
 		// just cache point plan now
@@ -752,6 +786,8 @@ type Update struct {
 	// Used when partition sets are given.
 	// e.g. update t partition(p0) set a = 1;
 	PartitionedTable []table.PartitionedTable
+
+	tblID2Table map[int64]table.Table
 }
 
 // Delete represents a delete plan.
@@ -820,6 +856,7 @@ type AnalyzeColumnsTask struct {
 	CommonHandleInfo *model.IndexInfo
 	ColsInfo         []*model.ColumnInfo
 	TblInfo          *model.TableInfo
+	Indexes          []*model.IndexInfo
 	analyzeInfo
 }
 
@@ -948,6 +985,8 @@ func (e *Explain) prepareSchema() error {
 	switch {
 	case (format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == ast.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
+	case format == ast.ExplainFormatVerbose:
+		fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
 	case format == ast.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
@@ -977,7 +1016,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
-	case ast.ExplainFormatROW, ast.ExplainFormatBrief:
+	case ast.ExplainFormatROW, ast.ExplainFormatBrief, ast.ExplainFormatVerbose:
 		if e.Rows == nil || e.Analyze {
 			e.explainedPlans = map[int]bool{}
 			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
@@ -1154,7 +1193,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	}
 
 	id := texttree.PrettyIdentifier(p.ExplainID().String()+driverSide, indent, isLastChild)
-	estRows, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, estCost, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
 	var row []string
 	if e.Analyze {
@@ -1164,24 +1203,32 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
 		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
 	} else {
-		row = []string{id, estRows, taskType, accessObject, operatorInfo}
+		row = []string{id, estRows}
+		if e.Format == ast.ExplainFormatVerbose {
+			row = append(row, estCost)
+		}
+		row = append(row, taskType, accessObject, operatorInfo)
 	}
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string) {
+func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string) {
 	// For `explain for connection` statement, `e.ExplainRows` will be set.
 	for _, row := range e.ExplainRows {
 		if len(row) < 5 {
 			panic("should never happen")
 		}
 		if row[0] == id {
-			return row[1], row[3], row[4]
+			return row[1], "N/A", row[3], row[4]
 		}
 	}
 	estRows := "N/A"
 	if si := p.statsInfo(); si != nil {
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
+	}
+	estCost := "N/A"
+	if pp, ok := p.(PhysicalPlan); ok {
+		estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
 	}
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
@@ -1193,7 +1240,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string) {
 		}
 		operatorInfo = p.ExplainInfo()
 	}
-	return estRows, accessObject, operatorInfo
+	return estRows, estCost, accessObject, operatorInfo
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
@@ -1323,5 +1370,6 @@ func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
 	if _, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
 		return true, nil
 	}
+
 	return false, nil
 }
