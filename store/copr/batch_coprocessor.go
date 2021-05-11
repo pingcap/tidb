@@ -492,6 +492,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoffer, ta
 		return b.retryBatchCopTask(ctx, bo, task)
 	}
 	if err != nil {
+		err = txndriver.ToTiDBErr(err)
 		return nil, errors.Trace(err)
 	}
 	defer cancel()
