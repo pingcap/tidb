@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	txndriver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
@@ -406,7 +405,7 @@ func (m *mppIterator) nextImpl(ctx context.Context) (resp *mppResponse, ok bool,
 			return
 		case <-ticker.C:
 			if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
-				err = tikverr.ErrQueryInterrupted
+				err = txndriver.ErrQueryInterrupted
 				exit = true
 				return
 			}
