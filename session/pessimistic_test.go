@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	txndriver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1132,11 +1131,11 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 
 	tk1.MustExec("begin pessimistic")
 	err := tk1.ExecToErr("select * from t where k = 2 for update nowait")
-	c.Check(tikverr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(txndriver.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	err = tk1.ExecToErr("select * from t where k = 4 for update nowait")
-	c.Check(tikverr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(txndriver.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	err = tk1.ExecToErr("select * from t where k = 7 for update nowait")
-	c.Check(tikverr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(txndriver.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	tk.MustExec("rollback")
 	tk1.MustExec("rollback")
 
@@ -1148,9 +1147,9 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 
 	tk1.MustExec("begin pessimistic")
 	err = tk1.ExecToErr("select * from t where k = 2 for update nowait")
-	c.Check(tikverr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(txndriver.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	err = tk1.ExecToErr("select * from t where k = 6 for update nowait")
-	c.Check(tikverr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(txndriver.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	tk.MustExec("rollback")
 	tk1.MustExec("rollback")
 }
@@ -1283,7 +1282,7 @@ func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
 	c.Assert(txndriver.ErrLockWaitTimeout.Equal(err), IsTrue)
 	err = tk2.ExecToErr("select * from t1 where c2 = 3 for update nowait")
 	c.Assert(err, NotNil)
-	c.Assert(tikverr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Assert(txndriver.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
@@ -1430,12 +1429,12 @@ func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 		tk2.MustExec("begin pessimistic")
 		err := tk2.ExecToErr("select * from tu where z = 3 for update nowait")
 		c.Assert(err, NotNil)
-		c.Assert(terror.ErrorEqual(err, tikverr.ErrLockAcquireFailAndNoWaitSet), IsTrue)
+		c.Assert(terror.ErrorEqual(err, txndriver.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into tu(x, y) values(2, 2);")
 		err = tk2.ExecToErr("select * from tu where z = 4 for update nowait")
 		c.Assert(err, NotNil)
-		c.Assert(terror.ErrorEqual(err, tikverr.ErrLockAcquireFailAndNoWaitSet), IsTrue)
+		c.Assert(terror.ErrorEqual(err, txndriver.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 
 		// test batch point get lock
 		tk.MustExec("begin pessimistic")
@@ -1444,12 +1443,12 @@ func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 		tk2.MustExec("begin pessimistic")
 		err = tk2.ExecToErr("select x from tu where z in (3, 7, 9) for update nowait")
 		c.Assert(err, NotNil)
-		c.Assert(terror.ErrorEqual(err, tikverr.ErrLockAcquireFailAndNoWaitSet), IsTrue)
+		c.Assert(terror.ErrorEqual(err, txndriver.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into tu(x, y) values(5, 6);")
 		err = tk2.ExecToErr("select * from tu where z = 11 for update nowait")
 		c.Assert(err, NotNil)
-		c.Assert(terror.ErrorEqual(err, tikverr.ErrLockAcquireFailAndNoWaitSet), IsTrue)
+		c.Assert(terror.ErrorEqual(err, txndriver.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 
 		tk.MustExec("commit")
 		tk2.MustExec("commit")

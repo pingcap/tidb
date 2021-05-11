@@ -51,7 +51,9 @@ var (
 	ErrQueryInterrupted = dbterror.ClassTiKV.NewStd(errno.ErrQueryInterrupted)
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
 	ErrTiKVMaxTimestampNotSynced = dbterror.ClassTiKV.NewStd(errno.ErrTiKVMaxTimestampNotSynced)
-	ErrResolveLockTimeout        = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
+	// ErrLockAcquireFailAndNoWaitSet is the error that acquire the lock failed while no wait is setted.
+	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(errno.ErrLockAcquireFailAndNoWaitSet)
+	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
 	// ErrLockWaitTimeout is the error that wait for the lock is timeout.
 	ErrLockWaitTimeout = dbterror.ClassTiKV.NewStd(errno.ErrLockWaitTimeout)
 	// ErrTiKVServerBusy is the error when tikv server is busy.
@@ -255,6 +257,10 @@ func ToTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrTiKVMaxTimestampNotSynced) {
 		return ErrTiKVMaxTimestampNotSynced
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrLockAcquireFailAndNoWaitSet) {
+		return ErrLockAcquireFailAndNoWaitSet
 	}
 
 	if errors.ErrorEqual(err, tikverr.ErrResolveLockTimeout) {
