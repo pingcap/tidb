@@ -88,6 +88,8 @@ type Join struct {
 	ExplicitParens bool
 }
 
+func (*Join) resultSet() {}
+
 // NewCrossJoin builds a cross join without `on` or `using` clause.
 // If the right child is a join tree, we need to handle it differently to make the precedence get right.
 // Here is the example: t1 join t2 join t3
@@ -273,6 +275,8 @@ type TableName struct {
 	// AS OF is used to see the data as it was at a specific point in time.
 	AsOf *AsOfClause
 }
+
+func (*TableName) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableName) restoreName(ctx *format.RestoreCtx) {
@@ -497,6 +501,8 @@ type TableSource struct {
 	// AsName is the alias name of the table source.
 	AsName model.CIStr
 }
+
+func (*TableSource) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
@@ -1077,6 +1083,8 @@ type SelectStmt struct {
 	With  *WithClause
 }
 
+func (*SelectStmt) resultSet() {}
+
 func (n *WithClause) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("WITH ")
 	if n.IsRecursive {
@@ -1507,6 +1515,8 @@ type SetOprStmt struct {
 	Limit      *Limit
 	With       *WithClause
 }
+
+func (*SetOprStmt) resultSet() {}
 
 // Restore implements Node interface.
 func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
