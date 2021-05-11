@@ -47,9 +47,13 @@ var (
 	ErrGCTooEarly = dbterror.ClassTiKV.NewStd(errno.ErrGCTooEarly)
 	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
 	ErrTiKVStaleCommand = dbterror.ClassTiKV.NewStd(errno.ErrTiKVStaleCommand)
+	// ErrQueryInterrupted is the error when the query is interrupted.
+	ErrQueryInterrupted = dbterror.ClassTiKV.NewStd(errno.ErrQueryInterrupted)
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
 	ErrTiKVMaxTimestampNotSynced = dbterror.ClassTiKV.NewStd(errno.ErrTiKVMaxTimestampNotSynced)
 	ErrResolveLockTimeout        = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
+	// ErrLockWaitTimeout is the error that wait for the lock is timeout.
+	ErrLockWaitTimeout = dbterror.ClassTiKV.NewStd(errno.ErrLockWaitTimeout)
 	// ErrTiKVServerBusy is the error when tikv server is busy.
 	ErrTiKVServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerBusy)
 	// ErrTiFlashServerBusy is the error that tiflash server is busy.
@@ -58,6 +62,8 @@ var (
 	ErrPDServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrPDServerTimeout)
 	// ErrRegionUnavailable is the error when region is not available.
 	ErrRegionUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrRegionUnavailable)
+	// ErrUnknown is the unknow error.
+	ErrUnknown = dbterror.ClassTiKV.NewStd(errno.ErrUnknown)
 )
 
 // Registers error returned from TiKV.
@@ -227,6 +233,10 @@ func ToTiDBErr(err error) error {
 		return ErrTiFlashServerTimeout
 	}
 
+	if errors.ErrorEqual(err, tikverr.ErrQueryInterrupted) {
+		return ErrQueryInterrupted
+	}
+
 	if errors.ErrorEqual(err, tikverr.ErrTiKVServerBusy) {
 		return ErrTiKVServerBusy
 	}
@@ -251,12 +261,20 @@ func ToTiDBErr(err error) error {
 		return ErrResolveLockTimeout
 	}
 
+	if errors.ErrorEqual(err, tikverr.ErrLockWaitTimeout) {
+		return ErrLockWaitTimeout
+	}
+
 	if errors.ErrorEqual(err, tikverr.ErrRegionUnavailable) {
 		return ErrRegionUnavailable
 	}
 
 	if e, ok := err.(*tikverr.ErrTokenLimit); ok {
 		return ErrTokenLimit.GenWithStackByArgs(e.StoreID)
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrUnknown) {
+		return ErrUnknown
 	}
 
 	return errors.Trace(originErr)
