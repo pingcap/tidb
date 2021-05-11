@@ -4733,7 +4733,7 @@ func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
 	tk.MustExec("insert into t values(1, 1)")
 	_, err := tk.Exec("alter table t add index idx(b)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: job.ErrCount:512, mock unknown type: ast.whenClause.")
 	tk.MustExec("drop table if exists t")
 }
 
@@ -5038,4 +5038,24 @@ func (s *testSerialDBSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(job.ErrorCount, Equals, int64(4))
 	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
+}
+
+// Close issue #23321.
+// See https://github.com/pingcap/tidb/issues/23321
+func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists test_add_index_after_add_col")
+	tk.MustExec("create table test_add_index_after_add_col(a int, b int not null default '0');")
+	tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2);")
+	tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0';")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit"), IsNil)
+	}()
+
+	_, err := tk.Exec("alter table test_add_index_after_add_col add unique index cc(c);")
+	c.Assert(err.Error(), Equals, "[kv:1062]DDL job cancelled by panic in rollingback, error msg: Duplicate entry '0' for key 'cc'")
 }

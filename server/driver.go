@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sli"
 )
 
 // IDriver opens IContext.
@@ -104,6 +105,9 @@ type QueryCtx interface {
 	SetCommandValue(command byte)
 
 	SetSessionManager(util.SessionManager)
+
+	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
+	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
 }
 
 // PreparedStatement is the interface to use a prepared statement.
