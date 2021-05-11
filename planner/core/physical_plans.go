@@ -1376,7 +1376,7 @@ type PhysicalCTE struct {
 type PhysicalCTETable struct {
 	physicalSchemaProducer
 
-	IdForStorage int
+	IDForStorage int
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.

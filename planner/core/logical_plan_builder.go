@@ -3659,16 +3659,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 				b.handleHelper.pushMap(nil)
 				var p LogicalPlan
-				lp := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IdForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
+				lp := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
 				lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 				p = lp
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				if len(asName.String()) > 0 {
-					var err error
-					p, err = b.adjustCTEPlanSchema(p, cte.def)
-					if err != nil {
-						return nil, err
-					}
 					var on types.NameSlice
 					for i, name := range p.OutputNames() {
 						cpOn := *name
@@ -5708,7 +5703,10 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 	if isRecursive {
 		saveCheck := b.buildingRecursivePartForCTE
 		b.buildingRecursivePartForCTE = false
-		err = b.splitSeedAndRecursive(ctx, cte.Query.Query, cte.Name)
+		err = b.buildRecursiveCTE(ctx, cte.Query.Query)
+		if err != nil {
+			return nil, err
+		}
 		b.buildingRecursivePartForCTE = saveCheck
 	} else {
 		p, err = b.buildResultSetNode(ctx, cte.Query.Query)
@@ -5724,16 +5722,17 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 		cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 		cInfo.seedLP = p
 	}
-	if err != nil {
-		return nil, err
-	}
 	return nil, nil
 }
 
-func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultSetNode, cteName model.CIStr) error {
+func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNode) error {
 	cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 	switch x := (cte).(type) {
 	case *ast.SetOprStmt:
+		// 1. Handle the WITH clause if exists.
+		// 2. Build plans for each part of SetOprStmt.
+		// 3. If it fail to build a plan, it may be the recursive part. Then we build the seed part plan, and rebuild it.
+		// 4. Finally, we get the seed part plan and recursive part plan.
 		if x.With != nil {
 			l := len(b.outerCTEs)
 			defer func() {
@@ -5745,21 +5744,11 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			}
 		}
 
-		seed := make([]LogicalPlan, 0)
 		recursive := make([]LogicalPlan, 0)
-		var tmpAfterSetOptsForSeed []*ast.SetOprType
 		tmpAfterSetOptsForRecur := []*ast.SetOprType{nil}
 
 		expectSeed := true
-		// TODO: handle intersect/except.
 		for i := 0; i < len(x.SelectList.Selects); i++ {
-			var afterSetOperator *ast.SetOprType
-			switch x := x.SelectList.Selects[i].(type) {
-			case *ast.SelectStmt:
-				afterSetOperator = x.AfterSetOperator
-			case *ast.SetOprSelectList:
-				afterSetOperator = x.AfterSetOperator
-			}
 			var p LogicalPlan
 			var err error
 
@@ -5774,7 +5763,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			}
 
 			if expectSeed {
-				if cInfo.useRecursive == true {
+				if cInfo.useRecursive {
 					if i == 0 {
 						return ErrCTERecursiveRequiresNonRecursiveFirst.GenWithStackByArgs(cInfo.def.Name.String())
 					}
@@ -5784,6 +5773,8 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 					if x.OrderBy != nil {
 						return ErrNotSupportedYet.GenWithStackByArgs("ORDER BY over UNION in recursive Common Table Expression")
 					}
+
+					// Check union type.
 					if afterOpr != nil {
 						if *afterOpr != ast.Union && *afterOpr != ast.UnionAll {
 							return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("%s between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL", afterOpr.String()))
@@ -5794,21 +5785,21 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 					expectSeed = false
 					cInfo.useRecursive = false
 
+					// Build seed part plan.
 					saveSelect := x.SelectList.Selects
 					x.SelectList.Selects = x.SelectList.Selects[:i]
 					p, err = b.buildSetOpr(ctx, x)
-					x.SelectList.Selects = saveSelect
-
 					if err != nil {
 						return err
 					}
-
+					x.SelectList.Selects = saveSelect
 					p, err = b.adjustCTEPlanSchema(p, cInfo.def)
 					if err != nil {
 						return err
 					}
-
 					cInfo.seedLP = p
+
+					// Rebuild the plan.
 					i--
 					b.buildingRecursivePartForCTE = true
 					continue
@@ -5816,8 +5807,6 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 				if err != nil {
 					return err
 				}
-				seed = append(seed, p)
-				tmpAfterSetOptsForSeed = append(tmpAfterSetOptsForSeed, afterSetOperator)
 			} else {
 				if err != nil {
 					return err
@@ -5827,17 +5816,18 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 						return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("%s between recursive part's selects, hint: The operator between recursive part's selects must bu UNION[DISTINCT] or UNION ALL", afterOpr.String()))
 					}
 				}
-				if cInfo.useRecursive == false {
+				if !cInfo.useRecursive {
 					return ErrCTERecursiveRequiresNonRecursiveFirst.GenWithStackByArgs(cInfo.def.Name.String())
 				}
 				cInfo.useRecursive = false
 				recursive = append(recursive, p)
-				tmpAfterSetOptsForRecur = append(tmpAfterSetOptsForRecur, afterSetOperator)
+				tmpAfterSetOptsForRecur = append(tmpAfterSetOptsForRecur, afterOpr)
 			}
 
 		}
 
 		if len(recursive) == 0 {
+			// In this case, even if SQL specifies "WITH RECURSIVE", the CTE is non-recursive.
 			p, err := b.buildSetOpr(ctx, x)
 			if err != nil {
 				return err
@@ -5850,6 +5840,7 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 			return nil
 		}
 
+		// Build the recursive part's logical plan.
 		recurPart, err := b.buildUnion(ctx, recursive, tmpAfterSetOptsForRecur)
 		if err != nil {
 			return err
@@ -5858,14 +5849,12 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 		if err != nil {
 			return err
 		}
-		if recurPart.Schema().Len() != cInfo.seedLP.Schema().Len() {
-			return ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
-		}
 		cInfo.recurLP = recurPart
 		return nil
 	default:
 		p, err := b.buildResultSetNode(ctx, x)
 		if err != nil {
+			// Refine the error message.
 			if errors.ErrorEqual(err, ErrCTERecursiveRequiresNonRecursiveFirst) {
 				err = ErrCTERecursiveRequiresUnion.GenWithStackByArgs(cInfo.def.Name.String())
 			}
@@ -5881,16 +5870,6 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 }
 
 func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExpression) (LogicalPlan, error) {
-	//exprs := make([]expression.Expression, len(p.Schema().Columns))
-	//tmpSchema := p.Schema().Clone()
-	//for i, col := range p.Schema().Columns {
-	//	colc := col.Clone().(*expression.Column)
-	//	exprs[i] = colc
-	//	tmpSchema.Columns[i].UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
-	//}
-	//proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true, AvoidEliminateForCTE: true}.Init(b.ctx, b.getSelectOffset())
-	//proj.SetSchema(tmpSchema)
-	//proj.SetChildren(p)
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
 		name.TblName = def.Name
@@ -5941,7 +5920,7 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 	nameMap := make(map[string]struct{})
 	for _, cte := range w.CTEs {
 		if _, ok := nameMap[cte.Name.L]; ok {
-			return errors.New("Not unique table/alias")
+			return ErrNonUniqTable
 		}
 		nameMap[cte.Name.L] = struct{}{}
 	}
@@ -5981,6 +5960,7 @@ func (b *PlanBuilder) buildProjection4CTEUnion(ctx context.Context, seed Logical
 	return proj, nil
 }
 
+// The recursive part/CTE's schema is nullable, and the UID should be unique.
 func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVars) *expression.Schema {
 	res := seedSchema.Clone()
 	for _, col := range res.Columns {
