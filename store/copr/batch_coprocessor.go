@@ -201,15 +201,15 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 				}
 			}
 			if totalRemainingRegionNum > 0 {
-				weightedTaskNum := float64(len(storeCandidateRegionMap[store]))/avgStorePerRegion + float64(len(storeTaskMap[store].regionInfos))
 				avgStorePerRegion = float64(totalRegionCandidateNum) / float64(totalRemainingRegionNum)
+				weightedRegionNum := float64(len(storeCandidateRegionMap[store]))/avgStorePerRegion + float64(len(storeTaskMap[store].regionInfos))
 				for _, id := range ri.AllStores {
 					// it is not optimal because we only check the stores that affected by this region, in fact in order
-					// to find out the store with the lowest weightedTaskNum, all stores should be checked, but I think
+					// to find out the store with the lowest weightedRegionNum, all stores should be checked, but I think
 					// check only the affected stores is more simple and will get a good enough result
-					if id != store && len(storeCandidateRegionMap[id]) > 0 && float64(len(storeCandidateRegionMap[id]))/avgStorePerRegion+float64(len(storeTaskMap[id].regionInfos)) <= weightedTaskNum {
+					if id != store && len(storeCandidateRegionMap[id]) > 0 && float64(len(storeCandidateRegionMap[id]))/avgStorePerRegion+float64(len(storeTaskMap[id].regionInfos)) <= weightedRegionNum {
 						store = id
-						weightedTaskNum = float64(len(storeCandidateRegionMap[id]))/avgStorePerRegion + float64(len(storeTaskMap[id].regionInfos))
+						weightedRegionNum = float64(len(storeCandidateRegionMap[id]))/avgStorePerRegion + float64(len(storeTaskMap[id].regionInfos))
 					}
 				}
 			}
