@@ -19,13 +19,16 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
@@ -639,4 +642,64 @@ func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
 	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 	_, err = t3.Get(context.Background(), []byte("fb2"))
 	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
+}
+
+func (s *testLockSuite) TestDeadlockReportWaitChain(c *C) {
+	makeLockCtx := func(txn tikv.TxnProbe, resourceGroupTag string) *kv.LockCtx {
+		return &kv.LockCtx{
+			ForUpdateTS:      txn.StartTS(),
+			WaitStartTime:    time.Now(),
+			ResourceGroupTag: []byte(resourceGroupTag),
+		}
+	}
+
+	txn1, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn1.SetPessimistic(true)
+	txn2, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn2.SetPessimistic(true)
+
+	ctx := context.Background()
+	err = txn1.LockKeys(ctx, makeLockCtx(txn1, "tag1"), []byte("k1"))
+	c.Assert(err, IsNil)
+	err = txn2.LockKeys(ctx, makeLockCtx(txn2, "tag2"), []byte("k2"))
+	c.Assert(err, IsNil)
+
+	// txn1 blocks on k2.
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := txn1.LockKeys(ctx, makeLockCtx(txn1, "tag3"), []byte("k2"))
+		// After txn2 releases the lock, `txn1.LockKeys` will return a conflict error unconditionally by design.
+		c.Assert(err, NotNil)
+		c.Assert(errors.Cause(err).(*tikverr.ErrWriteConflict), NotNil)
+	}()
+	// Sleep for a while to make sure it has been blocked.
+	time.Sleep(time.Millisecond * 100)
+
+	// txn2 tries locking k1 and encounters deadlock error.
+	err = txn2.LockKeys(ctx, makeLockCtx(txn2, "tag4"), []byte("k1"))
+	c.Assert(err, NotNil)
+	dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock)
+	c.Assert(ok, IsTrue)
+
+	waitChain := dl.GetWaitChain()
+	c.Assert(len(waitChain), Equals, 2)
+	c.Assert(waitChain[0].Txn, Equals, txn1.StartTS())
+	c.Assert(waitChain[0].WaitForTxn, Equals, txn2.StartTS())
+	c.Assert(waitChain[0].Key, DeepEquals, []byte("k2"))
+	c.Assert(string(waitChain[0].ResourceGroupTag), Equals, "tag3")
+
+	c.Assert(waitChain[1].Txn, Equals, txn2.StartTS())
+	c.Assert(waitChain[1].WaitForTxn, Equals, txn1.StartTS())
+	c.Assert(waitChain[1].Key, DeepEquals, []byte("k1"))
+	c.Assert(string(waitChain[1].ResourceGroupTag), Equals, "tag4")
+
+	err = txn2.Rollback()
+	c.Assert(err, IsNil)
+	wg.Wait()
+	err = txn1.Rollback()
+	c.Assert(err, IsNil)
 }
