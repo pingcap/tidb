@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -365,6 +366,11 @@ func (tc *TiDBContext) SetCommandValue(command byte) {
 // GetSessionVars return SessionVars.
 func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
 	return tc.session.GetSessionVars()
+}
+
+// GetTxnWriteThroughputSLI implements QueryCtx GetTxnWriteThroughputSLI method.
+func (tc *TiDBContext) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return tc.session.GetTxnWriteThroughputSLI()
 }
 
 type tidbResultSet struct {
