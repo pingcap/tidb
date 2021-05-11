@@ -83,6 +83,13 @@ func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 	tk.MustExec("create global temporary table temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2)) ON COMMIT DELETE ROWS;")
 	tk.MustExec("insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
 	tk.MustGetErrCode("admin check table temporary_admin_test;", mysql.ErrAdminCheckTable)
+	tk.MustExec("drop table if exists temporary_admin_test;")
+
+	tk.MustExec("drop table if exists non_temporary_admin_test;")
+	tk.MustExec("create table non_temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2));")
+	tk.MustExec("insert non_temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
+	tk.MustExec("admin check table non_temporary_admin_test;")
+	tk.MustExec("drop table if exists non_temporary_admin_test;")
 }
 
 func (s *testSuite5) TestAdminRecoverIndex(c *C) {

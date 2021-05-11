@@ -1463,9 +1463,6 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tblName.DBInfo.Name.O, tableInfo.Name.O)
 	}
-	if tableInfo.TempTableType == model.TempTableGlobal || tableInfo.TempTableType == model.TempTableLocal {
-		return nil, infoschema.ErrAdminCheckTable
-	}
 	p := &CheckTable{
 		DBName: tblName.Schema.O,
 		Table:  tbl,
