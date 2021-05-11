@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/lock"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
@@ -157,9 +158,34 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	return finalPlan, cost, nil
 }
 
+// mergeContinuousSelections merge continuous selections which may occur after changing plans.
+func mergeContinuousSelections(p PhysicalPlan) {
+	if sel, ok := p.(*PhysicalSelection); ok {
+		for {
+			childSel := sel.children[0]
+			if tmp, ok := childSel.(*PhysicalSelection); ok {
+				sel.Conditions = append(sel.Conditions, tmp.Conditions...)
+				sel.SetChild(0, tmp.children[0])
+			} else {
+				break
+			}
+		}
+	}
+	for _, child := range p.Children() {
+		mergeContinuousSelections(child)
+	}
+	// merge continuous selections in a coprocessor task of tiflash
+	tableReader, isTableReader := p.(*PhysicalTableReader)
+	if isTableReader && tableReader.StoreType == kv.TiFlash {
+		mergeContinuousSelections(tableReader.tablePlan)
+		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+	}
+}
+
 func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
+	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = eliminateLockForTemporaryTable(plan)
 	plan = enableParallelApply(sctx, plan)
