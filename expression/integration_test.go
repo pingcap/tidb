@@ -7758,7 +7758,7 @@ func (s *testIntegrationSerialSuite) TestCollationMergeJoin(c *C) {
 		"  `col_10` blob DEFAULT NULL," +
 		"  `col_11` decimal(17,5) NOT NULL," +
 		"  `col_13` varchar(381) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'Yr'," +
-		"  PRIMARY KEY (`col_13`,`col_11`) CLUSTERED," +
+		"  PRIMARY KEY (`col_13`,`col_11`)," +
 		"  KEY `idx_4` (`col_10`(3))" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 	tk.MustExec("insert into t values ('a', 12523, 'A');")
