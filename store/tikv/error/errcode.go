@@ -20,7 +20,4 @@ const (
 	CodeLockWaitTimeout             = 1205
 	CodeQueryInterrupted            = 1317
 	CodeLockAcquireFailAndNoWaitSet = 3572
-
-	// TiKV/PD/TiFlash errors.
-	CodeTiKVStoreLimit = 9008
 )
