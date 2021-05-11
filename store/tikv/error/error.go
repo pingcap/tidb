@@ -44,6 +44,8 @@ var (
 	ErrTiKVMaxTimestampNotSynced = errors.New("tikv max timestamp not synced")
 	// ErrResolveLockTimeout is the error that resolve lock timeout.
 	ErrResolveLockTimeout = errors.New("resolve lock timeout")
+	// ErrLockWaitTimeout is the error that wait for the lock is timeout.
+	ErrLockWaitTimeout = errors.New("lock wait timeout")
 	// ErrTiKVServerBusy is the error when tikv server is busy.
 	ErrTiKVServerBusy = errors.New("tikv server busy")
 	// ErrTiFlashServerBusy is the error that tiflash server is busy.
@@ -59,7 +61,6 @@ const MismatchClusterID = "mismatch cluster id"
 var (
 	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(CodeLockAcquireFailAndNoWaitSet)
-	ErrLockWaitTimeout             = dbterror.ClassTiKV.NewStd(CodeLockWaitTimeout)
 	ErrUnknown                     = dbterror.ClassTiKV.NewStd(CodeUnknown)
 )
 
