@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// RegionInfo contains region related information for batchCopTask
 type RegionInfo struct {
 	Region    RegionVerID
 	Meta      *metapb.Region
@@ -45,6 +46,7 @@ func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatch
 	}
 }
 
+// SendReqToAddr send batch cop request
 func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *RPCContext, regionInfos []RegionInfo, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
 	// use the first ctx to send request, because every ctx has same address.
 	cancel = func() {}

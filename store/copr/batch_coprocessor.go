@@ -272,7 +272,7 @@ func buildBatchCopTasks(bo *backoffer, cache *tikv.RegionCache, ranges *tikv.Key
 					storeAddr:   rpcCtx.Addr,
 					cmdType:     cmdType,
 					ctx:         rpcCtx,
-					regionInfos: []tikv.RegionInfo{{task.region, rpcCtx.Meta, task.ranges, allStores}},
+					regionInfos: []tikv.RegionInfo{{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores}},
 				}
 				storeTaskMap[rpcCtx.Addr] = batchTask
 			}
