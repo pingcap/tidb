@@ -543,7 +543,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	switch act := action.(type) {
 	case actionPrewrite:
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
-		if !bo.HasErrors() {
+		if bo.ErrorsNum() == 0 {
 			for _, group := range groups {
 				c.regionTxnSize[group.region.id] = group.mutations.Len()
 			}

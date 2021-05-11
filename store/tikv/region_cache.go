@@ -42,7 +42,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
-	gbackoff "google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
@@ -426,7 +426,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 
 	if cachedRegion.checkNeedReload() {
-		// TODO: This may cause a fake EpochNotMatch error, and reload the region after a retry. It's better to reload
+		// TODO: This may cause a fake EpochNotMatch error, and reload the region after a backoff. It's better to reload
 		// the region directly here.
 		return nil, nil
 	}
@@ -1406,7 +1406,7 @@ func (c *RegionCache) getStoresByLabels(labels []*metapb.StoreLabel) []*Store {
 
 // OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
 func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, currentRegions []*metapb.Region) error {
-	// Find whether the region epoch in `ctx` is ahead of TiKV's. If so, retry.
+	// Find whether the region epoch in `ctx` is ahead of TiKV's. If so, backoff.
 	for _, meta := range currentRegions {
 		if meta.GetId() == ctx.Region.id &&
 			(meta.GetRegionEpoch().GetConfVer() < ctx.Region.confVer ||
@@ -2111,7 +2111,7 @@ func createKVHealthClient(ctx context.Context, addr string) (*grpc.ClientConn, h
 		grpc.WithInitialWindowSize(grpcInitialWindowSize),
 		grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 		grpc.WithConnectParams(grpc.ConnectParams{
-			Backoff: gbackoff.Config{
+			Backoff: backoff.Config{
 				BaseDelay:  100 * time.Millisecond, // Default was 1s.
 				Multiplier: 1.6,                    // Default
 				Jitter:     0.2,                    // Default

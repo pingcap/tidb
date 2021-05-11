@@ -151,7 +151,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
-	if bo.HasErrors() {
+	if bo.ErrorsNum() > 0 {
 		txnSize = math.MaxUint64
 	}
 

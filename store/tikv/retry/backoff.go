@@ -426,11 +426,6 @@ func (b *Backoffer) GetBackoffSleepMS() map[BackoffType]int {
 	return b.backoffSleepMS
 }
 
-// HasErrors returns true if b.errors is not empty.
-func (b *Backoffer) HasErrors() bool {
-	return len(b.errors) != 0
-}
-
 // ErrorsNum returns the number of errors.
 func (b *Backoffer) ErrorsNum() int {
 	return len(b.errors)
