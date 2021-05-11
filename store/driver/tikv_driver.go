@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -306,27 +305,10 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 
 // BeginWithOption begins a transaction with given option
 func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
-	txnScope := option.TxnScope
-	if txnScope == "" {
-		txnScope = oracle.GlobalTxnScope
-	}
-	var txn *tikv.KVTxn
-	var err error
-	if option.StartTS != nil {
-		txn, err = s.BeginWithStartTS(txnScope, *option.StartTS)
-	} else if option.PrevSec != nil {
-		txn, err = s.BeginWithExactStaleness(txnScope, *option.PrevSec)
-	} else if option.MaxPrevSec != nil {
-		txn, err = s.BeginWithMaxPrevSec(txnScope, *option.MaxPrevSec)
-	} else if option.MinStartTS != nil {
-		txn, err = s.BeginWithMinStartTS(txnScope, *option.MinStartTS)
-	} else {
-		txn, err = s.BeginWithTxnScope(txnScope)
-	}
+	txn, err := s.KVStore.BeginWithOption(option)
 	if err != nil {
 		return nil, txn_driver.ToTiDBErr(err)
 	}
-
 	return txn_driver.NewTiKVTxn(txn), err
 }
 
