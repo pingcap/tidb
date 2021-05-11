@@ -1872,7 +1872,7 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	tk.MustExec("update t set name = 'hello' where name <= 'abc'")
 	tk.MustExec("set character_set_connection = 'utf8mb4'")
 	tk.MustExec("admin capture bindings")
-	rows := tk.MustQuery("show global bindings").Rows()
+	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `c` = ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
