@@ -129,13 +129,12 @@ func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
-	forUpdateTS   uint64
-	stmtFuture    oracle.Future
-	Binlog        interface{}
-	InfoSchema    interface{}
-	History       interface{}
-	SchemaVersion int64
-	StartTS       uint64
+	forUpdateTS uint64
+	stmtFuture  oracle.Future
+	Binlog      interface{}
+	InfoSchema  interface{}
+	History     interface{}
+	StartTS     uint64
 
 	// ShardStep indicates the max size of continuous rowid shard in one transaction.
 	ShardStep    int
@@ -870,19 +869,26 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	}
 }
 
+// FIXME: remove this interface
+// infoschemaMetaVersion is a workaround. Due to circular dependency,
+// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
+// So we give a convenience for that
+type infoschemaMetaVersion interface {
+	SchemaMetaVersion() int64
+}
+
 // GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
 // Otherwise, transaction infoschema is returned.
 // Nil if there is no available infoschema.
-func (s *SessionVars) GetInfoSchema() interface{} {
-	type IS interface {
-		SchemaMetaVersion() int64
-	}
-	if snap, ok := s.SnapshotInfoschema.(IS); ok {
+func (s *SessionVars) GetInfoSchema() infoschemaMetaVersion {
+	if snap, ok := s.SnapshotInfoschema.(infoschemaMetaVersion); ok {
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", s.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
 		return snap
 	}
-	if s.TxnCtx != nil && s.TxnCtx.InfoSchema != nil {
-		return s.TxnCtx.InfoSchema
+	if s.TxnCtx != nil {
+		if is, ok := s.TxnCtx.InfoSchema.(infoschemaMetaVersion); ok {
+			return is
+		}
 	}
 	return nil
 }
