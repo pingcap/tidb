@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
-	
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
@@ -514,7 +514,7 @@ func (s *testClusteredSuite) TestClusteredIndexSelectWhereInNull(c *C) {
 	tk := s.newTK(c)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a datetime, b bigint, primary key (a));")
-	tk.MustQuery("select * from t where a in (null);").Check(testkit.Rows( /* empty result */))
+	tk.MustQuery("select * from t where a in (null);").Check(testkit.Rows( /* empty result */ ))
 }
 
 func (s *testClusteredSuite) TestClusteredIndexSyntax(c *C) {
