@@ -1349,8 +1349,13 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
-		finalArg1 = arg1
-		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
+		// Why check not null flag
+		// eg: int_col > const_val(which is less than min_int32)
+		// If int_col got null, compare result cannot be true
+		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg0Type.Flag)) {
+			finalArg1 = arg1
+		}
+		if isExceptional && arg1.GetType().EvalType() == types.ETInt && mysql.HasNotNullFlag(arg0Type.Flag) {
 			// Judge it is inf or -inf
 			// For int:
 			//			inf:  01111111 & 1 == 1
@@ -1368,8 +1373,10 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
-		finalArg0 = arg0
-		if isExceptional && arg0.GetType().EvalType() == types.ETInt {
+		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)) {
+			finalArg0 = arg0
+		}
+		if isExceptional && arg0.GetType().EvalType() == types.ETInt && mysql.HasNotNullFlag(arg1Type.Flag) {
 			if arg0.Value.GetInt64()&1 == 1 {
 				isNegativeInfinite = true
 			} else {
@@ -1378,7 +1385,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// int constant [cmp] year type
-	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear {
+	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear && !arg0.Value.IsNull() {
 		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
 		if failed == nil {
 			arg0.Value.SetInt64(adjusted)
@@ -1386,7 +1393,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// year type [cmp] int constant
-	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear {
+	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear && !arg1.Value.IsNull() {
 		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
 		if failed == nil {
 			arg1.Value.SetInt64(adjusted)

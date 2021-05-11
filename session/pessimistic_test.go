@@ -299,6 +299,14 @@ func (s *testPessimisticSuite) TestInsertOnDup(c *C) {
 	tk.MustQuery("select * from dup").Check(testkit.Rows("1 2"))
 }
 
+func (s *testPessimisticSuite) TestPointGetOverflow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(k tinyint, v int, unique key(k))")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t set v = 100 where k = -200;")
+	tk.MustExec("update t set v = 100 where k in (-200, -400);")
+}
+
 func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
