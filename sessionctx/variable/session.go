@@ -1445,20 +1445,6 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
 }
 
-// SetLocalSystemVar sets values of the local variables which in "server" scope.
-func SetLocalSystemVar(name string, val string) {
-	switch name {
-	case TiDBDDLReorgWorkerCount:
-		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
-	case TiDBDDLReorgBatchSize:
-		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
-	case TiDBDDLErrorCountLimit:
-		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
-	case TiDBRowFormatVersion:
-		SetDDLReorgRowFormat(tidbOptInt64(val, DefTiDBRowFormatV2))
-	}
-}
-
 // special session variables.
 const (
 	SQLModeVar           = "sql_mode"
@@ -1469,22 +1455,7 @@ const (
 	TransactionIsolation = "transaction_isolation"
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
 	MaxExecutionTime     = "max_execution_time"
-)
-
-// these variables are useless for TiDB, but still need to validate their values for some compatible issues.
-// TODO: some more variables need to be added here.
-const (
-	serverReadOnly = "read_only"
-)
-
-var (
-	// TxIsolationNames are the valid values of the variable "tx_isolation" or "transaction_isolation".
-	TxIsolationNames = map[string]struct{}{
-		"READ-UNCOMMITTED": {},
-		"READ-COMMITTED":   {},
-		"REPEATABLE-READ":  {},
-		"SERIALIZABLE":     {},
-	}
+	ReadOnly             = "read_only"
 )
 
 // TableDelta stands for the changed count for one table or partition.
