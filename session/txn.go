@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/sli"
 	"runtime/trace"
 	"strings"
 	"sync/atomic"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
