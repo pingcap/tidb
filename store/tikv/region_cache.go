@@ -536,6 +536,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 
 // GetAllValidTiFlashStores returns the store ids of all valid TiFlash stores, the store id of currentStore is always the first one
 func (c *RegionCache) GetAllValidTiFlashStores(id RegionVerID, currentStore *Store) []uint64 {
+	// set the cap to 2 because usually, TiFlash table will have 2 replicas
 	allStores := make([]uint64, 0, 2)
 	// make sure currentStore id is always the first in allStores
 	allStores = append(allStores, currentStore.storeID)
