@@ -562,6 +562,9 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 	for _, table := range stmt.Tables {
 		currentDB := p.ctx.GetSessionVars().CurrentDB
+		if table.Schema.String() != "" {
+			currentDB = table.Schema.L
+		}
 		if currentDB == "" {
 			p.err = errors.Trace(ErrNoDB)
 			return
