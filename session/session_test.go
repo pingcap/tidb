@@ -3746,7 +3746,7 @@ func (s *testSessionSuite2) TestMemoryUsageAlarmVariable(c *C) {
 	err = tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=-1")
 	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_memory_usage_alarm_ratio' can't be set to the value of '-1'")
 	err = tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
-	c.Assert(err.Error(), Equals, "Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
+	c.Assert(err.Error(), Equals, "[variable:1228]Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
 }
 
 func (s *testSessionSuite2) TestSelectLockInShare(c *C) {
@@ -4125,6 +4125,43 @@ func (s *testSessionSerialSuite) TestRemovedSysVars(c *C) {
 	c.Assert(err.Error(), Equals, "[variable:1193]Unknown system variable 'bogus_var'")
 }
 
+func (s *testSessionSerialSuite) TestCorrectScopeError(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeNone, Name: "sv_none", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal, Name: "sv_global", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeSession, Name: "sv_session", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "sv_both", Value: "acdc"})
+
+	// check set behavior
+
+	// none
+	_, err := tk.Exec("SET sv_none='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'sv_none' is a read only variable")
+	_, err = tk.Exec("SET GLOBAL sv_none='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'sv_none' is a read only variable")
+
+	// global
+	tk.MustExec("SET GLOBAL sv_global='acdc'")
+	_, err = tk.Exec("SET sv_global='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1229]Variable 'sv_global' is a GLOBAL variable and should be set with SET GLOBAL")
+
+	// session
+	_, err = tk.Exec("SET GLOBAL sv_session='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1228]Variable 'sv_session' is a SESSION variable and can't be used with SET GLOBAL")
+	tk.MustExec("SET sv_session='acdc'")
+
+	// both
+	tk.MustExec("SET GLOBAL sv_both='acdc'")
+	tk.MustExec("SET sv_both='acdc'")
+
+	// unregister
+	variable.UnregisterSysVar("sv_none")
+	variable.UnregisterSysVar("sv_global")
+	variable.UnregisterSysVar("sv_session")
+	variable.UnregisterSysVar("sv_both")
+}
+
 func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -4242,4 +4279,27 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	err = stmt.Restore(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(sb.String(), Equals, "SELECT 3")
+}
+
+func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows")
+	tk.MustExec("begin")
+	tk.MustExec("insert into g_tmp values (3, 3, 3)")
+	tk.MustExec("insert into g_tmp values (4, 7, 9)")
+
+	// Cover table scan.
+	tk.MustQuery("select * from g_tmp").Check(testkit.Rows("3 3 3", "4 7 9"))
+	// Cover index reader.
+	tk.MustQuery("select b from g_tmp where b > 3").Check(testkit.Rows("7"))
+	// Cover index lookup.
+	tk.MustQuery("select c from g_tmp where b = 3").Check(testkit.Rows("3"))
+	// Cover point get.
+	tk.MustQuery("select * from g_tmp where a = 3").Check(testkit.Rows("3 3 3"))
+	// Cover batch point get.
+	tk.MustQuery("select * from g_tmp where a in (2,3,4)").Check(testkit.Rows("3 3 3", "4 7 9"))
+	tk.MustExec("commit")
+
+	// The global temporary table data is discard after the transaction commit.
+	tk.MustQuery("select * from g_tmp").Check(testkit.Rows())
 }

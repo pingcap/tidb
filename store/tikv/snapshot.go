@@ -107,7 +107,6 @@ type KVSnapshot struct {
 		matchStoreLabels []*metapb.StoreLabel
 	}
 	sampleStep uint32
-	txnScope   string
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -127,7 +126,8 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 	}
 }
 
-func (s *KVSnapshot) setSnapshotTS(ts uint64) {
+// SetSnapshotTS resets the timestamp for reads.
+func (s *KVSnapshot) SetSnapshotTS(ts uint64) {
 	// Sanity check for snapshot version.
 	if ts >= math.MaxInt64 && ts != math.MaxUint64 {
 		err := errors.Errorf("try to get snapshot with a large ts %d", ts)
@@ -565,17 +565,9 @@ func (s *KVSnapshot) IterReverse(k []byte) (unionstore.Iterator, error) {
 // value of this option. Only ReplicaRead is supported for snapshot
 func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case kv.NotFillCache:
-		s.notFillCache = val.(bool)
-	case kv.SnapshotTS:
-		s.setSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
 		s.mu.Lock()
 		s.mu.replicaRead = val.(kv.ReplicaReadType)
-		s.mu.Unlock()
-	case kv.TaskID:
-		s.mu.Lock()
-		s.mu.taskID = val.(uint64)
 		s.mu.Unlock()
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()
@@ -591,8 +583,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 		s.mu.Lock()
 		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
 		s.mu.Unlock()
-	case kv.TxnScope:
-		s.txnScope = val.(string)
 	}
 }
 
@@ -610,6 +600,12 @@ func (s *KVSnapshot) DelOption(opt int) {
 	}
 }
 
+// SetNotFillCache indicates whether tikv should skip filling cache when
+// loading data.
+func (s *KVSnapshot) SetNotFillCache(b bool) {
+	s.notFillCache = b
+}
+
 // SetKeyOnly indicates if tikv can return only keys.
 func (s *KVSnapshot) SetKeyOnly(b bool) {
 	s.keyOnly = b
@@ -623,6 +619,14 @@ func (s *KVSnapshot) SetIsolationLevel(level IsoLevel) {
 // SetPriority sets the priority for tikv to execute commands.
 func (s *KVSnapshot) SetPriority(pri Priority) {
 	s.priority = pri
+}
+
+// SetTaskID marks current task's unique ID to allow TiKV to schedule
+// tasks more fairly.
+func (s *KVSnapshot) SetTaskID(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.taskID = id
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.

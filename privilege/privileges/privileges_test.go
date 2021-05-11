@@ -1345,5 +1345,85 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedTables(c *C) {
 	mustExec(c, cloudAdminSe, "USE metrics_schema")
 	mustExec(c, cloudAdminSe, "SELECT * FROM metrics_schema.uptime")
 	mustExec(c, cloudAdminSe, "CREATE TABLE mysql.abcd (a int)")
+}
 
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER uroot1, uroot2, uroot3")
+	tk.MustExec("GRANT SUPER ON *.* to uroot1 WITH GRANT OPTION") // super not process
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+	tk.MustExec("GRANT SUPER, PROCESS, RESTRICTED_TABLES_ADMIN ON *.* to uroot2 WITH GRANT OPTION")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "uroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// Even though we have super, we still can't read protected information from tidb_servers_info, cluster_* tables
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`).Check(testkit.Rows("0"))
+	// 36 = a UUID. Normally it is an IP address.
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) != 36`).Check(testkit.Rows("0"))
+
+	// That is unless we have the RESTRICTED_TABLES_ADMIN privilege
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "uroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	// flip from is NOT NULL etc
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NULL`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NULL`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) = 36`).Check(testkit.Rows("0"))
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
+	// Without TiKV the status var list does not include tidb_gc_leader_desc
+	// So we can only test that the dynamic privilege is grantable.
+	// We will have to use an integration test to run SHOW STATUS LIKE 'tidb_gc_leader_desc'
+	// and verify if it appears.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER unostatus, ustatus")
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+	tk.MustExec("GRANT RESTRICTED_STATUS_ADMIN ON *.* to ustatus")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "unostatus",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+}
+
+// TestViewDefiner tests that default roles are correctly applied in the algorithm definer
+// See: https://github.com/pingcap/tidb/issues/24414
+func (s *testPrivilegeSuite) TestViewDefiner(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE DATABASE issue24414")
+	tk.MustExec("USE issue24414")
+	tk.MustExec(`create table table1(
+		col1 int,
+		col2 int,
+		col3 int
+		)`)
+	tk.MustExec(`insert into table1 values (1,1,1),(2,2,2)`)
+	tk.MustExec(`CREATE ROLE 'ACL-mobius-admin'`)
+	tk.MustExec(`CREATE USER 'mobius-admin'`)
+	tk.MustExec(`CREATE USER 'mobius-admin-no-role'`)
+	tk.MustExec(`GRANT Select,Insert,Update,Delete,Create,Drop,Alter,Index,Create View,Show View ON issue24414.* TO 'ACL-mobius-admin'@'%'`)
+	tk.MustExec(`GRANT Select,Insert,Update,Delete,Create,Drop,Alter,Index,Create View,Show View ON issue24414.* TO 'mobius-admin-no-role'@'%'`)
+	tk.MustExec(`GRANT 'ACL-mobius-admin'@'%' to 'mobius-admin'@'%'`)
+	tk.MustExec(`SET DEFAULT ROLE ALL TO 'mobius-admin'`)
+	// create tables
+	tk.MustExec(`CREATE ALGORITHM = UNDEFINED DEFINER = 'mobius-admin'@'127.0.0.1' SQL SECURITY DEFINER VIEW test_view (col1 , col2 , col3) AS SELECT * from table1`)
+	tk.MustExec(`CREATE ALGORITHM = UNDEFINED DEFINER = 'mobius-admin-no-role'@'127.0.0.1' SQL SECURITY DEFINER VIEW test_view2 (col1 , col2 , col3) AS SELECT * from table1`)
+
+	// all examples should work
+	tk.MustExec("select * from test_view")
+	tk.MustExec("select * from test_view2")
 }
