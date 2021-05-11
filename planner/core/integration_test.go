@@ -2034,6 +2034,5 @@ func (s *testIntegrationSuite) TestIssue23846(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varbinary(10),UNIQUE KEY(a))")
 	tk.MustExec("insert into t values(0x00A4EEF4FA55D6706ED5)")
-	tk.MustQuery("select count(*) from t where a=0x00A4EEF4FA55D6706ED5").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t where a=0x00A4EEF4FA55D6706ED5").Check(testkit.Rows("\x00\xa4\xee\xf4\xfaU\xd6pn\xd5")) // not empty
 }
