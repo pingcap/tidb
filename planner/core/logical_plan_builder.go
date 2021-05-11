@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -3651,7 +3652,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 					cte.recursiveRef = true
 					p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID}.Init(b.ctx, b.getSelectOffset())
-					p.SetSchema(getResultCTESchema(cte.seedLP.Schema()))
+					p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 					p.SetOutputNames(cte.seedLP.OutputNames())
 					return p, nil
 				}
@@ -3659,7 +3660,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				b.handleHelper.pushMap(nil)
 				var p LogicalPlan
 				lp := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IdForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
-				lp.SetSchema(getResultCTESchema(cte.seedLP.Schema()))
+				lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 				p = lp
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				if len(asName.String()) > 0 {
@@ -5880,16 +5881,16 @@ func (b *PlanBuilder) splitSeedAndRecursive(ctx context.Context, cte ast.ResultS
 }
 
 func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExpression) (LogicalPlan, error) {
-	exprs := make([]expression.Expression, len(p.Schema().Columns))
-	tmpSchema := p.Schema().Clone()
-	for i, col := range p.Schema().Columns {
-		colc := col.Clone().(*expression.Column)
-		exprs[i] = colc
-		tmpSchema.Columns[i].UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
-	}
-	proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true, AvoidEliminateForCTE: true}.Init(b.ctx, b.getSelectOffset())
-	proj.SetSchema(tmpSchema)
-	proj.SetChildren(p)
+	//exprs := make([]expression.Expression, len(p.Schema().Columns))
+	//tmpSchema := p.Schema().Clone()
+	//for i, col := range p.Schema().Columns {
+	//	colc := col.Clone().(*expression.Column)
+	//	exprs[i] = colc
+	//	tmpSchema.Columns[i].UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+	//}
+	//proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true, AvoidEliminateForCTE: true}.Init(b.ctx, b.getSelectOffset())
+	//proj.SetSchema(tmpSchema)
+	//proj.SetChildren(p)
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
 		name.TblName = def.Name
@@ -5903,8 +5904,8 @@ func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExp
 			outPutNames[i].ColName = n
 		}
 	}
-	proj.SetOutputNames(outPutNames)
-	return proj, nil
+	p.SetOutputNames(outPutNames)
+	return p, nil
 }
 
 func (b *PlanBuilder) prepareCTECheckForSubQuery() []*cteInfo {
@@ -5965,7 +5966,7 @@ func (b *PlanBuilder) buildProjection4CTEUnion(ctx context.Context, seed Logical
 		return nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 	}
 	exprs := make([]expression.Expression, len(seed.Schema().Columns))
-	resSchema := getResultCTESchema(seed.Schema())
+	resSchema := getResultCTESchema(seed.Schema(), b.ctx.GetSessionVars())
 	for i, col := range recur.Schema().Columns {
 		if !resSchema.Columns[i].RetType.Equal(col.RetType) {
 			exprs[i] = expression.BuildCastFunction4Union(b.ctx, col, resSchema.Columns[i].RetType)
@@ -5980,10 +5981,11 @@ func (b *PlanBuilder) buildProjection4CTEUnion(ctx context.Context, seed Logical
 	return proj, nil
 }
 
-func getResultCTESchema(seedSchema *expression.Schema) *expression.Schema {
+func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVars) *expression.Schema {
 	res := seedSchema.Clone()
 	for _, col := range res.Columns {
 		col.RetType = col.RetType.Clone()
+		col.UniqueID = svar.AllocPlanColumnID()
 		col.RetType.Flag &= ^mysql.NotNullFlag
 	}
 	return res
