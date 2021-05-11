@@ -1990,6 +1990,8 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+// TryPushCastDownToControlFunctionForHybridType try to push cast down to control function for Hybrid Type.
+// If necessary, it will rebuild control function using changed args.
 func TryPushCastDownToControlFunctionForHybridType(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression, success bool) {
 	sf, ok := expr.(*ScalarFunction)
 	if !ok {

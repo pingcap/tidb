@@ -9366,8 +9366,8 @@ func (s *testIntegrationSuite) TestEnumControlFunction(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int,b enum(\"b\"),c enum(\"c\"));")
 	tk.MustExec("insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);")
-	tk.MustQuery("select a from t where if(a=1,b,c)=\"b\";").Check(testkit.Rows("2", "2"))
-	tk.MustQuery("select a from t where if(a=1,b,c)=\"c\";").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select a from t where if(a=1,b,c)=\"b\";").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select a from t where if(a=1,b,c)=\"c\";").Check(testkit.Rows("2", "2"))
 	tk.MustQuery("select a from t where if(a=1,b,c)=1;").Sort().Check(testkit.Rows("1", "1", "2", "2"))
 	tk.MustQuery("select a from t where if(a=1,b,c);").Sort().Check(testkit.Rows("1", "1", "2", "2"))
 
