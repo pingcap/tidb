@@ -56,8 +56,8 @@ func (s *extractStartTsSuite) SetUpTest(c *C) {
 			Value: "Some Random Label",
 		}},
 	}
-	store.resolveTSMu.resolveTS[2] = 102
-	store.resolveTSMu.resolveTS[3] = 101
+	store.setSafeTS(2, 102)
+	store.setSafeTS(3, 101)
 	s.store = store
 }
 
@@ -105,8 +105,8 @@ func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 }
 
 func (s *extractStartTsSuite) TestMaxPrevSecFallback(c *C) {
-	s.store.resolveTSMu.resolveTS[2] = 0x8000000000000002
-	s.store.resolveTSMu.resolveTS[3] = 0x8000000000000001
+	s.store.setSafeTS(2, 0x8000000000000002)
+	s.store.setSafeTS(3, 0x8000000000000001)
 
 	i := uint64(100)
 	cases := []kv.TransactionOption{
