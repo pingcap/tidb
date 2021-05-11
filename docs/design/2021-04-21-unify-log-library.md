@@ -1,7 +1,7 @@
 # Proposal: Unifying Log Library
 
 - Author(s): [Yifan Xu](https://github.com/SabaPing)
-- Last updated:  Apr 12, 2021
+- Last updated: Apr 12, 2021
 - Discussion at: https://github.com/pingcap/tidb/pull/24181
 - Tracking issue: https://github.com/pingcap/tidb/issues/24190
 
@@ -71,7 +71,7 @@ Similar to `logrus`, the init method of zap `func InitZapLogger(cfg *LogConfig) 
 
 #### gRPC Logger
 
-I almost forgot that there is a fish in the net, which is not in `util/logutil/log.go`. In `main.go` there is a bunch of grpc logger initialization code.
+In `main.go` there is a bunch of grpc logger initialization code, which is not in `util/logutil/log.go`. 
 
 [Here is the code](https://github.com/pingcap/tidb/blob/e79fa8c6b654e5b94e9ed0a1c0f997d6564e95be/tidb-server/main.go#L591).
 
@@ -109,7 +109,7 @@ Most of the logging logic in PD will use the global zap handler.
 
 TiDB depends on BR, which in turn depends on tidb's `util/logutil/log.go`, constituting a circular dependency. 
 
-Not only is it a circular dependency, it also happens to depend on the log component 🙃🙃🙃🙃! This creates a considerable obstacle for the refactor.
+Not only is it a circular dependency, it also happens to depend on the log component. This creates a considerable obstacle for the refactor.
 
 The following code is from `pkg/lightning/log/log.go`, which calls TiDB's `InitLogger` and then `pingcap/log`'s InitLogger.
 
